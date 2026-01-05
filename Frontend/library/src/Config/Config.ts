@@ -457,7 +457,7 @@ export class Config {
                 'Either locked mouse, where the pointer is consumed by the video and locked to it, or hovering mouse, where the mouse is not consumed.',
                 settings && Object.prototype.hasOwnProperty.call(settings, Flags.HoveringMouseMode)
                     ? settings[Flags.HoveringMouseMode]
-                    : false,
+                    : true,
                 useUrlParams,
                 (isHoveringMouse: boolean, setting: SettingBase) => {
                     setting.label = `Control Scheme: ${isHoveringMouse ? 'Hovering' : 'Locked'} Mouse`;
@@ -756,7 +756,7 @@ export class Config {
                 999 /*max*/,
                 settings && Object.prototype.hasOwnProperty.call(settings, NumericParameters.WebRTCFPS)
                     ? settings[NumericParameters.WebRTCFPS]
-                    : 60 /*value*/,
+                    : 30 /*value*/,
                 useUrlParams
             )
         );
@@ -771,7 +771,7 @@ export class Config {
                 500000 /*max*/,
                 settings && Object.prototype.hasOwnProperty.call(settings, NumericParameters.WebRTCMinBitrate)
                     ? settings[NumericParameters.WebRTCMinBitrate]
-                    : 0 /*value*/,
+                    : 25000 /*value*/,
                 useUrlParams
             )
         );
