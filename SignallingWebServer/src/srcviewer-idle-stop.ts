@@ -16,6 +16,10 @@ export interface ViewerIdleOptions {
   firstViewerGraceMs?: number;
   /** Optional delay before starting the "no-first-viewer" timer (ms). Default: env NO_VIEWER_DELAY_MS or 0 */
   firstViewerDelayMs?: number;
+  /** Heartbeat interval for server -> viewer pings (ms). 0 disables. Default: env VIEWER_HEARTBEAT_MS or 30s */
+  heartbeatMs?: number;
+  /** Allowed missed pongs before disconnecting. Default: env VIEWER_HEARTBEAT_MISSES or 2 */
+  heartbeatMisses?: number;
   /** Optional custom logger */
   logger?: (msg: string) => void;
 }
@@ -27,6 +31,10 @@ export interface ViewerIdleOptions {
  */
 export function wireViewerIdleStop(root: any, opts: ViewerIdleOptions = {}) {
   const log = opts.logger ?? ((m: string) => console.log(m));
+  const readNumber = (value: unknown, fallback: number) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
   const GRACE_MS = opts.graceMs ?? Number(process.env.GRACE_MS ?? 10 * 60_000);
   const SCAN_EVERY = opts.attachIntervalMs ?? 500;
   const TIMEOUT = opts.attachTimeoutMs ?? 0; // 0 = never stop retrying
@@ -35,10 +43,28 @@ export function wireViewerIdleStop(root: any, opts: ViewerIdleOptions = {}) {
     opts.firstViewerGraceMs ?? Number(process.env.NO_VIEWER_GRACE_MS ?? 60 * 60_000);
   const FIRST_VIEWER_DELAY_MS =
     opts.firstViewerDelayMs ?? Number(process.env.NO_VIEWER_DELAY_MS ?? 0);
+  const HEARTBEAT_MS = readNumber(
+    opts.heartbeatMs ?? process.env.VIEWER_HEARTBEAT_MS,
+    30_000
+  );
+  const HEARTBEAT_MISSES = readNumber(
+    opts.heartbeatMisses ?? process.env.VIEWER_HEARTBEAT_MISSES,
+    2
+  );
+  const HEARTBEAT_ENABLED = HEARTBEAT_MS > 0 && HEARTBEAT_MISSES > 0;
 
   let viewerCount = 0;
   let zeroViewersTimer: NodeJS.Timeout | null = null;
   let firstViewerTimer: NodeJS.Timeout | null = null;
+  const trackedPlayerIds = new Set<string>();
+  const trackedUpgradeSockets = new WeakSet<Socket>();
+  type HeartbeatState = {
+    interval: NodeJS.Timeout | null;
+    missed: number;
+    onPong: (msg: any) => void;
+    protocol: any;
+  };
+  const heartbeatByPlayerId = new Map<string, HeartbeatState>();
 
   const cancelZeroTimer = () => {
     if (zeroViewersTimer) {
@@ -71,6 +97,89 @@ export function wireViewerIdleStop(root: any, opts: ViewerIdleOptions = {}) {
     }
   };
 
+  const stopHeartbeatForPlayer = (playerId: string) => {
+    const state = heartbeatByPlayerId.get(playerId);
+    if (!state) return;
+    if (state.interval) clearInterval(state.interval);
+    if (state.protocol && typeof state.protocol.off === "function") {
+      state.protocol.off("pong", state.onPong);
+    }
+    heartbeatByPlayerId.delete(playerId);
+  };
+
+  const startHeartbeatForPlayer = (player: any) => {
+    if (!HEARTBEAT_ENABLED) return;
+    const playerId = player?.playerId;
+    const protocol = player?.protocol;
+    if (!playerId || !protocol || typeof protocol.sendMessage !== "function") return;
+    if (heartbeatByPlayerId.has(playerId)) return;
+
+    const state: HeartbeatState = {
+      interval: null,
+      missed: 0,
+      onPong: () => {},
+      protocol
+    };
+    state.onPong = () => {
+      state.missed = 0;
+    };
+    if (typeof protocol.on === "function") {
+      protocol.on("pong", state.onPong);
+    }
+
+    state.interval = setInterval(() => {
+      if (state.missed >= HEARTBEAT_MISSES) {
+        log(`[idle] heartbeat timeout for ${playerId} -> disconnecting`);
+        if (trackedPlayerIds.has(playerId)) {
+          untrackPlayerId(playerId);
+        } else {
+          stopHeartbeatForPlayer(playerId);
+        }
+        try {
+          protocol.disconnect(4000, "heartbeat timeout");
+        } catch {}
+        return;
+      }
+      state.missed += 1;
+      try {
+        protocol.sendMessage({ type: "ping", time: Date.now() });
+      } catch {}
+    }, HEARTBEAT_MS);
+
+    heartbeatByPlayerId.set(playerId, state);
+  };
+
+  const trackPlayerId = (playerId: string) => {
+    if (!playerId || trackedPlayerIds.has(playerId)) return;
+    trackedPlayerIds.add(playerId);
+    onConnect();
+  };
+
+  const trackPlayer = (player: any) => {
+    const playerId = player?.playerId;
+    if (!playerId) return;
+    trackPlayerId(playerId);
+    startHeartbeatForPlayer(player);
+  };
+
+  const untrackPlayerId = (playerId: string) => {
+    if (!trackedPlayerIds.delete(playerId)) return;
+    stopHeartbeatForPlayer(playerId);
+    onDisconnect();
+  };
+
+  const trackUpgradeSocket = (socket: Socket) => {
+    if (trackedUpgradeSockets.has(socket)) return;
+    trackedUpgradeSockets.add(socket);
+    onConnect();
+    const cleanup = () => {
+      if (!trackedUpgradeSockets.delete(socket)) return;
+      onDisconnect();
+    };
+    socket.on("close", cleanup);
+    socket.on("error", cleanup);
+  };
+
   function isWssCandidate(x: any): boolean {
     // ws.WebSocketServer has .on() and a Set of .clients
     return !!(x && typeof x === "object" && typeof x.on === "function" && x.clients && typeof x.clients.size === "number");
@@ -100,6 +209,57 @@ export function wireViewerIdleStop(root: any, opts: ViewerIdleOptions = {}) {
     return null;
   }
 
+  function attachWss(wss: any, label: string): boolean {
+    const trackedWs = new WeakSet<any>();
+    const trackWs = (ws: any) => {
+      if (!ws || typeof ws.on !== "function") return;
+      if (trackedWs.has(ws)) return;
+      trackedWs.add(ws);
+      onConnect();
+      ws.__idleAlive = true;
+      ws.on("pong", () => {
+        ws.__idleAlive = true;
+      });
+      const cleanup = () => {
+        if (!trackedWs.delete(ws)) return;
+        onDisconnect();
+      };
+      ws.on("close", cleanup);
+      ws.on("error", cleanup);
+    };
+
+    if (wss.clients) {
+      for (const ws of wss.clients) {
+        trackWs(ws);
+      }
+    }
+    wss.on("connection", trackWs);
+
+    if (HEARTBEAT_ENABLED) {
+      const interval = setInterval(() => {
+        if (!wss.clients) return;
+        for (const ws of wss.clients) {
+          if (!ws || typeof ws.ping !== "function") continue;
+          if (ws.__idleAlive === false) {
+            if (typeof ws.terminate === "function") {
+              try { ws.terminate(); } catch {}
+            }
+            continue;
+          }
+          ws.__idleAlive = false;
+          try { ws.ping(); } catch {}
+        }
+      }, HEARTBEAT_MS);
+      wss.on("close", () => clearInterval(interval));
+    }
+
+    log(`[idle] attached to player WebSocket server (${label})`);
+    if (HEARTBEAT_ENABLED) {
+      log(`[idle] heartbeat enabled (interval=${HEARTBEAT_MS} ms, misses=${HEARTBEAT_MISSES})`);
+    }
+    return true;
+  }
+
   function attachHttpUpgrade(http: HttpServer): boolean {
     http.on("upgrade", (req, socket /* Duplex */) => {
       // req.socket is a net.Socket (has localPort)
@@ -107,9 +267,7 @@ export function wireViewerIdleStop(root: any, opts: ViewerIdleOptions = {}) {
         (req.socket as Socket).localPort ??
         ((http.address() as AddressInfo | null)?.port ?? undefined);
       if (PLAYER_PORT && localPort !== PLAYER_PORT) return; // ignore non-player upgrades
-      onConnect();
-      socket.on("close", onDisconnect);
-      socket.on("error", onDisconnect);
+      trackUpgradeSocket(socket as Socket);
     });
 
     const bound = (http.address() as AddressInfo | null)?.port;
@@ -124,36 +282,46 @@ export function wireViewerIdleStop(root: any, opts: ViewerIdleOptions = {}) {
   function tryAttachOnce(): boolean {
     let attachedSomething = false;
 
-    // 1) Best-effort: attach to "server events" if they exist (often no-ops on PS 2.0)
-    if (typeof root?.on === "function") {
-      try { root.on("playerConnected", onConnect); root.on("playerDisconnected", onDisconnect); attachedSomething = true; } catch {}
-      try { root.on("wsPlayerConnected", onConnect); root.on("wsPlayerDisconnected", onDisconnect); attachedSomething = true; } catch {}
-      if (attachedSomething) log("[idle] attached to signalling server events (may be inactive on PS 2.0)");
+    // 1) Prefer player registry if available (gives us reliable add/remove + heartbeat)
+    const registry = root?.playerRegistry;
+    if (registry && typeof registry.on === "function" && typeof registry.listPlayers === "function") {
+      const existingPlayers = registry.listPlayers();
+      if (Array.isArray(existingPlayers)) {
+        for (const player of existingPlayers) {
+          trackPlayer(player);
+        }
+      }
+      registry.on("added", (playerId: string) => {
+        if (typeof registry.get === "function") {
+          const player = registry.get(playerId);
+          if (player) {
+            trackPlayer(player);
+            return;
+          }
+        }
+        trackPlayerId(playerId);
+      });
+      registry.on("removed", (playerId: string) => {
+        untrackPlayerId(playerId);
+      });
+      log(`[idle] attached to player registry (count=${viewerCount})`);
+      if (HEARTBEAT_ENABLED) {
+        log(`[idle] heartbeat enabled (interval=${HEARTBEAT_MS} ms, misses=${HEARTBEAT_MISSES})`);
+      }
+      return true;
     }
 
     // 2) Explicit/common paths for Players WSS (fast path)
     const explicit = root?.playerServer?.wss ?? root?.playersWss ?? root?.wssPlayers ?? root?.wss;
     if (isWssCandidate(explicit)) {
-      explicit.on("connection", (ws: any) => {
-        onConnect();
-        ws.on("close", onDisconnect);
-        ws.on("error", onDisconnect);
-      });
-      log("[idle] attached to player WebSocket server (explicit path)");
-      return true;
+      return attachWss(explicit, "explicit path");
     }
 
     // 3) Deep-scan for a WebSocketServer anywhere
     const foundWss = deepFind<any>(root, isWssCandidate, 12);
     if (foundWss) {
       const { obj: wss, path } = foundWss;
-      wss.on("connection", (ws: any) => {
-        onConnect();
-        ws.on("close", onDisconnect);
-        ws.on("error", onDisconnect);
-      });
-      log(`[idle] attached to player WebSocket server at: ${path}`);
-      return true;
+      return attachWss(wss, `found at ${path}`);
     }
 
     // 4) Fallback: hook HTTP server 'upgrade' (counts WS connects regardless of where WSS lives)
@@ -161,6 +329,13 @@ export function wireViewerIdleStop(root: any, opts: ViewerIdleOptions = {}) {
     if (foundHttp) {
       attachHttpUpgrade(foundHttp.obj);
       return true;
+    }
+
+    // 5) Best-effort: attach to "server events" if they exist (often no-ops on PS 2.0)
+    if (typeof root?.on === "function") {
+      try { root.on("playerConnected", onConnect); root.on("playerDisconnected", onDisconnect); attachedSomething = true; } catch {}
+      try { root.on("wsPlayerConnected", onConnect); root.on("wsPlayerDisconnected", onDisconnect); attachedSomething = true; } catch {}
+      if (attachedSomething) log("[idle] attached to signalling server events (may be inactive on PS 2.0)");
     }
 
     return attachedSomething;
