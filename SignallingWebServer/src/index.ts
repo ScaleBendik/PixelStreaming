@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 import express from 'express';
+import { wireViewerIdleStop } from "./srcviewer-idle-stop";
 import fs from 'fs';
 import path from 'path';
 import {
@@ -269,6 +270,13 @@ if (options.serve) {
 }
 
 const signallingServer = new SignallingServer(serverOpts);
+wireViewerIdleStop(signallingServer, 
+    {   graceMs: 15 * 60_000, 
+        attachTimeoutMs: 0, 
+        playerPort: 80,
+        firstViewerGraceMs: 60 * 60_000,
+    });
+
 
 if (options.stdin) {
     initInputHandler(options, signallingServer);

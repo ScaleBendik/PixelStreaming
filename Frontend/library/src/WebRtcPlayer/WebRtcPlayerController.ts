@@ -134,7 +134,10 @@ export class WebRtcPlayerController {
             this.onAfkTriggered.bind(this)
         );
         this.afkController.onAFKTimedOutCallback = () => {
-            this.closeSignalingServer('You have been disconnected due to inactivity.', false);
+            const dcMessage ="Disconnected due to inactivity \n"
+            +"Server will shut down automatically if no new connections are made.\n"
+            +" ";
+            this.closeSignalingServer(dcMessage, false);
         };
 
         this.freezeFrameController = new FreezeFrameController(this.pixelStreaming.videoElementParent);
