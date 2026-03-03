@@ -97,6 +97,15 @@ The server supports separate peer options for players and streamers while keepin
 
 If player/streamer specific options are provided, they are used for those peers. Otherwise the shared `peer_options` are used as fallback.
 
+### Peer options secrets via environment variables
+
+Peer option JSON files support environment placeholders in string values:
+
+- `${ENV:TURN_USERNAME}`
+- `${ENV:TURN_CREDENTIAL}`
+
+If any referenced environment variable is missing at startup, the signalling server now fails fast with a clear error.
+
 Given these options, to start the server with the closest behaviour as the old cirrus, you would invoke,
 ```
 npm start -- --console_messages --https_redirect verbose --serve --log_config --http_root www --homepage player.html

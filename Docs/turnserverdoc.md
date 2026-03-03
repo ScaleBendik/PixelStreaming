@@ -152,8 +152,8 @@ Store in:
         "turn:turn.scaleworld.net:3478?transport=udp",
         "turns:turn.scaleworld.net:443?transport=tcp"
       ],
-      "username": "<turn-user>",
-      "credential": "<turn-password>"
+      "username": "${ENV:TURN_USERNAME}",
+      "credential": "${ENV:TURN_CREDENTIAL}"
     }
   ],
   "iceTransportPolicy": "all"
@@ -170,8 +170,8 @@ Store in:
         "turn:<turn-private-ip>:3478?transport=udp",
         "turn:<turn-private-ip>:3478?transport=tcp"
       ],
-      "username": "<turn-user>",
-      "credential": "<turn-password>"
+      "username": "${ENV:TURN_USERNAME}",
+      "credential": "${ENV:TURN_CREDENTIAL}"
     }
   ],
   "iceTransportPolicy": "all"
@@ -198,6 +198,29 @@ call start.bat -- ^
   --peer_options_player_file="%ROOT%\peer_options.player.json" ^
   --peer_options_streamer_file="%ROOT%\peer_options.streamer.json"
 ```
+
+## Secret Handling (Current Pattern)
+
+- Do not commit static TURN credentials into repository JSON files.
+- Keep `peer_options.player.json` and `peer_options.streamer.json` with `${ENV:...}` placeholders.
+- Set runtime env vars before starting signalling:
+  - `TURN_USERNAME`
+  - `TURN_CREDENTIAL`
+
+### Windows (current manual run pattern)
+
+```bat
+set TURN_USERNAME=<turn-user>
+set TURN_CREDENTIAL=<turn-password>
+call start_dev_turn.bat
+```
+
+### Linux/systemd (if signalling runs as a service)
+
+Add env vars to the service unit (or `EnvironmentFile`) and restart service.
+
+Fail-fast behavior:
+- If either env var is missing, Wilbur exits at startup with an explicit error listing missing variable names.
 
 ## Build/Deploy Steps After Code Changes
 
@@ -282,4 +305,3 @@ When in doubt, verify these files first:
 - `SignallingWebServer/peer_options.player.json`
 - `SignallingWebServer/peer_options.streamer.json`
 - `/etc/turnserver.conf`
-

@@ -6,8 +6,8 @@
 		  "turn:172.31.32.124:3478?transport=udp",
 		  "turn:172.31.32.124:3478?transport=tcp"
 		],
-		"username": "devturn",
-		"credential": "Realize1-repeated381gp92"
+		"username": "${ENV:TURN_USERNAME}",
+		"credential": "${ENV:TURN_CREDENTIAL}"
 	  }
 	],
 	"iceTransportPolicy": "all"

@@ -18,6 +18,35 @@ import { initialize } from 'express-openapi';
 // eslint-disable-next-line  @typescript-eslint/no-unsafe-assignment
 const pjson = require('../package.json');
 
+const ENV_PLACEHOLDER_REGEX = /\$\{ENV:([A-Z0-9_]+)\}/g;
+
+function resolveEnvPlaceholders(value: unknown, missing: Set<string>): unknown {
+    if (typeof value === 'string') {
+        return value.replace(ENV_PLACEHOLDER_REGEX, (_match: string, envVarName: string) => {
+            const envValue = process.env[envVarName];
+            if (envValue === undefined) {
+                missing.add(envVarName);
+                return '';
+            }
+            return envValue;
+        });
+    }
+
+    if (Array.isArray(value)) {
+        return value.map((item) => resolveEnvPlaceholders(item, missing));
+    }
+
+    if (value && typeof value === 'object') {
+        const result: Record<string, unknown> = {};
+        for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+            result[key] = resolveEnvPlaceholders(nestedValue, missing);
+        }
+        return result;
+    }
+
+    return value;
+}
+
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument */
 // possible config file options
 let config_file: IProgramOptions = {};
@@ -282,6 +311,23 @@ if (options.peer_options_streamer_file) {
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 Logger.info(`${pjson.name} v${pjson.version} starting...`);
+
+const missingEnvVars = new Set<string>();
+if (options.peer_options) {
+    options.peer_options = resolveEnvPlaceholders(options.peer_options, missingEnvVars);
+}
+if (options.peer_options_player) {
+    options.peer_options_player = resolveEnvPlaceholders(options.peer_options_player, missingEnvVars);
+}
+if (options.peer_options_streamer) {
+    options.peer_options_streamer = resolveEnvPlaceholders(options.peer_options_streamer, missingEnvVars);
+}
+if (missingEnvVars.size > 0) {
+    const missing = Array.from(missingEnvVars).sort().join(', ');
+    Logger.error(`Missing required environment variables referenced in peer options: ${missing}`);
+    throw Error(`Missing required environment variables referenced in peer options: ${missing}`);
+}
+
 if (options.log_config) {
     Logger.info('Config:');
     for (const key in options) {

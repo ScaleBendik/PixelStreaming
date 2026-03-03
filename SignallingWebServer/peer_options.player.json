@@ -6,8 +6,8 @@
 		  "turn:turn.scaleworld.net:3478?transport=udp",
 		  "turns:turn.scaleworld.net:443?transport=tcp"
 		],
-		"username": "devturn",
-		"credential": "Realize1-repeated381gp92"
+		"username": "${ENV:TURN_USERNAME}",
+		"credential": "${ENV:TURN_CREDENTIAL}"
 	  }
 	],
 	"iceTransportPolicy": "all"
