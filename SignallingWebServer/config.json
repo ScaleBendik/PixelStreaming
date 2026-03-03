@@ -16,8 +16,9 @@
 	"rest_api": false,
 	"reverse_proxy": false,
 	"reverse_proxy_num_proxies": 1,
-	"peer_options": "",
 	"log_config": true,
 	"stdin": false,
-	"console_messages": "verbose"
+	"console_messages": "verbose",
+	"peer_options_player_file": "C:/PixelStreaming/PixelStreaming/SignallingWebServer/peer_options.player.json",
+	"peer_options_streamer_file": "C:/PixelStreaming/PixelStreaming/SignallingWebServer/peer_options.streamer.json"
 }

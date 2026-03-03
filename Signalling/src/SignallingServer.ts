@@ -34,6 +34,12 @@ export interface IServerConfig {
     // The peer configuration object to send to peers in the config message when they connect.
     peerOptions: unknown;
 
+    // Optional peer configuration object to send specifically to player peers.
+    peerOptionsPlayer?: unknown;
+
+    // Optional peer configuration object to send specifically to streamer peers.
+    peerOptionsStreamer?: unknown;
+
     // Additional websocket options for the streamer listening websocket.
     streamerWsOptions?: wslib.ServerOptions;
 
@@ -59,6 +65,8 @@ export type ProtocolConfig = {
 export class SignallingServer {
     config: IServerConfig;
     protocolConfig: ProtocolConfig;
+    protocolConfigPlayer: ProtocolConfig;
+    protocolConfigStreamer: ProtocolConfig;
     streamerRegistry: StreamerRegistry;
     playerRegistry: PlayerRegistry;
     startTime: Date;
@@ -74,9 +82,20 @@ export class SignallingServer {
         this.config = config;
         this.streamerRegistry = new StreamerRegistry();
         this.playerRegistry = new PlayerRegistry();
+        const sharedPeerOptions = this.config.peerOptions || {};
+        const playerPeerOptions = this.config.peerOptionsPlayer || sharedPeerOptions;
+        const streamerPeerOptions = this.config.peerOptionsStreamer || sharedPeerOptions;
         this.protocolConfig = {
             protocolVersion: SignallingProtocol.SIGNALLING_VERSION,
-            peerConnectionOptions: this.config.peerOptions || {}
+            peerConnectionOptions: sharedPeerOptions
+        };
+        this.protocolConfigPlayer = {
+            protocolVersion: SignallingProtocol.SIGNALLING_VERSION,
+            peerConnectionOptions: playerPeerOptions
+        };
+        this.protocolConfigStreamer = {
+            protocolVersion: SignallingProtocol.SIGNALLING_VERSION,
+            peerConnectionOptions: streamerPeerOptions
         };
         this.startTime = new Date();
 
@@ -137,9 +156,9 @@ export class SignallingServer {
 
         // because peer connection options is a general field with all optional fields
         // it doesnt play nice with mergePartial so we just add it verbatim
-        const message: Messages.config = MessageHelpers.createMessage(Messages.config, this.protocolConfig);
+        const message: Messages.config = MessageHelpers.createMessage(Messages.config, this.protocolConfigStreamer);
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        message.peerConnectionOptions = this.protocolConfig['peerConnectionOptions'];
+        message.peerConnectionOptions = this.protocolConfigStreamer['peerConnectionOptions'];
         newStreamer.sendMessage(message);
     }
 
@@ -157,9 +176,9 @@ export class SignallingServer {
 
         // because peer connection options is a general field with all optional fields
         // it doesnt play nice with mergePartial so we just add it verbatim
-        const message: Messages.config = MessageHelpers.createMessage(Messages.config, this.protocolConfig);
+        const message: Messages.config = MessageHelpers.createMessage(Messages.config, this.protocolConfigPlayer);
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        message.peerConnectionOptions = this.protocolConfig['peerConnectionOptions'];
+        message.peerConnectionOptions = this.protocolConfigPlayer['peerConnectionOptions'];
         newPlayer.sendMessage(message);
     }
 

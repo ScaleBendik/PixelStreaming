@@ -153,6 +153,34 @@ program
             'Additional JSON data to send in peerConnectionOptions of the config message. This allows you to provide JSON data without having to deal with it on the command line.'
         ).default(config_file.peer_options_file || '')
     )
+    .addOption(
+        new Option(
+            '--peer_options_player <json-string>',
+            'Additional JSON data to send in peerConnectionOptions of the config message for player peers only.'
+        )
+            .argParser(JSON.parse)
+            .default(config_file.peer_options_player || '')
+    )
+    .addOption(
+        new Option(
+            '--peer_options_player_file <filename>',
+            'Additional JSON data to send in peerConnectionOptions of the config message for player peers only. This allows you to provide JSON data without having to deal with it on the command line.'
+        ).default(config_file.peer_options_player_file || '')
+    )
+    .addOption(
+        new Option(
+            '--peer_options_streamer <json-string>',
+            'Additional JSON data to send in peerConnectionOptions of the config message for streamer peers only.'
+        )
+            .argParser(JSON.parse)
+            .default(config_file.peer_options_streamer || '')
+    )
+    .addOption(
+        new Option(
+            '--peer_options_streamer_file <filename>',
+            'Additional JSON data to send in peerConnectionOptions of the config message for streamer peers only. This allows you to provide JSON data without having to deal with it on the command line.'
+        ).default(config_file.peer_options_streamer_file || '')
+    )
     .option(
         '--reverse-proxy',
         'Enables reverse proxy mode. This will trust the X-Forwarded-For header.',
@@ -220,6 +248,38 @@ if (options.peer_options_file) {
     );
 }
 
+// read the peer_options_player_file
+if (options.peer_options_player_file) {
+    if (!fs.existsSync(options.peer_options_player_file)) {
+        Logger.error(`peer_options_player_file "${options.peer_options_player_file}" does not exist.`);
+        throw Error(
+            `Failed to find a peer options player config file called ${options.peer_options_player_file}.`
+        );
+    }
+
+    options.peer_options_player = JSON.parse(fs.readFileSync(options.peer_options_player_file, 'utf-8'));
+} else if (options.peer_options_player) {
+    Logger.warn(
+        `The --peer_options_player cli flag has many issues with passing JSON data on the command line. It is recommended that you use --peer_options_player_file instead.`
+    );
+}
+
+// read the peer_options_streamer_file
+if (options.peer_options_streamer_file) {
+    if (!fs.existsSync(options.peer_options_streamer_file)) {
+        Logger.error(`peer_options_streamer_file "${options.peer_options_streamer_file}" does not exist.`);
+        throw Error(
+            `Failed to find a peer options streamer config file called ${options.peer_options_streamer_file}.`
+        );
+    }
+
+    options.peer_options_streamer = JSON.parse(fs.readFileSync(options.peer_options_streamer_file, 'utf-8'));
+} else if (options.peer_options_streamer) {
+    Logger.warn(
+        `The --peer_options_streamer cli flag has many issues with passing JSON data on the command line. It is recommended that you use --peer_options_streamer_file instead.`
+    );
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 Logger.info(`${pjson.name} v${pjson.version} starting...`);
 if (options.log_config) {
@@ -239,6 +299,8 @@ const serverOpts: IServerConfig = {
     playerPort: options.player_port,
     sfuPort: options.sfu_port,
     peerOptions: options.peer_options,
+    peerOptionsPlayer: options.peer_options_player,
+    peerOptionsStreamer: options.peer_options_streamer,
     maxSubscribers: options.max_players
 };
 

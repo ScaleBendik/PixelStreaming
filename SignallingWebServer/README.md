@@ -81,6 +81,22 @@ These CLI options can also be described in a `config.json` (default config file 
 	"stdin": false
 }
 ```
+### Split Player/Streamer Peer Options
+
+The server supports separate peer options for players and streamers while keeping the old shared behavior for compatibility.
+
+- Shared legacy options:
+  - `peer_options`
+  - `peer_options_file`
+- Player-only options:
+  - `peer_options_player`
+  - `peer_options_player_file`
+- Streamer-only options:
+  - `peer_options_streamer`
+  - `peer_options_streamer_file`
+
+If player/streamer specific options are provided, they are used for those peers. Otherwise the shared `peer_options` are used as fallback.
+
 Given these options, to start the server with the closest behaviour as the old cirrus, you would invoke,
 ```
 npm start -- --console_messages --https_redirect verbose --serve --log_config --http_root www --homepage player.html
