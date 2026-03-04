@@ -6,6 +6,9 @@ This document describes the current TURN setup and the Pixel Streaming modificat
 
 It is written as an operational runbook so future setup/recovery can be done without re-discovery.
 
+For full cross-cloud architecture context (AWS + control plane), see:
+- `Docs/cloud-infrastructure.md`
+
 ## Final Architecture (Working)
 
 - **Browser/Player** connects to signalling web app.
