@@ -19,6 +19,6 @@
 	"log_config": true,
 	"stdin": false,
 	"console_messages": "verbose",
-	"peer_options_player_file": "C:/PixelStreaming/PixelStreaming/SignallingWebServer/peer_options.player.json",
-	"peer_options_streamer_file": "C:/PixelStreaming/PixelStreaming/SignallingWebServer/peer_options.streamer.json"
+	"peer_options_player_file": "peer_options.player.json",
+	"peer_options_streamer_file": "peer_options.streamer.json"
 }
