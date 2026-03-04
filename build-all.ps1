@@ -1,8 +1,8 @@
-$ErrorActionPreference = "Stop"
-
 param(
     [switch]$SkipInstall
 )
+
+$ErrorActionPreference = "Stop"
 
 $repoRoot = $PSScriptRoot
 Set-Location $repoRoot
