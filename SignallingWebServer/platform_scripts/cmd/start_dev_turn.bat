@@ -1,5 +1,5 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal
 
 set "ROOT=C:\PixelStreaming\PixelStreaming\SignallingWebServer"
 set "REGION=eu-north-1"
@@ -9,23 +9,25 @@ set "AWS_EXE=aws"
 
 where aws >nul 2>nul
 if errorlevel 1 (
-  set "AWS_EXE=C:\Program Files\Amazon\AWSCLIV2\aws.exe"
-)
-
-if /i not "%AWS_EXE%"=="aws" (
-  if not exist "%AWS_EXE%" (
-    echo ERROR: AWS CLI not found at "%AWS_EXE%".
+  if exist "C:\Program Files\Amazon\AWSCLIV2\aws.exe" (
+    set "AWS_EXE=C:\Program Files\Amazon\AWSCLIV2\aws.exe"
+  ) else if exist "C:\Program Files\Amazon\AWSCLI\bin\aws.exe" (
+    set "AWS_EXE=C:\Program Files\Amazon\AWSCLI\bin\aws.exe"
+  ) else (
+    echo ERROR: AWS CLI not found in PATH or standard install directories.
     exit /b 1
   )
 )
 
+echo Using AWS CLI: "%AWS_EXE%"
+
 set "TURN_USERNAME="
-for /f "usebackq delims=" %%I in (`"%AWS_EXE%" ssm get-parameter --name "%TURN_USER_PARAM%" --with-decryption --region "%REGION%" --query Parameter.Value --output text 2^>nul`) do (
+for /f "usebackq delims=" %%I in (`"%AWS_EXE%" ssm get-parameter --name "%TURN_USER_PARAM%" --with-decryption --region "%REGION%" --query Parameter.Value --output text`) do (
   set "TURN_USERNAME=%%I"
 )
 
 set "TURN_CREDENTIAL="
-for /f "usebackq delims=" %%I in (`"%AWS_EXE%" ssm get-parameter --name "%TURN_CREDENTIAL_PARAM%" --with-decryption --region "%REGION%" --query Parameter.Value --output text 2^>nul`) do (
+for /f "usebackq delims=" %%I in (`"%AWS_EXE%" ssm get-parameter --name "%TURN_CREDENTIAL_PARAM%" --with-decryption --region "%REGION%" --query Parameter.Value --output text`) do (
   set "TURN_CREDENTIAL=%%I"
 )
 
