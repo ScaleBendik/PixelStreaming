@@ -21,13 +21,18 @@ if errorlevel 1 (
 
 echo Using AWS CLI: "%AWS_EXE%"
 
+set "AWS_CALL=aws"
+if /i not "%AWS_EXE%"=="aws" (
+  set "AWS_CALL="%AWS_EXE%""
+)
+
 set "TURN_USERNAME="
-for /f "usebackq delims=" %%I in (`"%AWS_EXE%" ssm get-parameter --name "%TURN_USER_PARAM%" --with-decryption --region "%REGION%" --query Parameter.Value --output text`) do (
+for /f "usebackq delims=" %%I in (`%AWS_CALL% ssm get-parameter --name "%TURN_USER_PARAM%" --with-decryption --region "%REGION%" --query Parameter.Value --output text`) do (
   set "TURN_USERNAME=%%I"
 )
 
 set "TURN_CREDENTIAL="
-for /f "usebackq delims=" %%I in (`"%AWS_EXE%" ssm get-parameter --name "%TURN_CREDENTIAL_PARAM%" --with-decryption --region "%REGION%" --query Parameter.Value --output text`) do (
+for /f "usebackq delims=" %%I in (`%AWS_CALL% ssm get-parameter --name "%TURN_CREDENTIAL_PARAM%" --with-decryption --region "%REGION%" --query Parameter.Value --output text`) do (
   set "TURN_CREDENTIAL=%%I"
 )
 
