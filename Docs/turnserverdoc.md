@@ -184,14 +184,30 @@ Store in:
 
 ```json
 {
-  "peer_options_player_file": "C:/PixelStreaming/PixelStreaming/SignallingWebServer/peer_options.player.json",
-  "peer_options_streamer_file": "C:/PixelStreaming/PixelStreaming/SignallingWebServer/peer_options.streamer.json"
+  "peer_options_player_file": "peer_options.player.json",
+  "peer_options_streamer_file": "peer_options.streamer.json"
 }
 ```
 
+Why:
+- Relative paths are portable across machines (local workstation and EC2) and resolved from `SignallingWebServer` working directory.
+
 ### Startup script reference
 
-`start_dev_turn.bat` should pass split files:
+`start_dev_turn.bat` now does all of the following:
+
+- Fetches TURN username/password from SSM parameters at launch:
+  - `/pixelstreaming/turn/username`
+  - `/pixelstreaming/turn/credential`
+- Exports them as `TURN_USERNAME` / `TURN_CREDENTIAL`.
+- Fails fast if AWS CLI is unavailable or params cannot be read.
+- Starts Wilbur with split player/streamer peer option files.
+
+Expected host requirements for this script:
+- AWS CLI installed (PATH, AWS CLI v2 path, or AWS CLI v1 path)
+- EC2 role can read/decrypt those two SSM SecureString parameters
+
+Launch path:
 
 ```bat
 call start.bat -- ^
@@ -203,50 +219,57 @@ call start.bat -- ^
 
 - Do not commit static TURN credentials into repository JSON files.
 - Keep `peer_options.player.json` and `peer_options.streamer.json` with `${ENV:...}` placeholders.
-- Set runtime env vars before starting signalling:
-  - `TURN_USERNAME`
-  - `TURN_CREDENTIAL`
-
-### Windows (current manual run pattern)
-
-```bat
-set TURN_USERNAME=<turn-user>
-set TURN_CREDENTIAL=<turn-password>
-call start_dev_turn.bat
-```
-
-### Linux/systemd (if signalling runs as a service)
-
-Add env vars to the service unit (or `EnvironmentFile`) and restart service.
+- Runtime env vars are now populated by `start_dev_turn.bat` from SSM on Windows streamer instances.
+- Manual env export is still valid for ad-hoc local testing.
 
 Fail-fast behavior:
 - If either env var is missing, Wilbur exits at startup with an explicit error listing missing variable names.
 
 ## Build/Deploy Steps After Code Changes
 
-From repo root (`PixelStreaming/PixelStreaming`), build in order:
+From repo root (`C:\PixelStreaming\PixelStreaming`), use the helper scripts:
+
+```bat
+pull-latest.bat
+build-all.bat
+```
+
+PowerShell alternative:
+
+```powershell
+.\build-all.ps1
+```
+
+`build-all.ps1` executes build in required order:
 
 1. `Common`
 2. `Signalling`
 3. `SignallingWebServer`
 
-Example:
+Restart signalling service/process after build.
 
-```powershell
-cd C:\PixelStreaming\PixelStreaming\Common
-npm install
-npm run build
+## EC2 Git Access (Validated Pattern)
 
-cd ..\Signalling
-npm install
-npm run build
+Private repo pull without user login on instance:
 
-cd ..\SignallingWebServer
-npm install
-npm run build
+1. Generate SSH key on instance and add `.pub` as GitHub Deploy Key (read-only) on this repo.
+2. Add SSH host alias in `%USERPROFILE%\.ssh\config`:
+
+```text
+Host github-pixelstreaming
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/pixelstreaming_ro
+  IdentitiesOnly yes
 ```
 
-Restart signalling service/process after build.
+3. Set remote URL to alias form:
+
+```text
+git@github-pixelstreaming:ScaleBendik/PixelStreaming.git
+```
+
+4. Pull with `pull-latest.bat`.
 
 ## Validation Checklist
 
@@ -264,6 +287,17 @@ Restart signalling service/process after build.
 7. Regression:
    - regular non-forced path works
    - forced TURN test works where expected
+8. Streamer startup:
+   - `start_dev_turn.bat` logs `Loaded TURN credentials from SSM parameter store.`
+   - Wilbur starts without hardcoded credentials.
+
+## TURN Credential Sanity Check Commands
+
+Quick check from instance:
+
+```sh
+aws ssm get-parameter --name /pixelstreaming/turn/username --with-decryption --region eu-north-1 --query Parameter.Value --output text
+```
 
 ## Troubleshooting Quick Map
 
@@ -287,6 +321,14 @@ Check:
 - cert/key paths in `turnserver.conf`
 - cert SAN contains `turn.scaleworld.net`
 - server name in client URL matches cert DNS name
+
+### Symptom: `start_dev_turn.bat` exits immediately
+
+Check:
+- Run directly in `cmd` to view raw output.
+- Ensure AWS CLI can be resolved (`aws --version`).
+- Ensure EC2 role can read SSM params.
+- Ensure Node/Wilbur ports are not already in use (`80`, `8888`, `8889`).
 
 ## Security/Operational Notes
 
