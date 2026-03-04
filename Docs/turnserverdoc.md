@@ -302,6 +302,32 @@ Quick check from instance:
 aws ssm get-parameter --name /pixelstreaming/turn/username --with-decryption --region eu-north-1 --query Parameter.Value --output text
 ```
 
+## Credential Persistence vs SSM Rotation
+
+coturn does not query SSM on every authentication request. It reads credentials from local config/userdb at startup.
+
+This means:
+- Reboot with unchanged SSM values: usually still works.
+- Rotate SSM values later: coturn keeps old credentials until a sync + restart is performed.
+
+Use this script on TURN host for one-time/manual sync:
+- `Docs/Resources/turn/sync-coturn-creds-from-ssm.sh`
+
+Optional helper to install startup sync hook (systemd `ExecStartPre`) so each coturn restart/boot re-syncs from SSM:
+- `Docs/Resources/turn/install-coturn-ssm-sync.sh`
+
+### One-time sync command
+
+```sh
+sudo bash Docs/Resources/turn/sync-coturn-creds-from-ssm.sh --restart
+```
+
+### Install boot/start sync hook
+
+```sh
+sudo bash Docs/Resources/turn/install-coturn-ssm-sync.sh
+```
+
 ## Troubleshooting Quick Map
 
 ### Symptom: `WEBRTC CONNECTION NEGOTIATED` but no video (`0 bytes`)
@@ -317,6 +343,14 @@ Check:
 - TURN endpoint/port in peer options
 - listener present on TURN
 - SG path for that protocol/port
+
+### Symptom: TURN logs show `Cannot find credentials of user` / `401 Unauthorized`
+
+Check:
+- coturn auth mode is long-term credentials (`lt-cred-mech`) and not conflicting with `use-auth-secret`.
+- correct config file is being used by coturn service (`systemctl cat coturn` / `ExecStart`).
+- local coturn credentials were synced from SSM after any rotation.
+- run `Docs/Resources/turn/sync-coturn-creds-from-ssm.sh --restart` and retest.
 
 ### Symptom: TURNS cert errors
 
