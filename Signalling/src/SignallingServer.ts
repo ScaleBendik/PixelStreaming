@@ -51,11 +51,79 @@ export interface IServerConfig {
 
     // Max number of players per streamer.
     maxSubscribers?: number;
+
+    // Enables websocket ping/pong keepalive for player connections.
+    playerKeepalive?: boolean;
+
+    // Interval in milliseconds between player keepalive checks.
+    playerKeepaliveIntervalMs?: number;
+
+    // Number of consecutive missed pongs before terminating a player connection.
+    playerKeepaliveMaxMissedPongs?: number;
 }
 
 export type ProtocolConfig = {
     [key: string]: any;
 };
+
+function formatUnknownValue(rawValue: unknown): string {
+    if (
+        typeof rawValue === 'string' ||
+        typeof rawValue === 'number' ||
+        typeof rawValue === 'boolean' ||
+        typeof rawValue === 'bigint'
+    ) {
+        return String(rawValue);
+    }
+
+    return Object.prototype.toString.call(rawValue);
+}
+
+function parseBooleanOption(rawValue: unknown, fallback: boolean, label: string): boolean {
+    if (typeof rawValue === 'boolean') {
+        return rawValue;
+    }
+    if (rawValue === undefined || rawValue === null) {
+        return fallback;
+    }
+
+    const text = formatUnknownValue(rawValue).trim().toLowerCase();
+    switch (text) {
+        case '1':
+        case 'true':
+        case 'yes':
+        case 'on':
+            return true;
+        case '0':
+        case 'false':
+        case 'no':
+        case 'off':
+            return false;
+        default:
+            Logger.warn(`Invalid ${label} value '${text}'. Using fallback ${fallback}.`);
+            return fallback;
+    }
+}
+
+function parseMinIntegerOption(rawValue: unknown, fallback: number, minValue: number, label: string): number {
+    if (rawValue === undefined || rawValue === null || rawValue === '') {
+        return fallback;
+    }
+
+    const text = formatUnknownValue(rawValue);
+    const parsed = Number.parseInt(text, 10);
+    if (Number.isNaN(parsed) || parsed < minValue) {
+        Logger.warn(`Invalid ${label} value '${text}'. Using fallback ${fallback}.`);
+        return fallback;
+    }
+
+    return parsed;
+}
+
+interface IPlayerKeepaliveState {
+    missedPongs: number;
+    remoteAddress?: string;
+}
 
 /**
  * The main signalling server object.
@@ -70,6 +138,11 @@ export class SignallingServer {
     streamerRegistry: StreamerRegistry;
     playerRegistry: PlayerRegistry;
     startTime: Date;
+    private playerKeepaliveEnabled: boolean;
+    private playerKeepaliveIntervalMs: number;
+    private playerKeepaliveMaxMissedPongs: number;
+    private playerKeepaliveTimer: NodeJS.Timeout | null;
+    private playerKeepaliveState: Map<wslib.WebSocket, IPlayerKeepaliveState>;
 
     /**
      * Initializes the server object and sets up listening sockets for streamers
@@ -98,6 +171,25 @@ export class SignallingServer {
             peerConnectionOptions: streamerPeerOptions
         };
         this.startTime = new Date();
+        this.playerKeepaliveEnabled = parseBooleanOption(
+            this.config.playerKeepalive,
+            true,
+            'playerKeepalive'
+        );
+        this.playerKeepaliveIntervalMs = parseMinIntegerOption(
+            this.config.playerKeepaliveIntervalMs,
+            30_000,
+            1_000,
+            'playerKeepaliveIntervalMs'
+        );
+        this.playerKeepaliveMaxMissedPongs = parseMinIntegerOption(
+            this.config.playerKeepaliveMaxMissedPongs,
+            2,
+            1,
+            'playerKeepaliveMaxMissedPongs'
+        );
+        this.playerKeepaliveTimer = null;
+        this.playerKeepaliveState = new Map();
 
         if (!config.playerPort && !config.httpServer && !config.httpsServer) {
             Logger.error('No player port, http server or https server supplied to SignallingServer.');
@@ -124,6 +216,7 @@ export class SignallingServer {
         if (!config.httpServer && !config.httpsServer) {
             Logger.info(`Listening for player connections on port ${config.playerPort}`);
         }
+        this.initializePlayerKeepaliveWatchdog();
 
         // Optional SFU connections
         if (config.sfuPort) {
@@ -156,7 +249,10 @@ export class SignallingServer {
 
         // because peer connection options is a general field with all optional fields
         // it doesnt play nice with mergePartial so we just add it verbatim
-        const message: Messages.config = MessageHelpers.createMessage(Messages.config, this.protocolConfigStreamer);
+        const message: Messages.config = MessageHelpers.createMessage(
+            Messages.config,
+            this.protocolConfigStreamer
+        );
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         message.peerConnectionOptions = this.protocolConfigStreamer['peerConnectionOptions'];
         newStreamer.sendMessage(message);
@@ -166,17 +262,22 @@ export class SignallingServer {
         Logger.info(`New player connection: %s (%s)`, request.socket.remoteAddress, request.url);
 
         const newPlayer = new PlayerConnection(this, ws, request.socket.remoteAddress);
+        this.registerPlayerKeepalive(ws, request.socket.remoteAddress);
 
         // add it to the registry and when the transport closes, remove it
         this.playerRegistry.add(newPlayer);
         newPlayer.transport.on('close', () => {
+            this.unregisterPlayerKeepalive(ws);
             this.playerRegistry.remove(newPlayer);
             Logger.info(`Player %s (%s) disconnected.`, newPlayer.playerId, request.socket.remoteAddress);
         });
 
         // because peer connection options is a general field with all optional fields
         // it doesnt play nice with mergePartial so we just add it verbatim
-        const message: Messages.config = MessageHelpers.createMessage(Messages.config, this.protocolConfigPlayer);
+        const message: Messages.config = MessageHelpers.createMessage(
+            Messages.config,
+            this.protocolConfigPlayer
+        );
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         message.peerConnectionOptions = this.protocolConfigPlayer['peerConnectionOptions'];
         newPlayer.sendMessage(message);
@@ -201,5 +302,78 @@ export class SignallingServer {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         message.peerConnectionOptions = this.protocolConfig['peerConnectionOptions'];
         newSFU.sendMessage(message);
+    }
+
+    private initializePlayerKeepaliveWatchdog(): void {
+        if (!this.playerKeepaliveEnabled) {
+            Logger.info('[player-keepalive] Disabled.');
+            return;
+        }
+
+        this.playerKeepaliveTimer = setInterval(() => {
+            this.runPlayerKeepaliveTick();
+        }, this.playerKeepaliveIntervalMs);
+        this.playerKeepaliveTimer.unref();
+
+        Logger.info(
+            `[player-keepalive] Enabled (intervalMs=${this.playerKeepaliveIntervalMs}, maxMissedPongs=${this.playerKeepaliveMaxMissedPongs}).`
+        );
+    }
+
+    private registerPlayerKeepalive(ws: wslib.WebSocket, remoteAddress?: string): void {
+        if (!this.playerKeepaliveEnabled) {
+            return;
+        }
+
+        this.playerKeepaliveState.set(ws, { missedPongs: 0, remoteAddress });
+        ws.on('pong', () => {
+            const state = this.playerKeepaliveState.get(ws);
+            if (!state) {
+                return;
+            }
+
+            state.missedPongs = 0;
+        });
+        ws.on('close', () => {
+            this.unregisterPlayerKeepalive(ws);
+        });
+    }
+
+    private unregisterPlayerKeepalive(ws: wslib.WebSocket): void {
+        if (!this.playerKeepaliveEnabled) {
+            return;
+        }
+
+        this.playerKeepaliveState.delete(ws);
+    }
+
+    private runPlayerKeepaliveTick(): void {
+        for (const [ws, state] of this.playerKeepaliveState.entries()) {
+            if (ws.readyState !== wslib.WebSocket.OPEN) {
+                this.playerKeepaliveState.delete(ws);
+                continue;
+            }
+
+            if (state.missedPongs >= this.playerKeepaliveMaxMissedPongs) {
+                Logger.warn(
+                    `[player-keepalive] Terminating stale player connection (${state.remoteAddress || 'unknown'}). Missed pongs=${state.missedPongs}.`
+                );
+                this.playerKeepaliveState.delete(ws);
+                ws.terminate();
+                continue;
+            }
+
+            state.missedPongs++;
+            try {
+                ws.ping();
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'unknown error';
+                Logger.warn(
+                    `[player-keepalive] Ping failed for player connection (${state.remoteAddress || 'unknown'}): ${message}. Terminating socket.`
+                );
+                this.playerKeepaliveState.delete(ws);
+                ws.terminate();
+            }
+        }
     }
 }

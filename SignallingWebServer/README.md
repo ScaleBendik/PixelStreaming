@@ -106,6 +106,23 @@ Peer option JSON files support environment placeholders in string values:
 
 If any referenced environment variable is missing at startup, the signalling server now fails fast with a clear error.
 
+### Player websocket keepalive watchdog
+
+Wilbur now includes a websocket keepalive watchdog for player connections to reduce stale "ghost" sessions.
+
+Relevant CLI/config keys:
+
+- `player_keepalive`
+- `player_keepalive_interval_ms`
+- `player_keepalive_max_missed_pongs`
+
+Behavior:
+
+1. If `player_keepalive=true`, Wilbur sends websocket ping frames to each player at `player_keepalive_interval_ms`.
+2. Each pong resets that connection's missed counter.
+3. If missed pongs reach `player_keepalive_max_missed_pongs`, Wilbur force-terminates that socket so the player registry is cleaned up.
+4. This improves idle-stop accuracy when clients leave abruptly (browser crash, network drop, laptop sleep).
+
 ### Viewer idle auto-stop
 
 Wilbur now supports optional instance auto-stop when there are no connected viewers.

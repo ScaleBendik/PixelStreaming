@@ -270,6 +270,21 @@ program
         config_file.auth_clock_skew_seconds || '5'
     )
     .option(
+        '--player_keepalive <value>',
+        'Enables websocket keepalive watchdog for player connections. true/false',
+        config_file.player_keepalive ?? 'true'
+    )
+    .option(
+        '--player_keepalive_interval_ms <number>',
+        'Interval between websocket keepalive checks for players.',
+        config_file.player_keepalive_interval_ms || '30000'
+    )
+    .option(
+        '--player_keepalive_max_missed_pongs <number>',
+        'Missed websocket pong count before forcing player disconnect.',
+        config_file.player_keepalive_max_missed_pongs || '2'
+    )
+    .option(
         '--viewer_idle_stop <value>',
         'Enables automatic EC2 stop when the signalling server stays idle (no viewers). true/false',
         config_file.viewer_idle_stop ?? 'false'
@@ -458,7 +473,10 @@ const serverOpts: IServerConfig = {
     peerOptions: options.peer_options,
     peerOptionsPlayer: options.peer_options_player,
     peerOptionsStreamer: options.peer_options_streamer,
-    maxSubscribers: options.max_players
+    maxSubscribers: options.max_players,
+    playerKeepalive: options.player_keepalive,
+    playerKeepaliveIntervalMs: options.player_keepalive_interval_ms,
+    playerKeepaliveMaxMissedPongs: options.player_keepalive_max_missed_pongs
 };
 
 if (playerVerifyClient) {
