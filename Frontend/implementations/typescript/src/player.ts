@@ -28,6 +28,12 @@ const SESSION_MANAGER_RECONNECT_REGION_PARAM = 'reconnectRegion';
 const SESSION_MANAGER_RECONNECT_INSTANCE_ID_PARAM = 'reconnectInstanceId';
 const EXPIRED_CONNECTION_GUIDANCE =
     'Connection expired. Go to scaleworld.scaleaq.com and click connect again to continue your session';
+const RECONNECT_BOOTSTRAP_QUERY_PARAMS = new Set<string>([
+    CONNECT_TICKET_PARAM,
+    RECONNECT_URL_PARAM,
+    RECONNECT_REGION_PARAM,
+    RECONNECT_INSTANCE_ID_PARAM
+]);
 
 type ReconnectContext = {
     sessionManagerUrl: string;
@@ -40,6 +46,9 @@ const getConnectTicketStorageKey = (): string =>
 
 const getReconnectContextStorageKey = (): string =>
     `sw-reconnect-context:${window.location.host}${window.location.pathname}`;
+
+const getPlayerQueryStateStorageKey = (): string =>
+    `sw-player-query-state:${window.location.host}${window.location.pathname}`;
 
 const readSessionStorage = (key: string): string | null => {
     try {
@@ -63,6 +72,37 @@ const removeSessionStorage = (key: string) => {
     } catch {
         // Ignore storage failures.
     }
+};
+
+const toRestorablePlayerQueryString = (params: URLSearchParams): string => {
+    const restorable = new URLSearchParams();
+    params.forEach((value, key) => {
+        if (RECONNECT_BOOTSTRAP_QUERY_PARAMS.has(key)) {
+            return;
+        }
+
+        restorable.append(key, value);
+    });
+
+    return restorable.toString();
+};
+
+const applyQueryString = (params: URLSearchParams, queryString: string): void => {
+    const source = new URLSearchParams(queryString);
+    source.forEach((value, key) => {
+        params.append(key, value);
+    });
+};
+
+const persistPlayerQueryState = (storageKey: string): void => {
+    const currentUrl = new URL(window.location.href);
+    const queryString = toRestorablePlayerQueryString(currentUrl.searchParams);
+    if (queryString) {
+        writeSessionStorage(storageKey, queryString);
+        return;
+    }
+
+    removeSessionStorage(storageKey);
 };
 
 const parseReconnectContext = (
@@ -190,6 +230,7 @@ document.body.onload = function() {
     const pageUrl = new URL(window.location.href);
     const connectTicketStorageKey = getConnectTicketStorageKey();
     const reconnectContextStorageKey = getReconnectContextStorageKey();
+    const playerQueryStateStorageKey = getPlayerQueryStateStorageKey();
     const connectTicketFromQuery =
         pageUrl.searchParams.get(CONNECT_TICKET_PARAM)?.trim() ?? '';
     const reconnectContextFromQuery = parseReconnectContext(
@@ -203,6 +244,9 @@ document.body.onload = function() {
         pageUrl.searchParams.has(RECONNECT_REGION_PARAM) ||
         pageUrl.searchParams.has(RECONNECT_INSTANCE_ID_PARAM);
     const hasConnectTicketQueryParam = pageUrl.searchParams.has(CONNECT_TICKET_PARAM);
+    const restorablePlayerQueryFromUrl = toRestorablePlayerQueryString(
+        pageUrl.searchParams
+    );
 
     if (connectTicketFromQuery) {
         writeSessionStorage(connectTicketStorageKey, connectTicketFromQuery);
@@ -213,6 +257,11 @@ document.body.onload = function() {
             JSON.stringify(reconnectContextFromQuery)
         );
     }
+    if (restorablePlayerQueryFromUrl) {
+        writeSessionStorage(playerQueryStateStorageKey, restorablePlayerQueryFromUrl);
+    } else if (!hasConnectTicketQueryParam && !hasReconnectQueryParams) {
+        removeSessionStorage(playerQueryStateStorageKey);
+    }
 
     const connectTicket =
         connectTicketFromQuery || readSessionStorage(connectTicketStorageKey)?.trim() || '';
@@ -222,12 +271,17 @@ document.body.onload = function() {
     const reconnectContext =
         reconnectContextFromQuery ??
         loadReconnectContextFromStorage(reconnectContextStorageKey);
+    const storedPlayerQuery =
+        readSessionStorage(playerQueryStateStorageKey)?.trim() ?? '';
 
     if (hasConnectTicketQueryParam || hasReconnectQueryParams) {
         pageUrl.searchParams.delete(CONNECT_TICKET_PARAM);
         pageUrl.searchParams.delete(RECONNECT_URL_PARAM);
         pageUrl.searchParams.delete(RECONNECT_REGION_PARAM);
         pageUrl.searchParams.delete(RECONNECT_INSTANCE_ID_PARAM);
+        if (!restorablePlayerQueryFromUrl && storedPlayerQuery) {
+            applyQueryString(pageUrl.searchParams, storedPlayerQuery);
+        }
         window.history.replaceState(null, '', pageUrl.toString());
     }
 
@@ -244,6 +298,7 @@ document.body.onload = function() {
         Logger.Warning(
             `Redirecting to session manager to refresh connect ticket (${reason}).`
         );
+        persistPlayerQueryState(playerQueryStateStorageKey);
         removeSessionStorage(connectTicketStorageKey);
         window.location.replace(reconnectUrl);
         return true;
