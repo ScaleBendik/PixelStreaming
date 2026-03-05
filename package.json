@@ -20,8 +20,8 @@
         "changeset": "npx @changesets/cli",
         "clean": "npm run clean --ws",
         "build": "npm run build --ws",
-        "build:all:cjs": "cd Common && npm run build:cjs && cd ../Signalling && npm run build:cjs && cd ../SignallingWebServer && npm run build && cd ../Frontend/library && npm run build:cjs && cd ../ui-library && npm run build:cjs && cd ../implementations/typescript && npm run build:dev",
-        "build:all:esm": "cd Common && npm run build:esm && cd ../Signalling && npm run build:esm && cd ../SignallingWebServer && npm run build && cd ../Frontend/library && npm run build:esm && cd ../ui-library && npm run build:esm && cd ../implementations/typescript && npm run build:esm",
+        "build:all:cjs": "node -e \"require('fs').rmSync('SignallingWebServer/www',{ recursive: true, force: true })\" && cd Common && npm run build:cjs && cd ../Signalling && npm run build:cjs && cd ../SignallingWebServer && npm run build && cd ../Frontend/library && npm run build:cjs && cd ../ui-library && npm run build:cjs && cd ../implementations/typescript && npm run build:dev",
+        "build:all:esm": "node -e \"require('fs').rmSync('SignallingWebServer/www',{ recursive: true, force: true })\" && cd Common && npm run build:esm && cd ../Signalling && npm run build:esm && cd ../SignallingWebServer && npm run build && cd ../Frontend/library && npm run build:esm && cd ../ui-library && npm run build:esm && cd ../implementations/typescript && npm run build:esm",
         "pre-commit-lint": "lint-staged",
         "lint": "npm run lint --ws"
     },
