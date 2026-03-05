@@ -11,6 +11,12 @@ set "CONNECT_TICKET_ISSUER=scaleworld-dev-connect-ticket"
 set "CONNECT_TICKET_AUDIENCE=scaleworld-pixelstreaming"
 set "CONNECT_TICKET_SIGNING_KEY=sw-dev-ct-20260305-jvL9N8kQ2mH4rT6yU1pW3sX5cV7bN9fK2dG4hJ6k"
 set "CONNECT_TICKET_ROUTE_HOST_SUFFIX=stream.scaleworld.net"
+if not defined VIEWER_IDLE_STOP set "VIEWER_IDLE_STOP=true"
+if not defined VIEWER_IDLE_GRACE_MS set "VIEWER_IDLE_GRACE_MS=900000"
+if not defined VIEWER_IDLE_FIRST_VIEWER_GRACE_MS set "VIEWER_IDLE_FIRST_VIEWER_GRACE_MS=3600000"
+if not defined VIEWER_IDLE_FIRST_VIEWER_DELAY_MS set "VIEWER_IDLE_FIRST_VIEWER_DELAY_MS=0"
+if not defined VIEWER_IDLE_STOP_RETRY_MS set "VIEWER_IDLE_STOP_RETRY_MS=60000"
+if not defined VIEWER_IDLE_STOP_DRY_RUN set "VIEWER_IDLE_STOP_DRY_RUN=false"
 
 where aws >nul 2>nul
 if errorlevel 1 (
@@ -76,4 +82,10 @@ call start.bat -- ^
   --auth_audience="%CONNECT_TICKET_AUDIENCE%" ^
   --auth_signing_key="%CONNECT_TICKET_SIGNING_KEY%" ^
   --auth_instance_id="%INSTANCE_ID%" ^
-  --auth_route_host_suffix="%CONNECT_TICKET_ROUTE_HOST_SUFFIX%"
+  --auth_route_host_suffix="%CONNECT_TICKET_ROUTE_HOST_SUFFIX%" ^
+  --viewer_idle_stop="%VIEWER_IDLE_STOP%" ^
+  --viewer_idle_grace_ms="%VIEWER_IDLE_GRACE_MS%" ^
+  --viewer_idle_first_viewer_grace_ms="%VIEWER_IDLE_FIRST_VIEWER_GRACE_MS%" ^
+  --viewer_idle_first_viewer_delay_ms="%VIEWER_IDLE_FIRST_VIEWER_DELAY_MS%" ^
+  --viewer_idle_stop_retry_ms="%VIEWER_IDLE_STOP_RETRY_MS%" ^
+  --viewer_idle_stop_dry_run="%VIEWER_IDLE_STOP_DRY_RUN%"

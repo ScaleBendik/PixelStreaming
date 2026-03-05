@@ -15,6 +15,7 @@ import { initInputHandler } from './InputHandler';
 import { Command, Option } from 'commander';
 import { initialize } from 'express-openapi';
 import { ConnectTicketAuthMode, createPlayerVerifyClient } from './ConnectTicketAuth';
+import { wireViewerIdleStop } from './viewer-idle-stop';
 
 // eslint-disable-next-line  @typescript-eslint/no-unsafe-assignment
 const pjson = require('../package.json');
@@ -269,6 +270,41 @@ program
         config_file.auth_clock_skew_seconds || '5'
     )
     .option(
+        '--viewer_idle_stop <value>',
+        'Enables automatic EC2 stop when the signalling server stays idle (no viewers). true/false',
+        config_file.viewer_idle_stop ?? 'false'
+    )
+    .option(
+        '--viewer_idle_grace_ms <number>',
+        'Grace period after last viewer disconnect before instance stop.',
+        config_file.viewer_idle_grace_ms || '900000'
+    )
+    .option(
+        '--viewer_idle_first_viewer_grace_ms <number>',
+        'Maximum wait for first viewer connection before instance stop.',
+        config_file.viewer_idle_first_viewer_grace_ms || '3600000'
+    )
+    .option(
+        '--viewer_idle_first_viewer_delay_ms <number>',
+        'Delay before first-viewer grace timer starts.',
+        config_file.viewer_idle_first_viewer_delay_ms || '0'
+    )
+    .option(
+        '--viewer_idle_stop_retry_ms <number>',
+        'Retry delay for stop request failures while still idle.',
+        config_file.viewer_idle_stop_retry_ms || '60000'
+    )
+    .option(
+        '--viewer_idle_aws_cli_path <path>',
+        'AWS CLI executable used for stop-instances (default: aws).',
+        config_file.viewer_idle_aws_cli_path || 'aws'
+    )
+    .option(
+        '--viewer_idle_stop_dry_run <value>',
+        'Logs idle-stop actions without requesting EC2 stop. true/false',
+        config_file.viewer_idle_stop_dry_run ?? 'false'
+    )
+    .option(
         '--log_config',
         'Will print the program configuration on startup.',
         config_file.log_config || false
@@ -459,6 +495,17 @@ if (options.serve) {
 }
 
 const signallingServer = new SignallingServer(serverOpts);
+
+wireViewerIdleStop(signallingServer, {
+    enabled: options.viewer_idle_stop,
+    graceMs: options.viewer_idle_grace_ms,
+    firstViewerGraceMs: options.viewer_idle_first_viewer_grace_ms,
+    firstViewerDelayMs: options.viewer_idle_first_viewer_delay_ms,
+    stopRetryMs: options.viewer_idle_stop_retry_ms,
+    awsCliPath: options.viewer_idle_aws_cli_path,
+    dryRun: options.viewer_idle_stop_dry_run,
+    logger: (message: string) => Logger.info(message)
+});
 
 if (options.stdin) {
     initInputHandler(options, signallingServer);

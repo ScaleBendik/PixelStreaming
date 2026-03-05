@@ -1,0 +1,259 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
+
+const execFileAsync = promisify(execFile);
+
+const DEFAULT_IDLE_GRACE_MS = 15 * 60_000;
+const DEFAULT_FIRST_VIEWER_GRACE_MS = 60 * 60_000;
+const DEFAULT_FIRST_VIEWER_DELAY_MS = 0;
+const DEFAULT_STOP_RETRY_MS = 60_000;
+const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
+const IMDS_METADATA_BASE_URL = 'http://169.254.169.254/latest/meta-data';
+
+export interface ViewerIdleOptions {
+    enabled?: boolean;
+    graceMs?: number;
+    firstViewerGraceMs?: number;
+    firstViewerDelayMs?: number;
+    stopRetryMs?: number;
+    awsCliPath?: string;
+    dryRun?: boolean;
+    logger?: (message: string) => void;
+}
+
+function parseBoolean(rawValue: unknown, fallback: boolean): boolean {
+    if (typeof rawValue === 'boolean') {
+        return rawValue;
+    }
+    if (typeof rawValue !== 'string') {
+        return fallback;
+    }
+
+    switch (rawValue.trim().toLowerCase()) {
+        case '1':
+        case 'true':
+        case 'yes':
+        case 'on':
+            return true;
+        case '0':
+        case 'false':
+        case 'no':
+        case 'off':
+            return false;
+        default:
+            return fallback;
+    }
+}
+
+function parseNonNegativeInteger(
+    rawValue: unknown,
+    fallback: number,
+    label: string,
+    log: (message: string) => void
+): number {
+    if (rawValue === undefined || rawValue === null || rawValue === '') {
+        return fallback;
+    }
+
+    const rawValueText =
+        typeof rawValue === 'string' ||
+        typeof rawValue === 'number' ||
+        typeof rawValue === 'boolean' ||
+        typeof rawValue === 'bigint'
+            ? String(rawValue)
+            : Object.prototype.toString.call(rawValue);
+
+    const parsed = Number.parseInt(rawValueText, 10);
+    if (Number.isNaN(parsed) || parsed < 0) {
+        log(`[idle-stop] Invalid ${label} value '${rawValueText}'. Using fallback ${fallback}.`);
+        return fallback;
+    }
+    return parsed;
+}
+
+async function readImdsToken(): Promise<string> {
+    const response = await fetch(IMDS_TOKEN_URL, {
+        method: 'PUT',
+        headers: {
+            'X-aws-ec2-metadata-token-ttl-seconds': '21600'
+        }
+    });
+
+    if (!response.ok) {
+        throw new Error(`IMDSv2 token request failed with status ${response.status}.`);
+    }
+    return response.text();
+}
+
+async function readImdsValue(pathSuffix: string, token: string): Promise<string> {
+    const response = await fetch(`${IMDS_METADATA_BASE_URL}/${pathSuffix}`, {
+        headers: {
+            'X-aws-ec2-metadata-token': token
+        }
+    });
+
+    if (!response.ok) {
+        throw new Error(`IMDS read for '${pathSuffix}' failed with status ${response.status}.`);
+    }
+    return response.text();
+}
+
+async function stopCurrentInstance(
+    awsCliPath: string,
+    dryRun: boolean,
+    log: (message: string) => void
+): Promise<void> {
+    const token = await readImdsToken();
+    const [instanceId, region] = await Promise.all([
+        readImdsValue('instance-id', token),
+        readImdsValue('placement/region', token)
+    ]);
+
+    if (dryRun) {
+        log(`[idle-stop] DRY RUN: would stop instance ${instanceId} in region ${region}.`);
+        return;
+    }
+
+    const args = ['ec2', 'stop-instances', '--region', region, '--instance-ids', instanceId];
+    const { stdout, stderr } = await execFileAsync(awsCliPath, args, { windowsHide: true });
+
+    if (stdout && stdout.trim().length > 0) {
+        log(`[idle-stop] StopInstances output: ${stdout.trim()}`);
+    }
+    if (stderr && stderr.trim().length > 0) {
+        log(`[idle-stop] StopInstances stderr: ${stderr.trim()}`);
+    }
+
+    log(`[idle-stop] StopInstances requested for ${instanceId} (${region}).`);
+}
+
+export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdleOptions = {}): void {
+    const log = options.logger ?? ((message: string) => Logger.info(message));
+
+    const enabled = parseBoolean(options.enabled ?? process.env.VIEWER_IDLE_STOP_ENABLED ?? true, true);
+    if (!enabled) {
+        log('[idle-stop] Disabled.');
+        return;
+    }
+
+    const graceMs = parseNonNegativeInteger(
+        options.graceMs ?? process.env.VIEWER_IDLE_GRACE_MS,
+        DEFAULT_IDLE_GRACE_MS,
+        'VIEWER_IDLE_GRACE_MS',
+        log
+    );
+    const firstViewerGraceMs = parseNonNegativeInteger(
+        options.firstViewerGraceMs ?? process.env.VIEWER_IDLE_FIRST_VIEWER_GRACE_MS,
+        DEFAULT_FIRST_VIEWER_GRACE_MS,
+        'VIEWER_IDLE_FIRST_VIEWER_GRACE_MS',
+        log
+    );
+    const firstViewerDelayMs = parseNonNegativeInteger(
+        options.firstViewerDelayMs ?? process.env.VIEWER_IDLE_FIRST_VIEWER_DELAY_MS,
+        DEFAULT_FIRST_VIEWER_DELAY_MS,
+        'VIEWER_IDLE_FIRST_VIEWER_DELAY_MS',
+        log
+    );
+    const stopRetryMs = parseNonNegativeInteger(
+        options.stopRetryMs ?? process.env.VIEWER_IDLE_STOP_RETRY_MS,
+        DEFAULT_STOP_RETRY_MS,
+        'VIEWER_IDLE_STOP_RETRY_MS',
+        log
+    );
+    const dryRun = parseBoolean(options.dryRun ?? process.env.VIEWER_IDLE_STOP_DRY_RUN ?? false, false);
+    const awsCliPath = String(options.awsCliPath ?? process.env.VIEWER_IDLE_AWS_CLI_PATH ?? 'aws');
+
+    let zeroViewersTimer: NodeJS.Timeout | null = null;
+    let firstViewerTimer: NodeJS.Timeout | null = null;
+    let stopInFlight = false;
+    let hasSeenViewer = server.playerRegistry.count() > 0;
+
+    const clearZeroTimer = (): void => {
+        if (zeroViewersTimer) {
+            clearTimeout(zeroViewersTimer);
+            zeroViewersTimer = null;
+        }
+    };
+
+    const clearFirstViewerTimer = (): void => {
+        if (firstViewerTimer) {
+            clearTimeout(firstViewerTimer);
+            firstViewerTimer = null;
+        }
+    };
+
+    const scheduleStop = (reason: string, delayMs: number): void => {
+        clearZeroTimer();
+        zeroViewersTimer = setTimeout(() => {
+            void requestStop(reason);
+        }, delayMs);
+        log(`[idle-stop] Scheduled stop in ${delayMs} ms (reason=${reason}).`);
+    };
+
+    const scheduleRetryIfStillIdle = (): void => {
+        if (stopRetryMs <= 0) {
+            return;
+        }
+        if (server.playerRegistry.count() > 0) {
+            return;
+        }
+        scheduleStop('retry-after-failure', stopRetryMs);
+    };
+
+    const requestStop = async (reason: string): Promise<void> => {
+        if (stopInFlight) {
+            return;
+        }
+        if (server.playerRegistry.count() > 0) {
+            log('[idle-stop] Stop request aborted because viewers are connected.');
+            return;
+        }
+
+        stopInFlight = true;
+        try {
+            log(`[idle-stop] Triggering stop (reason=${reason}).`);
+            await stopCurrentInstance(awsCliPath, dryRun, log);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            log(`[idle-stop] Stop request failed: ${message}`);
+            scheduleRetryIfStillIdle();
+        } finally {
+            stopInFlight = false;
+        }
+    };
+
+    const onViewerAdded = (): void => {
+        hasSeenViewer = true;
+        clearZeroTimer();
+        clearFirstViewerTimer();
+        log(`[idle-stop] Viewer connected (count=${server.playerRegistry.count()}).`);
+    };
+
+    const onViewerRemoved = (): void => {
+        const count = server.playerRegistry.count();
+        log(`[idle-stop] Viewer disconnected (count=${count}).`);
+        if (count === 0) {
+            scheduleStop('grace-after-last-viewer', graceMs);
+        }
+    };
+
+    server.playerRegistry.on('added', onViewerAdded);
+    server.playerRegistry.on('removed', onViewerRemoved);
+    log('[idle-stop] Wired to player registry events.');
+
+    if (!hasSeenViewer && firstViewerGraceMs > 0) {
+        firstViewerTimer = setTimeout(() => {
+            firstViewerTimer = null;
+            if (hasSeenViewer || server.playerRegistry.count() > 0) {
+                return;
+            }
+            void requestStop('no-viewer-ever-connected');
+        }, firstViewerDelayMs + firstViewerGraceMs);
+
+        log(
+            `[idle-stop] First-viewer window active (delay=${firstViewerDelayMs} ms, grace=${firstViewerGraceMs} ms).`
+        );
+    }
+}

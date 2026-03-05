@@ -106,6 +106,40 @@ Peer option JSON files support environment placeholders in string values:
 
 If any referenced environment variable is missing at startup, the signalling server now fails fast with a clear error.
 
+### Viewer idle auto-stop
+
+Wilbur now supports optional instance auto-stop when there are no connected viewers.
+
+Relevant CLI/config keys:
+
+- `viewer_idle_stop`
+- `viewer_idle_grace_ms`
+- `viewer_idle_first_viewer_grace_ms`
+- `viewer_idle_first_viewer_delay_ms`
+- `viewer_idle_stop_retry_ms`
+- `viewer_idle_aws_cli_path`
+- `viewer_idle_stop_dry_run`
+
+Behavior:
+
+1. If `viewer_idle_stop=true`, Wilbur listens to internal player registry add/remove events.
+2. When viewer count drops to `0`, it schedules a stop after `viewer_idle_grace_ms`.
+3. If no viewer ever connects, it schedules a stop after `viewer_idle_first_viewer_delay_ms + viewer_idle_first_viewer_grace_ms`.
+4. Stop is executed via `aws ec2 stop-instances` against the current instance discovered from IMDSv2 metadata.
+
+Operational notes:
+
+1. This requires AWS CLI and instance-profile IAM permission for `ec2:StopInstances` on self.
+2. Use `viewer_idle_stop_dry_run=true` first to validate logs before enabling real stop.
+3. If you already stop instances from Session Manager policy/watchdog, coordinate timers to avoid policy fights.
+4. `start_dev_turn.bat` sets sane defaults, but you can override them with environment variables before launch:
+   - `VIEWER_IDLE_STOP`
+   - `VIEWER_IDLE_GRACE_MS`
+   - `VIEWER_IDLE_FIRST_VIEWER_GRACE_MS`
+   - `VIEWER_IDLE_FIRST_VIEWER_DELAY_MS`
+   - `VIEWER_IDLE_STOP_RETRY_MS`
+   - `VIEWER_IDLE_STOP_DRY_RUN`
+
 Given these options, to start the server with the closest behaviour as the old cirrus, you would invoke,
 ```
 npm start -- --console_messages --https_redirect verbose --serve --log_config --http_root www --homepage player.html
