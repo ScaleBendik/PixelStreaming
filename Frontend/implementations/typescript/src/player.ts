@@ -7,6 +7,7 @@ import {
     PixelStreaming,
     Logger,
     LogLevel,
+    Flags,
     TextParameters
 } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.7';
 import { Application, PixelStreamingApplicationStyle } from '@epicgames-ps/lib-pixelstreamingfrontend-ui-ue5.7';
@@ -212,8 +213,14 @@ document.body.onload = function() {
         );
     }
 
-    // Create a config object
-    const config = new Config({ useUrlParams: true });
+    // Create a config object.
+    // Explicitly keep hovering mouse as the default for this project.
+    const config = new Config({
+        useUrlParams: true,
+        initialSettings: {
+            [Flags.HoveringMouseMode]: true
+        }
+    });
 
     // Create the main Pixel Streaming object for interfacing with the web-API of Pixel Streaming
     const stream = new PixelStreaming(config);
