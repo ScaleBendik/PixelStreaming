@@ -14,6 +14,7 @@ import { beautify, IProgramOptions } from './Utils';
 import { initInputHandler } from './InputHandler';
 import { Command, Option } from 'commander';
 import { initialize } from 'express-openapi';
+import { ConnectTicketAuthMode, createPlayerVerifyClient } from './ConnectTicketAuth';
 
 // eslint-disable-next-line  @typescript-eslint/no-unsafe-assignment
 const pjson = require('../package.json');
@@ -45,6 +46,15 @@ function resolveEnvPlaceholders(value: unknown, missing: Set<string>): unknown {
     }
 
     return value;
+}
+
+function normalizeAuthMode(value: string): ConnectTicketAuthMode {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'off' || normalized === 'soft' || normalized === 'enforce') {
+        return normalized;
+    }
+
+    throw new Error(`Invalid auth_mode '${value}'. Expected one of: off, soft, enforce.`);
 }
 
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument */
@@ -223,6 +233,41 @@ program
             .implies({ reverse_proxy: true })
             .default(config_file.reverse_proxy_num_proxies || 1)
     )
+    .addOption(
+        new Option('--auth_mode <mode>', 'Sets connect ticket auth mode for player websocket connections.')
+            .choices(['off', 'soft', 'enforce'])
+            .default(config_file.auth_mode || 'off')
+    )
+    .option(
+        '--auth_issuer <value>',
+        'Expected JWT issuer for connect ticket validation.',
+        config_file.auth_issuer || ''
+    )
+    .option(
+        '--auth_audience <value>',
+        'Expected JWT audience for connect ticket validation.',
+        config_file.auth_audience || ''
+    )
+    .option(
+        '--auth_signing_key <value>',
+        'HMAC signing key used to validate connect tickets (HS256).',
+        config_file.auth_signing_key || ''
+    )
+    .option(
+        '--auth_instance_id <value>',
+        'Expected instanceId claim for this signalling server instance.',
+        config_file.auth_instance_id || ''
+    )
+    .option(
+        '--auth_route_host_suffix <value>',
+        'Expected routed host suffix (for example stream.scaleworld.net).',
+        config_file.auth_route_host_suffix || ''
+    )
+    .option(
+        '--auth_clock_skew_seconds <number>',
+        'Allowed JWT clock skew in seconds.',
+        config_file.auth_clock_skew_seconds || '5'
+    )
     .option(
         '--log_config',
         'Will print the program configuration on startup.',
@@ -322,10 +367,22 @@ if (options.peer_options_player) {
 if (options.peer_options_streamer) {
     options.peer_options_streamer = resolveEnvPlaceholders(options.peer_options_streamer, missingEnvVars);
 }
+const authEnvFields = [
+    'auth_issuer',
+    'auth_audience',
+    'auth_signing_key',
+    'auth_instance_id',
+    'auth_route_host_suffix'
+] as const;
+for (const field of authEnvFields) {
+    if (typeof options[field] === 'string') {
+        options[field] = resolveEnvPlaceholders(options[field], missingEnvVars) as string;
+    }
+}
 if (missingEnvVars.size > 0) {
     const missing = Array.from(missingEnvVars).sort().join(', ');
-    Logger.error(`Missing required environment variables referenced in peer options: ${missing}`);
-    throw Error(`Missing required environment variables referenced in peer options: ${missing}`);
+    Logger.error(`Missing required environment variables referenced in configuration: ${missing}`);
+    throw Error(`Missing required environment variables referenced in configuration: ${missing}`);
 }
 
 if (options.log_config) {
@@ -340,6 +397,24 @@ if (options.reverse_proxy) {
     app.set('trust proxy', options.reverse_proxy_num_proxies);
 }
 
+const authMode = normalizeAuthMode(String(options.auth_mode || 'off'));
+const authClockSkewSeconds = Number.parseInt(String(options.auth_clock_skew_seconds || '5'), 10);
+if (Number.isNaN(authClockSkewSeconds)) {
+    throw Error(
+        `Invalid auth_clock_skew_seconds value '${options.auth_clock_skew_seconds}'. Expected an integer.`
+    );
+}
+
+const playerVerifyClient = createPlayerVerifyClient({
+    mode: authMode,
+    issuer: String(options.auth_issuer || ''),
+    audience: String(options.auth_audience || ''),
+    signingKey: String(options.auth_signing_key || ''),
+    instanceId: String(options.auth_instance_id || ''),
+    routeHostSuffix: String(options.auth_route_host_suffix || ''),
+    clockSkewSeconds: authClockSkewSeconds
+});
+
 const serverOpts: IServerConfig = {
     streamerPort: options.streamer_port,
     playerPort: options.player_port,
@@ -349,6 +424,13 @@ const serverOpts: IServerConfig = {
     peerOptionsStreamer: options.peer_options_streamer,
     maxSubscribers: options.max_players
 };
+
+if (playerVerifyClient) {
+    serverOpts.playerWsOptions = {
+        ...(serverOpts.playerWsOptions || {}),
+        verifyClient: playerVerifyClient
+    };
+}
 
 if (options.serve) {
     const webserverOptions: IWebServerConfig = {
