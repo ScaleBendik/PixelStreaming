@@ -231,10 +231,20 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         log(`[idle-stop] Viewer connected (count=${server.playerRegistry.count()}).`);
     };
 
-    const onViewerRemoved = (): void => {
-        const count = server.playerRegistry.count();
-        log(`[idle-stop] Viewer disconnected (count=${count}).`);
-        if (count === 0) {
+    const onViewerRemoved = (removedPlayerId?: string): void => {
+        // PlayerRegistry emits "removed" before it updates internal counts.
+        // Compute the effective post-removal count so idle-stop can trigger on last viewer.
+        const rawCount = server.playerRegistry.count();
+        const removedEntryStillPresent =
+            typeof removedPlayerId === 'string' && removedPlayerId.length > 0
+                ? server.playerRegistry.has(removedPlayerId)
+                : false;
+        const effectiveCount = Math.max(0, rawCount - (removedEntryStillPresent ? 1 : 0));
+
+        log(
+            `[idle-stop] Viewer disconnected (count=${effectiveCount}, rawCount=${rawCount}, removedEntryStillPresent=${removedEntryStillPresent}).`
+        );
+        if (effectiveCount === 0) {
             scheduleStop('grace-after-last-viewer', graceMs);
         }
     };
