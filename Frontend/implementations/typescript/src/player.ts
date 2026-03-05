@@ -26,6 +26,8 @@ const RECONNECT_REGION_PARAM = 'sm_region';
 const RECONNECT_INSTANCE_ID_PARAM = 'sm_instance_id';
 const SESSION_MANAGER_RECONNECT_REGION_PARAM = 'reconnectRegion';
 const SESSION_MANAGER_RECONNECT_INSTANCE_ID_PARAM = 'reconnectInstanceId';
+const EXPIRED_CONNECTION_GUIDANCE =
+    'Connection expired. Go to scaleworld.scaleaq.com and click connect again to continue your session';
 
 type ReconnectContext = {
     sessionManagerUrl: string;
@@ -142,6 +144,46 @@ const isConnectTicketDisconnectReason = (reason: string): boolean => {
     );
 };
 
+const parseConnectTicketExpiryMs = (ticket: string): number | null => {
+    const trimmedTicket = ticket.trim();
+    if (!trimmedTicket) {
+        return null;
+    }
+
+    const segments = trimmedTicket.split('.');
+    if (segments.length < 2) {
+        return null;
+    }
+
+    try {
+        const base64 = segments[1].replace(/-/g, '+').replace(/_/g, '/');
+        const payloadJson = atob(base64);
+        const payload = JSON.parse(payloadJson) as { exp?: unknown };
+        if (typeof payload.exp !== 'number') {
+            return null;
+        }
+
+        return payload.exp * 1000;
+    } catch {
+        return null;
+    }
+};
+
+const showExpiredConnectionGuidance = () => {
+    // Run after overlay updates so this text wins over generic "Disconnected".
+    window.setTimeout(() => {
+        const disconnectOverlayText = document.getElementById('disconnectButton');
+        if (disconnectOverlayText) {
+            disconnectOverlayText.innerHTML = EXPIRED_CONNECTION_GUIDANCE;
+        }
+
+        const errorOverlayText = document.getElementById('errorOverlayInner');
+        if (errorOverlayText) {
+            errorOverlayText.innerHTML = EXPIRED_CONNECTION_GUIDANCE;
+        }
+    }, 0);
+};
+
 document.body.onload = function() {
     Logger.InitLogging(LogLevel.Warning, true);
 
@@ -174,6 +216,9 @@ document.body.onload = function() {
 
     const connectTicket =
         connectTicketFromQuery || readSessionStorage(connectTicketStorageKey)?.trim() || '';
+    const connectTicketExpiresAtMs = connectTicket
+        ? parseConnectTicketExpiryMs(connectTicket)
+        : null;
     const reconnectContext =
         reconnectContextFromQuery ??
         loadReconnectContextFromStorage(reconnectContextStorageKey);
@@ -245,11 +290,17 @@ document.body.onload = function() {
     stream.addEventListener('webRtcDisconnected', (event) => {
         const eventData = (event as { data?: { eventString?: string } }).data;
         const reason = eventData?.eventString ?? '';
-        if (!isConnectTicketDisconnectReason(reason)) {
+        const isConnectTicketDisconnect =
+            isConnectTicketDisconnectReason(reason) ||
+            (connectTicketExpiresAtMs !== null && Date.now() >= connectTicketExpiresAtMs);
+        if (!isConnectTicketDisconnect) {
             return;
         }
 
-        redirectToSessionManagerForReconnect(reason);
+        const redirected = redirectToSessionManagerForReconnect(reason);
+        if (!redirected) {
+            showExpiredConnectionGuidance();
+        }
     });
 
     const application = new Application({
