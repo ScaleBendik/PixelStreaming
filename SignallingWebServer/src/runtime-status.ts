@@ -13,6 +13,7 @@ export interface RuntimeStatusUpdate {
     source?: string;
     version?: string;
     heartbeatOnly?: boolean;
+    preserveStatusAtUtc?: boolean;
 }
 export interface RuntimeStatusPublisher {
     publish(update: RuntimeStatusUpdate): Promise<boolean>;
@@ -117,6 +118,7 @@ export function createRuntimeStatusPublisher(
     );
     const defaultVersion = normalizeTagValue(options.version ?? process.env.RUNTIME_STATUS_VERSION ?? '');
     let identityPromise: Promise<{ instanceId: string; region: string }> | null = null;
+    let lastPublishedStatus: string | null = null;
 
     const resolveIdentity = async (): Promise<{ instanceId: string; region: string }> => {
         if (!identityPromise) {
@@ -138,17 +140,29 @@ export function createRuntimeStatusPublisher(
 
     return {
         async publish(update: RuntimeStatusUpdate): Promise<boolean> {
+            const normalizedStatus = normalizeTagValue(update.status);
+            const heartbeatOnly = update.heartbeatOnly === true;
+            const preserveStatusAtUtc = update.preserveStatusAtUtc === true;
+            const preservesCurrentStatusTimestamp = preserveStatusAtUtc && !heartbeatOnly;
+
+            if (heartbeatOnly && lastPublishedStatus && normalizedStatus !== lastPublishedStatus) {
+                log(
+                    `[runtime-status] Ignoring stale heartbeat for status='${normalizedStatus}' while current status='${lastPublishedStatus}'.`
+                );
+                return false;
+            }
+
             try {
                 const { instanceId, region } = await resolveIdentity();
                 const nowIso = new Date().toISOString();
                 const tags = [
-                    `Key=ScaleWorldRuntimeStatus,Value=${normalizeTagValue(update.status)}`,
+                    `Key=ScaleWorldRuntimeStatus,Value=${normalizedStatus}`,
                     `Key=ScaleWorldRuntimeStatusHeartbeatAtUtc,Value=${nowIso}`,
                     `Key=ScaleWorldRuntimeStatusSource,Value=${normalizeTagValue(update.source ?? defaultSource)}`,
                     `Key=ScaleWorldRuntimeStatusReason,Value=${normalizeTagValue(update.reason)}`,
                     `Key=ScaleWorldRuntimeStatusVersion,Value=${normalizeTagValue(update.version ?? defaultVersion)}`
                 ];
-                if (!update.heartbeatOnly) {
+                if (!heartbeatOnly && !preservesCurrentStatusTimestamp) {
                     tags.splice(1, 0, `Key=ScaleWorldRuntimeStatusAtUtc,Value=${nowIso}`);
                 }
                 const args = [
@@ -162,9 +176,16 @@ export function createRuntimeStatusPublisher(
                     ...tags
                 ];
                 await execFileAsync(awsCliPath, args, { windowsHide: true });
+                if (!heartbeatOnly || preservesCurrentStatusTimestamp) {
+                    lastPublishedStatus = normalizedStatus;
+                }
                 log(
-                    `[runtime-status] Published status='${normalizeTagValue(update.status)}'${
-                        update.heartbeatOnly ? ' heartbeat' : ''
+                    `[runtime-status] Published status='${normalizedStatus}'${
+                        heartbeatOnly
+                            ? ' heartbeat'
+                            : preservesCurrentStatusTimestamp
+                              ? ' (preserved status timestamp)'
+                              : ''
                     } for ${instanceId} (${region}).`
                 );
                 return true;
