@@ -10,6 +10,7 @@ const DEFAULT_IDLE_GRACE_MS = 15 * 60_000;
 const DEFAULT_FIRST_VIEWER_GRACE_MS = 60 * 60_000;
 const DEFAULT_FIRST_VIEWER_DELAY_MS = 0;
 const DEFAULT_STOP_RETRY_MS = 60_000;
+const DEFAULT_IDLE_STATUS_HEARTBEAT_MS = 60_000;
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
 const IMDS_METADATA_BASE_URL = 'http://169.254.169.254/latest/meta-data';
 
@@ -19,6 +20,7 @@ export interface ViewerIdleOptions {
     firstViewerGraceMs?: number;
     firstViewerDelayMs?: number;
     stopRetryMs?: number;
+    idleStatusHeartbeatMs?: number;
     awsCliPath?: string;
     dryRun?: boolean;
     logger?: (message: string) => void;
@@ -151,18 +153,30 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         'VIEWER_IDLE_STOP_RETRY_MS',
         log
     );
+    const idleStatusHeartbeatMs = parseNonNegativeInteger(
+        options.idleStatusHeartbeatMs ?? process.env.VIEWER_IDLE_STATUS_HEARTBEAT_MS,
+        DEFAULT_IDLE_STATUS_HEARTBEAT_MS,
+        'VIEWER_IDLE_STATUS_HEARTBEAT_MS',
+        log
+    );
     const dryRun = parseBoolean(options.dryRun ?? process.env.VIEWER_IDLE_STOP_DRY_RUN ?? false, false);
     const awsCliPath = String(options.awsCliPath ?? process.env.VIEWER_IDLE_AWS_CLI_PATH ?? 'aws');
     const runtimeStatusPublisher = options.runtimeStatusPublisher ?? null;
 
     let zeroViewersTimer: NodeJS.Timeout | null = null;
     let firstViewerTimer: NodeJS.Timeout | null = null;
+    let idleStatusHeartbeatTimer: NodeJS.Timeout | null = null;
     let stopInFlight = false;
     let hasSeenViewer = server.playerRegistry.count() > 0;
 
-    const publishStatus = (status: string, reason: string): void => {
+    const publishStatus = (status: string, reason: string, heartbeatOnly = false): void => {
         if (!runtimeStatusPublisher) return;
-        void runtimeStatusPublisher.publish({ status, reason, source: 'viewer-idle-stop' });
+        void runtimeStatusPublisher.publish({
+            status,
+            reason,
+            source: 'viewer-idle-stop',
+            heartbeatOnly
+        });
     };
 
     const clearZeroTimer = (): void => {
@@ -177,10 +191,26 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             firstViewerTimer = null;
         }
     };
+    const clearIdleStatusHeartbeat = (): void => {
+        if (!idleStatusHeartbeatTimer) return;
+        clearInterval(idleStatusHeartbeatTimer);
+        idleStatusHeartbeatTimer = null;
+    };
+    const startIdleStatusHeartbeat = (reason: string): void => {
+        clearIdleStatusHeartbeat();
+        if (idleStatusHeartbeatMs <= 0 || !runtimeStatusPublisher) {
+            return;
+        }
+        idleStatusHeartbeatTimer = setInterval(() => {
+            publishStatus('idle_shutdown_pending', reason, true);
+        }, idleStatusHeartbeatMs);
+    };
 
     const scheduleStop = (reason: string, delayMs: number): void => {
         clearZeroTimer();
-        publishStatus('idle_shutdown_pending', mapStopReason(reason));
+        const mappedReason = mapStopReason(reason);
+        publishStatus('idle_shutdown_pending', mappedReason);
+        startIdleStatusHeartbeat(mappedReason);
         zeroViewersTimer = setTimeout(() => {
             void requestStop(reason);
         }, delayMs);
@@ -195,6 +225,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
     const requestStop = async (reason: string): Promise<void> => {
         if (stopInFlight) return;
+        clearIdleStatusHeartbeat();
         if (server.playerRegistry.count() > 0) {
             log('[idle-stop] Stop request aborted because viewers are connected.');
             publishStatus('ready', 'viewer_connected_during_idle_shutdown');
@@ -220,6 +251,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         hasSeenViewer = true;
         clearZeroTimer();
         clearFirstViewerTimer();
+        clearIdleStatusHeartbeat();
         publishStatus('ready', 'viewer_connected');
         log(`[idle-stop] Viewer connected (count=${server.playerRegistry.count()}).`);
     };

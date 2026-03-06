@@ -12,6 +12,7 @@ export interface RuntimeStatusUpdate {
     reason?: string;
     source?: string;
     version?: string;
+    heartbeatOnly?: boolean;
 }
 export interface RuntimeStatusPublisher {
     publish(update: RuntimeStatusUpdate): Promise<boolean>;
@@ -26,6 +27,7 @@ export interface RuntimeStatusPublisherOptions {
 export interface SignallingRuntimeStatusOptions {
     logger?: (message: string) => void;
     source?: string;
+    heartbeatMs?: number;
 }
 
 function parseBoolean(rawValue: unknown, fallback: boolean): boolean {
@@ -45,6 +47,19 @@ function parseBoolean(rawValue: unknown, fallback: boolean): boolean {
         default:
             return fallback;
     }
+}
+
+function parseNonNegativeInteger(rawValue: unknown, fallback: number): number {
+    if (rawValue === undefined || rawValue === null || rawValue === '') return fallback;
+    const rawValueText =
+        typeof rawValue === 'string' ||
+        typeof rawValue === 'number' ||
+        typeof rawValue === 'boolean' ||
+        typeof rawValue === 'bigint'
+            ? String(rawValue)
+            : '';
+    const parsed = Number.parseInt(rawValueText, 10);
+    return Number.isNaN(parsed) || parsed < 0 ? fallback : parsed;
 }
 
 function normalizeTagValue(value: unknown): string {
@@ -125,6 +140,17 @@ export function createRuntimeStatusPublisher(
         async publish(update: RuntimeStatusUpdate): Promise<boolean> {
             try {
                 const { instanceId, region } = await resolveIdentity();
+                const nowIso = new Date().toISOString();
+                const tags = [
+                    `Key=ScaleWorldRuntimeStatus,Value=${normalizeTagValue(update.status)}`,
+                    `Key=ScaleWorldRuntimeStatusHeartbeatAtUtc,Value=${nowIso}`,
+                    `Key=ScaleWorldRuntimeStatusSource,Value=${normalizeTagValue(update.source ?? defaultSource)}`,
+                    `Key=ScaleWorldRuntimeStatusReason,Value=${normalizeTagValue(update.reason)}`,
+                    `Key=ScaleWorldRuntimeStatusVersion,Value=${normalizeTagValue(update.version ?? defaultVersion)}`
+                ];
+                if (!update.heartbeatOnly) {
+                    tags.splice(1, 0, `Key=ScaleWorldRuntimeStatusAtUtc,Value=${nowIso}`);
+                }
                 const args = [
                     'ec2',
                     'create-tags',
@@ -133,15 +159,13 @@ export function createRuntimeStatusPublisher(
                     '--resources',
                     instanceId,
                     '--tags',
-                    `Key=ScaleWorldRuntimeStatus,Value=${normalizeTagValue(update.status)}`,
-                    `Key=ScaleWorldRuntimeStatusAtUtc,Value=${new Date().toISOString()}`,
-                    `Key=ScaleWorldRuntimeStatusSource,Value=${normalizeTagValue(update.source ?? defaultSource)}`,
-                    `Key=ScaleWorldRuntimeStatusReason,Value=${normalizeTagValue(update.reason)}`,
-                    `Key=ScaleWorldRuntimeStatusVersion,Value=${normalizeTagValue(update.version ?? defaultVersion)}`
+                    ...tags
                 ];
                 await execFileAsync(awsCliPath, args, { windowsHide: true });
                 log(
-                    `[runtime-status] Published status='${normalizeTagValue(update.status)}' for ${instanceId} (${region}).`
+                    `[runtime-status] Published status='${normalizeTagValue(update.status)}'${
+                        update.heartbeatOnly ? ' heartbeat' : ''
+                    } for ${instanceId} (${region}).`
                 );
                 return true;
             } catch (error) {
@@ -160,22 +184,61 @@ export function wireSignallingRuntimeStatus(
 ): void {
     if (!publisher) return;
     const log = options.logger ?? ((message: string) => Logger.info(message));
-    const publish = (status: string, reason: string): void => {
-        void publisher.publish({ status, reason, source: options.source ?? 'signalling-server' });
+    const heartbeatMs = parseNonNegativeInteger(
+        options.heartbeatMs ?? process.env.RUNTIME_STATUS_HEARTBEAT_MS,
+        60_000
+    );
+    const source = options.source ?? 'signalling-server';
+    let currentStatus: string | null = null;
+    let currentReason: string | null = null;
+    let heartbeatTimer: NodeJS.Timeout | null = null;
+
+    const clearHeartbeat = (): void => {
+        if (!heartbeatTimer) return;
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
     };
+
+    const publishTransition = (status: string, reason: string): void => {
+        currentStatus = status;
+        currentReason = reason;
+        void publisher.publish({ status, reason, source });
+    };
+
+    const publishHeartbeat = (): void => {
+        if (!currentStatus) return;
+        void publisher.publish({
+            status: currentStatus,
+            reason: currentReason ?? undefined,
+            source,
+            heartbeatOnly: true
+        });
+    };
+
+    const startHeartbeat = (): void => {
+        clearHeartbeat();
+        if (heartbeatMs <= 0) return;
+        heartbeatTimer = setInterval(() => {
+            publishHeartbeat();
+        }, heartbeatMs);
+    };
+
     const syncFromStreamerCount = (readyReason: string, waitingReason: string): void => {
         if (server.streamerRegistry.count() > 0) {
-            publish('ready', readyReason);
+            publishTransition('ready', readyReason);
+            startHeartbeat();
             return;
         }
-        publish('waiting_for_streamer', waitingReason);
+        publishTransition('waiting_for_streamer', waitingReason);
+        startHeartbeat();
     };
 
     syncFromStreamerCount('streamer_present_on_startup', 'signalling_server_started');
 
     server.streamerRegistry.on('added', (streamerId: string) => {
         log(`[runtime-status] Streamer connected (${streamerId}).`);
-        publish('ready', 'streamer_connected');
+        publishTransition('ready', 'streamer_connected');
+        startHeartbeat();
     });
 
     server.streamerRegistry.on('removed', (streamerId: string) => {
