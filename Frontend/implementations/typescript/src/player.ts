@@ -21,22 +21,22 @@ declare global {
 }
 
 const CONNECT_TICKET_PARAM = 'ct';
-const RECONNECT_URL_PARAM = 'sm_reconnect_url';
+
 const RECONNECT_REGION_PARAM = 'sm_region';
 const RECONNECT_INSTANCE_ID_PARAM = 'sm_instance_id';
+const SESSION_MANAGER_BASE_URL = 'https://scaleworld.scaleaq.com';
+const SESSION_MANAGER_RECONNECT_PATH = '/servers/';
 const SESSION_MANAGER_RECONNECT_REGION_PARAM = 'reconnectRegion';
 const SESSION_MANAGER_RECONNECT_INSTANCE_ID_PARAM = 'reconnectInstanceId';
 const EXPIRED_CONNECTION_GUIDANCE =
     'Connection expired. Go to scaleworld.scaleaq.com and click connect again to continue your session';
 const RECONNECT_BOOTSTRAP_QUERY_PARAMS = new Set<string>([
     CONNECT_TICKET_PARAM,
-    RECONNECT_URL_PARAM,
     RECONNECT_REGION_PARAM,
     RECONNECT_INSTANCE_ID_PARAM
 ]);
 
 type ReconnectContext = {
-    sessionManagerUrl: string;
     region: string;
     instanceId: string;
 };
@@ -106,26 +106,17 @@ const persistPlayerQueryState = (storageKey: string): void => {
 };
 
 const parseReconnectContext = (
-    sessionManagerUrl: string | null,
     region: string | null,
     instanceId: string | null
 ): ReconnectContext | null => {
-    const normalizedSessionManagerUrl = sessionManagerUrl?.trim() ?? '';
     const normalizedRegion = region?.trim() ?? '';
     const normalizedInstanceId = instanceId?.trim() ?? '';
 
-    if (!normalizedSessionManagerUrl || !normalizedRegion || !normalizedInstanceId) {
-        return null;
-    }
-
-    try {
-        new URL(normalizedSessionManagerUrl);
-    } catch {
+    if (!normalizedRegion || !normalizedInstanceId) {
         return null;
     }
 
     return {
-        sessionManagerUrl: normalizedSessionManagerUrl,
         region: normalizedRegion,
         instanceId: normalizedInstanceId
     };
@@ -140,7 +131,6 @@ const loadReconnectContextFromStorage = (key: string): ReconnectContext | null =
     try {
         const parsed = JSON.parse(raw) as Partial<ReconnectContext>;
         return parseReconnectContext(
-            typeof parsed.sessionManagerUrl === 'string' ? parsed.sessionManagerUrl : null,
             typeof parsed.region === 'string' ? parsed.region : null,
             typeof parsed.instanceId === 'string' ? parsed.instanceId : null
         );
@@ -151,7 +141,10 @@ const loadReconnectContextFromStorage = (key: string): ReconnectContext | null =
 
 const buildSessionManagerReconnectUrl = (context: ReconnectContext): string | null => {
     try {
-        const reconnectUrl = new URL(context.sessionManagerUrl);
+        const reconnectUrl = new URL(
+            SESSION_MANAGER_RECONNECT_PATH,
+            SESSION_MANAGER_BASE_URL
+        );
         reconnectUrl.searchParams.set(
             SESSION_MANAGER_RECONNECT_REGION_PARAM,
             context.region
@@ -234,13 +227,11 @@ document.body.onload = function() {
     const connectTicketFromQuery =
         pageUrl.searchParams.get(CONNECT_TICKET_PARAM)?.trim() ?? '';
     const reconnectContextFromQuery = parseReconnectContext(
-        pageUrl.searchParams.get(RECONNECT_URL_PARAM),
         pageUrl.searchParams.get(RECONNECT_REGION_PARAM),
         pageUrl.searchParams.get(RECONNECT_INSTANCE_ID_PARAM)
     );
 
     const hasReconnectQueryParams =
-        pageUrl.searchParams.has(RECONNECT_URL_PARAM) ||
         pageUrl.searchParams.has(RECONNECT_REGION_PARAM) ||
         pageUrl.searchParams.has(RECONNECT_INSTANCE_ID_PARAM);
     const hasConnectTicketQueryParam = pageUrl.searchParams.has(CONNECT_TICKET_PARAM);
@@ -276,7 +267,6 @@ document.body.onload = function() {
 
     if (hasConnectTicketQueryParam || hasReconnectQueryParams) {
         pageUrl.searchParams.delete(CONNECT_TICKET_PARAM);
-        pageUrl.searchParams.delete(RECONNECT_URL_PARAM);
         pageUrl.searchParams.delete(RECONNECT_REGION_PARAM);
         pageUrl.searchParams.delete(RECONNECT_INSTANCE_ID_PARAM);
         if (!restorablePlayerQueryFromUrl && storedPlayerQuery) {
