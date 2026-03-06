@@ -9,6 +9,8 @@ set "AWS_EXE=aws"
 set "ENABLE_GIT_SYNC_BEFORE_START=true"
 set "DISCARD_LOCAL_GIT_CHANGES_ON_SYNC=true"
 set "REQUIRE_EC2_INSTANCE_FOR_GIT_SYNC=true"
+if not defined IMDS_INSTANCE_ID_RETRY_COUNT set "IMDS_INSTANCE_ID_RETRY_COUNT=12"
+if not defined IMDS_INSTANCE_ID_RETRY_DELAY_SECONDS set "IMDS_INSTANCE_ID_RETRY_DELAY_SECONDS=5"
 set "CONNECT_TICKET_AUTH_MODE=enforce"
 set "CONNECT_TICKET_ISSUER=scaleworld-dev-connect-ticket"
 set "CONNECT_TICKET_AUDIENCE=scaleworld-pixelstreaming"
@@ -66,17 +68,39 @@ if not defined TURN_CREDENTIAL (
 echo Loaded TURN credentials from SSM parameter store.
 
 set "INSTANCE_ID="
+set /a IMDS_INSTANCE_ID_ATTEMPT=0
+
+:read_instance_id_retry
+set /a IMDS_INSTANCE_ID_ATTEMPT+=1
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { $token = Invoke-RestMethod -Method Put -Uri 'http://169.254.169.254/latest/api/token' -Headers @{'X-aws-ec2-metadata-token-ttl-seconds'='21600'}; $iid = Invoke-RestMethod -Method Get -Uri 'http://169.254.169.254/latest/meta-data/instance-id' -Headers @{'X-aws-ec2-metadata-token'=$token}; Write-Output $iid } catch { }"`) do (
   set "INSTANCE_ID=%%I"
 )
 
-if not defined INSTANCE_ID (
-  echo WARNING: Failed to read EC2 instance id from IMDSv2 metadata endpoint.
-  echo WARNING: Starting Wilbur with ticket auth disabled for this run.
-  set "CONNECT_TICKET_AUTH_MODE=off"
-) else (
+if defined INSTANCE_ID (
   echo Detected EC2 instance id: %INSTANCE_ID%
+  goto after_instance_id
 )
+
+if %IMDS_INSTANCE_ID_ATTEMPT% geq %IMDS_INSTANCE_ID_RETRY_COUNT% (
+  goto instance_id_failed
+)
+
+echo WARNING: Failed to read EC2 instance id from IMDSv2 metadata endpoint on attempt %IMDS_INSTANCE_ID_ATTEMPT% of %IMDS_INSTANCE_ID_RETRY_COUNT%.
+echo WARNING: Retrying in %IMDS_INSTANCE_ID_RETRY_DELAY_SECONDS% seconds...
+timeout /t %IMDS_INSTANCE_ID_RETRY_DELAY_SECONDS% /nobreak >nul
+goto read_instance_id_retry
+
+:instance_id_failed
+if /i "%CONNECT_TICKET_AUTH_MODE%"=="off" (
+  echo WARNING: Failed to read EC2 instance id from IMDSv2 metadata endpoint after %IMDS_INSTANCE_ID_RETRY_COUNT% attempts.
+  echo WARNING: CONNECT_TICKET_AUTH_MODE=off, continuing without instance id.
+) else (
+  echo ERROR: Failed to read EC2 instance id from IMDSv2 metadata endpoint after %IMDS_INSTANCE_ID_RETRY_COUNT% attempts.
+  echo ERROR: Refusing to start Wilbur with ticket auth enabled and no instance id.
+  exit /b 1
+)
+
+:after_instance_id
 
 if /i "%ENABLE_GIT_SYNC_BEFORE_START%"=="true" (
   if /i "%REQUIRE_EC2_INSTANCE_FOR_GIT_SYNC%"=="true" if not defined INSTANCE_ID (
