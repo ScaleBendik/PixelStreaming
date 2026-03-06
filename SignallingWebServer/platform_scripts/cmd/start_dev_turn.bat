@@ -7,6 +7,8 @@ set "TURN_USER_PARAM=/pixelstreaming/turn/username"
 set "TURN_CREDENTIAL_PARAM=/pixelstreaming/turn/credential"
 set "AWS_EXE=aws"
 set "ENABLE_GIT_SYNC_BEFORE_START=false"
+set "DISCARD_LOCAL_GIT_CHANGES_ON_SYNC=true"
+set "REQUIRE_EC2_INSTANCE_FOR_GIT_SYNC=true"
 set "CONNECT_TICKET_AUTH_MODE=enforce"
 set "CONNECT_TICKET_ISSUER=scaleworld-dev-connect-ticket"
 set "CONNECT_TICKET_AUDIENCE=scaleworld-pixelstreaming"
@@ -77,10 +79,17 @@ if not defined INSTANCE_ID (
 )
 
 if /i "%ENABLE_GIT_SYNC_BEFORE_START%"=="true" (
+  if /i "%REQUIRE_EC2_INSTANCE_FOR_GIT_SYNC%"=="true" if not defined INSTANCE_ID (
+    echo WARNING: ENABLE_GIT_SYNC_BEFORE_START is true, but no EC2 instance id was detected.
+    echo WARNING: Skipping git sync to avoid wiping local workstation changes.
+    goto continue_start
+  )
+
   call :sync_repo_and_build
   if errorlevel 1 exit /b 1
 )
 
+:continue_start
 cd /d "%ROOT%\platform_scripts\cmd"
 
 call start.bat -- ^
@@ -134,26 +143,58 @@ if not defined UPSTREAM_BRANCH (
   exit /b 0
 )
 
-set "REMOTE_UPDATES=0"
-for /f "usebackq delims=" %%I in (`git rev-list --count HEAD..@{u}`) do (
-  set "REMOTE_UPDATES=%%I"
+set "CURRENT_HEAD="
+for /f "usebackq delims=" %%I in (`git rev-parse HEAD`) do (
+  set "CURRENT_HEAD=%%I"
 )
 
-if "%REMOTE_UPDATES%"=="0" (
-  echo No remote updates detected on %UPSTREAM_BRANCH%.
+set "UPSTREAM_HEAD="
+for /f "usebackq delims=" %%I in (`git rev-parse @{u}`) do (
+  set "UPSTREAM_HEAD=%%I"
+)
+
+set "HAS_LOCAL_TRACKED_CHANGES=0"
+for /f "usebackq delims=" %%I in (`git status --porcelain --untracked-files=no`) do (
+  set "HAS_LOCAL_TRACKED_CHANGES=1"
+)
+
+set "REPO_RESET_REQUIRED=0"
+if not "%CURRENT_HEAD%"=="%UPSTREAM_HEAD%" (
+  set "REPO_RESET_REQUIRED=1"
+)
+
+if "%HAS_LOCAL_TRACKED_CHANGES%"=="1" (
+  set "REPO_RESET_REQUIRED=1"
+)
+
+if "%REPO_RESET_REQUIRED%"=="0" (
+  echo Repo already matches %UPSTREAM_BRANCH% and has no tracked local changes.
   popd
   exit /b 0
 )
 
-echo %REMOTE_UPDATES% remote update^(s^) detected on %UPSTREAM_BRANCH%. Pulling latest changes...
-git pull --ff-only
-if errorlevel 1 (
-  echo ERROR: git pull --ff-only failed.
+if /i not "%DISCARD_LOCAL_GIT_CHANGES_ON_SYNC%"=="true" (
+  echo ERROR: Local or branch differences detected, but DISCARD_LOCAL_GIT_CHANGES_ON_SYNC is disabled.
   popd
   exit /b 1
 )
 
-echo Running build-all.bat after git update...
+if "%HAS_LOCAL_TRACKED_CHANGES%"=="1" (
+  echo Discarding tracked local repository changes before startup sync...
+)
+
+if not "%CURRENT_HEAD%"=="%UPSTREAM_HEAD%" (
+  echo Resetting repo from %CURRENT_HEAD% to %UPSTREAM_BRANCH% ^(%UPSTREAM_HEAD%^)...
+)
+
+git reset --hard @{u}
+if errorlevel 1 (
+  echo ERROR: git reset --hard @{u} failed.
+  popd
+  exit /b 1
+)
+
+echo Running build-all.bat after repository sync...
 call "%REPO_ROOT%\build-all.bat"
 if errorlevel 1 (
   echo ERROR: build-all.bat failed.
