@@ -10,7 +10,7 @@ if not exist "%WATCHDOG_SCRIPT%" (
 )
 
 if not defined WATCHDOG_UNREAL_PROCESS_NAME (
-  echo WARNING: WATCHDOG_UNREAL_PROCESS_NAME is not set. The watchdog will only monitor Wilbur unless you pass -UnrealProcessName.
+  set "WATCHDOG_UNREAL_PROCESS_NAME=ScaleWorld"
 )
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%WATCHDOG_SCRIPT%" %*

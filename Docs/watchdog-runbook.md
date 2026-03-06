@@ -63,7 +63,7 @@ Runtime status publishing inputs:
 ## Example
 
 ```powershell
-$env:WATCHDOG_UNREAL_PROCESS_NAME = 'MyProject-Win64-Shipping.exe'
+$env:WATCHDOG_UNREAL_PROCESS_NAME = 'ScaleWorld'
 $env:WATCHDOG_RESTART_COMMAND = '"C:\PixelStreaming\PixelStreaming\SignallingWebServer\platform_scripts\cmd\start_dev_turn.bat"'
 $env:WATCHDOG_RUNTIME_STATUS_ENABLED = 'true'
 $env:WATCHDOG_DRY_RUN = 'true'
