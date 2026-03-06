@@ -2,6 +2,7 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
+import { RuntimeStatusPublisher } from './runtime-status';
 
 const execFileAsync = promisify(execFile);
 
@@ -21,16 +22,12 @@ export interface ViewerIdleOptions {
     awsCliPath?: string;
     dryRun?: boolean;
     logger?: (message: string) => void;
+    runtimeStatusPublisher?: RuntimeStatusPublisher | null;
 }
 
 function parseBoolean(rawValue: unknown, fallback: boolean): boolean {
-    if (typeof rawValue === 'boolean') {
-        return rawValue;
-    }
-    if (typeof rawValue !== 'string') {
-        return fallback;
-    }
-
+    if (typeof rawValue === 'boolean') return rawValue;
+    if (typeof rawValue !== 'string') return fallback;
     switch (rawValue.trim().toLowerCase()) {
         case '1':
         case 'true':
@@ -53,10 +50,7 @@ function parseNonNegativeInteger(
     label: string,
     log: (message: string) => void
 ): number {
-    if (rawValue === undefined || rawValue === null || rawValue === '') {
-        return fallback;
-    }
-
+    if (rawValue === undefined || rawValue === null || rawValue === '') return fallback;
     const rawValueText =
         typeof rawValue === 'string' ||
         typeof rawValue === 'number' ||
@@ -64,7 +58,6 @@ function parseNonNegativeInteger(
         typeof rawValue === 'bigint'
             ? String(rawValue)
             : Object.prototype.toString.call(rawValue);
-
     const parsed = Number.parseInt(rawValueText, 10);
     if (Number.isNaN(parsed) || parsed < 0) {
         log(`[idle-stop] Invalid ${label} value '${rawValueText}'. Using fallback ${fallback}.`);
@@ -76,27 +69,17 @@ function parseNonNegativeInteger(
 async function readImdsToken(): Promise<string> {
     const response = await fetch(IMDS_TOKEN_URL, {
         method: 'PUT',
-        headers: {
-            'X-aws-ec2-metadata-token-ttl-seconds': '21600'
-        }
+        headers: { 'X-aws-ec2-metadata-token-ttl-seconds': '21600' }
     });
-
-    if (!response.ok) {
-        throw new Error(`IMDSv2 token request failed with status ${response.status}.`);
-    }
+    if (!response.ok) throw new Error(`IMDSv2 token request failed with status ${response.status}.`);
     return response.text();
 }
 
 async function readImdsValue(pathSuffix: string, token: string): Promise<string> {
     const response = await fetch(`${IMDS_METADATA_BASE_URL}/${pathSuffix}`, {
-        headers: {
-            'X-aws-ec2-metadata-token': token
-        }
+        headers: { 'X-aws-ec2-metadata-token': token }
     });
-
-    if (!response.ok) {
-        throw new Error(`IMDS read for '${pathSuffix}' failed with status ${response.status}.`);
-    }
+    if (!response.ok) throw new Error(`IMDS read for '${pathSuffix}' failed with status ${response.status}.`);
     return response.text();
 }
 
@@ -118,20 +101,26 @@ async function stopCurrentInstance(
 
     const args = ['ec2', 'stop-instances', '--region', region, '--instance-ids', instanceId];
     const { stdout, stderr } = await execFileAsync(awsCliPath, args, { windowsHide: true });
-
-    if (stdout && stdout.trim().length > 0) {
-        log(`[idle-stop] StopInstances output: ${stdout.trim()}`);
-    }
-    if (stderr && stderr.trim().length > 0) {
-        log(`[idle-stop] StopInstances stderr: ${stderr.trim()}`);
-    }
-
+    if (stdout && stdout.trim().length > 0) log(`[idle-stop] StopInstances output: ${stdout.trim()}`);
+    if (stderr && stderr.trim().length > 0) log(`[idle-stop] StopInstances stderr: ${stderr.trim()}`);
     log(`[idle-stop] StopInstances requested for ${instanceId} (${region}).`);
+}
+
+function mapStopReason(reason: string): string {
+    switch (reason) {
+        case 'grace-after-last-viewer':
+            return 'idle_timeout';
+        case 'retry-after-failure':
+            return 'retry_after_stop_failure';
+        case 'no-viewer-ever-connected':
+            return 'no_viewer_ever_connected';
+        default:
+            return reason.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
+    }
 }
 
 export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdleOptions = {}): void {
     const log = options.logger ?? ((message: string) => Logger.info(message));
-
     const enabled = parseBoolean(options.enabled ?? process.env.VIEWER_IDLE_STOP_ENABLED ?? true, true);
     if (!enabled) {
         log('[idle-stop] Disabled.');
@@ -164,11 +153,17 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     );
     const dryRun = parseBoolean(options.dryRun ?? process.env.VIEWER_IDLE_STOP_DRY_RUN ?? false, false);
     const awsCliPath = String(options.awsCliPath ?? process.env.VIEWER_IDLE_AWS_CLI_PATH ?? 'aws');
+    const runtimeStatusPublisher = options.runtimeStatusPublisher ?? null;
 
     let zeroViewersTimer: NodeJS.Timeout | null = null;
     let firstViewerTimer: NodeJS.Timeout | null = null;
     let stopInFlight = false;
     let hasSeenViewer = server.playerRegistry.count() > 0;
+
+    const publishStatus = (status: string, reason: string): void => {
+        if (!runtimeStatusPublisher) return;
+        void runtimeStatusPublisher.publish({ status, reason, source: 'viewer-idle-stop' });
+    };
 
     const clearZeroTimer = (): void => {
         if (zeroViewersTimer) {
@@ -176,7 +171,6 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             zeroViewersTimer = null;
         }
     };
-
     const clearFirstViewerTimer = (): void => {
         if (firstViewerTimer) {
             clearTimeout(firstViewerTimer);
@@ -186,6 +180,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
     const scheduleStop = (reason: string, delayMs: number): void => {
         clearZeroTimer();
+        publishStatus('idle_shutdown_pending', mapStopReason(reason));
         zeroViewersTimer = setTimeout(() => {
             void requestStop(reason);
         }, delayMs);
@@ -193,31 +188,28 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     };
 
     const scheduleRetryIfStillIdle = (): void => {
-        if (stopRetryMs <= 0) {
-            return;
-        }
-        if (server.playerRegistry.count() > 0) {
-            return;
-        }
+        if (stopRetryMs <= 0 || server.playerRegistry.count() > 0) return;
+        publishStatus('idle_shutdown_pending', 'retry_after_stop_failure');
         scheduleStop('retry-after-failure', stopRetryMs);
     };
 
     const requestStop = async (reason: string): Promise<void> => {
-        if (stopInFlight) {
-            return;
-        }
+        if (stopInFlight) return;
         if (server.playerRegistry.count() > 0) {
             log('[idle-stop] Stop request aborted because viewers are connected.');
+            publishStatus('ready', 'viewer_connected_during_idle_shutdown');
             return;
         }
 
         stopInFlight = true;
         try {
+            publishStatus('stopping', mapStopReason(reason));
             log(`[idle-stop] Triggering stop (reason=${reason}).`);
             await stopCurrentInstance(awsCliPath, dryRun, log);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             log(`[idle-stop] Stop request failed: ${message}`);
+            publishStatus('idle_shutdown_pending', 'stop_request_failed');
             scheduleRetryIfStillIdle();
         } finally {
             stopInFlight = false;
@@ -228,25 +220,21 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         hasSeenViewer = true;
         clearZeroTimer();
         clearFirstViewerTimer();
+        publishStatus('ready', 'viewer_connected');
         log(`[idle-stop] Viewer connected (count=${server.playerRegistry.count()}).`);
     };
 
     const onViewerRemoved = (removedPlayerId?: string): void => {
-        // PlayerRegistry emits "removed" before it updates internal counts.
-        // Compute the effective post-removal count so idle-stop can trigger on last viewer.
         const rawCount = server.playerRegistry.count();
         const removedEntryStillPresent =
             typeof removedPlayerId === 'string' && removedPlayerId.length > 0
                 ? server.playerRegistry.has(removedPlayerId)
                 : false;
         const effectiveCount = Math.max(0, rawCount - (removedEntryStillPresent ? 1 : 0));
-
         log(
             `[idle-stop] Viewer disconnected (count=${effectiveCount}, rawCount=${rawCount}, removedEntryStillPresent=${removedEntryStillPresent}).`
         );
-        if (effectiveCount === 0) {
-            scheduleStop('grace-after-last-viewer', graceMs);
-        }
+        if (effectiveCount === 0) scheduleStop('grace-after-last-viewer', graceMs);
     };
 
     server.playerRegistry.on('added', onViewerAdded);
@@ -256,9 +244,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     if (!hasSeenViewer && firstViewerGraceMs > 0) {
         firstViewerTimer = setTimeout(() => {
             firstViewerTimer = null;
-            if (hasSeenViewer || server.playerRegistry.count() > 0) {
-                return;
-            }
+            if (hasSeenViewer || server.playerRegistry.count() > 0) return;
             void requestStop('no-viewer-ever-connected');
         }, firstViewerDelayMs + firstViewerGraceMs);
 

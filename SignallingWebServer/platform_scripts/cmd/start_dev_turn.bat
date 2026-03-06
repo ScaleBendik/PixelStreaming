@@ -9,6 +9,7 @@ set "AWS_EXE=aws"
 set "ENABLE_GIT_SYNC_BEFORE_START=true"
 set "DISCARD_LOCAL_GIT_CHANGES_ON_SYNC=true"
 set "REQUIRE_EC2_INSTANCE_FOR_GIT_SYNC=true"
+set "RUNTIME_STATUS_ENABLED=true"
 if not defined IMDS_INSTANCE_ID_RETRY_COUNT set "IMDS_INSTANCE_ID_RETRY_COUNT=12"
 if not defined IMDS_INSTANCE_ID_RETRY_DELAY_SECONDS set "IMDS_INSTANCE_ID_RETRY_DELAY_SECONDS=5"
 set "CONNECT_TICKET_AUTH_MODE=enforce"
@@ -101,6 +102,7 @@ if /i "%CONNECT_TICKET_AUTH_MODE%"=="off" (
 )
 
 :after_instance_id
+call :set_runtime_status "booting" "startup-script" "startup_sequence"
 
 if /i "%ENABLE_GIT_SYNC_BEFORE_START%"=="true" (
   if /i "%REQUIRE_EC2_INSTANCE_FOR_GIT_SYNC%"=="true" if not defined INSTANCE_ID (
@@ -114,6 +116,7 @@ if /i "%ENABLE_GIT_SYNC_BEFORE_START%"=="true" (
 )
 
 :continue_start
+call :set_runtime_status "waiting_for_streamer" "startup-script" "signalling_server_starting"
 cd /d "%ROOT%\platform_scripts\cmd"
 
 call start.bat -- ^
@@ -133,7 +136,10 @@ call start.bat -- ^
   --viewer_idle_first_viewer_grace_ms="%VIEWER_IDLE_FIRST_VIEWER_GRACE_MS%" ^
   --viewer_idle_first_viewer_delay_ms="%VIEWER_IDLE_FIRST_VIEWER_DELAY_MS%" ^
   --viewer_idle_stop_retry_ms="%VIEWER_IDLE_STOP_RETRY_MS%" ^
-  --viewer_idle_stop_dry_run="%VIEWER_IDLE_STOP_DRY_RUN%"
+  --viewer_idle_stop_dry_run="%VIEWER_IDLE_STOP_DRY_RUN%" ^
+  --runtime_status="%RUNTIME_STATUS_ENABLED%" ^
+  --runtime_status_aws_cli_path="%AWS_EXE%" ^
+  --runtime_status_source="signalling-server"
 
 exit /b %errorlevel%
 
@@ -143,6 +149,7 @@ for %%I in ("%ROOT%\..") do set "REPO_ROOT=%%~fI"
 where git >nul 2>nul
 if errorlevel 1 (
   echo ERROR: Git not found in PATH while ENABLE_GIT_SYNC_BEFORE_START=true.
+  call :set_runtime_status "runtime_fault" "startup-script" "git_not_found"
   exit /b 1
 )
 
@@ -152,6 +159,7 @@ echo Checking PixelStreaming repo for remote updates...
 git fetch --prune
 if errorlevel 1 (
   echo ERROR: git fetch failed.
+  call :set_runtime_status "runtime_fault" "startup-script" "git_fetch_failed"
   popd
   exit /b 1
 )
@@ -186,7 +194,6 @@ set "REPO_RESET_REQUIRED=0"
 if not "%CURRENT_HEAD%"=="%UPSTREAM_HEAD%" (
   set "REPO_RESET_REQUIRED=1"
 )
-
 if "%HAS_LOCAL_TRACKED_CHANGES%"=="1" (
   set "REPO_RESET_REQUIRED=1"
 )
@@ -199,6 +206,7 @@ if "%REPO_RESET_REQUIRED%"=="0" (
 
 if /i not "%DISCARD_LOCAL_GIT_CHANGES_ON_SYNC%"=="true" (
   echo ERROR: Local or branch differences detected, but DISCARD_LOCAL_GIT_CHANGES_ON_SYNC is disabled.
+  call :set_runtime_status "runtime_fault" "startup-script" "repo_dirty"
   popd
   exit /b 1
 )
@@ -211,9 +219,11 @@ if not "%CURRENT_HEAD%"=="%UPSTREAM_HEAD%" (
   echo Resetting repo from %CURRENT_HEAD% to %UPSTREAM_BRANCH% ^(%UPSTREAM_HEAD%^)...
 )
 
+call :set_runtime_status "updating_infra" "startup-script" "git_sync_in_progress"
 git reset --hard @{u}
 if errorlevel 1 (
   echo ERROR: git reset --hard @{u} failed.
+  call :set_runtime_status "runtime_fault" "startup-script" "git_reset_failed"
   popd
   exit /b 1
 )
@@ -222,9 +232,40 @@ echo Running build-all.bat after repository sync...
 call "%REPO_ROOT%\build-all.bat"
 if errorlevel 1 (
   echo ERROR: build-all.bat failed.
+  call :set_runtime_status "runtime_fault" "startup-script" "build_failed"
   popd
   exit /b 1
 )
 
 popd
+exit /b 0
+
+:set_runtime_status
+if /i not "%RUNTIME_STATUS_ENABLED%"=="true" exit /b 0
+if not defined INSTANCE_ID exit /b 0
+set "STATUS_VALUE=%~1"
+set "STATUS_SOURCE=%~2"
+set "STATUS_REASON=%~3"
+set "STATUS_VERSION=%~4"
+if not defined STATUS_SOURCE set "STATUS_SOURCE=startup-script"
+
+set "UTC_TIMESTAMP="
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "[DateTime]::UtcNow.ToString('o')"`) do (
+  set "UTC_TIMESTAMP=%%I"
+)
+if not defined UTC_TIMESTAMP exit /b 0
+
+%AWS_CALL% ec2 create-tags --region "%REGION%" --resources "%INSTANCE_ID%" --tags ^
+  "Key=ScaleWorldRuntimeStatus,Value=%STATUS_VALUE%" ^
+  "Key=ScaleWorldRuntimeStatusAtUtc,Value=%UTC_TIMESTAMP%" ^
+  "Key=ScaleWorldRuntimeStatusSource,Value=%STATUS_SOURCE%" ^
+  "Key=ScaleWorldRuntimeStatusReason,Value=%STATUS_REASON%" ^
+  "Key=ScaleWorldRuntimeStatusVersion,Value=%STATUS_VERSION%" >nul 2>nul
+
+if errorlevel 1 (
+  echo WARNING: Failed to publish runtime status "%STATUS_VALUE%" ^(reason=%STATUS_REASON%^).
+  exit /b 0
+)
+
+echo Published runtime status "%STATUS_VALUE%" ^(reason=%STATUS_REASON%^).
 exit /b 0

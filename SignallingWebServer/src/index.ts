@@ -16,9 +16,10 @@ import { Command, Option } from 'commander';
 import { initialize } from 'express-openapi';
 import { ConnectTicketAuthMode, createPlayerVerifyClient } from './ConnectTicketAuth';
 import { wireViewerIdleStop } from './viewer-idle-stop';
+import { createRuntimeStatusPublisher, wireSignallingRuntimeStatus } from './runtime-status';
 
-// eslint-disable-next-line  @typescript-eslint/no-unsafe-assignment
-const pjson = require('../package.json');
+type PackageJsonMetadata = { description?: string; version?: string; name?: string };
+const pjson = require('../package.json') as PackageJsonMetadata;
 
 const ENV_PLACEHOLDER_REGEX = /\$\{ENV:([A-Z0-9_]+)\}/g;
 
@@ -91,10 +92,8 @@ if (!configArgsParser.no_config) {
 const program = new Command();
 program
     .name('node dist/index.js')
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    .description(pjson.description)
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    .version(pjson.version);
+    .description(pjson.description ?? '')
+    .version(pjson.version ?? '');
 
 // For any switch that doesn't take an argument, like --serve, its important to give it a default value.
 // Without the default, not supplying the default will mean the option is `undefined` in
@@ -320,6 +319,26 @@ program
         config_file.viewer_idle_stop_dry_run ?? 'false'
     )
     .option(
+        '--runtime_status <value>',
+        'Enables EC2 runtime status tag updates. true/false',
+        config_file.runtime_status ?? 'true'
+    )
+    .option(
+        '--runtime_status_aws_cli_path <path>',
+        'AWS CLI executable used for EC2 runtime status tag writes (default: aws).',
+        config_file.runtime_status_aws_cli_path || 'aws'
+    )
+    .option(
+        '--runtime_status_source <value>',
+        'Source label written with runtime status tags.',
+        config_file.runtime_status_source || 'signalling-server'
+    )
+    .option(
+        '--runtime_status_version <value>',
+        'Version label written with runtime status tags.',
+        config_file.runtime_status_version || ''
+    )
+    .option(
         '--log_config',
         'Will print the program configuration on startup.',
         config_file.log_config || false
@@ -405,7 +424,6 @@ if (options.peer_options_streamer_file) {
     );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 Logger.info(`${pjson.name} v${pjson.version} starting...`);
 
 const missingEnvVars = new Set<string>();
@@ -513,6 +531,18 @@ if (options.serve) {
 }
 
 const signallingServer = new SignallingServer(serverOpts);
+const runtimeStatusPublisher = createRuntimeStatusPublisher({
+    enabled: options.runtime_status,
+    awsCliPath: options.runtime_status_aws_cli_path,
+    source: String(options.runtime_status_source || 'signalling-server'),
+    version: String(options.runtime_status_version || pjson.version || ''),
+    logger: (message: string) => Logger.info(message)
+});
+
+wireSignallingRuntimeStatus(signallingServer, runtimeStatusPublisher, {
+    logger: (message: string) => Logger.info(message),
+    source: String(options.runtime_status_source || 'signalling-server')
+});
 
 wireViewerIdleStop(signallingServer, {
     enabled: options.viewer_idle_stop,
@@ -522,7 +552,8 @@ wireViewerIdleStop(signallingServer, {
     stopRetryMs: options.viewer_idle_stop_retry_ms,
     awsCliPath: options.viewer_idle_aws_cli_path,
     dryRun: options.viewer_idle_stop_dry_run,
-    logger: (message: string) => Logger.info(message)
+    logger: (message: string) => Logger.info(message),
+    runtimeStatusPublisher
 });
 
 if (options.stdin) {
