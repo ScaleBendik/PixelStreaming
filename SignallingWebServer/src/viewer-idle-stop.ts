@@ -228,7 +228,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         clearIdleStatusHeartbeat();
         if (server.playerRegistry.count() > 0) {
             log('[idle-stop] Stop request aborted because viewers are connected.');
-            publishStatus('ready', 'viewer_connected_during_idle_shutdown');
+            publishStatus('ready', 'viewer_connected_during_idle_shutdown', true);
             return;
         }
 
@@ -252,7 +252,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         clearZeroTimer();
         clearFirstViewerTimer();
         clearIdleStatusHeartbeat();
-        publishStatus('ready', 'viewer_connected');
+        publishStatus('ready', 'viewer_connected', true);
         log(`[idle-stop] Viewer connected (count=${server.playerRegistry.count()}).`);
     };
 
