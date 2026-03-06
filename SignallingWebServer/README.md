@@ -157,6 +157,29 @@ Operational notes:
    - `VIEWER_IDLE_STOP_RETRY_MS`
    - `VIEWER_IDLE_STOP_DRY_RUN`
 
+
+### Experimental runtime watchdog
+
+A standalone first-pass Windows watchdog scaffold is now available for validating runtime supervision without changing the default startup path.
+
+Files:
+
+- `platform_scripts/powershell/watchdog.ps1`
+- `platform_scripts/cmd/start_watchdog.bat`
+- `../Docs/watchdog-runbook.md`
+
+Current watchdog capabilities:
+
+1. monitor Unreal and/or Wilbur processes
+2. publish `runtime_fault` and `booting` runtime tags
+3. optionally run pre-restart, restart, and post-restart commands
+4. optionally terminate matched processes before recovery
+
+Important:
+
+1. This watchdog is not wired into `start_dev_turn.bat` yet.
+2. Start with dry-run mode.
+3. Runtime status publishing requires `ec2:CreateTags` permission for the approved `ScaleWorldRuntime*` tag set.
 Given these options, to start the server with the closest behaviour as the old cirrus, you would invoke,
 ```
 npm start -- --console_messages --https_redirect verbose --serve --log_config --http_root www --homepage player.html

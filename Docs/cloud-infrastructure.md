@@ -121,6 +121,16 @@ Both use env placeholders:
 3. Exports env vars for Wilbur process.
 4. Starts Wilbur with split peer option files.
 
+### Watchdog Scaffold (Implemented, Not Default)
+
+A standalone first-pass watchdog scaffold now exists for manual validation:
+
+- `SignallingWebServer/platform_scripts/powershell/watchdog.ps1`
+- `SignallingWebServer/platform_scripts/cmd/start_watchdog.bat`
+- `Docs/watchdog-runbook.md`
+
+It is not yet wired into the default streamer startup path.
+
 ## Deployment and Update Flow (Streamer Instances)
 
 Repo root helpers (implemented):
@@ -188,7 +198,7 @@ Note:
 - Connect ticket issuance + signalling validation
 - Dedicated TURN sizing/failover hardening
 - Short-lived TURN credentials from API
-- In-house watchdog replacement for runtime supervision
+- In-house watchdog replacement for runtime supervision (standalone scaffold added; default integration still pending)
 - AMI readiness validation of fully automated bootstrap
 
 ## Change Log
