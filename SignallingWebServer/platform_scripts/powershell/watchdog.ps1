@@ -198,7 +198,7 @@ function Find-MatchingProcesses {
         [pscustomobject]$Rule
     )
 
-    @(
+    $matches = @(
         $Snapshot | Where-Object {
             $name = [string]($_.Name)
             if (-not (Test-NameMatch -Name $name -Pattern $Rule.ProcessName)) {
@@ -213,8 +213,9 @@ function Find-MatchingProcesses {
             return $commandLine.IndexOf($Rule.CommandLinePattern, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
         }
     )
-}
 
+    return ,$matches
+}
 function Invoke-CommandString {
     param(
         [string]$Command,
