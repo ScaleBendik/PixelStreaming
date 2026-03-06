@@ -6,6 +6,7 @@ set "REGION=eu-north-1"
 set "TURN_USER_PARAM=/pixelstreaming/turn/username"
 set "TURN_CREDENTIAL_PARAM=/pixelstreaming/turn/credential"
 set "AWS_EXE=aws"
+set "ENABLE_GIT_SYNC_BEFORE_START=false"
 set "CONNECT_TICKET_AUTH_MODE=enforce"
 set "CONNECT_TICKET_ISSUER=scaleworld-dev-connect-ticket"
 set "CONNECT_TICKET_AUDIENCE=scaleworld-pixelstreaming"
@@ -75,6 +76,11 @@ if not defined INSTANCE_ID (
   echo Detected EC2 instance id: %INSTANCE_ID%
 )
 
+if /i "%ENABLE_GIT_SYNC_BEFORE_START%"=="true" (
+  call :sync_repo_and_build
+  if errorlevel 1 exit /b 1
+)
+
 cd /d "%ROOT%\platform_scripts\cmd"
 
 call start.bat -- ^
@@ -95,3 +101,65 @@ call start.bat -- ^
   --viewer_idle_first_viewer_delay_ms="%VIEWER_IDLE_FIRST_VIEWER_DELAY_MS%" ^
   --viewer_idle_stop_retry_ms="%VIEWER_IDLE_STOP_RETRY_MS%" ^
   --viewer_idle_stop_dry_run="%VIEWER_IDLE_STOP_DRY_RUN%"
+
+exit /b %errorlevel%
+
+:sync_repo_and_build
+for %%I in ("%ROOT%\..") do set "REPO_ROOT=%%~fI"
+
+where git >nul 2>nul
+if errorlevel 1 (
+  echo ERROR: Git not found in PATH while ENABLE_GIT_SYNC_BEFORE_START=true.
+  exit /b 1
+)
+
+pushd "%REPO_ROOT%"
+
+echo Checking PixelStreaming repo for remote updates...
+git fetch --prune
+if errorlevel 1 (
+  echo ERROR: git fetch failed.
+  popd
+  exit /b 1
+)
+
+set "UPSTREAM_BRANCH="
+for /f "usebackq delims=" %%I in (`git rev-parse --abbrev-ref --symbolic-full-name @{u} 2^>nul`) do (
+  set "UPSTREAM_BRANCH=%%I"
+)
+
+if not defined UPSTREAM_BRANCH (
+  echo WARNING: No upstream branch configured. Skipping git pull/build step.
+  popd
+  exit /b 0
+)
+
+set "REMOTE_UPDATES=0"
+for /f "usebackq delims=" %%I in (`git rev-list --count HEAD..@{u}`) do (
+  set "REMOTE_UPDATES=%%I"
+)
+
+if "%REMOTE_UPDATES%"=="0" (
+  echo No remote updates detected on %UPSTREAM_BRANCH%.
+  popd
+  exit /b 0
+)
+
+echo %REMOTE_UPDATES% remote update^(s^) detected on %UPSTREAM_BRANCH%. Pulling latest changes...
+git pull --ff-only
+if errorlevel 1 (
+  echo ERROR: git pull --ff-only failed.
+  popd
+  exit /b 1
+)
+
+echo Running build-all.bat after git update...
+call "%REPO_ROOT%\build-all.bat"
+if errorlevel 1 (
+  echo ERROR: build-all.bat failed.
+  popd
+  exit /b 1
+)
+
+popd
+exit /b 0
