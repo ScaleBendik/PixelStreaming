@@ -16,8 +16,8 @@ To use the AFK system, set the following properties in the [`Config`](https://gi
 
 | Property | Default | Description |
 |    ---   |   ---   |     ---     |
-| `Flags.AFKDetection` | `false` | Determines whether the AFK system should check for user interactions. |
-| `NumericParameters.AFKTimeoutSecs` | `120` | Sets the maximum time interval, in seconds, that the user can remain away from keyboard before seeing a warning overlay in the player widget. |
+| `Flags.AFKDetection` | `true` | Determines whether the AFK system should check for user interactions. |
+| `NumericParameters.AFKTimeoutSecs` | `300` | Sets the maximum time interval, in seconds, that the user can remain away from keyboard before seeing a warning overlay in the player widget. |
 | `NumericParameters.AFKCountdown` | `10` | Sets the duration of the countdown, in seconds, before the stream is terminated if a user does not respond in time. |
 
 For example, to activate AFK Detection and set it to kick in after five minutes, you would do the following in your implementation:

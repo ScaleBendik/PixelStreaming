@@ -431,7 +431,7 @@ export class Config {
                 'Timeout the experience if user is AFK for a period.',
                 settings && Object.prototype.hasOwnProperty.call(settings, Flags.AFKDetection)
                     ? settings[Flags.AFKDetection]
-                    : false,
+                    : true,
                 useUrlParams
             )
         );
@@ -622,7 +622,7 @@ export class Config {
                 null /*max*/,
                 settings && Object.prototype.hasOwnProperty.call(settings, NumericParameters.AFKTimeoutSecs)
                     ? settings[NumericParameters.AFKTimeoutSecs]
-                    : 120 /*value*/,
+                    : 300 /*value*/,
                 useUrlParams
             )
         );
