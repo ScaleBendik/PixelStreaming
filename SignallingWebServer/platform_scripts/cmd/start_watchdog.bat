@@ -13,5 +13,13 @@ if not defined WATCHDOG_UNREAL_PROCESS_NAME (
   set "WATCHDOG_UNREAL_PROCESS_NAME=ScaleWorld"
 )
 
+if not defined WATCHDOG_TERMINATE_MATCHED_PROCESSES (
+  set "WATCHDOG_TERMINATE_MATCHED_PROCESSES=true"
+)
+
+if not defined WATCHDOG_RESTART_COMMAND (
+  set "WATCHDOG_RESTART_COMMAND=""%SCRIPT_DIR%start_streamer_stack.bat"" --recovery"
+)
+
 powershell -NoProfile -ExecutionPolicy Bypass -File "%WATCHDOG_SCRIPT%" %*
 exit /b %errorlevel%

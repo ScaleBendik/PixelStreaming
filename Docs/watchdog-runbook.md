@@ -1,13 +1,20 @@
-# Runtime Watchdog (Standalone Scaffold)
+# Runtime Watchdog
 
-Last updated: 2026-03-06
+Last updated: 2026-03-09
 
 ## Purpose
 
-This is the first in-house watchdog scaffold for Windows streamer instances.
+This is the in-house Windows runtime supervisor for ScaleWorld streamer instances.
 
-It is intentionally standalone and not wired into default startup yet.
-The goal is to validate process supervision and restart behavior without destabilizing the current startup path.
+The intended stack is:
+
+1. `start_streamer_stack.bat` launches the streaming stack
+2. `start_dev_turn.bat` starts Wilbur and loads runtime secrets
+3. `start_unreal.bat` launches the Unreal application
+4. `start_watchdog.bat` runs the watchdog and uses `start_streamer_stack.bat --recovery` for full-stack recovery
+
+`start_dev_turn.bat` is now the Wilbur-specific startup script.
+`start_streamer_stack.bat` is the canonical Windows entrypoint for the full streamer stack.
 
 ## Current Scope
 
@@ -17,19 +24,24 @@ The watchdog can:
 2. publish `runtime_fault` when required processes disappear
 3. optionally run pre-restart, restart, and post-restart commands
 4. optionally terminate matched processes before recovery
-5. publish `booting` with reason `watchdog_restart_pending` before restart
+5. trigger full-stack recovery through `start_streamer_stack.bat --recovery`
+6. publish `booting` with reason `watchdog_restart_pending` before recovery
 
 The watchdog does not yet:
 
-1. install itself as a Windows service
-2. refresh TURN credentials on its own
+1. run as a Windows service by default
+2. detect app-level hung-but-present Unreal states
 3. integrate with Session Manager callback APIs
-4. replace the current startup script automatically
+4. fully replace legacy crash tooling in all environments
 
 ## Files
 
-- PowerShell watchdog: `SignallingWebServer/platform_scripts/powershell/watchdog.ps1`
-- Batch launcher: `SignallingWebServer/platform_scripts/cmd/start_watchdog.bat`
+- Canonical stack launcher: `SignallingWebServer/platform_scripts/cmd/start_streamer_stack.bat`
+- Compatibility wrapper: `SignallingWebServer/platform_scripts/cmd/start_stack.bat`
+- Wilbur launcher: `SignallingWebServer/platform_scripts/cmd/start_dev_turn.bat`
+- Unreal launcher: `SignallingWebServer/platform_scripts/cmd/start_unreal.bat`
+- Watchdog PowerShell script: `SignallingWebServer/platform_scripts/powershell/watchdog.ps1`
+- Watchdog batch launcher: `SignallingWebServer/platform_scripts/cmd/start_watchdog.bat`
 
 ## Required Inputs
 
@@ -38,17 +50,17 @@ Environment variables or equivalent PowerShell parameters:
 - `WATCHDOG_UNREAL_PROCESS_NAME`
 - `WATCHDOG_WILBUR_PROCESS_NAME` (default `node.exe`)
 - `WATCHDOG_WILBUR_COMMANDLINE_PATTERN` (default `SignallingWebServer`)
-- `WATCHDOG_RESTART_COMMAND`
 
 Recommended optional inputs:
 
-- `WATCHDOG_POLL_INTERVAL_SECONDS` (default `15`)
+- `WATCHDOG_RESTART_COMMAND` (defaults to `start_streamer_stack.bat --recovery` in `start_watchdog.bat`)
+- `WATCHDOG_POLL_INTERVAL_SECONDS` (default `10`)
 - `WATCHDOG_FAILURE_THRESHOLD` (default `3`)
-- `WATCHDOG_RESTART_COOLDOWN_SECONDS` (default `120`)
-- `WATCHDOG_POST_RESTART_GRACE_SECONDS` (default `30`)
+- `WATCHDOG_RESTART_COOLDOWN_SECONDS` (default `10`)
+- `WATCHDOG_POST_RESTART_GRACE_SECONDS` (default `15`)
 - `WATCHDOG_PRE_RESTART_COMMAND`
 - `WATCHDOG_POST_RESTART_COMMAND`
-- `WATCHDOG_TERMINATE_MATCHED_PROCESSES` (default `false`)
+- `WATCHDOG_TERMINATE_MATCHED_PROCESSES` (default `true` in `start_watchdog.bat`)
 - `WATCHDOG_DRY_RUN` (default `false`)
 - `WATCHDOG_RUN_ONCE` (default `false`)
 - `WATCHDOG_LOG_PATH`
@@ -64,16 +76,20 @@ Runtime status publishing inputs:
 
 ```powershell
 $env:WATCHDOG_UNREAL_PROCESS_NAME = 'ScaleWorld'
-$env:WATCHDOG_RESTART_COMMAND = '"C:\PixelStreaming\PixelStreaming\SignallingWebServer\platform_scripts\cmd\start_dev_turn.bat"'
-$env:WATCHDOG_RUNTIME_STATUS_ENABLED = 'true'
 $env:WATCHDOG_DRY_RUN = 'true'
 
 C:\PixelStreaming\PixelStreaming\SignallingWebServer\platform_scripts\cmd\start_watchdog.bat
 ```
 
+Default behavior from `start_watchdog.bat`:
+
+- Unreal process: `ScaleWorld`
+- terminate matched processes before restart: `true`
+- restart command: `start_streamer_stack.bat --recovery`
+
 ## Runtime Status Behavior
 
-When enabled, the watchdog writes the same generic runtime tags already used by startup, Wilbur, and idle-stop:
+When enabled, the watchdog writes the shared runtime tag namespace:
 
 - `ScaleWorldRuntimeStatus`
 - `ScaleWorldRuntimeStatusAtUtc`
@@ -98,16 +114,21 @@ If runtime status publishing is enabled, the instance role must allow `ec2:Creat
 
 ## Operational Notes
 
-1. Start with `WATCHDOG_DRY_RUN=true`.
-2. Keep the watchdog out of default startup until restart behavior is validated on a dev instance.
-3. If you run Wilbur in an interactive console, continue to account for Windows console and QuickEdit pause behavior during tests.
-4. If recovery should stop stale processes before relaunch, enable `WATCHDOG_TERMINATE_MATCHED_PROCESSES=true`.
-5. The restart command is launched detached, so point it at a command that is safe to run in a separate `cmd.exe` process.
+1. Use `start_streamer_stack.bat` as the normal Windows boot/start entrypoint.
+2. Use `start_dev_turn.bat` directly only for focused Wilbur troubleshooting.
+3. Start with `WATCHDOG_DRY_RUN=true` until fault detection and restart behavior are validated on a dev instance.
+4. Keep legacy crash tooling only until watchdog restart flow is verified end-to-end in dev.
+5. Recovery should restart the whole stack through `start_streamer_stack.bat --recovery`, not only one process.
+6. `start_dev_turn.bat` reloads TURN credentials and the connect-ticket signing key on restart, so recovery should continue to flow through that script.
 
-## Recommended Next Steps
+## Recommended Validation Path
 
-1. Validate process detection on one dev instance.
-2. Validate dry-run fault detection for Unreal-only failure.
-3. Validate dry-run fault detection for Wilbur-only failure.
-4. Validate restart command against the actual AMI launch path.
-5. After that, decide whether to wire the watchdog into startup or run it as a service or scheduled task.
+1. Validate process detection for Unreal-only failure.
+2. Validate process detection for Wilbur-only failure.
+3. Validate full-stack recovery using the default restart command.
+4. Confirm runtime status transitions during recovery:
+   - `runtime_fault`
+   - `booting`
+   - `waiting_for_streamer`
+   - `ready`
+5. After that, decide when to remove the legacy crash monitor from the default AMI startup path.

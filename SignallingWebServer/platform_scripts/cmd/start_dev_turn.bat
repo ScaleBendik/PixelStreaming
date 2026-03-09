@@ -5,17 +5,19 @@ set "ROOT=C:\PixelStreaming\PixelStreaming\SignallingWebServer"
 set "REGION=eu-north-1"
 set "TURN_USER_PARAM=/pixelstreaming/turn/username"
 set "TURN_CREDENTIAL_PARAM=/pixelstreaming/turn/credential"
+set "CONNECT_TICKET_SIGNING_KEY_PARAM=/pixelstreaming/connect-ticket/signing-key"
 set "AWS_EXE=aws"
 set "ENABLE_GIT_SYNC_BEFORE_START=true"
 set "DISCARD_LOCAL_GIT_CHANGES_ON_SYNC=true"
 set "REQUIRE_EC2_INSTANCE_FOR_GIT_SYNC=true"
 set "RUNTIME_STATUS_ENABLED=true"
+if not defined STARTUP_RUNTIME_STATUS_HEARTBEAT_INTERVAL_SECONDS set "STARTUP_RUNTIME_STATUS_HEARTBEAT_INTERVAL_SECONDS=30"
 if not defined IMDS_INSTANCE_ID_RETRY_COUNT set "IMDS_INSTANCE_ID_RETRY_COUNT=12"
 if not defined IMDS_INSTANCE_ID_RETRY_DELAY_SECONDS set "IMDS_INSTANCE_ID_RETRY_DELAY_SECONDS=5"
 set "CONNECT_TICKET_AUTH_MODE=enforce"
 set "CONNECT_TICKET_ISSUER=scaleworld-dev-connect-ticket"
 set "CONNECT_TICKET_AUDIENCE=scaleworld-pixelstreaming"
-set "CONNECT_TICKET_SIGNING_KEY=sw-dev-ct-20260305-jvL9N8kQ2mH4rT6yU1pW3sX5cV7bN9fK2dG4hJ6k"
+if not defined CONNECT_TICKET_SIGNING_KEY set "CONNECT_TICKET_SIGNING_KEY="
 set "CONNECT_TICKET_ROUTE_HOST_SUFFIX=stream.scaleworld.net"
 if not defined PLAYER_KEEPALIVE set "PLAYER_KEEPALIVE=true"
 if not defined PLAYER_KEEPALIVE_INTERVAL_MS set "PLAYER_KEEPALIVE_INTERVAL_MS=30000"
@@ -26,6 +28,10 @@ if not defined VIEWER_IDLE_FIRST_VIEWER_GRACE_MS set "VIEWER_IDLE_FIRST_VIEWER_G
 if not defined VIEWER_IDLE_FIRST_VIEWER_DELAY_MS set "VIEWER_IDLE_FIRST_VIEWER_DELAY_MS=0"
 if not defined VIEWER_IDLE_STOP_RETRY_MS set "VIEWER_IDLE_STOP_RETRY_MS=60000"
 if not defined VIEWER_IDLE_STOP_DRY_RUN set "VIEWER_IDLE_STOP_DRY_RUN=false"
+
+set "INSTANCE_ID="
+set "STARTUP_HEARTBEAT_STATE_FILE="
+set "STARTUP_HEARTBEAT_STOP_FILE="
 
 where aws >nul 2>nul
 if errorlevel 1 (
@@ -68,7 +74,21 @@ if not defined TURN_CREDENTIAL (
 
 echo Loaded TURN credentials from SSM parameter store.
 
-set "INSTANCE_ID="
+if /i not "%CONNECT_TICKET_AUTH_MODE%"=="off" (
+  if not defined CONNECT_TICKET_SIGNING_KEY (
+    for /f "usebackq delims=" %%I in (`%AWS_CALL% ssm get-parameter --name "%CONNECT_TICKET_SIGNING_KEY_PARAM%" --with-decryption --region "%REGION%" --query Parameter.Value --output text`) do (
+      set "CONNECT_TICKET_SIGNING_KEY=%%I"
+    )
+  )
+
+  if not defined CONNECT_TICKET_SIGNING_KEY (
+    echo ERROR: Failed to load connect-ticket signing key from SSM parameter "%CONNECT_TICKET_SIGNING_KEY_PARAM%".
+    exit /b 1
+  )
+
+  echo Loaded connect-ticket signing key from SSM parameter store.
+)
+
 set /a IMDS_INSTANCE_ID_ATTEMPT=0
 
 :read_instance_id_retry
@@ -82,9 +102,7 @@ if defined INSTANCE_ID (
   goto after_instance_id
 )
 
-if %IMDS_INSTANCE_ID_ATTEMPT% geq %IMDS_INSTANCE_ID_RETRY_COUNT% (
-  goto instance_id_failed
-)
+if %IMDS_INSTANCE_ID_ATTEMPT% geq %IMDS_INSTANCE_ID_RETRY_COUNT% goto instance_id_failed
 
 echo WARNING: Failed to read EC2 instance id from IMDSv2 metadata endpoint on attempt %IMDS_INSTANCE_ID_ATTEMPT% of %IMDS_INSTANCE_ID_RETRY_COUNT%.
 echo WARNING: Retrying in %IMDS_INSTANCE_ID_RETRY_DELAY_SECONDS% seconds...
@@ -102,7 +120,9 @@ if /i "%CONNECT_TICKET_AUTH_MODE%"=="off" (
 )
 
 :after_instance_id
+call :reset_startup_heartbeat
 call :set_runtime_status "booting" "startup-script" "startup_sequence"
+call :start_startup_heartbeat
 
 if /i "%ENABLE_GIT_SYNC_BEFORE_START%"=="true" (
   if /i "%REQUIRE_EC2_INSTANCE_FOR_GIT_SYNC%"=="true" if not defined INSTANCE_ID (
@@ -116,6 +136,7 @@ if /i "%ENABLE_GIT_SYNC_BEFORE_START%"=="true" (
 )
 
 :continue_start
+call :stop_startup_heartbeat
 call :set_runtime_status "waiting_for_streamer" "startup-script" "signalling_server_starting"
 cd /d "%ROOT%\platform_scripts\cmd"
 
@@ -150,6 +171,7 @@ where git >nul 2>nul
 if errorlevel 1 (
   echo ERROR: Git not found in PATH while ENABLE_GIT_SYNC_BEFORE_START=true.
   call :set_runtime_status "runtime_fault" "startup-script" "git_not_found"
+  call :stop_startup_heartbeat
   exit /b 1
 )
 
@@ -160,6 +182,7 @@ git fetch --prune
 if errorlevel 1 (
   echo ERROR: git fetch failed.
   call :set_runtime_status "runtime_fault" "startup-script" "git_fetch_failed"
+  call :stop_startup_heartbeat
   popd
   exit /b 1
 )
@@ -191,12 +214,8 @@ for /f "usebackq delims=" %%I in (`git status --porcelain --untracked-files=no`)
 )
 
 set "REPO_RESET_REQUIRED=0"
-if not "%CURRENT_HEAD%"=="%UPSTREAM_HEAD%" (
-  set "REPO_RESET_REQUIRED=1"
-)
-if "%HAS_LOCAL_TRACKED_CHANGES%"=="1" (
-  set "REPO_RESET_REQUIRED=1"
-)
+if not "%CURRENT_HEAD%"=="%UPSTREAM_HEAD%" set "REPO_RESET_REQUIRED=1"
+if "%HAS_LOCAL_TRACKED_CHANGES%"=="1" set "REPO_RESET_REQUIRED=1"
 
 if "%REPO_RESET_REQUIRED%"=="0" (
   echo Repo already matches %UPSTREAM_BRANCH% and has no tracked local changes.
@@ -207,23 +226,20 @@ if "%REPO_RESET_REQUIRED%"=="0" (
 if /i not "%DISCARD_LOCAL_GIT_CHANGES_ON_SYNC%"=="true" (
   echo ERROR: Local or branch differences detected, but DISCARD_LOCAL_GIT_CHANGES_ON_SYNC is disabled.
   call :set_runtime_status "runtime_fault" "startup-script" "repo_dirty"
+  call :stop_startup_heartbeat
   popd
   exit /b 1
 )
 
-if "%HAS_LOCAL_TRACKED_CHANGES%"=="1" (
-  echo Discarding tracked local repository changes before startup sync...
-)
-
-if not "%CURRENT_HEAD%"=="%UPSTREAM_HEAD%" (
-  echo Resetting repo from %CURRENT_HEAD% to %UPSTREAM_BRANCH% ^(%UPSTREAM_HEAD%^)...
-)
+if "%HAS_LOCAL_TRACKED_CHANGES%"=="1" echo Discarding tracked local repository changes before startup sync...
+if not "%CURRENT_HEAD%"=="%UPSTREAM_HEAD%" echo Resetting repo from %CURRENT_HEAD% to %UPSTREAM_BRANCH% ^(%UPSTREAM_HEAD%^)...
 
 call :set_runtime_status "updating_infra" "startup-script" "git_sync_in_progress"
 git reset --hard @{u}
 if errorlevel 1 (
   echo ERROR: git reset --hard @{u} failed.
   call :set_runtime_status "runtime_fault" "startup-script" "git_reset_failed"
+  call :stop_startup_heartbeat
   popd
   exit /b 1
 )
@@ -233,11 +249,44 @@ call "%REPO_ROOT%\build-all.bat"
 if errorlevel 1 (
   echo ERROR: build-all.bat failed.
   call :set_runtime_status "runtime_fault" "startup-script" "build_failed"
+  call :stop_startup_heartbeat
   popd
   exit /b 1
 )
 
 popd
+exit /b 0
+
+:reset_startup_heartbeat
+if not defined INSTANCE_ID exit /b 0
+set "STARTUP_HEARTBEAT_TOKEN=%INSTANCE_ID%-%RANDOM%%RANDOM%"
+set "STARTUP_HEARTBEAT_STATE_FILE=%TEMP%\scaleworld-startup-status-%STARTUP_HEARTBEAT_TOKEN%.state"
+set "STARTUP_HEARTBEAT_STOP_FILE=%TEMP%\scaleworld-startup-status-%STARTUP_HEARTBEAT_TOKEN%.stop"
+if exist "%STARTUP_HEARTBEAT_STATE_FILE%" del /f /q "%STARTUP_HEARTBEAT_STATE_FILE%" >nul 2>nul
+if exist "%STARTUP_HEARTBEAT_STOP_FILE%" del /f /q "%STARTUP_HEARTBEAT_STOP_FILE%" >nul 2>nul
+exit /b 0
+
+:start_startup_heartbeat
+if /i not "%RUNTIME_STATUS_ENABLED%"=="true" exit /b 0
+if not defined INSTANCE_ID exit /b 0
+if not defined STARTUP_HEARTBEAT_STATE_FILE exit /b 0
+start "ScaleWorld Startup Status Heartbeat" /min powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\platform_scripts\powershell\runtime-status-heartbeat.ps1" -InstanceId "%INSTANCE_ID%" -Region "%REGION%" -AwsCliPath "%AWS_EXE%" -StateFilePath "%STARTUP_HEARTBEAT_STATE_FILE%" -StopFilePath "%STARTUP_HEARTBEAT_STOP_FILE%" -IntervalSeconds %STARTUP_RUNTIME_STATUS_HEARTBEAT_INTERVAL_SECONDS%
+exit /b 0
+
+:stop_startup_heartbeat
+if not defined STARTUP_HEARTBEAT_STOP_FILE exit /b 0
+> "%STARTUP_HEARTBEAT_STOP_FILE%" echo stop
+exit /b 0
+
+:write_startup_status_state
+if not defined STARTUP_HEARTBEAT_STATE_FILE exit /b 0
+> "%STARTUP_HEARTBEAT_STATE_FILE%" (
+  echo status=%STATUS_VALUE%
+  echo source=%STATUS_SOURCE%
+  echo reason=%STATUS_REASON%
+  echo version=%STATUS_VERSION%
+  echo status_at_utc=%UTC_TIMESTAMP%
+)
 exit /b 0
 
 :set_runtime_status
@@ -250,14 +299,15 @@ set "STATUS_VERSION=%~4"
 if not defined STATUS_SOURCE set "STATUS_SOURCE=startup-script"
 
 set "UTC_TIMESTAMP="
-for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "[DateTime]::UtcNow.ToString('o')"`) do (
-  set "UTC_TIMESTAMP=%%I"
-)
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "[DateTime]::UtcNow.ToString('o')"`) do set "UTC_TIMESTAMP=%%I"
 if not defined UTC_TIMESTAMP exit /b 0
+
+call :write_startup_status_state
 
 %AWS_CALL% ec2 create-tags --region "%REGION%" --resources "%INSTANCE_ID%" --tags ^
   "Key=ScaleWorldRuntimeStatus,Value=%STATUS_VALUE%" ^
   "Key=ScaleWorldRuntimeStatusAtUtc,Value=%UTC_TIMESTAMP%" ^
+  "Key=ScaleWorldRuntimeStatusHeartbeatAtUtc,Value=%UTC_TIMESTAMP%" ^
   "Key=ScaleWorldRuntimeStatusSource,Value=%STATUS_SOURCE%" ^
   "Key=ScaleWorldRuntimeStatusReason,Value=%STATUS_REASON%" ^
   "Key=ScaleWorldRuntimeStatusVersion,Value=%STATUS_VERSION%" >nul 2>nul

@@ -160,12 +160,15 @@ Operational notes:
 
 ### Experimental runtime watchdog
 
-A standalone first-pass Windows watchdog scaffold is now available for validating runtime supervision without changing the default startup path.
+A Windows watchdog and stack launcher are now available for validating full streamer supervision.
 
 Files:
 
-- `platform_scripts/powershell/watchdog.ps1`
+- `platform_scripts/cmd/start_streamer_stack.bat`
+- `platform_scripts/cmd/start_dev_turn.bat`
+- `platform_scripts/cmd/start_unreal.bat`
 - `platform_scripts/cmd/start_watchdog.bat`
+- `platform_scripts/powershell/watchdog.ps1`
 - `../Docs/watchdog-runbook.md`
 
 Current watchdog capabilities:
@@ -174,12 +177,14 @@ Current watchdog capabilities:
 2. publish `runtime_fault` and `booting` runtime tags
 3. optionally run pre-restart, restart, and post-restart commands
 4. optionally terminate matched processes before recovery
+5. recover through `start_streamer_stack.bat --recovery`
 
 Important:
 
-1. This watchdog is not wired into `start_dev_turn.bat` yet.
-2. Start with dry-run mode.
-3. Runtime status publishing requires `ec2:CreateTags` permission for the approved `ScaleWorldRuntime*` tag set.
+1. `start_streamer_stack.bat` is the canonical Windows launcher for Wilbur + Unreal + watchdog.
+2. `start_dev_turn.bat` remains the Wilbur-specific launcher and can still be run directly for focused troubleshooting.
+3. Start with dry-run mode before trusting automatic recovery in dev.
+4. Runtime status publishing requires `ec2:CreateTags` permission for the approved `ScaleWorldRuntime*` tag set.
 Given these options, to start the server with the closest behaviour as the old cirrus, you would invoke,
 ```
 npm start -- --console_messages --https_redirect verbose --serve --log_config --http_root www --homepage player.html
@@ -215,4 +220,5 @@ During development it may be useful to work with self-signed SSL certificates (e
 The previous reference signalling server was called Cirrus (UE 5.4 and earlier). Wilbur is a direct replacement for Cirrus.
 
 Differences of behaviour from the old Cirrus server are described [here](from_cirrus.md).
+
 
