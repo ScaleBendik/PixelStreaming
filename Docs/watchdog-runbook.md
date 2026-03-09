@@ -54,10 +54,10 @@ Environment variables or equivalent PowerShell parameters:
 Recommended optional inputs:
 
 - `WATCHDOG_RESTART_COMMAND` (defaults to `start_streamer_stack.bat --recovery` in `start_watchdog.bat`)
-- `WATCHDOG_POLL_INTERVAL_SECONDS` (default `10`)
+- `WATCHDOG_POLL_INTERVAL_SECONDS` (default `5`)
 - `WATCHDOG_FAILURE_THRESHOLD` (default `3`)
-- `WATCHDOG_RESTART_COOLDOWN_SECONDS` (default `10`)
-- `WATCHDOG_POST_RESTART_GRACE_SECONDS` (default `15`)
+- `WATCHDOG_RESTART_COOLDOWN_SECONDS` (default `5`)
+- `WATCHDOG_POST_RESTART_GRACE_SECONDS` (default `8`)
 - `WATCHDOG_PRE_RESTART_COMMAND`
 - `WATCHDOG_POST_RESTART_COMMAND`
 - `WATCHDOG_TERMINATE_MATCHED_PROCESSES` (default `true` in `start_watchdog.bat`)

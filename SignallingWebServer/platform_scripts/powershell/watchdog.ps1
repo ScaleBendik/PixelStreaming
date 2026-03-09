@@ -4,10 +4,10 @@ param(
     [string]$UnrealCommandLinePattern = $env:WATCHDOG_UNREAL_COMMANDLINE_PATTERN,
     [string]$WilburProcessName = $(if ($env:WATCHDOG_WILBUR_PROCESS_NAME) { $env:WATCHDOG_WILBUR_PROCESS_NAME } else { 'node.exe' }),
     [string]$WilburCommandLinePattern = $(if ($env:WATCHDOG_WILBUR_COMMANDLINE_PATTERN) { $env:WATCHDOG_WILBUR_COMMANDLINE_PATTERN } else { 'SignallingWebServer' }),
-    [string]$PollIntervalSeconds = $(if ($env:WATCHDOG_POLL_INTERVAL_SECONDS) { $env:WATCHDOG_POLL_INTERVAL_SECONDS } else { '10' }),
+    [string]$PollIntervalSeconds = $(if ($env:WATCHDOG_POLL_INTERVAL_SECONDS) { $env:WATCHDOG_POLL_INTERVAL_SECONDS } else { '5' }),
     [string]$FailureThreshold = $(if ($env:WATCHDOG_FAILURE_THRESHOLD) { $env:WATCHDOG_FAILURE_THRESHOLD } else { '3' }),
-    [string]$RestartCooldownSeconds = $(if ($env:WATCHDOG_RESTART_COOLDOWN_SECONDS) { $env:WATCHDOG_RESTART_COOLDOWN_SECONDS } else { '10' }),
-    [string]$PostRestartGraceSeconds = $(if ($env:WATCHDOG_POST_RESTART_GRACE_SECONDS) { $env:WATCHDOG_POST_RESTART_GRACE_SECONDS } else { '15' }),
+    [string]$RestartCooldownSeconds = $(if ($env:WATCHDOG_RESTART_COOLDOWN_SECONDS) { $env:WATCHDOG_RESTART_COOLDOWN_SECONDS } else { '5' }),
+    [string]$PostRestartGraceSeconds = $(if ($env:WATCHDOG_POST_RESTART_GRACE_SECONDS) { $env:WATCHDOG_POST_RESTART_GRACE_SECONDS } else { '8' }),
     [string]$TerminateMatchedProcesses = $(if ($env:WATCHDOG_TERMINATE_MATCHED_PROCESSES) { $env:WATCHDOG_TERMINATE_MATCHED_PROCESSES } else { 'false' }),
     [string]$DryRun = $(if ($env:WATCHDOG_DRY_RUN) { $env:WATCHDOG_DRY_RUN } else { 'false' }),
     [string]$RunOnce = $(if ($env:WATCHDOG_RUN_ONCE) { $env:WATCHDOG_RUN_ONCE } else { 'false' }),
@@ -426,9 +426,14 @@ while ($true) {
         continue
     }
 
-    $secondsSinceRestart = [int](([DateTimeOffset]::UtcNow - $lastRestartAtUtc).TotalSeconds)
+    $secondsSinceRestart = if ($lastRestartAtUtc -eq [DateTimeOffset]::MinValue) {
+        [double]::PositiveInfinity
+    } else {
+        ([DateTimeOffset]::UtcNow - $lastRestartAtUtc).TotalSeconds
+    }
     if ($lastRestartAtUtc -ne [DateTimeOffset]::MinValue -and $secondsSinceRestart -lt $restartCooldownSecondsValue) {
-        Write-WatchdogLog "Restart cooldown active for $($restartCooldownSecondsValue - $secondsSinceRestart)s. Fault persists: $faultSummary" 'WARN'
+        $cooldownRemainingSeconds = [int][Math]::Ceiling($restartCooldownSecondsValue - $secondsSinceRestart)
+        Write-WatchdogLog "Restart cooldown active for $cooldownRemainingSeconds s. Fault persists: $faultSummary" 'WARN'
         if ($runOnceValue) {
             break
         }
