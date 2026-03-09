@@ -1,7 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
+import fs from 'fs';
+import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
+import { Messages } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
 
 const execFileAsync = promisify(execFile);
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
@@ -29,6 +32,23 @@ export interface SignallingRuntimeStatusOptions {
     logger?: (message: string) => void;
     source?: string;
     heartbeatMs?: number;
+    streamerHealthEnabled?: boolean;
+    streamerHealthPath?: string;
+    streamerPingFreshMs?: number;
+    streamerHealthWriteMs?: number;
+}
+
+interface LocalStreamerHealthSnapshot {
+    status: string;
+    reason: string;
+    healthy: boolean;
+    streamerCount: number;
+    streamerId?: string;
+    statusAtUtc?: string;
+    lastStreamerPingAtUtc?: string;
+    lastHealthyAtUtc?: string;
+    updatedAtUtc: string;
+    pingFreshMs: number;
 }
 
 function parseBoolean(rawValue: unknown, fallback: boolean): boolean {
@@ -203,16 +223,40 @@ export function wireSignallingRuntimeStatus(
     publisher: RuntimeStatusPublisher | null,
     options: SignallingRuntimeStatusOptions = {}
 ): void {
-    if (!publisher) return;
     const log = options.logger ?? ((message: string) => Logger.info(message));
     const heartbeatMs = parseNonNegativeInteger(
         options.heartbeatMs ?? process.env.RUNTIME_STATUS_HEARTBEAT_MS,
         60_000
     );
     const source = options.source ?? 'signalling-server';
+    const defaultStreamerHealthPath = path.resolve(__dirname, '..', 'state', 'streamer-health.json');
+    const streamerHealthEnabled = parseBoolean(
+        options.streamerHealthEnabled ?? process.env.RUNTIME_STATUS_STREAMER_HEALTH_ENABLED ?? true,
+        true
+    );
+    const streamerPingFreshMs = parseNonNegativeInteger(
+        options.streamerPingFreshMs ?? process.env.RUNTIME_STATUS_STREAMER_PING_FRESH_MS,
+        75_000
+    );
+    const streamerHealthWriteMs = parseNonNegativeInteger(
+        options.streamerHealthWriteMs ?? process.env.RUNTIME_STATUS_STREAMER_HEALTH_WRITE_MS,
+        5_000
+    );
+    const streamerHealthPath = String(
+        options.streamerHealthPath ??
+            process.env.RUNTIME_STATUS_STREAMER_HEALTH_PATH ??
+            defaultStreamerHealthPath
+    );
     let currentStatus: string | null = null;
     let currentReason: string | null = null;
     let heartbeatTimer: NodeJS.Timeout | null = null;
+    let streamerHealthTimer: NodeJS.Timeout | null = null;
+    let lastStatusAtUtc: string | null = null;
+    let lastStreamerPingAtMs: number | null = null;
+    let lastHealthyAtMs: number | null = null;
+    let lastStreamerId: string | null = null;
+    let lastStreamerHealthWriteFailure: string | null = null;
+    const attachedStreamers = new WeakSet<object>();
 
     const clearHeartbeat = (): void => {
         if (!heartbeatTimer) return;
@@ -220,20 +264,120 @@ export function wireSignallingRuntimeStatus(
         heartbeatTimer = null;
     };
 
+    const clearStreamerHealthTimer = (): void => {
+        if (!streamerHealthTimer) return;
+        clearInterval(streamerHealthTimer);
+        streamerHealthTimer = null;
+    };
+
+    const writeStreamerHealthSnapshot = (): void => {
+        if (!streamerHealthEnabled) return;
+
+        const nowMs = Date.now();
+        const streamerCount = server.streamerRegistry.count();
+        let reason = currentReason ?? 'runtime_status_unavailable';
+        let healthy = false;
+
+        if (currentStatus === 'ready') {
+            if (lastStreamerPingAtMs === null) {
+                reason = 'waiting_for_streamer_ping';
+            } else if (nowMs - lastStreamerPingAtMs > streamerPingFreshMs) {
+                reason = 'streamer_ping_stale';
+            } else {
+                healthy = true;
+                reason = 'streamer_ping_fresh';
+                lastHealthyAtMs = nowMs;
+            }
+        } else if (currentStatus === 'waiting_for_streamer') {
+            reason = 'waiting_for_streamer';
+        }
+
+        const snapshot: LocalStreamerHealthSnapshot = {
+            status: currentStatus ?? 'unknown',
+            reason,
+            healthy,
+            streamerCount,
+            updatedAtUtc: new Date(nowMs).toISOString(),
+            pingFreshMs: streamerPingFreshMs
+        };
+
+        if (lastStreamerId) snapshot.streamerId = lastStreamerId;
+        if (lastStatusAtUtc) snapshot.statusAtUtc = lastStatusAtUtc;
+        if (lastStreamerPingAtMs !== null) {
+            snapshot.lastStreamerPingAtUtc = new Date(lastStreamerPingAtMs).toISOString();
+        }
+        if (lastHealthyAtMs !== null) {
+            snapshot.lastHealthyAtUtc = new Date(lastHealthyAtMs).toISOString();
+        }
+
+        try {
+            fs.mkdirSync(path.dirname(streamerHealthPath), { recursive: true });
+            fs.writeFileSync(streamerHealthPath, JSON.stringify(snapshot, null, 2), 'utf8');
+            lastStreamerHealthWriteFailure = null;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (message !== lastStreamerHealthWriteFailure) {
+                log(
+                    `[runtime-status] Failed to write streamer health file '${streamerHealthPath}': ${message}`
+                );
+                lastStreamerHealthWriteFailure = message;
+            }
+        }
+    };
+
+    const markStreamerPing = (streamerId: string): void => {
+        lastStreamerPingAtMs = Date.now();
+        lastStreamerId = streamerId;
+        if (currentStatus === 'ready') {
+            lastHealthyAtMs = lastStreamerPingAtMs;
+        }
+        writeStreamerHealthSnapshot();
+    };
+
+    const attachStreamerHealthListeners = (streamerId: string): void => {
+        if (!streamerHealthEnabled) return;
+
+        const streamer = server.streamerRegistry.find(streamerId);
+        if (!streamer || attachedStreamers.has(streamer)) return;
+
+        attachedStreamers.add(streamer);
+        streamer.protocol.on(Messages.ping.typeName, () => {
+            markStreamerPing(streamer.streamerId || streamerId);
+        });
+        streamer.on('disconnect', () => {
+            writeStreamerHealthSnapshot();
+        });
+        streamer.on('id_changed', () => {
+            lastStreamerId = streamer.streamerId || streamerId;
+            writeStreamerHealthSnapshot();
+        });
+    };
+
     const publishTransition = (status: string, reason: string): void => {
         currentStatus = status;
         currentReason = reason;
-        void publisher.publish({ status, reason, source });
+        lastStatusAtUtc = new Date().toISOString();
+        if (status !== 'ready') {
+            lastStreamerPingAtMs = null;
+            lastStreamerId = null;
+        }
+        if (publisher) {
+            void publisher.publish({ status, reason, source });
+        }
+        writeStreamerHealthSnapshot();
     };
 
     const publishHeartbeat = (): void => {
         if (!currentStatus) return;
-        void publisher.publish({
-            status: currentStatus,
-            reason: currentReason ?? undefined,
-            source,
-            heartbeatOnly: true
-        });
+        if (publisher) {
+            void publisher.publish({
+                status: currentStatus,
+                reason: currentReason ?? undefined,
+                source,
+                heartbeatOnly: true
+            });
+        }
+        writeStreamerHealthSnapshot();
     };
 
     const startHeartbeat = (): void => {
@@ -242,6 +386,14 @@ export function wireSignallingRuntimeStatus(
         heartbeatTimer = setInterval(() => {
             publishHeartbeat();
         }, heartbeatMs);
+    };
+
+    const startStreamerHealthTimer = (): void => {
+        clearStreamerHealthTimer();
+        if (!streamerHealthEnabled || streamerHealthWriteMs <= 0) return;
+        streamerHealthTimer = setInterval(() => {
+            writeStreamerHealthSnapshot();
+        }, streamerHealthWriteMs);
     };
 
     const syncFromStreamerCount = (readyReason: string, waitingReason: string): void => {
@@ -255,9 +407,16 @@ export function wireSignallingRuntimeStatus(
     };
 
     syncFromStreamerCount('streamer_present_on_startup', 'signalling_server_started');
+    startStreamerHealthTimer();
+
+    const initialStreamerId = server.streamerRegistry.getFirstStreamerId();
+    if (initialStreamerId) {
+        attachStreamerHealthListeners(initialStreamerId);
+    }
 
     server.streamerRegistry.on('added', (streamerId: string) => {
         log(`[runtime-status] Streamer connected (${streamerId}).`);
+        attachStreamerHealthListeners(streamerId);
         publishTransition('ready', 'streamer_connected');
         startHeartbeat();
     });
@@ -267,5 +426,9 @@ export function wireSignallingRuntimeStatus(
             `[runtime-status] Streamer disconnected (${streamerId}). remaining=${server.streamerRegistry.count()}.`
         );
         syncFromStreamerCount('another_streamer_still_connected', 'streamer_disconnected');
+        const nextStreamerId = server.streamerRegistry.getFirstStreamerId();
+        if (nextStreamerId) {
+            attachStreamerHealthListeners(nextStreamerId);
+        }
     });
 }

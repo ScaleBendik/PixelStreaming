@@ -35,14 +35,31 @@ if /i "%STACK_RUN_UNREAL_UPDATE_CHECK%"=="true" (
   )
 )
 
-echo Starting Wilbur in %STACK_MODE% mode...
-start "ScaleWorld Wilbur" "%SCRIPT_DIR%start_dev_turn.bat" %*
+set "WILBUR_PROCESS_NAME=node.exe"
+if defined WATCHDOG_WILBUR_PROCESS_NAME set "WILBUR_PROCESS_NAME=%WATCHDOG_WILBUR_PROCESS_NAME%"
+set "WILBUR_COMMANDLINE_PATTERN=SignallingWebServer"
+if defined WATCHDOG_WILBUR_COMMANDLINE_PATTERN set "WILBUR_COMMANDLINE_PATTERN=%WATCHDOG_WILBUR_COMMANDLINE_PATTERN%"
+set "UNREAL_PROCESS_NAME=ScaleWorld.exe"
+if defined SCALEWORLD_EXECUTABLE_NAME set "UNREAL_PROCESS_NAME=%SCALEWORLD_EXECUTABLE_NAME%"
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$wilbur = Get-CimInstance Win32_Process | Where-Object { $_.Name -ieq '%WILBUR_PROCESS_NAME%' -and $_.CommandLine -like '*%WILBUR_COMMANDLINE_PATTERN%*' } | Select-Object -First 1; if ($wilbur) { exit 0 } else { exit 1 }"
+if errorlevel 1 (
+  echo Starting Wilbur in %STACK_MODE% mode...
+  start "ScaleWorld Wilbur" "%SCRIPT_DIR%start_dev_turn.bat" %*
+) else (
+  echo Wilbur is already running. Skipping launch.
+)
 
 if /i "%STACK_START_UNREAL%"=="true" (
   if exist "%SCRIPT_DIR%start_unreal.bat" (
-    timeout /t %STACK_UNREAL_START_DELAY_SECONDS% /nobreak >nul
-    echo Starting Unreal runtime...
-    start "ScaleWorld Unreal" "%SCRIPT_DIR%start_unreal.bat"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$unreal = Get-CimInstance Win32_Process | Where-Object { $_.Name -ieq '%UNREAL_PROCESS_NAME%' } | Select-Object -First 1; if ($unreal) { exit 0 } else { exit 1 }"
+    if errorlevel 1 (
+      timeout /t %STACK_UNREAL_START_DELAY_SECONDS% /nobreak >nul
+      echo Starting Unreal runtime...
+      start "ScaleWorld Unreal" "%SCRIPT_DIR%start_unreal.bat"
+    ) else (
+      echo Unreal is already running. Skipping launch.
+    )
   ) else (
     echo WARNING: start_unreal.bat not found in "%SCRIPT_DIR%". Unreal launch skipped.
   )

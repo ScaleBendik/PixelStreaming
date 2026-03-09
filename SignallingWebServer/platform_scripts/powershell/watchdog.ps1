@@ -18,7 +18,14 @@ param(
     [string]$RuntimeStatusEnabled = $(if ($env:WATCHDOG_RUNTIME_STATUS_ENABLED) { $env:WATCHDOG_RUNTIME_STATUS_ENABLED } elseif ($env:RUNTIME_STATUS_ENABLED) { $env:RUNTIME_STATUS_ENABLED } else { 'true' }),
     [string]$RuntimeStatusSource = $(if ($env:WATCHDOG_RUNTIME_STATUS_SOURCE) { $env:WATCHDOG_RUNTIME_STATUS_SOURCE } else { 'watchdog' }),
     [string]$RuntimeStatusVersion = $(if ($env:WATCHDOG_RUNTIME_STATUS_VERSION) { $env:WATCHDOG_RUNTIME_STATUS_VERSION } else { '' }),
-    [string]$AwsCliPath = $(if ($env:WATCHDOG_AWS_CLI_PATH) { $env:WATCHDOG_AWS_CLI_PATH } elseif ($env:RUNTIME_STATUS_AWS_CLI_PATH) { $env:RUNTIME_STATUS_AWS_CLI_PATH } else { 'aws' })
+    [string]$AwsCliPath = $(if ($env:WATCHDOG_AWS_CLI_PATH) { $env:WATCHDOG_AWS_CLI_PATH } elseif ($env:RUNTIME_STATUS_AWS_CLI_PATH) { $env:RUNTIME_STATUS_AWS_CLI_PATH } else { 'aws' }),
+    [string]$StreamerHealthEnabled = $(if ($env:WATCHDOG_STREAMER_HEALTH_ENABLED) { $env:WATCHDOG_STREAMER_HEALTH_ENABLED } else { 'true' }),
+    [string]$StreamerHealthPath = $(if ($env:WATCHDOG_STREAMER_HEALTH_PATH) { $env:WATCHDOG_STREAMER_HEALTH_PATH } else { 'state\streamer-health.json' }),
+    [string]$StreamerHealthMaxStaleSeconds = $(if ($env:WATCHDOG_STREAMER_HEALTH_MAX_STALE_SECONDS) { $env:WATCHDOG_STREAMER_HEALTH_MAX_STALE_SECONDS } else { '75' }),
+    [string]$StreamerHealthStartupGraceSeconds = $(if ($env:WATCHDOG_STREAMER_HEALTH_STARTUP_GRACE_SECONDS) { $env:WATCHDOG_STREAMER_HEALTH_STARTUP_GRACE_SECONDS } else { '120' }),
+    [string]$UnrealCpuStallConfirmEnabled = $(if ($env:WATCHDOG_UNREAL_CPU_STALL_CONFIRM_ENABLED) { $env:WATCHDOG_UNREAL_CPU_STALL_CONFIRM_ENABLED } else { 'true' }),
+    [string]$UnrealCpuStallMinDeltaSeconds = $(if ($env:WATCHDOG_UNREAL_CPU_STALL_MIN_DELTA_SECONDS) { $env:WATCHDOG_UNREAL_CPU_STALL_MIN_DELTA_SECONDS } else { '0.001' }),
+    [string]$UnrealCpuStallConfirmSeconds = $(if ($env:WATCHDOG_UNREAL_CPU_STALL_CONFIRM_SECONDS) { $env:WATCHDOG_UNREAL_CPU_STALL_CONFIRM_SECONDS } else { '10' })
 )
 
 Set-StrictMode -Version Latest
@@ -70,6 +77,25 @@ function ConvertTo-PositiveInt {
 
     $parsed = 0
     if (-not [int]::TryParse($Value, [ref]$parsed) -or $parsed -lt 0) {
+        throw "Invalid $Name value '$Value'."
+    }
+
+    return $parsed
+}
+
+function ConvertTo-NonNegativeDouble {
+    param(
+        [string]$Value,
+        [double]$Default,
+        [string]$Name
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $Default
+    }
+
+    $parsed = 0.0
+    if (-not [double]::TryParse($Value, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$parsed) -or $parsed -lt 0) {
         throw "Invalid $Name value '$Value'."
     }
 
@@ -190,6 +216,30 @@ function Test-NameMatch {
 
 function Get-ProcessSnapshot {
     Get-CimInstance Win32_Process | Select-Object ProcessId, Name, CommandLine
+}
+
+function Get-ProcessCpuSnapshot {
+    param([int[]]$ProcessIds)
+
+    if (-not $ProcessIds -or $ProcessIds.Count -eq 0) {
+        return [pscustomobject]@{
+            IdKey = ''
+            TotalCpuSeconds = 0.0
+        }
+    }
+
+    $processes = @(Get-Process -Id $ProcessIds -ErrorAction SilentlyContinue)
+    $orderedProcesses = $processes | Sort-Object Id
+    $idKey = (($orderedProcesses | ForEach-Object { [string]$_.Id }) -join ',')
+    $totalCpuSeconds = 0.0
+    foreach ($process in $orderedProcesses) {
+        $totalCpuSeconds += [double]$process.CPU
+    }
+
+    return [pscustomobject]@{
+        IdKey = $idKey
+        TotalCpuSeconds = $totalCpuSeconds
+    }
 }
 
 function Find-MatchingProcesses {
@@ -324,6 +374,41 @@ function Stop-MatchingProcesses {
     }
 }
 
+function Read-StreamerHealthSnapshot {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return [pscustomobject]@{
+            State = 'missing'
+            Snapshot = $null
+            Error = $null
+        }
+    }
+
+    try {
+        $raw = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            return [pscustomobject]@{
+                State = 'missing'
+                Snapshot = $null
+                Error = $null
+            }
+        }
+
+        return [pscustomobject]@{
+            State = 'ok'
+            Snapshot = ($raw | ConvertFrom-Json -ErrorAction Stop)
+            Error = $null
+        }
+    } catch {
+        return [pscustomobject]@{
+            State = 'invalid'
+            Snapshot = $null
+            Error = $_.Exception.Message
+        }
+    }
+}
+
 $pollIntervalSecondsValue = ConvertTo-PositiveInt -Value $PollIntervalSeconds -Default 15 -Name 'PollIntervalSeconds'
 $failureThresholdValue = ConvertTo-PositiveInt -Value $FailureThreshold -Default 3 -Name 'FailureThreshold'
 $restartCooldownSecondsValue = ConvertTo-PositiveInt -Value $RestartCooldownSeconds -Default 120 -Name 'RestartCooldownSeconds'
@@ -332,6 +417,13 @@ $terminateMatchedProcessesValue = ConvertTo-Bool -Value $TerminateMatchedProcess
 $dryRunValue = ConvertTo-Bool -Value $DryRun -Default $false
 $runOnceValue = ConvertTo-Bool -Value $RunOnce -Default $false
 $runtimeStatusEnabledValue = ConvertTo-Bool -Value $RuntimeStatusEnabled -Default $true
+$streamerHealthEnabledValue = ConvertTo-Bool -Value $StreamerHealthEnabled -Default $true
+$streamerHealthMaxStaleSecondsValue = ConvertTo-PositiveInt -Value $StreamerHealthMaxStaleSeconds -Default 75 -Name 'StreamerHealthMaxStaleSeconds'
+$streamerHealthStartupGraceSecondsValue = ConvertTo-PositiveInt -Value $StreamerHealthStartupGraceSeconds -Default 120 -Name 'StreamerHealthStartupGraceSeconds'
+$unrealCpuStallConfirmEnabledValue = ConvertTo-Bool -Value $UnrealCpuStallConfirmEnabled -Default $true
+$unrealCpuStallMinDeltaSecondsValue = ConvertTo-NonNegativeDouble -Value $UnrealCpuStallMinDeltaSeconds -Default 0.001 -Name 'UnrealCpuStallMinDeltaSeconds'
+$unrealCpuStallConfirmSecondsValue = ConvertTo-NonNegativeDouble -Value $UnrealCpuStallConfirmSeconds -Default 10 -Name 'UnrealCpuStallConfirmSeconds'
+$resolvedStreamerHealthPath = if ([System.IO.Path]::IsPathRooted($StreamerHealthPath)) { $StreamerHealthPath } else { Join-Path $script:SignallingWebServerRoot $StreamerHealthPath }
 
 $rules = [System.Collections.Generic.List[object]]::new()
 if (-not [string]::IsNullOrWhiteSpace($UnrealProcessName)) {
@@ -361,26 +453,41 @@ if ([string]::IsNullOrWhiteSpace($UnrealProcessName)) {
 if ([string]::IsNullOrWhiteSpace($RestartCommand)) {
     Write-WatchdogLog 'WATCHDOG_RESTART_COMMAND not set. Watchdog will publish faults but cannot recover automatically.' 'WARN'
 }
+if ($streamerHealthEnabledValue -and ([string]::IsNullOrWhiteSpace($UnrealProcessName) -or [string]::IsNullOrWhiteSpace($WilburProcessName))) {
+    Write-WatchdogLog 'WATCHDOG_STREAMER_HEALTH_ENABLED requires both Unreal and Wilbur process rules. Disabling streamer health checks.' 'WARN'
+    $streamerHealthEnabledValue = $false
+}
+if ($unrealCpuStallConfirmEnabledValue -and [string]::IsNullOrWhiteSpace($UnrealProcessName)) {
+    Write-WatchdogLog 'WATCHDOG_UNREAL_CPU_STALL_CONFIRM_ENABLED requires an Unreal process rule. Disabling CPU stall confirmation.' 'WARN'
+    $unrealCpuStallConfirmEnabledValue = $false
+}
 
 $ruleFailures = @{}
 foreach ($rule in $rules) {
     $ruleFailures[$rule.Name] = 0
 }
+$streamerHealthFailureCount = 0
 
+$watchdogStartedAtUtc = [DateTimeOffset]::UtcNow
 $lastRestartAtUtc = [DateTimeOffset]::MinValue
 $lastFaultSignature = $null
+$lastSuspiciousSignature = $null
 $healthyLogged = $false
+$lastUnrealCpuSnapshot = $null
+$unrealCpuStallAccumulatedSeconds = 0.0
 
-Write-WatchdogLog ('Starting watchdog. Poll={0}s threshold={1} restartCooldown={2}s postRestartGrace={3}s dryRun={4} runtimeStatus={5}' -f $pollIntervalSecondsValue, $failureThresholdValue, $restartCooldownSecondsValue, $postRestartGraceSecondsValue, $dryRunValue, $runtimeStatusEnabledValue)
+Write-WatchdogLog ('Starting watchdog. Poll={0}s threshold={1} restartCooldown={2}s postRestartGrace={3}s dryRun={4} runtimeStatus={5} streamerHealth={6} streamerHealthPath={7} streamerHealthMaxStale={8}s streamerHealthStartupGrace={9}s unrealCpuConfirm={10} unrealCpuMinDelta={11}s unrealCpuConfirmWindow={12}s' -f $pollIntervalSecondsValue, $failureThresholdValue, $restartCooldownSecondsValue, $postRestartGraceSecondsValue, $dryRunValue, $runtimeStatusEnabledValue, $streamerHealthEnabledValue, $resolvedStreamerHealthPath, $streamerHealthMaxStaleSecondsValue, $streamerHealthStartupGraceSecondsValue, $unrealCpuStallConfirmEnabledValue, $unrealCpuStallMinDeltaSecondsValue, $unrealCpuStallConfirmSecondsValue)
 Write-WatchdogLog ('Rules: {0}' -f (($rules | ForEach-Object { if ([string]::IsNullOrWhiteSpace($_.CommandLinePattern)) { $_.ProcessName } else { '{0} [{1}]' -f $_.ProcessName, $_.CommandLinePattern } }) -join ', '))
 
 while ($true) {
     try {
     $snapshot = @(Get-ProcessSnapshot)
+    $ruleMatches = @{}
     $failedRules = @()
 
     foreach ($rule in $rules) {
         $matches = Find-MatchingProcesses -Snapshot $snapshot -Rule $rule
+        $ruleMatches[$rule.Name] = $matches
         if ($matches.Count -gt 0) {
             $ruleFailures[$rule.Name] = 0
             continue
@@ -392,7 +499,148 @@ while ($true) {
         }
     }
 
+    $pendingFaultSignature = $null
+    $pendingFaultSummary = $null
+    $unrealCpuStallConfirmed = $false
+    $unrealCpuStallSummary = $null
+    if ($unrealCpuStallConfirmEnabledValue -and $ruleMatches.ContainsKey('unreal') -and $ruleMatches['unreal'].Count -gt 0) {
+        $unrealProcessIds = @($ruleMatches['unreal'] | ForEach-Object { [int]$_.ProcessId })
+        $unrealCpuSnapshot = Get-ProcessCpuSnapshot -ProcessIds $unrealProcessIds
+        $sampledAtUtc = [DateTimeOffset]::UtcNow
+        if ($lastUnrealCpuSnapshot -and $lastUnrealCpuSnapshot.IdKey -eq $unrealCpuSnapshot.IdKey -and -not [string]::IsNullOrWhiteSpace($unrealCpuSnapshot.IdKey)) {
+            $elapsedCpuSeconds = ($sampledAtUtc - $lastUnrealCpuSnapshot.SampledAtUtc).TotalSeconds
+            if ($elapsedCpuSeconds -gt 0) {
+                $cpuDeltaSeconds = [Math]::Max(0.0, $unrealCpuSnapshot.TotalCpuSeconds - $lastUnrealCpuSnapshot.TotalCpuSeconds)
+                if ($cpuDeltaSeconds -le $unrealCpuStallMinDeltaSecondsValue) {
+                    $unrealCpuStallAccumulatedSeconds += $elapsedCpuSeconds
+                } else {
+                    $unrealCpuStallAccumulatedSeconds = 0.0
+                }
+
+                $unrealCpuStallSummary = 'unreal cpu delta {0:N3}s over {1:N1}s (stall {2:N1}/{3:N1}s)' -f $cpuDeltaSeconds, $elapsedCpuSeconds, $unrealCpuStallAccumulatedSeconds, $unrealCpuStallConfirmSecondsValue
+                if ($unrealCpuStallAccumulatedSeconds -ge $unrealCpuStallConfirmSecondsValue) {
+                    $unrealCpuStallConfirmed = $true
+                }
+            }
+        } else {
+            $unrealCpuStallAccumulatedSeconds = 0.0
+            $unrealCpuStallSummary = 'unreal cpu stall confirmation reset (new or restarted process)'
+        }
+
+        $lastUnrealCpuSnapshot = [pscustomobject]@{
+            IdKey = $unrealCpuSnapshot.IdKey
+            TotalCpuSeconds = $unrealCpuSnapshot.TotalCpuSeconds
+            SampledAtUtc = $sampledAtUtc
+        }
+    } else {
+        $lastUnrealCpuSnapshot = $null
+        $unrealCpuStallAccumulatedSeconds = 0.0
+    }
+
+    if (
+        $streamerHealthEnabledValue -and
+        $ruleMatches.ContainsKey('unreal') -and
+        $ruleMatches.ContainsKey('wilbur') -and
+        $ruleMatches['unreal'].Count -gt 0 -and
+        $ruleMatches['wilbur'].Count -gt 0
+    ) {
+        $healthGraceReferenceUtc = if ($lastRestartAtUtc -ne [DateTimeOffset]::MinValue) { $lastRestartAtUtc } else { $watchdogStartedAtUtc }
+        $secondsSinceHealthGraceReference = ([DateTimeOffset]::UtcNow - $healthGraceReferenceUtc).TotalSeconds
+        if ($secondsSinceHealthGraceReference -lt $streamerHealthStartupGraceSecondsValue) {
+            $streamerHealthFailureCount = 0
+        } else {
+            $streamerHealthResult = Read-StreamerHealthSnapshot -Path $resolvedStreamerHealthPath
+            $streamerHealthFaultReason = $null
+            $streamerHealthFaultSummary = $null
+
+            if ($streamerHealthResult.State -eq 'missing') {
+                $streamerHealthFaultReason = 'streamer_health_missing'
+                $streamerHealthFaultSummary = "streamer health file missing ($resolvedStreamerHealthPath)"
+            } elseif ($streamerHealthResult.State -eq 'invalid') {
+                $streamerHealthFaultReason = 'streamer_health_invalid'
+                $streamerHealthFaultSummary = "streamer health file invalid ($($streamerHealthResult.Error))"
+            } else {
+                $streamerHealthSnapshot = $streamerHealthResult.Snapshot
+                $updatedAtUtc = $null
+                $updatedAtText = [string]$streamerHealthSnapshot.updatedAtUtc
+                if ([string]::IsNullOrWhiteSpace($updatedAtText) -or -not [DateTimeOffset]::TryParse($updatedAtText, [ref]$updatedAtUtc)) {
+                    $streamerHealthFaultReason = 'streamer_health_missing_timestamp'
+                    $streamerHealthFaultSummary = 'streamer health file missing updatedAtUtc timestamp'
+                } else {
+                    $healthAgeSeconds = ([DateTimeOffset]::UtcNow - $updatedAtUtc).TotalSeconds
+                    $healthy = $false
+                    try {
+                        $healthy = [bool]$streamerHealthSnapshot.healthy
+                    } catch {
+                        $healthy = $false
+                    }
+
+                    if ($healthAgeSeconds -gt $streamerHealthMaxStaleSecondsValue) {
+                        $streamerHealthFaultReason = 'streamer_health_file_stale'
+                        $streamerHealthFaultSummary = "streamer health file stale (${healthAgeSeconds:N0}s)"
+                    } elseif (-not $healthy) {
+                        $snapshotReason = [string]$streamerHealthSnapshot.reason
+                        $snapshotStatus = [string]$streamerHealthSnapshot.status
+                        if ([string]::IsNullOrWhiteSpace($snapshotReason)) {
+                            $snapshotReason = 'streamer_unhealthy'
+                        }
+                        if ([string]::IsNullOrWhiteSpace($snapshotStatus)) {
+                            $snapshotStatus = 'unknown'
+                        }
+                        $streamerHealthFaultReason = $snapshotReason
+                        $streamerHealthFaultSummary = "streamer health unhealthy (status=$snapshotStatus reason=$snapshotReason)"
+                    }
+                }
+            }
+
+            if ($streamerHealthFaultReason) {
+                $streamerHealthFailureCount = $streamerHealthFailureCount + 1
+                if ($streamerHealthFailureCount -ge $failureThresholdValue) {
+                    $streamerHealthSummaryWithCpu = if ([string]::IsNullOrWhiteSpace($unrealCpuStallSummary)) {
+                        $streamerHealthFaultSummary
+                    } else {
+                        '{0}; {1}' -f $streamerHealthFaultSummary, $unrealCpuStallSummary
+                    }
+
+                    if (-not $unrealCpuStallConfirmEnabledValue -or $unrealCpuStallConfirmed) {
+                        $failedRules += [pscustomobject]@{
+                            Name = 'streamer-health'
+                            ProcessName = 'streamer-health'
+                            CommandLinePattern = $null
+                            FaultReason = $streamerHealthFaultReason
+                            Summary = $streamerHealthSummaryWithCpu
+                        }
+                    } else {
+                        $pendingFaultSignature = $streamerHealthFaultReason
+                        $pendingFaultSummary = '{0}; awaiting CPU stall confirmation' -f $streamerHealthSummaryWithCpu
+                    }
+                }
+            } else {
+                $streamerHealthFailureCount = 0
+            }
+        }
+    } else {
+        $streamerHealthFailureCount = 0
+    }
+
     if ($failedRules.Count -eq 0) {
+        if ($pendingFaultSignature) {
+            if ($pendingFaultSignature -ne $lastSuspiciousSignature) {
+                Write-WatchdogLog "Suspicious runtime state detected: $pendingFaultSummary" 'WARN'
+                $lastSuspiciousSignature = $pendingFaultSignature
+            }
+
+            $healthyLogged = $false
+            $lastFaultSignature = $null
+            if ($runOnceValue) {
+                break
+            }
+
+            Start-Sleep -Seconds $pollIntervalSecondsValue
+            continue
+        }
+
+        $lastSuspiciousSignature = $null
         if (-not $healthyLogged) {
             Write-WatchdogLog 'All required processes are present.'
             $healthyLogged = $true
@@ -408,8 +656,15 @@ while ($true) {
     }
 
     $healthyLogged = $false
+    $lastSuspiciousSignature = $null
     $faultSignature = ($failedRules | ForEach-Object FaultReason) -join '+'
-    $faultSummary = ($failedRules | ForEach-Object { '{0} missing ({1}/{2})' -f $_.Name, $ruleFailures[$_.Name], $failureThresholdValue }) -join '; '
+    $faultSummary = ($failedRules | ForEach-Object {
+        if ($_.Name -eq 'streamer-health') {
+            '{0} ({1}/{2})' -f $_.Summary, $streamerHealthFailureCount, $failureThresholdValue
+        } else {
+            '{0} missing ({1}/{2})' -f $_.Name, $ruleFailures[$_.Name], $failureThresholdValue
+        }
+    }) -join '; '
 
     if ($faultSignature -ne $lastFaultSignature) {
         Write-WatchdogLog "Fault detected: $faultSummary" 'WARN'
@@ -491,3 +746,4 @@ while ($true) {
         Start-Sleep -Seconds $pollIntervalSecondsValue
     }
 }
+

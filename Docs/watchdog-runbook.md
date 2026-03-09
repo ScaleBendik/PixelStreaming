@@ -21,18 +21,19 @@ The intended stack is:
 The watchdog can:
 
 1. monitor Unreal and/or Wilbur processes
-2. publish `runtime_fault` when required processes disappear
-3. optionally run pre-restart, restart, and post-restart commands
-4. optionally terminate matched processes before recovery
-5. trigger full-stack recovery through `start_streamer_stack.bat --recovery`
-6. publish `booting` with reason `watchdog_restart_pending` before recovery
+2. detect hung Unreal sessions by watching Wilbur's local streamer health file
+3. corroborate hung-session faults with the long-serving Unreal CPU-stall heuristic
+4. publish `runtime_fault` when required processes disappear
+5. optionally run pre-restart, restart, and post-restart commands
+6. optionally terminate matched processes before recovery
+7. trigger full-stack recovery through `start_streamer_stack.bat --recovery`
+8. publish `booting` with reason `watchdog_restart_pending` before recovery
 
 The watchdog does not yet:
 
 1. run as a Windows service by default
-2. detect app-level hung-but-present Unreal states
-3. integrate with Session Manager callback APIs
-4. fully replace legacy crash tooling in all environments
+2. integrate with Session Manager callback APIs
+3. fully replace legacy crash tooling in all environments
 
 ## Files
 
@@ -64,6 +65,13 @@ Recommended optional inputs:
 - `WATCHDOG_DRY_RUN` (default `false`)
 - `WATCHDOG_RUN_ONCE` (default `false`)
 - `WATCHDOG_LOG_PATH`
+- `WATCHDOG_STREAMER_HEALTH_ENABLED` (default `true`)
+- `WATCHDOG_STREAMER_HEALTH_PATH` (default `state\streamer-health.json`)
+- `WATCHDOG_STREAMER_HEALTH_MAX_STALE_SECONDS` (default `75`)
+- `WATCHDOG_STREAMER_HEALTH_STARTUP_GRACE_SECONDS` (default `120`)
+- `WATCHDOG_UNREAL_CPU_STALL_CONFIRM_ENABLED` (default `true`)
+- `WATCHDOG_UNREAL_CPU_STALL_MIN_DELTA_SECONDS` (default `0.001`)
+- `WATCHDOG_UNREAL_CPU_STALL_CONFIRM_SECONDS` (default `10`)
 
 Runtime status publishing inputs:
 
@@ -86,6 +94,13 @@ Default behavior from `start_watchdog.bat`:
 - Unreal process: `ScaleWorld`
 - terminate matched processes before restart: `true`
 - restart command: `start_streamer_stack.bat --recovery`
+- streamer health checks: enabled
+- streamer health file: `state\streamer-health.json`
+- streamer health stale threshold: `75s`
+- streamer health startup grace: `120s`
+- Unreal CPU stall confirmation: enabled
+- Unreal CPU minimum delta: `0.001s`
+- Unreal CPU confirmation window: `10s`
 
 ## Runtime Status Behavior
 
@@ -102,6 +117,7 @@ Current watchdog writes:
 1. `runtime_fault`
    - `unreal_process_missing`
    - `wilbur_process_missing`
+   - streamer health fault reasons such as `streamer_ping_stale`
    - combined fault reasons if multiple required processes are missing
 2. `booting`
    - `watchdog_restart_pending`
@@ -120,15 +136,19 @@ If runtime status publishing is enabled, the instance role must allow `ec2:Creat
 4. Keep legacy crash tooling only until watchdog restart flow is verified end-to-end in dev.
 5. Recovery should restart the whole stack through `start_streamer_stack.bat --recovery`, not only one process.
 6. `start_dev_turn.bat` reloads TURN credentials and the connect-ticket signing key on restart, so recovery should continue to flow through that script.
+7. Hung Unreal detection depends on Wilbur writing a fresh local health file from real streamer ping traffic.
+8. When both processes are still present, the watchdog now requires the old Unreal CPU-stall signal as corroboration before it restarts the stack. This keeps the long-serving production heuristic in place while avoiding duplicate launches and reducing false positives from transient signalling issues.
 
 ## Recommended Validation Path
 
 1. Validate process detection for Unreal-only failure.
 2. Validate process detection for Wilbur-only failure.
-3. Validate full-stack recovery using the default restart command.
-4. Confirm runtime status transitions during recovery:
+3. Validate hung Unreal detection by leaving both processes alive while the local streamer health file becomes unhealthy or stale.
+4. Confirm the watchdog waits for Unreal CPU stall confirmation before recovering that hung-session case.
+5. Validate full-stack recovery using the default restart command.
+6. Confirm runtime status transitions during recovery:
    - `runtime_fault`
    - `booting`
    - `waiting_for_streamer`
    - `ready`
-5. After that, decide when to remove the legacy crash monitor from the default AMI startup path.
+7. After that, decide when to remove the legacy crash monitor from the default AMI startup path.
