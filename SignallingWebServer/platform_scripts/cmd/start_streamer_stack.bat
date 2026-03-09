@@ -36,13 +36,13 @@ if /i "%STACK_RUN_UNREAL_UPDATE_CHECK%"=="true" (
 )
 
 echo Starting Wilbur in %STACK_MODE% mode...
-start "ScaleWorld Wilbur" cmd /c "call \"%SCRIPT_DIR%start_dev_turn.bat\" %*"
+start "ScaleWorld Wilbur" "%SCRIPT_DIR%start_dev_turn.bat" %*
 
 if /i "%STACK_START_UNREAL%"=="true" (
   if exist "%SCRIPT_DIR%start_unreal.bat" (
     timeout /t %STACK_UNREAL_START_DELAY_SECONDS% /nobreak >nul
     echo Starting Unreal runtime...
-    start "ScaleWorld Unreal" cmd /c "call \"%SCRIPT_DIR%start_unreal.bat\""
+    start "ScaleWorld Unreal" "%SCRIPT_DIR%start_unreal.bat"
   ) else (
     echo WARNING: start_unreal.bat not found in "%SCRIPT_DIR%". Unreal launch skipped.
   )
@@ -51,7 +51,7 @@ if /i "%STACK_START_UNREAL%"=="true" (
 if /i "%STACK_START_WATCHDOG%"=="true" (
   if exist "%SCRIPT_DIR%start_watchdog.bat" (
     echo Scheduling watchdog start in %STACK_WATCHDOG_START_DELAY_SECONDS% seconds...
-    start "ScaleWorld Watchdog" cmd /c "timeout /t %STACK_WATCHDOG_START_DELAY_SECONDS% /nobreak >nul && call \"%SCRIPT_DIR%start_watchdog.bat\""
+    start "ScaleWorld Watchdog" powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds %STACK_WATCHDOG_START_DELAY_SECONDS%; & '%SCRIPT_DIR%start_watchdog.bat'"
   ) else (
     echo WARNING: start_watchdog.bat not found in "%SCRIPT_DIR%". Watchdog launch skipped.
   )
