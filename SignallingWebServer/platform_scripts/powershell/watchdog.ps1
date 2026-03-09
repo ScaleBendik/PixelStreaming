@@ -232,9 +232,45 @@ function Invoke-CommandString {
         return $true
     }
 
+    $parsedCommand = $null
+    try {
+        $trimmedCommand = $Command.Trim()
+        if ($trimmedCommand.StartsWith('"')) {
+            $closingQuote = $trimmedCommand.IndexOf('"', 1)
+            if ($closingQuote -gt 1) {
+                $parsedCommand = [pscustomobject]@{
+                    Executable = $trimmedCommand.Substring(1, $closingQuote - 1)
+                    Arguments = $trimmedCommand.Substring($closingQuote + 1).Trim()
+                }
+            }
+        } else {
+            $parts = $trimmedCommand -split '\s+', 2
+            if ($parts.Count -ge 1 -and -not [string]::IsNullOrWhiteSpace($parts[0])) {
+                $parsedCommand = [pscustomobject]@{
+                    Executable = $parts[0]
+                    Arguments = if ($parts.Count -gt 1) { $parts[1].Trim() } else { '' }
+                }
+            }
+        }
+    } catch {
+        $parsedCommand = $null
+    }
+
     Write-WatchdogLog "Executing $Label command: $Command"
     if ($WaitForExit) {
-        $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $Command -Wait -PassThru -WindowStyle Hidden
+        if ($parsedCommand -and $parsedCommand.Executable -match '\.(cmd|bat)$') {
+            $cmdLine = if ([string]::IsNullOrWhiteSpace($parsedCommand.Arguments)) {
+                ('call "{0}"' -f $parsedCommand.Executable)
+            } else {
+                ('call "{0}" {1}' -f $parsedCommand.Executable, $parsedCommand.Arguments)
+            }
+            $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmdLine -Wait -PassThru -WindowStyle Hidden
+        } elseif ($parsedCommand) {
+            $argumentList = if ([string]::IsNullOrWhiteSpace($parsedCommand.Arguments)) { @() } else { @($parsedCommand.Arguments) }
+            $process = Start-Process -FilePath $parsedCommand.Executable -ArgumentList $argumentList -Wait -PassThru -WindowStyle Hidden
+        } else {
+            $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $Command -Wait -PassThru -WindowStyle Hidden
+        }
         if ($process.ExitCode -ne 0) {
             Write-WatchdogLog "$Label command failed with exit code $($process.ExitCode)." 'ERROR'
             return $false
@@ -244,7 +280,19 @@ function Invoke-CommandString {
         return $true
     }
 
-    $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $Command -PassThru -WindowStyle Hidden
+    if ($parsedCommand -and $parsedCommand.Executable -match '\.(cmd|bat)$') {
+        $cmdLine = if ([string]::IsNullOrWhiteSpace($parsedCommand.Arguments)) {
+            ('call "{0}"' -f $parsedCommand.Executable)
+        } else {
+            ('call "{0}" {1}' -f $parsedCommand.Executable, $parsedCommand.Arguments)
+        }
+        $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmdLine -PassThru -WindowStyle Hidden
+    } elseif ($parsedCommand) {
+        $argumentList = if ([string]::IsNullOrWhiteSpace($parsedCommand.Arguments)) { @() } else { @($parsedCommand.Arguments) }
+        $process = Start-Process -FilePath $parsedCommand.Executable -ArgumentList $argumentList -PassThru -WindowStyle Hidden
+    } else {
+        $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $Command -PassThru -WindowStyle Hidden
+    }
     Write-WatchdogLog "$Label command started in detached cmd.exe process $($process.Id)."
     return $true
 }
@@ -327,6 +375,7 @@ Write-WatchdogLog ('Starting watchdog. Poll={0}s threshold={1} restartCooldown={
 Write-WatchdogLog ('Rules: {0}' -f (($rules | ForEach-Object { if ([string]::IsNullOrWhiteSpace($_.CommandLinePattern)) { $_.ProcessName } else { '{0} [{1}]' -f $_.ProcessName, $_.CommandLinePattern } }) -join ', '))
 
 while ($true) {
+    try {
     $snapshot = @(Get-ProcessSnapshot)
     $failedRules = @()
 
@@ -427,4 +476,13 @@ while ($true) {
     }
 
     Start-Sleep -Seconds $pollIntervalSecondsValue
+    } catch {
+        $errorMessage = $_.Exception.Message
+        $stackTrace = $_.ScriptStackTrace
+        Write-WatchdogLog "Unhandled watchdog loop error: $errorMessage" 'ERROR'
+        if (-not [string]::IsNullOrWhiteSpace($stackTrace)) {
+            Write-WatchdogLog $stackTrace 'ERROR'
+        }
+        Start-Sleep -Seconds $pollIntervalSecondsValue
+    }
 }
