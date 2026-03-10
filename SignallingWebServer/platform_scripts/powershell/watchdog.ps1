@@ -309,6 +309,8 @@ function Invoke-CommandString {
         $parsedCommand = $null
     }
 
+    $windowStyle = if ($Label -eq 'wilbur restart') { 'Normal' } else { 'Hidden' }
+
     Write-WatchdogLog "Executing $Label command: $Command"
     if ($WaitForExit) {
         if ($parsedCommand -and $parsedCommand.Executable -match '\.(cmd|bat)$') {
@@ -317,12 +319,12 @@ function Invoke-CommandString {
             } else {
                 ('call "{0}" {1}' -f $parsedCommand.Executable, $parsedCommand.Arguments)
             }
-            $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmdLine -Wait -PassThru -WindowStyle Hidden
+            $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmdLine -Wait -PassThru -WindowStyle $windowStyle
         } elseif ($parsedCommand) {
             $argumentList = if ([string]::IsNullOrWhiteSpace($parsedCommand.Arguments)) { @() } else { @($parsedCommand.Arguments) }
-            $process = Start-Process -FilePath $parsedCommand.Executable -ArgumentList $argumentList -Wait -PassThru -WindowStyle Hidden
+            $process = Start-Process -FilePath $parsedCommand.Executable -ArgumentList $argumentList -Wait -PassThru -WindowStyle $windowStyle
         } else {
-            $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $Command -Wait -PassThru -WindowStyle Hidden
+            $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $Command -Wait -PassThru -WindowStyle $windowStyle
         }
         if ($process.ExitCode -ne 0) {
             Write-WatchdogLog "$Label command failed with exit code $($process.ExitCode)." 'ERROR'
@@ -339,12 +341,12 @@ function Invoke-CommandString {
         } else {
             ('call "{0}" {1}' -f $parsedCommand.Executable, $parsedCommand.Arguments)
         }
-        $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmdLine -PassThru -WindowStyle Hidden
+        $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmdLine -PassThru -WindowStyle $windowStyle
     } elseif ($parsedCommand) {
         $argumentList = if ([string]::IsNullOrWhiteSpace($parsedCommand.Arguments)) { @() } else { @($parsedCommand.Arguments) }
-        $process = Start-Process -FilePath $parsedCommand.Executable -ArgumentList $argumentList -PassThru -WindowStyle Hidden
+        $process = Start-Process -FilePath $parsedCommand.Executable -ArgumentList $argumentList -PassThru -WindowStyle $windowStyle
     } else {
-        $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $Command -PassThru -WindowStyle Hidden
+        $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $Command -PassThru -WindowStyle $windowStyle
     }
     Write-WatchdogLog "$Label command started in detached cmd.exe process $($process.Id)."
     return $true
