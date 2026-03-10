@@ -339,7 +339,11 @@ exit /b
 
 :StartWilbur
 pushd %SCRIPT_DIR%\..\..\
-call %NPM% run start -- %SERVER_ARGS%
+set NODE_EXE=%SCRIPT_DIR%node\node.exe
+if not exist "%NODE_EXE%" (
+    set NODE_EXE=node.exe
+)
+call "%NODE_EXE%" .\dist\index.js %SERVER_ARGS%
 exit /b
 
 :NormalizePath

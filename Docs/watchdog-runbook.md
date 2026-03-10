@@ -50,7 +50,7 @@ Environment variables or equivalent PowerShell parameters:
 
 - `WATCHDOG_UNREAL_PROCESS_NAME`
 - `WATCHDOG_WILBUR_PROCESS_NAME` (default `node.exe`)
-- `WATCHDOG_WILBUR_COMMANDLINE_PATTERN` (default `SignallingWebServer`)
+- `WATCHDOG_WILBUR_COMMANDLINE_PATTERN` (default `index.js`)
 
 Recommended optional inputs:
 
@@ -92,6 +92,7 @@ C:\PixelStreaming\PixelStreaming\SignallingWebServer\platform_scripts\cmd\start_
 Default behavior from `start_watchdog.bat`:
 
 - Unreal process: `ScaleWorld`
+- Wilbur command-line pattern: `index.js`
 - terminate matched processes before restart: `true`
 - restart command: `start_streamer_stack.bat --recovery`
 - streamer health checks: enabled
