@@ -84,8 +84,13 @@ if /i "%STACK_START_UNREAL%"=="true" (
 
 if /i "%STACK_START_WATCHDOG%"=="true" (
   if exist "%SCRIPT_DIR%start_watchdog.bat" (
-    echo Scheduling watchdog start in %STACK_WATCHDOG_START_DELAY_SECONDS% seconds...
-    start "ScaleWorld Watchdog" powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds %STACK_WATCHDOG_START_DELAY_SECONDS%; & '%SCRIPT_DIR%start_watchdog.bat'"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$watchdog = Get-CimInstance Win32_Process | Where-Object { ($_.Name -ieq 'powershell.exe' -and $_.CommandLine -like '*watchdog.ps1*') -or ($_.Name -ieq 'cmd.exe' -and $_.CommandLine -like '*start_watchdog.bat*') } | Select-Object -First 1; if ($watchdog) { exit 0 } else { exit 1 }"
+    if errorlevel 1 (
+      echo Scheduling watchdog start in %STACK_WATCHDOG_START_DELAY_SECONDS% seconds...
+      start "ScaleWorld Watchdog" powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds %STACK_WATCHDOG_START_DELAY_SECONDS%; & '%SCRIPT_DIR%start_watchdog.bat'"
+    ) else (
+      echo Watchdog is already running or launch is already in progress. Skipping launch.
+    )
   ) else (
     echo WARNING: start_watchdog.bat not found in "%SCRIPT_DIR%". Watchdog launch skipped.
   )

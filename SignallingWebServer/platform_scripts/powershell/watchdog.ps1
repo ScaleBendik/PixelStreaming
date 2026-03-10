@@ -8,6 +8,7 @@ param(
     [string]$FailureThreshold = $(if ($env:WATCHDOG_FAILURE_THRESHOLD) { $env:WATCHDOG_FAILURE_THRESHOLD } else { '3' }),
     [string]$RestartCooldownSeconds = $(if ($env:WATCHDOG_RESTART_COOLDOWN_SECONDS) { $env:WATCHDOG_RESTART_COOLDOWN_SECONDS } else { '5' }),
     [string]$PostRestartGraceSeconds = $(if ($env:WATCHDOG_POST_RESTART_GRACE_SECONDS) { $env:WATCHDOG_POST_RESTART_GRACE_SECONDS } else { '8' }),
+    [string]$ProcessStartupGraceSeconds = $(if ($env:WATCHDOG_PROCESS_STARTUP_GRACE_SECONDS) { $env:WATCHDOG_PROCESS_STARTUP_GRACE_SECONDS } else { '30' }),
     [string]$TerminateMatchedProcesses = $(if ($env:WATCHDOG_TERMINATE_MATCHED_PROCESSES) { $env:WATCHDOG_TERMINATE_MATCHED_PROCESSES } else { 'false' }),
     [string]$DryRun = $(if ($env:WATCHDOG_DRY_RUN) { $env:WATCHDOG_DRY_RUN } else { 'false' }),
     [string]$RunOnce = $(if ($env:WATCHDOG_RUN_ONCE) { $env:WATCHDOG_RUN_ONCE } else { 'false' }),
@@ -413,6 +414,7 @@ $pollIntervalSecondsValue = ConvertTo-PositiveInt -Value $PollIntervalSeconds -D
 $failureThresholdValue = ConvertTo-PositiveInt -Value $FailureThreshold -Default 3 -Name 'FailureThreshold'
 $restartCooldownSecondsValue = ConvertTo-PositiveInt -Value $RestartCooldownSeconds -Default 120 -Name 'RestartCooldownSeconds'
 $postRestartGraceSecondsValue = ConvertTo-PositiveInt -Value $PostRestartGraceSeconds -Default 30 -Name 'PostRestartGraceSeconds'
+$processStartupGraceSecondsValue = ConvertTo-PositiveInt -Value $ProcessStartupGraceSeconds -Default 30 -Name 'ProcessStartupGraceSeconds'
 $terminateMatchedProcessesValue = ConvertTo-Bool -Value $TerminateMatchedProcesses -Default $false
 $dryRunValue = ConvertTo-Bool -Value $DryRun -Default $false
 $runOnceValue = ConvertTo-Bool -Value $RunOnce -Default $false
@@ -476,11 +478,13 @@ $healthyLogged = $false
 $lastUnrealCpuSnapshot = $null
 $unrealCpuStallAccumulatedSeconds = 0.0
 
-Write-WatchdogLog ('Starting watchdog. Poll={0}s threshold={1} restartCooldown={2}s postRestartGrace={3}s dryRun={4} runtimeStatus={5} streamerHealth={6} streamerHealthPath={7} streamerHealthMaxStale={8}s streamerHealthStartupGrace={9}s unrealCpuConfirm={10} unrealCpuMinDelta={11}s unrealCpuConfirmWindow={12}s' -f $pollIntervalSecondsValue, $failureThresholdValue, $restartCooldownSecondsValue, $postRestartGraceSecondsValue, $dryRunValue, $runtimeStatusEnabledValue, $streamerHealthEnabledValue, $resolvedStreamerHealthPath, $streamerHealthMaxStaleSecondsValue, $streamerHealthStartupGraceSecondsValue, $unrealCpuStallConfirmEnabledValue, $unrealCpuStallMinDeltaSecondsValue, $unrealCpuStallConfirmSecondsValue)
+Write-WatchdogLog ('Starting watchdog. Poll={0}s threshold={1} restartCooldown={2}s postRestartGrace={3}s processStartupGrace={4}s dryRun={5} runtimeStatus={6} streamerHealth={7} streamerHealthPath={8} streamerHealthMaxStale={9}s streamerHealthStartupGrace={10}s unrealCpuConfirm={11} unrealCpuMinDelta={12}s unrealCpuConfirmWindow={13}s' -f $pollIntervalSecondsValue, $failureThresholdValue, $restartCooldownSecondsValue, $postRestartGraceSecondsValue, $processStartupGraceSecondsValue, $dryRunValue, $runtimeStatusEnabledValue, $streamerHealthEnabledValue, $resolvedStreamerHealthPath, $streamerHealthMaxStaleSecondsValue, $streamerHealthStartupGraceSecondsValue, $unrealCpuStallConfirmEnabledValue, $unrealCpuStallMinDeltaSecondsValue, $unrealCpuStallConfirmSecondsValue)
 Write-WatchdogLog ('Rules: {0}' -f (($rules | ForEach-Object { if ([string]::IsNullOrWhiteSpace($_.CommandLinePattern)) { $_.ProcessName } else { '{0} [{1}]' -f $_.ProcessName, $_.CommandLinePattern } }) -join ', '))
 
 while ($true) {
     try {
+    $processGraceReferenceUtc = if ($lastRestartAtUtc -ne [DateTimeOffset]::MinValue) { $lastRestartAtUtc } else { $watchdogStartedAtUtc }
+    $processStartupGraceActive = $processStartupGraceSecondsValue -gt 0 -and (([DateTimeOffset]::UtcNow - $processGraceReferenceUtc).TotalSeconds -lt $processStartupGraceSecondsValue)
     $snapshot = @(Get-ProcessSnapshot)
     $ruleMatches = @{}
     $failedRules = @()
@@ -494,7 +498,7 @@ while ($true) {
         }
 
         $ruleFailures[$rule.Name] = [int]$ruleFailures[$rule.Name] + 1
-        if ($ruleFailures[$rule.Name] -ge $failureThresholdValue) {
+        if (-not $processStartupGraceActive -and $ruleFailures[$rule.Name] -ge $failureThresholdValue) {
             $failedRules += $rule
         }
     }
@@ -624,6 +628,18 @@ while ($true) {
     }
 
     if ($failedRules.Count -eq 0) {
+        if ($processStartupGraceActive) {
+            $lastSuspiciousSignature = $null
+            $lastFaultSignature = $null
+            $healthyLogged = $false
+            if ($runOnceValue) {
+                break
+            }
+
+            Start-Sleep -Seconds $pollIntervalSecondsValue
+            continue
+        }
+
         if ($pendingFaultSignature) {
             if ($pendingFaultSignature -ne $lastSuspiciousSignature) {
                 Write-WatchdogLog "Suspicious runtime state detected: $pendingFaultSummary" 'WARN'

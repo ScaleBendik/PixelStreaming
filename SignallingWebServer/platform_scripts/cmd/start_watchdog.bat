@@ -53,5 +53,9 @@ if not defined WATCHDOG_RESTART_COMMAND (
   set "WATCHDOG_RESTART_COMMAND=""%SCRIPT_DIR%start_streamer_stack.bat"" --recovery"
 )
 
+if not defined WATCHDOG_PROCESS_STARTUP_GRACE_SECONDS (
+  set "WATCHDOG_PROCESS_STARTUP_GRACE_SECONDS=30"
+)
+
 powershell -NoProfile -ExecutionPolicy Bypass -File "%WATCHDOG_SCRIPT%" %*
 exit /b %errorlevel%
