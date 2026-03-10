@@ -180,6 +180,7 @@ function Publish-RuntimeStatus {
             '--tags',
             ("Key=ScaleWorldRuntimeStatus,Value={0}" -f (Normalize-TagValue $Status)),
             ("Key=ScaleWorldRuntimeStatusAtUtc,Value={0}" -f $timestamp),
+            ("Key=ScaleWorldRuntimeStatusHeartbeatAtUtc,Value={0}" -f $timestamp),
             ("Key=ScaleWorldRuntimeStatusSource,Value={0}" -f (Normalize-TagValue $RuntimeStatusSource)),
             ("Key=ScaleWorldRuntimeStatusReason,Value={0}" -f (Normalize-TagValue $Reason)),
             ("Key=ScaleWorldRuntimeStatusVersion,Value={0}" -f (Normalize-TagValue $RuntimeStatusVersion))

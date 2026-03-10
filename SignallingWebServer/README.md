@@ -185,6 +185,12 @@ Important:
 2. `start_dev_turn.bat` remains the Wilbur-specific launcher and can still be run directly for focused troubleshooting.
 3. Start with dry-run mode before trusting automatic recovery in dev.
 4. Runtime status publishing requires `ec2:CreateTags` permission for the approved `ScaleWorldRuntime*` tag set.
+5. The current recommended Windows boot method is Task Scheduler:
+   - trigger: `At startup`
+   - delay: `20 seconds`
+   - user mode: `Run only when user is logged on`
+   - `Run with highest privileges`
+   - `Do not start a new instance`
 Given these options, to start the server with the closest behaviour as the old cirrus, you would invoke,
 ```
 npm start -- --console_messages --https_redirect verbose --serve --log_config --http_root www --homepage player.html

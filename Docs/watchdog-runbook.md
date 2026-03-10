@@ -133,9 +133,49 @@ Current watchdog writes:
 3. `runtime_fault`
    - `watchdog_restart_failed`
 
+Each watchdog publish now writes:
+
+- `ScaleWorldRuntimeStatusAtUtc`
+- `ScaleWorldRuntimeStatusHeartbeatAtUtc`
+
 ## IAM Requirement
 
 If runtime status publishing is enabled, the instance role must allow `ec2:CreateTags` for the approved `ScaleWorldRuntime*` tag keys on the streamer instance resource.
+
+## Recommended Task Scheduler Settings
+
+For the current production-style setup, the known-good Task Scheduler configuration is:
+
+### General
+
+- Task: `start_streamer_stack`
+- User: `Administrator` (or the intended interactive runtime account)
+- `Run only when user is logged on`
+- `Run with highest privileges`
+- `Configure for`: current Windows Server version
+
+### Trigger
+
+- `At startup`
+- delay: `20 seconds`
+
+### Action
+
+- Program/script:
+  - `C:\Windows\System32\cmd.exe`
+- Arguments:
+  - `/c "C:\PixelStreaming\PixelStreaming\SignallingWebServer\platform_scripts\cmd\start_streamer_stack.bat"`
+- Start in:
+  - `C:\PixelStreaming\PixelStreaming\SignallingWebServer\platform_scripts\cmd`
+
+### Settings
+
+- `If the task is already running` -> `Do not start a new instance`
+
+Operational note:
+
+- This mode depends on the instance getting its normal interactive logon session at boot.
+- It is the preferred configuration for the current fleet because it matches the long-running production operating model and keeps Wilbur/Unreal/watchdog windows visible for debugging.
 
 ## Operational Notes
 
@@ -148,6 +188,10 @@ If runtime status publishing is enabled, the instance role must allow `ec2:Creat
 7. Hung Unreal detection depends on Wilbur writing a fresh local health file from real streamer ping traffic.
 8. When both processes are still present, the watchdog now requires the old Unreal CPU-stall signal as corroboration before it restarts the stack. This keeps the long-serving production heuristic in place while avoiding duplicate launches and reducing false positives from transient signalling issues.
 9. The first missing-process grace now applies only to initial watchdog boot, not to subsequent recoveries. Subsequent recoveries rely on the normal post-restart grace window instead.
+10. The current empirically stable defaults are:
+   - Task Scheduler startup delay: `20s`
+   - watchdog process startup grace: `15s`
+   - poll / threshold / cooldown / post-restart grace: `5 / 3 / 5 / 8`
 
 ## Recommended Validation Path
 
