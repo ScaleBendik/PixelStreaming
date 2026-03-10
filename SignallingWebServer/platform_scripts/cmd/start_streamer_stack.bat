@@ -69,7 +69,7 @@ if /i "%STACK_START_UNREAL%"=="true" (
   )
 
   if exist "%SCRIPT_DIR%start_unreal.bat" (
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$unreal = Get-CimInstance Win32_Process | Where-Object { $_.Name -ieq '%UNREAL_PROCESS_NAME%' -or ($_.Name -ieq 'cmd.exe' -and $_.CommandLine -like '*%UNREAL_LAUNCHER_PATTERN%*') -or ($_.Name -ieq 'powershell.exe' -and $_.CommandLine -like '*start_scaleworld.ps1*') } | Select-Object -First 1; if ($unreal) { exit 0 } else { exit 1 }"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$currentPid = $PID; $unreal = Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $currentPid -and ($_.Name -ieq '%UNREAL_PROCESS_NAME%' -or ($_.Name -ieq 'cmd.exe' -and $_.CommandLine -like '*%UNREAL_LAUNCHER_PATTERN%*') -or ($_.Name -ieq 'powershell.exe' -and $_.CommandLine -like '*start_scaleworld.ps1*')) } | Select-Object -First 1; if ($unreal) { exit 0 } else { exit 1 }"
     if errorlevel 1 (
       timeout /t %STACK_UNREAL_START_DELAY_SECONDS% /nobreak >nul
       echo Starting Unreal runtime...
@@ -84,7 +84,7 @@ if /i "%STACK_START_UNREAL%"=="true" (
 
 if /i "%STACK_START_WATCHDOG%"=="true" (
   if exist "%SCRIPT_DIR%start_watchdog.bat" (
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$watchdog = Get-CimInstance Win32_Process | Where-Object { ($_.Name -ieq 'powershell.exe' -and $_.CommandLine -like '*watchdog.ps1*') -or ($_.Name -ieq 'cmd.exe' -and $_.CommandLine -like '*start_watchdog.bat*') } | Select-Object -First 1; if ($watchdog) { exit 0 } else { exit 1 }"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$currentPid = $PID; $watchdog = Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $currentPid -and (($_.Name -ieq 'powershell.exe' -and $_.CommandLine -like '*watchdog.ps1*') -or ($_.Name -ieq 'cmd.exe' -and $_.CommandLine -like '*start_watchdog.bat*')) } | Select-Object -First 1; if ($watchdog) { exit 0 } else { exit 1 }"
     if errorlevel 1 (
       echo Scheduling watchdog start in %STACK_WATCHDOG_START_DELAY_SECONDS% seconds...
       start "ScaleWorld Watchdog" powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds %STACK_WATCHDOG_START_DELAY_SECONDS%; & '%SCRIPT_DIR%start_watchdog.bat'"
