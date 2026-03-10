@@ -7,6 +7,7 @@ set "UPDATE_SCRIPT=%PIXELSTREAMING_ROOT%\SWupdate.ps1"
 set "STACK_MODE=normal"
 set "STACK_START_WATCHDOG=true"
 set "STACK_START_UNREAL=true"
+if not defined STACK_LAUNCH_UNREAL_BEFORE_WILBUR set "STACK_LAUNCH_UNREAL_BEFORE_WILBUR=true"
 
 if /i "%~1"=="--recovery" (
   set "STACK_MODE=recovery"
@@ -63,29 +64,20 @@ if errorlevel 1 (
   echo Wilbur is already running or launch is already in progress. Skipping launch.
 )
 
-if /i "%STACK_START_UNREAL%"=="true" (
+if /i "%STACK_START_UNREAL%"=="true" if /i "%STACK_LAUNCH_UNREAL_BEFORE_WILBUR%"=="true" (
+  call :launch_unreal_if_needed
+  if errorlevel 1 exit /b 1
+)
+
+if /i "%STACK_START_UNREAL%"=="true" if /i not "%STACK_LAUNCH_UNREAL_BEFORE_WILBUR%"=="true" (
   call :wait_for_wilbur_ready
   if errorlevel 1 (
     echo ERROR: Wilbur did not become ready on %STACK_WILBUR_READY_HOST%:%STACK_WILBUR_READY_PORT% within %STACK_WILBUR_READY_TIMEOUT_SECONDS% seconds.
     exit /b 1
   )
 
-  if exist "%SCRIPT_DIR%start_unreal.bat" (
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$currentPid = $PID; $unreal = Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $currentPid -and (($_.Name -like '%UNREAL_PROCESS_NAME_PATTERN%') -or ($_.Name -ieq 'cmd.exe' -and $_.CommandLine -like '*%UNREAL_LAUNCHER_PATTERN%*') -or ($_.Name -ieq 'powershell.exe' -and $_.CommandLine -like '*start_scaleworld.ps1*')) } | Select-Object -First 1; if ($unreal) { exit 0 } else { exit 1 }"
-    if errorlevel 1 (
-      timeout /t %STACK_UNREAL_START_DELAY_SECONDS% /nobreak >nul
-      echo Starting Unreal runtime...
-      call "%SCRIPT_DIR%start_unreal.bat"
-      if errorlevel 1 (
-        echo ERROR: Unreal launch failed.
-        exit /b 1
-      )
-    ) else (
-      echo Unreal is already running or launch is already in progress. Skipping launch.
-    )
-  ) else (
-    echo WARNING: start_unreal.bat not found in "%SCRIPT_DIR%". Unreal launch skipped.
-  )
+  call :launch_unreal_if_needed
+  if errorlevel 1 exit /b 1
 )
 
 if /i "%STACK_START_WATCHDOG%"=="true" (
@@ -103,6 +95,25 @@ if /i "%STACK_START_WATCHDOG%"=="true" (
 )
 
 echo Stack launch completed.
+exit /b 0
+
+:launch_unreal_if_needed
+if exist "%SCRIPT_DIR%start_unreal.bat" (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "$currentPid = $PID; $unreal = Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $currentPid -and (($_.Name -like '%UNREAL_PROCESS_NAME_PATTERN%') -or ($_.Name -ieq 'cmd.exe' -and $_.CommandLine -like '*%UNREAL_LAUNCHER_PATTERN%*') -or ($_.Name -ieq 'powershell.exe' -and $_.CommandLine -like '*start_scaleworld.ps1*')) } | Select-Object -First 1; if ($unreal) { exit 0 } else { exit 1 }"
+  if errorlevel 1 (
+    timeout /t %STACK_UNREAL_START_DELAY_SECONDS% /nobreak >nul
+    echo Starting Unreal runtime...
+    call "%SCRIPT_DIR%start_unreal.bat"
+    if errorlevel 1 (
+      echo ERROR: Unreal launch failed.
+      exit /b 1
+    )
+  ) else (
+    echo Unreal is already running or launch is already in progress. Skipping launch.
+  )
+) else (
+  echo WARNING: start_unreal.bat not found in "%SCRIPT_DIR%". Unreal launch skipped.
+)
 exit /b 0
 
 :wait_for_wilbur_ready
