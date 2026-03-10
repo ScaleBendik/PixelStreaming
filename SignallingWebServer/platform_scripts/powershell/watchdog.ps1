@@ -8,11 +8,13 @@ param(
     [string]$FailureThreshold = $(if ($env:WATCHDOG_FAILURE_THRESHOLD) { $env:WATCHDOG_FAILURE_THRESHOLD } else { '3' }),
     [string]$RestartCooldownSeconds = $(if ($env:WATCHDOG_RESTART_COOLDOWN_SECONDS) { $env:WATCHDOG_RESTART_COOLDOWN_SECONDS } else { '5' }),
     [string]$PostRestartGraceSeconds = $(if ($env:WATCHDOG_POST_RESTART_GRACE_SECONDS) { $env:WATCHDOG_POST_RESTART_GRACE_SECONDS } else { '8' }),
-    [string]$ProcessStartupGraceSeconds = $(if ($env:WATCHDOG_PROCESS_STARTUP_GRACE_SECONDS) { $env:WATCHDOG_PROCESS_STARTUP_GRACE_SECONDS } else { '30' }),
+    [string]$ProcessStartupGraceSeconds = $(if ($env:WATCHDOG_PROCESS_STARTUP_GRACE_SECONDS) { $env:WATCHDOG_PROCESS_STARTUP_GRACE_SECONDS } else { '15' }),
     [string]$TerminateMatchedProcesses = $(if ($env:WATCHDOG_TERMINATE_MATCHED_PROCESSES) { $env:WATCHDOG_TERMINATE_MATCHED_PROCESSES } else { 'false' }),
     [string]$DryRun = $(if ($env:WATCHDOG_DRY_RUN) { $env:WATCHDOG_DRY_RUN } else { 'false' }),
     [string]$RunOnce = $(if ($env:WATCHDOG_RUN_ONCE) { $env:WATCHDOG_RUN_ONCE } else { 'false' }),
     [string]$RestartCommand = $env:WATCHDOG_RESTART_COMMAND,
+    [string]$WilburRestartCommand = $env:WATCHDOG_WILBUR_RESTART_COMMAND,
+    [string]$UnrealRestartCommand = $env:WATCHDOG_UNREAL_RESTART_COMMAND,
     [string]$PreRestartCommand = $env:WATCHDOG_PRE_RESTART_COMMAND,
     [string]$PostRestartCommand = $env:WATCHDOG_POST_RESTART_COMMAND,
     [string]$LogPath = $env:WATCHDOG_LOG_PATH,
@@ -375,6 +377,48 @@ function Stop-MatchingProcesses {
     }
 }
 
+function Get-RecoveryPlan {
+    param(
+        [object[]]$FailedRules,
+        [object[]]$PrimaryRules,
+        [object[]]$LauncherRules,
+        [string]$DefaultCommand,
+        [string]$WilburOnlyCommand,
+        [string]$UnrealOnlyCommand
+    )
+
+    $failedRuleNames = @($FailedRules | ForEach-Object { $_.Name })
+    $nonHealthFailedRules = @($FailedRules | Where-Object { $_.Name -ne 'streamer-health' })
+
+    if ($nonHealthFailedRules.Count -eq 1 -and $failedRuleNames.Count -eq 1) {
+        $singleRule = $nonHealthFailedRules[0]
+        if ($singleRule.Name -eq 'wilbur' -and -not [string]::IsNullOrWhiteSpace($WilburOnlyCommand)) {
+            return [pscustomobject]@{
+                Label = 'wilbur restart'
+                Command = $WilburOnlyCommand
+                TerminationRules = @($PrimaryRules | Where-Object { $_.Name -eq 'wilbur' }) + @($LauncherRules | Where-Object { $_.Name -like 'wilbur-*' })
+                BootReason = 'watchdog_wilbur_restart_pending'
+            }
+        }
+
+        if ($singleRule.Name -eq 'unreal' -and -not [string]::IsNullOrWhiteSpace($UnrealOnlyCommand)) {
+            return [pscustomobject]@{
+                Label = 'unreal restart'
+                Command = $UnrealOnlyCommand
+                TerminationRules = @($PrimaryRules | Where-Object { $_.Name -eq 'unreal' }) + @($LauncherRules | Where-Object { $_.Name -like 'unreal-*' })
+                BootReason = 'watchdog_unreal_restart_pending'
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        Label = 'stack restart'
+        Command = $DefaultCommand
+        TerminationRules = @($PrimaryRules) + @($LauncherRules)
+        BootReason = 'watchdog_restart_pending'
+    }
+}
+
 function Read-StreamerHealthSnapshot {
     param([string]$Path)
 
@@ -476,6 +520,12 @@ if ([string]::IsNullOrWhiteSpace($UnrealProcessName)) {
 if ([string]::IsNullOrWhiteSpace($RestartCommand)) {
     Write-WatchdogLog 'WATCHDOG_RESTART_COMMAND not set. Watchdog will publish faults but cannot recover automatically.' 'WARN'
 }
+if ([string]::IsNullOrWhiteSpace($WilburRestartCommand)) {
+    $WilburRestartCommand = $RestartCommand
+}
+if ([string]::IsNullOrWhiteSpace($UnrealRestartCommand)) {
+    $UnrealRestartCommand = $RestartCommand
+}
 if ($streamerHealthEnabledValue -and ([string]::IsNullOrWhiteSpace($UnrealProcessName) -or [string]::IsNullOrWhiteSpace($WilburProcessName))) {
     Write-WatchdogLog 'WATCHDOG_STREAMER_HEALTH_ENABLED requires both Unreal and Wilbur process rules. Disabling streamer health checks.' 'WARN'
     $streamerHealthEnabledValue = $false
@@ -504,8 +554,7 @@ Write-WatchdogLog ('Rules: {0}' -f (($rules | ForEach-Object { if ([string]::IsN
 
 while ($true) {
     try {
-    $processGraceReferenceUtc = if ($lastRestartAtUtc -ne [DateTimeOffset]::MinValue) { $lastRestartAtUtc } else { $watchdogStartedAtUtc }
-    $processStartupGraceActive = $processStartupGraceSecondsValue -gt 0 -and (([DateTimeOffset]::UtcNow - $processGraceReferenceUtc).TotalSeconds -lt $processStartupGraceSecondsValue)
+    $processStartupGraceActive = $processStartupGraceSecondsValue -gt 0 -and (([DateTimeOffset]::UtcNow - $watchdogStartedAtUtc).TotalSeconds -lt $processStartupGraceSecondsValue)
     $snapshot = @(Get-ProcessSnapshot)
     $ruleMatches = @{}
     $failedRules = @()
@@ -724,7 +773,9 @@ while ($true) {
         $lastFaultSignature = $faultSignature
     }
 
-    if ([string]::IsNullOrWhiteSpace($RestartCommand)) {
+    $recoveryPlan = Get-RecoveryPlan -FailedRules $failedRules -PrimaryRules $rules -LauncherRules $recoveryLauncherRules -DefaultCommand $RestartCommand -WilburOnlyCommand $WilburRestartCommand -UnrealOnlyCommand $UnrealRestartCommand
+
+    if ([string]::IsNullOrWhiteSpace($recoveryPlan.Command)) {
         if ($runOnceValue) {
             break
         }
@@ -749,7 +800,7 @@ while ($true) {
         continue
     }
 
-    Write-WatchdogLog "Starting recovery for fault '$faultSignature'."
+    Write-WatchdogLog ("Starting {0} for fault '{1}'." -f $recoveryPlan.Label, $faultSignature)
     if (-not (Invoke-CommandString -Command $PreRestartCommand -Label 'pre-restart' -WaitForExit $true)) {
         if ($runOnceValue) {
             break
@@ -760,11 +811,11 @@ while ($true) {
     }
 
     if ($terminateMatchedProcessesValue) {
-        Stop-MatchingProcesses -Snapshot $snapshot -Rules ($rules + $recoveryLauncherRules)
+        Stop-MatchingProcesses -Snapshot $snapshot -Rules $recoveryPlan.TerminationRules
     }
 
-    Publish-RuntimeStatus -Status 'booting' -Reason 'watchdog_restart_pending'
-    $restartSucceeded = Invoke-CommandString -Command $RestartCommand -Label 'restart' -WaitForExit $false
+    Publish-RuntimeStatus -Status 'booting' -Reason $recoveryPlan.BootReason
+    $restartSucceeded = Invoke-CommandString -Command $recoveryPlan.Command -Label $recoveryPlan.Label -WaitForExit $false
     if ($restartSucceeded) {
         $null = Invoke-CommandString -Command $PostRestartCommand -Label 'post-restart' -WaitForExit $true
         $lastRestartAtUtc = [DateTimeOffset]::UtcNow

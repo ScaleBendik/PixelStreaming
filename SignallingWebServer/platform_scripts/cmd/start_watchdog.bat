@@ -57,8 +57,16 @@ if not defined WATCHDOG_RESTART_COMMAND (
   set "WATCHDOG_RESTART_COMMAND=""%SCRIPT_DIR%start_streamer_stack.bat"" --recovery"
 )
 
+if not defined WATCHDOG_WILBUR_RESTART_COMMAND (
+  set "WATCHDOG_WILBUR_RESTART_COMMAND=""%SCRIPT_DIR%start_dev_turn.bat"""
+)
+
+if not defined WATCHDOG_UNREAL_RESTART_COMMAND (
+  set "WATCHDOG_UNREAL_RESTART_COMMAND=""%SCRIPT_DIR%start_unreal.bat"""
+)
+
 if not defined WATCHDOG_PROCESS_STARTUP_GRACE_SECONDS (
-  set "WATCHDOG_PROCESS_STARTUP_GRACE_SECONDS=30"
+  set "WATCHDOG_PROCESS_STARTUP_GRACE_SECONDS=15"
 )
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%WATCHDOG_SCRIPT%" %*

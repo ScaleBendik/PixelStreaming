@@ -26,8 +26,11 @@ The watchdog can:
 4. publish `runtime_fault` when required processes disappear
 5. optionally run pre-restart, restart, and post-restart commands
 6. optionally terminate matched processes before recovery
-7. trigger full-stack recovery through `start_streamer_stack.bat --recovery`
-8. publish `booting` with reason `watchdog_restart_pending` before recovery
+7. restart only the missing crashed component by default:
+   - `start_dev_turn.bat` when only Wilbur is missing
+   - `start_unreal.bat` when only Unreal is missing
+8. trigger full-stack recovery through `start_streamer_stack.bat --recovery` for combined or ambiguous faults
+9. publish `booting` with a reason that reflects the recovery type before restart
 
 The watchdog does not yet:
 
@@ -55,10 +58,13 @@ Environment variables or equivalent PowerShell parameters:
 Recommended optional inputs:
 
 - `WATCHDOG_RESTART_COMMAND` (defaults to `start_streamer_stack.bat --recovery` in `start_watchdog.bat`)
+- `WATCHDOG_WILBUR_RESTART_COMMAND` (defaults to `start_dev_turn.bat`)
+- `WATCHDOG_UNREAL_RESTART_COMMAND` (defaults to `start_unreal.bat`)
 - `WATCHDOG_POLL_INTERVAL_SECONDS` (default `5`)
 - `WATCHDOG_FAILURE_THRESHOLD` (default `3`)
 - `WATCHDOG_RESTART_COOLDOWN_SECONDS` (default `5`)
 - `WATCHDOG_POST_RESTART_GRACE_SECONDS` (default `8`)
+- `WATCHDOG_PROCESS_STARTUP_GRACE_SECONDS` (default `15`, initial boot only)
 - `WATCHDOG_PRE_RESTART_COMMAND`
 - `WATCHDOG_POST_RESTART_COMMAND`
 - `WATCHDOG_TERMINATE_MATCHED_PROCESSES` (default `true` in `start_watchdog.bat`)
@@ -95,6 +101,8 @@ Default behavior from `start_watchdog.bat`:
 - Wilbur command-line pattern: `index.js`
 - terminate matched processes before restart: `true`
 - restart command: `start_streamer_stack.bat --recovery`
+- Wilbur-only restart command: `start_dev_turn.bat`
+- Unreal-only restart command: `start_unreal.bat`
 - streamer health checks: enabled
 - streamer health file: `state\streamer-health.json`
 - streamer health stale threshold: `75s`
@@ -139,6 +147,7 @@ If runtime status publishing is enabled, the instance role must allow `ec2:Creat
 6. `start_dev_turn.bat` reloads TURN credentials and the connect-ticket signing key on restart, so recovery should continue to flow through that script.
 7. Hung Unreal detection depends on Wilbur writing a fresh local health file from real streamer ping traffic.
 8. When both processes are still present, the watchdog now requires the old Unreal CPU-stall signal as corroboration before it restarts the stack. This keeps the long-serving production heuristic in place while avoiding duplicate launches and reducing false positives from transient signalling issues.
+9. The first missing-process grace now applies only to initial watchdog boot, not to subsequent recoveries. Subsequent recoveries rely on the normal post-restart grace window instead.
 
 ## Recommended Validation Path
 
