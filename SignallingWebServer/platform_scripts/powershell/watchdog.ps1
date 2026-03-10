@@ -445,6 +445,27 @@ if (-not [string]::IsNullOrWhiteSpace($WilburProcessName)) {
     })
 }
 
+$recoveryLauncherRules = @(
+    [pscustomobject]@{
+        Name = 'wilbur-launcher-cmd'
+        ProcessName = 'cmd.exe'
+        CommandLinePattern = 'start_dev_turn.bat'
+        FaultReason = $null
+    },
+    [pscustomobject]@{
+        Name = 'unreal-launcher-cmd'
+        ProcessName = 'cmd.exe'
+        CommandLinePattern = 'start_unreal.bat'
+        FaultReason = $null
+    },
+    [pscustomobject]@{
+        Name = 'unreal-launcher-powershell'
+        ProcessName = 'powershell.exe'
+        CommandLinePattern = 'start_scaleworld.ps1'
+        FaultReason = $null
+    }
+)
+
 if ($rules.Count -eq 0) {
     throw 'No watchdog rules configured. Set WATCHDOG_UNREAL_PROCESS_NAME and/or WATCHDOG_WILBUR_PROCESS_NAME.'
 }
@@ -567,10 +588,24 @@ while ($true) {
                 $streamerHealthSnapshot = $streamerHealthResult.Snapshot
                 $updatedAtUtc = $null
                 $updatedAtText = [string]$streamerHealthSnapshot.updatedAtUtc
-                if ([string]::IsNullOrWhiteSpace($updatedAtText) -or -not [DateTimeOffset]::TryParse($updatedAtText, [ref]$updatedAtUtc)) {
+                if ([string]::IsNullOrWhiteSpace($updatedAtText)) {
                     $streamerHealthFaultReason = 'streamer_health_missing_timestamp'
                     $streamerHealthFaultSummary = 'streamer health file missing updatedAtUtc timestamp'
                 } else {
+                    try {
+                        $updatedAtUtc = [DateTimeOffset]::Parse(
+                            $updatedAtText,
+                            [System.Globalization.CultureInfo]::InvariantCulture,
+                            [System.Globalization.DateTimeStyles]::RoundtripKind
+                        )
+                    } catch {
+                        $streamerHealthFaultReason = 'streamer_health_missing_timestamp'
+                        $streamerHealthFaultSummary = 'streamer health file missing updatedAtUtc timestamp'
+                    }
+
+                    if ($streamerHealthFaultReason) {
+                        # timestamp parse failed
+                    } else {
                     $healthAgeSeconds = ([DateTimeOffset]::UtcNow - $updatedAtUtc).TotalSeconds
                     $healthy = $false
                     try {
@@ -593,6 +628,7 @@ while ($true) {
                         }
                         $streamerHealthFaultReason = $snapshotReason
                         $streamerHealthFaultSummary = "streamer health unhealthy (status=$snapshotStatus reason=$snapshotReason)"
+                    }
                     }
                 }
             }
@@ -724,7 +760,7 @@ while ($true) {
     }
 
     if ($terminateMatchedProcessesValue) {
-        Stop-MatchingProcesses -Snapshot $snapshot -Rules $rules
+        Stop-MatchingProcesses -Snapshot $snapshot -Rules ($rules + $recoveryLauncherRules)
     }
 
     Publish-RuntimeStatus -Status 'booting' -Reason 'watchdog_restart_pending'

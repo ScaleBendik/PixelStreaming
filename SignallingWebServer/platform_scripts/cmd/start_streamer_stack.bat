@@ -75,7 +75,11 @@ if /i "%STACK_START_UNREAL%"=="true" (
     if errorlevel 1 (
       timeout /t %STACK_UNREAL_START_DELAY_SECONDS% /nobreak >nul
       echo Starting Unreal runtime...
-      start "ScaleWorld Unreal" "%SCRIPT_DIR%start_unreal.bat"
+      call "%SCRIPT_DIR%start_unreal.bat"
+      if errorlevel 1 (
+        echo ERROR: Unreal launch failed.
+        exit /b 1
+      )
     ) else (
       echo Unreal is already running or launch is already in progress. Skipping launch.
     )
