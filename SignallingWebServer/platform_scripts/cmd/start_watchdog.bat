@@ -10,7 +10,11 @@ if not exist "%WATCHDOG_SCRIPT%" (
 )
 
 if not defined WATCHDOG_UNREAL_PROCESS_NAME (
-  set "WATCHDOG_UNREAL_PROCESS_NAME=ScaleWorld"
+  if defined SCALEWORLD_EXECUTABLE_NAME (
+    for %%I in ("%SCALEWORLD_EXECUTABLE_NAME%") do set "WATCHDOG_UNREAL_PROCESS_NAME=%%~nI*"
+  ) else (
+    set "WATCHDOG_UNREAL_PROCESS_NAME=ScaleWorld*"
+  )
 )
 
 if not defined WATCHDOG_WILBUR_COMMANDLINE_PATTERN (

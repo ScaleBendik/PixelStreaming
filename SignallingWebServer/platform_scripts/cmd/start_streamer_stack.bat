@@ -51,6 +51,8 @@ if defined WATCHDOG_WILBUR_COMMANDLINE_PATTERN set "WILBUR_COMMANDLINE_PATTERN=%
 set "WILBUR_LAUNCHER_PATTERN=start_dev_turn.bat"
 set "UNREAL_PROCESS_NAME=ScaleWorld.exe"
 if defined SCALEWORLD_EXECUTABLE_NAME set "UNREAL_PROCESS_NAME=%SCALEWORLD_EXECUTABLE_NAME%"
+for %%I in ("%UNREAL_PROCESS_NAME%") do set "UNREAL_PROCESS_BASENAME=%%~nI"
+set "UNREAL_PROCESS_NAME_PATTERN=%UNREAL_PROCESS_BASENAME%*"
 set "UNREAL_LAUNCHER_PATTERN=start_unreal.bat"
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$wilbur = Get-CimInstance Win32_Process | Where-Object { ($_.Name -ieq '%WILBUR_PROCESS_NAME%' -and $_.CommandLine -like '*%WILBUR_COMMANDLINE_PATTERN%*') -or ($_.Name -ieq 'cmd.exe' -and $_.CommandLine -like '*%WILBUR_LAUNCHER_PATTERN%*') } | Select-Object -First 1; if ($wilbur) { exit 0 } else { exit 1 }"
@@ -69,7 +71,7 @@ if /i "%STACK_START_UNREAL%"=="true" (
   )
 
   if exist "%SCRIPT_DIR%start_unreal.bat" (
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$currentPid = $PID; $unreal = Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $currentPid -and ($_.Name -ieq '%UNREAL_PROCESS_NAME%' -or ($_.Name -ieq 'cmd.exe' -and $_.CommandLine -like '*%UNREAL_LAUNCHER_PATTERN%*') -or ($_.Name -ieq 'powershell.exe' -and $_.CommandLine -like '*start_scaleworld.ps1*')) } | Select-Object -First 1; if ($unreal) { exit 0 } else { exit 1 }"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$currentPid = $PID; $unreal = Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $currentPid -and (($_.Name -like '%UNREAL_PROCESS_NAME_PATTERN%') -or ($_.Name -ieq 'cmd.exe' -and $_.CommandLine -like '*%UNREAL_LAUNCHER_PATTERN%*') -or ($_.Name -ieq 'powershell.exe' -and $_.CommandLine -like '*start_scaleworld.ps1*')) } | Select-Object -First 1; if ($unreal) { exit 0 } else { exit 1 }"
     if errorlevel 1 (
       timeout /t %STACK_UNREAL_START_DELAY_SECONDS% /nobreak >nul
       echo Starting Unreal runtime...
