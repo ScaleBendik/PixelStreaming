@@ -16,6 +16,15 @@ if /i "%~1"=="--recovery" (
 
 if not defined STACK_WATCHDOG_START_DELAY_SECONDS set "STACK_WATCHDOG_START_DELAY_SECONDS=3"
 if not defined STACK_UNREAL_START_DELAY_SECONDS set "STACK_UNREAL_START_DELAY_SECONDS=5"
+if not defined STACK_WILBUR_READY_HOST set "STACK_WILBUR_READY_HOST=127.0.0.1"
+if not defined STACK_WILBUR_READY_PORT (
+  if defined SCALEWORLD_PIXEL_STREAMING_PORT (
+    set "STACK_WILBUR_READY_PORT=%SCALEWORLD_PIXEL_STREAMING_PORT%"
+  ) else (
+    set "STACK_WILBUR_READY_PORT=8888"
+  )
+)
+if not defined STACK_WILBUR_READY_TIMEOUT_SECONDS set "STACK_WILBUR_READY_TIMEOUT_SECONDS=60"
 if not defined STACK_RUN_UNREAL_UPDATE_CHECK set "STACK_RUN_UNREAL_UPDATE_CHECK=false"
 if not defined WATCHDOG_RESTART_COMMAND set "WATCHDOG_RESTART_COMMAND=""%SCRIPT_DIR%start_streamer_stack.bat"" --recovery"
 if not defined WATCHDOG_TERMINATE_MATCHED_PROCESSES set "WATCHDOG_TERMINATE_MATCHED_PROCESSES=true"
@@ -53,6 +62,12 @@ if errorlevel 1 (
 )
 
 if /i "%STACK_START_UNREAL%"=="true" (
+  call :wait_for_wilbur_ready
+  if errorlevel 1 (
+    echo ERROR: Wilbur did not become ready on %STACK_WILBUR_READY_HOST%:%STACK_WILBUR_READY_PORT% within %STACK_WILBUR_READY_TIMEOUT_SECONDS% seconds.
+    exit /b 1
+  )
+
   if exist "%SCRIPT_DIR%start_unreal.bat" (
     powershell -NoProfile -ExecutionPolicy Bypass -Command "$unreal = Get-CimInstance Win32_Process | Where-Object { $_.Name -ieq '%UNREAL_PROCESS_NAME%' -or ($_.Name -ieq 'cmd.exe' -and $_.CommandLine -like '*%UNREAL_LAUNCHER_PATTERN%*') -or ($_.Name -ieq 'powershell.exe' -and $_.CommandLine -like '*start_scaleworld.ps1*') } | Select-Object -First 1; if ($unreal) { exit 0 } else { exit 1 }"
     if errorlevel 1 (
@@ -78,3 +93,8 @@ if /i "%STACK_START_WATCHDOG%"=="true" (
 
 echo Stack launch completed.
 exit /b 0
+
+:wait_for_wilbur_ready
+echo Waiting for Wilbur readiness on %STACK_WILBUR_READY_HOST%:%STACK_WILBUR_READY_PORT%...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$hostName = '%STACK_WILBUR_READY_HOST%'; $port = %STACK_WILBUR_READY_PORT%; $deadline = (Get-Date).AddSeconds(%STACK_WILBUR_READY_TIMEOUT_SECONDS%); while ((Get-Date) -lt $deadline) { $client = $null; try { $client = New-Object System.Net.Sockets.TcpClient; $async = $client.BeginConnect($hostName, $port, $null, $null); if ($async.AsyncWaitHandle.WaitOne(1000)) { $client.EndConnect($async); $client.Close(); exit 0 } } catch { } finally { if ($client) { $client.Close() } } Start-Sleep -Milliseconds 500 } exit 1"
+exit /b %errorlevel%
