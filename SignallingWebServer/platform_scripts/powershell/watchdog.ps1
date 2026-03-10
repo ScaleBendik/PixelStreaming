@@ -3,7 +3,7 @@ param(
     [string]$UnrealProcessName = "Scaleworld.exe",
     [string]$UnrealCommandLinePattern = $env:WATCHDOG_UNREAL_COMMANDLINE_PATTERN,
     [string]$WilburProcessName = $(if ($env:WATCHDOG_WILBUR_PROCESS_NAME) { $env:WATCHDOG_WILBUR_PROCESS_NAME } else { 'node.exe' }),
-    [string]$WilburCommandLinePattern = $(if ($env:WATCHDOG_WILBUR_COMMANDLINE_PATTERN) { $env:WATCHDOG_WILBUR_COMMANDLINE_PATTERN } else { 'SignallingWebServer' }),
+    [string]$WilburCommandLinePattern = $(if ($env:WATCHDOG_WILBUR_COMMANDLINE_PATTERN) { $env:WATCHDOG_WILBUR_COMMANDLINE_PATTERN } else { 'index.js' }),
     [string]$PollIntervalSeconds = $(if ($env:WATCHDOG_POLL_INTERVAL_SECONDS) { $env:WATCHDOG_POLL_INTERVAL_SECONDS } else { '5' }),
     [string]$FailureThreshold = $(if ($env:WATCHDOG_FAILURE_THRESHOLD) { $env:WATCHDOG_FAILURE_THRESHOLD } else { '3' }),
     [string]$RestartCooldownSeconds = $(if ($env:WATCHDOG_RESTART_COOLDOWN_SECONDS) { $env:WATCHDOG_RESTART_COOLDOWN_SECONDS } else { '5' }),

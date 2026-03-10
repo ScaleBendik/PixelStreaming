@@ -51,7 +51,9 @@ IF NOT "!HTTP_ROOT_SUPPLIED!"=="true" (
 call :BuildWilbur
 call :PrintConfig
 call :StartWilbur
-pause
+IF /i "%PIXELSTREAMING_WILBUR_PAUSE_ON_EXIT%"=="true" (
+	pause
+)
 
 goto :eof
 
