@@ -21,6 +21,14 @@ if /i "%~1"=="--recovery" (
   shift
 )
 
+if /i "%~1"=="--validation" (
+  set "STACK_MODE=validation"
+  set "STACK_START_WATCHDOG=false"
+  set "STACK_ENABLE_UPDATE_MODE=false"
+  set "STACK_RUN_UNREAL_UPDATE_CHECK=false"
+  shift
+)
+
 if not defined STACK_WATCHDOG_START_DELAY_SECONDS set "STACK_WATCHDOG_START_DELAY_SECONDS=3"
 if not defined STACK_UNREAL_START_DELAY_SECONDS set "STACK_UNREAL_START_DELAY_SECONDS=1"
 if not defined STACK_WILBUR_READY_HOST set "STACK_WILBUR_READY_HOST=127.0.0.1"

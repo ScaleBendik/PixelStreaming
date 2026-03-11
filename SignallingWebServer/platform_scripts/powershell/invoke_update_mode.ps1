@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
     [int]$FailureStopDelaySeconds = $(if ($env:SCALEWORLD_UPDATE_FAILURE_STOP_DELAY_SECONDS) { [int]$env:SCALEWORLD_UPDATE_FAILURE_STOP_DELAY_SECONDS } else { 1800 }),
+    [int]$ValidationTimeoutSeconds = $(if ($env:SCALEWORLD_UPDATE_VALIDATION_TIMEOUT_SECONDS) { [int]$env:SCALEWORLD_UPDATE_VALIDATION_TIMEOUT_SECONDS } else { 180 }),
+    [int]$ValidationStableSeconds = $(if ($env:SCALEWORLD_UPDATE_VALIDATION_STABLE_SECONDS) { [int]$env:SCALEWORLD_UPDATE_VALIDATION_STABLE_SECONDS } else { 15 }),
     [bool]$AllowUnchanged = $true
 )
 
@@ -141,6 +143,58 @@ function Schedule-DelayedStop {
     Write-UpdateModeLog "Scheduled delayed instance stop in $DelaySeconds seconds."
 }
 
+function Get-StreamerHealthSnapshot {
+    param(
+        [string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $null
+    }
+
+    try {
+        return Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        return $null
+    }
+}
+
+function Wait-ForStreamerValidation {
+    param(
+        [string]$HealthPath,
+        [int]$TimeoutSeconds,
+        [int]$StableSeconds
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $healthySince = $null
+
+    while ((Get-Date) -lt $deadline) {
+        $snapshot = Get-StreamerHealthSnapshot -Path $HealthPath
+        $isHealthy =
+            $snapshot -and
+            [string]$snapshot.status -eq 'ready' -and
+            $snapshot.healthy -eq $true -and
+            [int]$snapshot.streamerCount -gt 0
+
+        if ($isHealthy) {
+            if (-not $healthySince) {
+                $healthySince = Get-Date
+            }
+
+            if (((Get-Date) - $healthySince).TotalSeconds -ge $StableSeconds) {
+                return $true
+            }
+        } else {
+            $healthySince = $null
+        }
+
+        Start-Sleep -Seconds 2
+    }
+
+    return $false
+}
+
 $awsCli = Get-AwsCliPath
 $identity = Get-InstanceIdentity
 $instanceTags = Get-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId
@@ -172,6 +226,8 @@ Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.
 
 $pixelStreamingRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $updateScript = Join-Path $pixelStreamingRoot 'SWupdate.ps1'
+$stackLauncher = Join-Path $PSScriptRoot '..\cmd\start_streamer_stack.bat'
+$streamerHealthPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\streamer-health.json'
 
 $prepareDataDrive = if ($env:STACK_PREPARE_DATA_DRIVE) { [System.Boolean]::Parse($env:STACK_PREPARE_DATA_DRIVE) } else { $true }
 $requireDataDrive = if ($env:STACK_REQUIRE_DATA_DRIVE) { [System.Boolean]::Parse($env:STACK_REQUIRE_DATA_DRIVE) } else { $false }
@@ -214,11 +270,34 @@ try {
         throw "SWupdate.ps1 exited with code $LASTEXITCODE."
     }
 
+    Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
+        ScaleWorldUpdateState = 'validating'
+        ScaleWorldUpdateResultReason = ''
+        ScaleWorldLastUpdatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    }
+
+    if (-not (Test-Path -LiteralPath $stackLauncher)) {
+        throw "Validation stack launcher not found at '$stackLauncher'."
+    }
+
+    if (Test-Path -LiteralPath $streamerHealthPath) {
+        Remove-Item -LiteralPath $streamerHealthPath -Force
+    }
+
+    Write-UpdateModeLog "Launching validation stack for '$zipFileName'."
+    Start-Process -FilePath $stackLauncher -ArgumentList '--validation' -WindowStyle Hidden | Out-Null
+
+    Write-UpdateModeLog "Waiting up to $ValidationTimeoutSeconds seconds for streamer validation."
+    $validated = Wait-ForStreamerValidation -HealthPath $streamerHealthPath -TimeoutSeconds $ValidationTimeoutSeconds -StableSeconds $ValidationStableSeconds
+    if (-not $validated) {
+        throw "Updated build failed validation within $ValidationTimeoutSeconds seconds."
+    }
+
     $completionTime = (Get-Date).ToUniversalTime().ToString('o')
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldCurrentBuild = $zipFileName
         ScaleWorldUpdateState = 'succeeded'
-        ScaleWorldUpdateResultReason = ''
+        ScaleWorldUpdateResultReason = 'validated_streamer_connected'
         ScaleWorldLastUpdatedAtUtc = $completionTime
     }
     Remove-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Keys @(
@@ -226,7 +305,7 @@ try {
         'ScaleWorldTargetZipKey'
     )
 
-    Write-UpdateModeLog "Update succeeded for '$zipFileName'. Stopping instance."
+    Write-UpdateModeLog "Update validated successfully for '$zipFileName'. Stopping instance."
     & $awsCli ec2 stop-instances --region $identity.Region --instance-ids $identity.InstanceId *> $null
     exit 10
 } catch {
