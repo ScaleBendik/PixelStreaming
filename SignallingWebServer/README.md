@@ -187,12 +187,13 @@ Important:
 4. Runtime status publishing requires `ec2:CreateTags` permission for the approved `ScaleWorldRuntime*` tag set.
 5. Manual update testing now goes through:
    - `platform_scripts/cmd/prepare_data_drive.bat`
-   - `platform_scripts/cmd/run_unreal_update.bat`
+   - `platform_scripts/cmd/run_unreal_update.bat -ZipKey "ScaleworldBuilds/<artifact>.zip"`
 6. `start_streamer_stack.bat` checks `ScaleWorldMaintenanceMode=update` before normal startup and can run a single-line Unreal update from `ScaleWorldTargetZipKey`.
 7. Maintenance-mode update now fetches the PixelStreaming repo first and only runs `git pull --ff-only` plus `build-all.bat` when the configured upstream branch has changed.
 8. If tracked local repo changes are present, maintenance-mode update fails fast instead of overwriting them.
-9. The updater uses the prepared data drive (preferably `D:`) for download/scratch space when available, while the final active install remains on `C:\PixelStreaming\WindowsNoEditor`.
-10. The current recommended Windows boot method is Task Scheduler:
+9. On successful maintenance validation, the instance keeps Fleet command tags in place, requests stop, and relies on the API to clear those command tags after the stopped instance is observed for the matching job.
+10. The updater uses the prepared data drive (preferably `D:`) for download/scratch space when available, while the final active install remains on `C:\PixelStreaming\WindowsNoEditor`.
+11. The current recommended Windows boot method is Task Scheduler:
    - trigger: `At startup`
    - delay: `20 seconds`
    - user mode: `Run only when user is logged on`

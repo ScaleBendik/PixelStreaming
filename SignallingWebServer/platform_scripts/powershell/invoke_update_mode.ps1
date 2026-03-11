@@ -120,26 +120,6 @@ function Set-InstanceTags {
     & $AwsCli @args *> $null
 }
 
-function Remove-InstanceTags {
-    param(
-        [string]$AwsCli,
-        [string]$Region,
-        [string]$InstanceId,
-        [string[]]$Keys
-    )
-
-    if (-not $Keys -or $Keys.Count -eq 0) {
-        return
-    }
-
-    $args = @('ec2', 'delete-tags', '--region', $Region, '--resources', $InstanceId, '--tags')
-    foreach ($key in $Keys) {
-        $args += ("Key={0}" -f $key)
-    }
-
-    & $AwsCli @args *> $null
-}
-
 function Schedule-DelayedStop {
     param(
         [int]$DelaySeconds
@@ -285,6 +265,12 @@ if ($maintenanceMode -ne 'update') {
     exit 0
 }
 
+$currentUpdateState = ([string]$instanceTags['ScaleWorldUpdateState']).Trim().ToLowerInvariant()
+if ($currentUpdateState -in @('succeeded', 'failed', 'stopping')) {
+    Write-UpdateModeLog "Maintenance update is already in terminal state '$currentUpdateState'. Waiting for API reconciliation or explicit retry."
+    exit 11
+}
+
 $targetZipKey = [string]$instanceTags['ScaleWorldTargetZipKey']
 if ([string]::IsNullOrWhiteSpace($targetZipKey)) {
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
@@ -388,13 +374,11 @@ try {
         ScaleWorldUpdateCompletedAtUtc = $completionTime
         ScaleWorldLastUpdatedAtUtc = $completionTime
     }
-    Remove-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Keys @(
-        'ScaleWorldMaintenanceMode',
-        'ScaleWorldTargetZipKey'
-    )
-
-    Write-UpdateModeLog "Update validated successfully for '$zipFileName'. Stopping instance."
+    Write-UpdateModeLog "Update validated successfully for '$zipFileName'. Requesting instance stop and leaving Fleet command tags for API reconciliation."
     & $awsCli ec2 stop-instances --region $identity.Region --instance-ids $identity.InstanceId *> $null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to request instance stop after validation."
+    }
     exit 10
 } catch {
     $reason = $_.Exception.Message

@@ -56,7 +56,7 @@ if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_UPDATE_MODE%"=="true" 
       exit /b 0
     )
     if "!UPDATE_MODE_EXIT!"=="11" (
-      echo Update mode handled a failed update. Skipping normal startup.
+      echo Update mode is holding the instance in maintenance. Skipping normal startup.
       exit /b 0
     )
     if not "!UPDATE_MODE_EXIT!"=="0" (

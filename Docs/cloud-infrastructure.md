@@ -172,7 +172,7 @@ Repo root helpers:
 - `pull-latest.bat`: fetch + fast-forward pull current branch
 - `build-all.ps1`: build Common -> Signalling -> SignallingWebServer
 - `build-all.bat`: wrapper for `build-all.ps1`
-- `SWupdate.ps1`: staged Unreal updater with manifest/checksum support and rollback
+- `SWupdate.ps1`: staged Unreal updater with explicit ZIP-key targeting and rollback
 
 Standard update/start flow on instance:
 
@@ -184,17 +184,14 @@ Standard update/start flow on instance:
 
 `SWupdate.ps1` now supports:
 
-1. single-line S3 build resolution using:
-   - mutable manifest pointer: `Scaleworld_001/latest.json`
-   - legacy direct ZIP fallback: `Scaleworld_001/ScaleWorld_Latest.zip`
+1. explicit S3 ZIP targeting using an exact object key such as `ScaleworldBuilds/ScaleWorld_2026-03-10-01.zip`
 2. staged extraction into `C:\PixelStreaming\releases\<buildId>`
 3. download and scratch extraction on the prepared data drive when available:
    - preferred ephemeral workspace: `D:\ScaleWorldBuilds`
    - fallback local workspace: `C:\PixelStreaming\downloads` / `C:\PixelStreaming\scratch`
-4. checksum validation when manifest provides SHA256
-5. active install switching via junction at `C:\PixelStreaming\WindowsNoEditor`
-6. rollback to previous release metadata
-7. runtime status publication during update windows (`updating_infra`)
+4. active install switching via junction at `C:\PixelStreaming\WindowsNoEditor`
+5. rollback to previous release metadata
+6. runtime status publication during update windows (`updating_infra`)
 
 Manual and maintenance-mode helpers:
 
@@ -215,6 +212,8 @@ During maintenance-mode updates, `invoke_update_mode.ps1` also syncs the PixelSt
 If tracked local changes exist in the repo, the maintenance update fails fast instead of overwriting instance-local edits.
 
 Prerequisite: the instance must have a valid PixelStreaming git checkout and Git installed so update mode can fetch/pull before building.
+
+Successful maintenance-mode update no longer clears Fleet command tags on the instance itself. The instance records the terminal result and requests stop, and the API clears Fleet command tags after it observes the stopped instance for the matching update job.
 
 Archive contract and naming rules are documented in:
 

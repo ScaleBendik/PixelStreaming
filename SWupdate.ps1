@@ -2,8 +2,6 @@
 param(
     [int]$DataDiskNumber = 1,
     [string]$BucketName = $(if ($env:SCALEWORLD_UPDATE_BUCKET) { $env:SCALEWORLD_UPDATE_BUCKET } else { 'scaleworlddepot' }),
-    [string]$ManifestKey = $(if ($env:SCALEWORLD_UPDATE_MANIFEST_KEY) { $env:SCALEWORLD_UPDATE_MANIFEST_KEY } else { 'Scaleworld_001/latest.json' }),
-    [string]$BuildKey = $(if ($env:SCALEWORLD_UPDATE_BUILD_KEY) { $env:SCALEWORLD_UPDATE_BUILD_KEY } else { 'Scaleworld_001/ScaleWorld_Latest.zip' }),
     [string]$ZipKey = '',
     [string]$InstallBasePath = $(if ($env:SCALEWORLD_INSTALL_BASE) { $env:SCALEWORLD_INSTALL_BASE } else { 'C:\PixelStreaming' }),
     [string]$ActiveInstallName = $(if ($env:SCALEWORLD_ACTIVE_INSTALL_NAME) { $env:SCALEWORLD_ACTIVE_INSTALL_NAME } else { 'WindowsNoEditor' }),
@@ -172,35 +170,7 @@ function Publish-RuntimeStatus {
     }
 }
 
-function Convert-ManifestToBuildMetadata {
-    param(
-        [object]$Manifest,
-        [string]$FallbackBuildKey
-    )
-
-    $buildId = @($Manifest.buildId, $Manifest.buildID, $Manifest.version, $Manifest.id) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
-    $zipKey = @($Manifest.zipKey, $Manifest.key, $Manifest.objectKey) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
-    $checksum = @($Manifest.sha256, $Manifest.sha256Hex, $Manifest.checksum) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
-    $createdAt = @($Manifest.createdAtUtc, $Manifest.createdAt, $Manifest.created) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
-
-    if ([string]::IsNullOrWhiteSpace($zipKey)) {
-        $zipKey = $FallbackBuildKey
-    }
-
-    if ([string]::IsNullOrWhiteSpace($buildId) -or [string]::IsNullOrWhiteSpace($zipKey)) {
-        return $null
-    }
-
-    return [pscustomobject]@{
-        BuildId = [string]$buildId
-        ZipKey = [string]$zipKey
-        Sha256 = [string]$checksum
-        CreatedAtUtc = [string]$createdAt
-        Source = 'manifest'
-    }
-}
-
-function Get-ExplicitZipMetadata {
+function Get-ZipMetadata {
     param(
         [string]$Bucket,
         [string]$ObjectKey
@@ -219,48 +189,7 @@ function Get-ExplicitZipMetadata {
         ZipKey = $ObjectKey
         Sha256 = ''
         CreatedAtUtc = [string]$head.LastModified
-        Source = 'explicit-zip-key'
-    }
-}
-function Get-BuildMetadata {
-    param(
-        [string]$Bucket,
-        [string]$ManifestObjectKey,
-        [string]$FallbackObjectKey
-    )
-
-    if (-not [string]::IsNullOrWhiteSpace($ManifestObjectKey)) {
-        try {
-            $manifestJson = & $script:AwsCliPath s3 cp ("s3://{0}/{1}" -f $Bucket, $ManifestObjectKey) - --no-progress
-            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace(($manifestJson | Out-String))) {
-                $manifest = ($manifestJson | Out-String) | ConvertFrom-Json -ErrorAction Stop
-                $converted = Convert-ManifestToBuildMetadata -Manifest $manifest -FallbackBuildKey $FallbackObjectKey
-                if ($converted) {
-                    return $converted
-                }
-            }
-        } catch {
-            Write-UpdateLog "Manifest lookup failed for s3://$Bucket/$ManifestObjectKey. Falling back to legacy build key." 'WARN'
-        }
-    }
-
-    $headJson = & $script:AwsCliPath s3api head-object --bucket $Bucket --key $FallbackObjectKey --output json
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to read metadata for s3://$Bucket/$FallbackObjectKey."
-    }
-
-    $head = ($headJson | Out-String) | ConvertFrom-Json -ErrorAction Stop
-    $etag = ([string]$head.ETag).Trim('"')
-    if ([string]::IsNullOrWhiteSpace($etag)) {
-        throw "S3 object metadata for s3://$Bucket/$FallbackObjectKey did not include an ETag."
-    }
-
-    return [pscustomobject]@{
-        BuildId = $etag
-        ZipKey = $FallbackObjectKey
-        Sha256 = ''
-        CreatedAtUtc = [string]$head.LastModified
-        Source = 'legacy-build-key'
+        Source = 'zip-key'
     }
 }
 
@@ -717,15 +646,20 @@ try {
     }
 
     Publish-RuntimeStatus -Status 'updating_infra' -Reason 'ue_build_update'
-    $buildMetadata = if (-not [string]::IsNullOrWhiteSpace($ZipKey)) {
-        Get-ExplicitZipMetadata -Bucket $BucketName -ObjectKey $ZipKey
-    } else {
-        Get-BuildMetadata -Bucket $BucketName -ManifestObjectKey $ManifestKey -FallbackObjectKey $BuildKey
+    $normalizedZipKey = $ZipKey.Trim()
+    if ([string]::IsNullOrWhiteSpace($normalizedZipKey)) {
+        throw 'ZipKey is required. Provide the exact S3 object key for the update ZIP.'
     }
+
+    $buildMetadata = Get-ZipMetadata -Bucket $BucketName -ObjectKey $normalizedZipKey
     $releaseName = Get-SafeReleaseName -BuildId $buildMetadata.BuildId
     $current = Get-CurrentReleaseState
 
-    if (-not $AllowUnchanged.IsPresent -and $current -and $current.BuildId -eq $buildMetadata.BuildId -and (Test-Path -LiteralPath $current.ReleasePath)) {
+    if (-not $AllowUnchanged.IsPresent `
+        -and $current `
+        -and $current.BuildId -eq $buildMetadata.BuildId `
+        -and $current.ZipKey -eq $buildMetadata.ZipKey `
+        -and (Test-Path -LiteralPath $current.ReleasePath)) {
         Write-UpdateLog "Build '$($buildMetadata.BuildId)' is already active. No update required."
         exit 0
     }
