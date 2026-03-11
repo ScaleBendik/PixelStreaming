@@ -176,9 +176,9 @@ Repo root helpers:
 
 Standard update/start flow on instance:
 
-1. `pull-latest.bat`
-2. `build-all.bat`
-3. `start_streamer_stack.bat`
+1. fetch latest PixelStreaming repo changes
+2. fast-forward pull and `build-all.bat` only when upstream changed
+3. run `start_streamer_stack.bat`
 
 ### Unreal Update Flow (Current)
 
@@ -203,6 +203,18 @@ Manual and maintenance-mode helpers:
 - `SignallingWebServer/platform_scripts/powershell/invoke_update_mode.ps1`
 
 `start_streamer_stack.bat` now checks instance maintenance tags before normal startup. If `ScaleWorldMaintenanceMode=update`, the instance runs the update path first instead of launching Wilbur/Unreal for user traffic.
+
+During maintenance-mode updates, `invoke_update_mode.ps1` also syncs the PixelStreaming repo before running `SWupdate.ps1`:
+
+1. `git fetch --prune`
+2. compare `HEAD` with the configured upstream branch
+3. if upstream changed and there are no tracked local edits, run `git pull --ff-only`
+4. run `build-all.bat`
+5. continue with the Unreal update sequence
+
+If tracked local changes exist in the repo, the maintenance update fails fast instead of overwriting instance-local edits.
+
+Prerequisite: the instance must have a valid PixelStreaming git checkout and Git installed so update mode can fetch/pull before building.
 
 Archive contract and naming rules are documented in:
 

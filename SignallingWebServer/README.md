@@ -189,13 +189,17 @@ Important:
    - `platform_scripts/cmd/prepare_data_drive.bat`
    - `platform_scripts/cmd/run_unreal_update.bat`
 6. `start_streamer_stack.bat` checks `ScaleWorldMaintenanceMode=update` before normal startup and can run a single-line Unreal update from `ScaleWorldTargetZipKey`.
-7. The updater uses the prepared data drive (preferably `D:`) for download/scratch space when available, while the final active install remains on `C:\PixelStreaming\WindowsNoEditor`.
-8. The current recommended Windows boot method is Task Scheduler:
+7. Maintenance-mode update now fetches the PixelStreaming repo first and only runs `git pull --ff-only` plus `build-all.bat` when the configured upstream branch has changed.
+8. If tracked local repo changes are present, maintenance-mode update fails fast instead of overwriting them.
+9. The updater uses the prepared data drive (preferably `D:`) for download/scratch space when available, while the final active install remains on `C:\PixelStreaming\WindowsNoEditor`.
+10. The current recommended Windows boot method is Task Scheduler:
    - trigger: `At startup`
    - delay: `20 seconds`
    - user mode: `Run only when user is logged on`
    - `Run with highest privileges`
    - `Do not start a new instance`
+
+Operational prerequisite: maintenance-mode update expects the instance's PixelStreaming directory to be a valid git checkout and `git` to be installed.
 Given these options, to start the server with the closest behaviour as the old cirrus, you would invoke,
 ```
 npm start -- --console_messages --https_redirect verbose --serve --log_config --http_root www --homepage player.html
