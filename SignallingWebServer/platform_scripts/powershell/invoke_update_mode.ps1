@@ -183,7 +183,7 @@ if (-not (Test-Path -LiteralPath $updateScript)) {
 
 try {
     $updateArgs = @('-BuildKey', $targetZipKey)
-    if ($AllowUnchanged.IsPresent) {
+    if ($AllowUnchanged) {
         $updateArgs += '-AllowUnchanged'
     }
 
@@ -218,5 +218,6 @@ try {
     Write-UpdateModeLog "Update failed: $reason" 'ERROR'
     exit 11
 }
+
 
 

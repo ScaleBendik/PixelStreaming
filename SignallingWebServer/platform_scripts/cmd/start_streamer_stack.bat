@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%\..\..\..") do set "PIXELSTREAMING_ROOT=%%~fI"
@@ -59,18 +59,18 @@ if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_UPDATE_MODE%"=="true" 
   if exist "%UPDATE_MODE_SCRIPT%" (
     echo Checking instance update mode...
     powershell -NoProfile -ExecutionPolicy Bypass -File "%UPDATE_MODE_SCRIPT%"
-    set "UPDATE_MODE_EXIT=%errorlevel%"
-    if "%UPDATE_MODE_EXIT%"=="10" (
+    set "UPDATE_MODE_EXIT=!errorlevel!"
+    if "!UPDATE_MODE_EXIT!"=="10" (
       echo Update mode completed successfully. Skipping normal startup.
       exit /b 0
     )
-    if "%UPDATE_MODE_EXIT%"=="11" (
+    if "!UPDATE_MODE_EXIT!"=="11" (
       echo Update mode handled a failed update. Skipping normal startup.
       exit /b 0
     )
-    if not "%UPDATE_MODE_EXIT%"=="0" (
-      echo ERROR: Update mode check failed with exit code %UPDATE_MODE_EXIT%.
-      exit /b %UPDATE_MODE_EXIT%
+    if not "!UPDATE_MODE_EXIT!"=="0" (
+      echo ERROR: Update mode check failed with exit code !UPDATE_MODE_EXIT!.
+      exit /b !UPDATE_MODE_EXIT!
     )
   ) else (
     echo WARNING: Update mode script not found at "%UPDATE_MODE_SCRIPT%". Continuing with normal startup.
