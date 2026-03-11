@@ -417,6 +417,8 @@ function Remove-CurrentReleaseForUpdate {
         return
     }
 
+    $rollbackBackup = New-RollbackBackupState -CurrentReleaseState $CurrentReleaseState
+
     if (Test-Path -LiteralPath $script:ActiveInstallPath) {
         if (Test-IsReparsePoint -Path $script:ActiveInstallPath) {
             cmd /c rmdir "$script:ActiveInstallPath" | Out-Null
@@ -431,6 +433,7 @@ function Remove-CurrentReleaseForUpdate {
 
     Set-ReleaseState -Current $null -Previous $null
     Write-UpdateLog "Removed current active release '$($CurrentReleaseState.BuildId)' to free space before activation." 'WARN'
+    return $rollbackBackup
 }
 
 function Switch-ActiveRelease {
@@ -528,6 +531,42 @@ function Get-DownloadDestination {
     return Join-Path $script:DownloadRoot $FileName
 }
 
+function Get-RollbackBackupRoot {
+    return Join-Path $script:DownloadRoot 'rollback'
+}
+
+function New-RollbackBackupState {
+    param(
+        [object]$CurrentReleaseState
+    )
+
+    if (-not $CurrentReleaseState -or -not $CurrentReleaseState.ReleasePath -or -not (Test-Path -LiteralPath $CurrentReleaseState.ReleasePath)) {
+        return $null
+    }
+
+    $backupRoot = Get-RollbackBackupRoot
+    New-DirectoryIfMissing -Path $backupRoot
+
+    $backupName = "{0}-{1}" -f (Get-SafeReleaseName -BuildId $CurrentReleaseState.BuildId), (Get-Date -Format 'yyyyMMddHHmmss')
+    $backupPath = Join-Path $backupRoot $backupName
+    Copy-Item -LiteralPath $CurrentReleaseState.ReleasePath -Destination $backupPath -Recurse -Force
+
+    $backupState = [pscustomobject]@{
+        BuildId = $CurrentReleaseState.BuildId
+        ZipKey = $CurrentReleaseState.ZipKey
+        Source = 'rollback-backup'
+        ReleasePath = $backupPath
+        ActivatedAtUtc = $CurrentReleaseState.ActivatedAtUtc
+        BackedUpAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+        CreatedAtUtc = if ($CurrentReleaseState.PSObject.Properties.Name -contains 'CreatedAtUtc') { $CurrentReleaseState.CreatedAtUtc } else { '' }
+        DownloadedAtUtc = if ($CurrentReleaseState.PSObject.Properties.Name -contains 'DownloadedAtUtc') { $CurrentReleaseState.DownloadedAtUtc } else { '' }
+        Sha256 = if ($CurrentReleaseState.PSObject.Properties.Name -contains 'Sha256') { $CurrentReleaseState.Sha256 } else { '' }
+    }
+    Write-ReleaseMetadata -ReleasePath $backupPath -Metadata $backupState
+    Write-UpdateLog "Copied active release '$($CurrentReleaseState.BuildId)' to rollback backup '$backupPath'."
+    return $backupState
+}
+
 function Invoke-Download {
     param(
         [string]$Bucket,
@@ -582,11 +621,18 @@ function Expand-ReleaseArchive {
     New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
     Expand-Archive -Path $ArchivePath -DestinationPath $stagingRoot -Force
 
-    $topLevel = @(Get-ChildItem -LiteralPath $stagingRoot -Force)
-    if ($topLevel.Count -eq 1 -and $topLevel[0].PSIsContainer) {
-        $contentSource = $topLevel[0].FullName
+    $matchedExecutables = @(Get-ChildItem -LiteralPath $stagingRoot -Recurse -File -Filter $ExecutableName -ErrorAction Stop)
+    if ($matchedExecutables.Count -eq 1) {
+        $contentSource = Split-Path -Parent $matchedExecutables[0].FullName
+    } elseif ($matchedExecutables.Count -gt 1) {
+        throw "Archive '$ArchivePath' contains multiple '$ExecutableName' candidates. Refusing to continue."
     } else {
-        $contentSource = $stagingRoot
+        $topLevel = @(Get-ChildItem -LiteralPath $stagingRoot -Force)
+        if ($topLevel.Count -eq 1 -and $topLevel[0].PSIsContainer) {
+            $contentSource = $topLevel[0].FullName
+        } else {
+            $contentSource = $stagingRoot
+        }
     }
 
     if ($contentSource -ne $stagingRoot) {
@@ -688,8 +734,9 @@ try {
     Invoke-Download -Bucket $BucketName -ObjectKey $buildMetadata.ZipKey -DestinationPath $archivePath
     Assert-Checksum -Path $archivePath -ExpectedSha256 $buildMetadata.Sha256
 
+    $rollbackBackup = $null
     if ($FreeSpaceByRemovingCurrentRelease -and $current -and (Test-Path -LiteralPath $current.ReleasePath)) {
-        Remove-CurrentReleaseForUpdate -CurrentReleaseState $current
+        $rollbackBackup = Remove-CurrentReleaseForUpdate -CurrentReleaseState $current
         $current = $null
     }
 
@@ -709,6 +756,9 @@ try {
     $releaseState.ActivatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     Write-ReleaseMetadata -ReleasePath $releasePath -Metadata $releaseState
     Switch-ActiveRelease -ReleaseState $releaseState
+    if ($rollbackBackup) {
+        Set-ReleaseState -Current $releaseState -Previous $rollbackBackup
+    }
 
     Write-UpdateLog "Activated build '$($releaseState.BuildId)' from s3://$BucketName/$($releaseState.ZipKey)."
 } catch {
@@ -717,6 +767,7 @@ try {
     Write-Error "SWupdate failed: $($_.Exception.Message)"
     exit 1
 }
+
 
 
 
