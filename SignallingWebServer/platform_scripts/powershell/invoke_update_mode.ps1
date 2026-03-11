@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [int]$FailureStopDelaySeconds = $(if ($env:SCALEWORLD_UPDATE_FAILURE_STOP_DELAY_SECONDS) { [int]$env:SCALEWORLD_UPDATE_FAILURE_STOP_DELAY_SECONDS } else { 1800 }),
     [bool]$AllowUnchanged = $true
@@ -172,6 +172,28 @@ Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.
 
 $pixelStreamingRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $updateScript = Join-Path $pixelStreamingRoot 'SWupdate.ps1'
+
+$prepareDataDrive = if ($env:STACK_PREPARE_DATA_DRIVE) { [System.Boolean]::Parse($env:STACK_PREPARE_DATA_DRIVE) } else { $true }
+$requireDataDrive = if ($env:STACK_REQUIRE_DATA_DRIVE) { [System.Boolean]::Parse($env:STACK_REQUIRE_DATA_DRIVE) } else { $false }
+$dataDiskNumber = if ($env:SCALEWORLD_DATA_DISK_NUMBER) { [int]$env:SCALEWORLD_DATA_DISK_NUMBER } else { 1 }
+
+if ($prepareDataDrive) {
+    $dataDriveScript = Join-Path $PSScriptRoot 'ensure_data_drive.ps1'
+    if (Test-Path -LiteralPath $dataDriveScript) {
+        Write-UpdateModeLog 'Preparing data drive for update mode.'
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $dataDriveScript -DataDiskNumber $dataDiskNumber -SkipIfUnavailable
+        if ($LASTEXITCODE -ne 0) {
+            if ($requireDataDrive) {
+                throw "Data drive preparation failed with code $LASTEXITCODE."
+            }
+
+            Write-UpdateModeLog "Data drive preparation failed with code $LASTEXITCODE. Continuing without prepared data drive." 'WARN'
+        }
+    } else {
+        Write-UpdateModeLog "Data drive script not found at '$dataDriveScript'. Continuing without prepared data drive." 'WARN'
+    }
+}
+
 if (-not (Test-Path -LiteralPath $updateScript)) {
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldUpdateState = 'failed'

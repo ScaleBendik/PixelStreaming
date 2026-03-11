@@ -38,23 +38,6 @@ if not defined WATCHDOG_TERMINATE_MATCHED_PROCESSES set "WATCHDOG_TERMINATE_MATC
 
 if /i "%STACK_MODE%"=="recovery" set "STACK_RUN_UNREAL_UPDATE_CHECK=false"
 
-if /i "%STACK_PREPARE_DATA_DRIVE%"=="true" (
-  if exist "%DATA_DRIVE_SCRIPT%" (
-    echo Preparing data drive...
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%DATA_DRIVE_SCRIPT%" -DataDiskNumber %SCALEWORLD_DATA_DISK_NUMBER% -SkipIfUnavailable
-    if errorlevel 1 (
-      if /i "%STACK_REQUIRE_DATA_DRIVE%"=="true" (
-        echo ERROR: Data drive preparation failed and STACK_REQUIRE_DATA_DRIVE=true.
-        exit /b 1
-      ) else (
-        echo WARNING: Data drive preparation failed. Continuing without prepared data drive.
-      )
-    )
-  ) else (
-    echo WARNING: Data drive script not found at "%DATA_DRIVE_SCRIPT%". Skipping data drive preparation.
-  )
-)
-
 if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_UPDATE_MODE%"=="true" (
   if exist "%UPDATE_MODE_SCRIPT%" (
     echo Checking instance update mode...
@@ -164,6 +147,7 @@ exit /b 0
 echo Waiting for Wilbur readiness on %STACK_WILBUR_READY_HOST%:%STACK_WILBUR_READY_PORT%...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$hostName = '%STACK_WILBUR_READY_HOST%'; $port = %STACK_WILBUR_READY_PORT%; $deadline = (Get-Date).AddSeconds(%STACK_WILBUR_READY_TIMEOUT_SECONDS%); while ((Get-Date) -lt $deadline) { $client = $null; try { $client = New-Object System.Net.Sockets.TcpClient; $async = $client.BeginConnect($hostName, $port, $null, $null); if ($async.AsyncWaitHandle.WaitOne(1000)) { $client.EndConnect($async); $client.Close(); exit 0 } } catch { } finally { if ($client) { $client.Close() } } Start-Sleep -Milliseconds 500 } exit 1"
 exit /b %errorlevel%
+
 
 
 
