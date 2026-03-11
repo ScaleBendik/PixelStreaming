@@ -210,6 +210,7 @@ if ([string]::IsNullOrWhiteSpace($targetZipKey)) {
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldUpdateState = 'failed'
         ScaleWorldUpdateResultReason = 'missing_target_zip'
+        ScaleWorldUpdateCompletedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     }
     Schedule-DelayedStop -DelaySeconds $FailureStopDelaySeconds
     Write-UpdateModeLog 'Update maintenance mode was requested without ScaleWorldTargetZipKey.' 'ERROR'
@@ -221,6 +222,7 @@ $timestamp = (Get-Date).ToUniversalTime().ToString('o')
 Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
     ScaleWorldUpdateState = 'running'
     ScaleWorldUpdateResultReason = ''
+    ScaleWorldUpdateCompletedAtUtc = ''
     ScaleWorldLastUpdatedAtUtc = $timestamp
 }
 
@@ -254,6 +256,7 @@ if (-not (Test-Path -LiteralPath $updateScript)) {
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldUpdateState = 'failed'
         ScaleWorldUpdateResultReason = 'missing_swupdate_script'
+        ScaleWorldUpdateCompletedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     }
     Schedule-DelayedStop -DelaySeconds $FailureStopDelaySeconds
     throw "SWupdate.ps1 not found at '$updateScript'."
@@ -273,6 +276,7 @@ try {
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldUpdateState = 'validating'
         ScaleWorldUpdateResultReason = ''
+        ScaleWorldUpdateCompletedAtUtc = ''
         ScaleWorldLastUpdatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     }
 
@@ -298,6 +302,7 @@ try {
         ScaleWorldCurrentBuild = $zipFileName
         ScaleWorldUpdateState = 'succeeded'
         ScaleWorldUpdateResultReason = 'validated_streamer_connected'
+        ScaleWorldUpdateCompletedAtUtc = $completionTime
         ScaleWorldLastUpdatedAtUtc = $completionTime
     }
     Remove-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Keys @(
@@ -313,6 +318,7 @@ try {
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldUpdateState = 'failed'
         ScaleWorldUpdateResultReason = $reason
+        ScaleWorldUpdateCompletedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
         ScaleWorldLastUpdatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     }
     Schedule-DelayedStop -DelaySeconds $FailureStopDelaySeconds
