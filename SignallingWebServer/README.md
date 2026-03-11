@@ -1,4 +1,4 @@
-# Reference Signalling/Web Server (Wilbur)
+﻿# Reference Signalling/Web Server (Wilbur)
 
 Wilbur is the reference signalling/web server that is shipped with the Pixel Streaming plugin. It is a small intermediary application that sits between streamers and other peers. It handles the initial connection negotiations and some other small ongoing control messages between peers, while also acting as a basic http web server to serve the [Frontend](/Frontend/README.md) web application.
 
@@ -185,7 +185,12 @@ Important:
 2. `start_dev_turn.bat` remains the Wilbur-specific launcher and can still be run directly for focused troubleshooting.
 3. Start with dry-run mode before trusting automatic recovery in dev.
 4. Runtime status publishing requires `ec2:CreateTags` permission for the approved `ScaleWorldRuntime*` tag set.
-5. The current recommended Windows boot method is Task Scheduler:
+5. Manual update testing now goes through:
+   - `platform_scripts/cmd/prepare_data_drive.bat`
+   - `platform_scripts/cmd/run_unreal_update.bat`
+6. `start_streamer_stack.bat` checks `ScaleWorldMaintenanceMode=update` before normal startup and can run a single-line Unreal update from `ScaleWorldTargetZipKey`.
+7. The updater uses the prepared data drive (preferably `D:`) for download/scratch space when available, while the final active install remains on `C:\PixelStreaming\WindowsNoEditor`.
+8. The current recommended Windows boot method is Task Scheduler:
    - trigger: `At startup`
    - delay: `20 seconds`
    - user mode: `Run only when user is logged on`
@@ -226,5 +231,6 @@ During development it may be useful to work with self-signed SSL certificates (e
 The previous reference signalling server was called Cirrus (UE 5.4 and earlier). Wilbur is a direct replacement for Cirrus.
 
 Differences of behaviour from the old Cirrus server are described [here](from_cirrus.md).
+
 
 

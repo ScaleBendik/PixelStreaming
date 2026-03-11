@@ -1,4 +1,4 @@
-# ScaleWorld Cloud Infrastructure (Source of Truth)
+﻿# ScaleWorld Cloud Infrastructure (Source of Truth)
 
 Last updated: 2026-03-09
 Owner: ScaleWorld Platform
@@ -184,12 +184,29 @@ Standard update/start flow on instance:
 
 `SWupdate.ps1` now supports:
 
-1. S3 manifest-driven or legacy-key build resolution
+1. single-line S3 build resolution using:
+   - mutable manifest pointer: `Scaleworld_001/latest.json`
+   - legacy direct ZIP fallback: `Scaleworld_001/ScaleWorld_Latest.zip`
 2. staged extraction into `C:\PixelStreaming\releases\<buildId>`
-3. checksum validation when manifest provides SHA256
-4. active install switching via junction at `C:\PixelStreaming\WindowsNoEditor`
-5. rollback to previous release metadata
-6. runtime status publication during update windows (`updating_infra`)
+3. download and scratch extraction on the prepared data drive when available:
+   - preferred ephemeral workspace: `D:\ScaleWorldBuilds`
+   - fallback local workspace: `C:\PixelStreaming\downloads` / `C:\PixelStreaming\scratch`
+4. checksum validation when manifest provides SHA256
+5. active install switching via junction at `C:\PixelStreaming\WindowsNoEditor`
+6. rollback to previous release metadata
+7. runtime status publication during update windows (`updating_infra`)
+
+Manual and maintenance-mode helpers:
+
+- `SignallingWebServer/platform_scripts/cmd/prepare_data_drive.bat`
+- `SignallingWebServer/platform_scripts/cmd/run_unreal_update.bat`
+- `SignallingWebServer/platform_scripts/powershell/invoke_update_mode.ps1`
+
+`start_streamer_stack.bat` now checks instance maintenance tags before normal startup. If `ScaleWorldMaintenanceMode=update`, the instance runs the update path first instead of launching Wilbur/Unreal for user traffic.
+
+Archive contract and naming rules are documented in:
+
+- `Docs/s3-build-archive-contract.md`
 
 ## Security Model
 
@@ -256,3 +273,4 @@ Note:
 
 - 2026-03-04: Created initial cloud-infrastructure source-of-truth document; captured current validated TURN/SSM startup model and AWS prerequisites for HTTPS + ticketed access rollout.
 - 2026-03-09: Updated streamer runtime source of truth to reflect canonical stack launcher, SSM-backed connect-ticket signing key, startup heartbeats, staged Unreal updater, and watchdog recovery flow.
+

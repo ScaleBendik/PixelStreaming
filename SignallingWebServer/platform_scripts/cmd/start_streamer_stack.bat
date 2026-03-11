@@ -4,10 +4,16 @@ setlocal EnableExtensions
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%\..\..\..") do set "PIXELSTREAMING_ROOT=%%~fI"
 set "UPDATE_SCRIPT=%PIXELSTREAMING_ROOT%\SWupdate.ps1"
+set "DATA_DRIVE_SCRIPT=%SCRIPT_DIR%..\powershell\ensure_data_drive.ps1"
+set "UPDATE_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_update_mode.ps1"
 set "STACK_MODE=normal"
 set "STACK_START_WATCHDOG=true"
 set "STACK_START_UNREAL=true"
 if not defined STACK_LAUNCH_UNREAL_BEFORE_WILBUR set "STACK_LAUNCH_UNREAL_BEFORE_WILBUR=true"
+if not defined STACK_PREPARE_DATA_DRIVE set "STACK_PREPARE_DATA_DRIVE=true"
+if not defined STACK_REQUIRE_DATA_DRIVE set "STACK_REQUIRE_DATA_DRIVE=false"
+if not defined STACK_ENABLE_UPDATE_MODE set "STACK_ENABLE_UPDATE_MODE=true"
+if not defined SCALEWORLD_DATA_DISK_NUMBER set "SCALEWORLD_DATA_DISK_NUMBER=1"
 
 if /i "%~1"=="--recovery" (
   set "STACK_MODE=recovery"
@@ -32,6 +38,45 @@ if not defined WATCHDOG_TERMINATE_MATCHED_PROCESSES set "WATCHDOG_TERMINATE_MATC
 
 if /i "%STACK_MODE%"=="recovery" set "STACK_RUN_UNREAL_UPDATE_CHECK=false"
 
+if /i "%STACK_PREPARE_DATA_DRIVE%"=="true" (
+  if exist "%DATA_DRIVE_SCRIPT%" (
+    echo Preparing data drive...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%DATA_DRIVE_SCRIPT%" -DataDiskNumber %SCALEWORLD_DATA_DISK_NUMBER% -SkipIfUnavailable
+    if errorlevel 1 (
+      if /i "%STACK_REQUIRE_DATA_DRIVE%"=="true" (
+        echo ERROR: Data drive preparation failed and STACK_REQUIRE_DATA_DRIVE=true.
+        exit /b 1
+      ) else (
+        echo WARNING: Data drive preparation failed. Continuing without prepared data drive.
+      )
+    )
+  ) else (
+    echo WARNING: Data drive script not found at "%DATA_DRIVE_SCRIPT%". Skipping data drive preparation.
+  )
+)
+
+if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_UPDATE_MODE%"=="true" (
+  if exist "%UPDATE_MODE_SCRIPT%" (
+    echo Checking instance update mode...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%UPDATE_MODE_SCRIPT%"
+    set "UPDATE_MODE_EXIT=%errorlevel%"
+    if "%UPDATE_MODE_EXIT%"=="10" (
+      echo Update mode completed successfully. Skipping normal startup.
+      exit /b 0
+    )
+    if "%UPDATE_MODE_EXIT%"=="11" (
+      echo Update mode handled a failed update. Skipping normal startup.
+      exit /b 0
+    )
+    if not "%UPDATE_MODE_EXIT%"=="0" (
+      echo ERROR: Update mode check failed with exit code %UPDATE_MODE_EXIT%.
+      exit /b %UPDATE_MODE_EXIT%
+    )
+  ) else (
+    echo WARNING: Update mode script not found at "%UPDATE_MODE_SCRIPT%". Continuing with normal startup.
+  )
+)
+
 if /i "%STACK_RUN_UNREAL_UPDATE_CHECK%"=="true" (
   if exist "%UPDATE_SCRIPT%" (
     echo Running Unreal update check...
@@ -44,7 +89,6 @@ if /i "%STACK_RUN_UNREAL_UPDATE_CHECK%"=="true" (
     echo WARNING: Update script not found at "%UPDATE_SCRIPT%". Skipping Unreal update check.
   )
 )
-
 set "WILBUR_PROCESS_NAME=node.exe"
 if defined WATCHDOG_WILBUR_PROCESS_NAME set "WILBUR_PROCESS_NAME=%WATCHDOG_WILBUR_PROCESS_NAME%"
 set "WILBUR_COMMANDLINE_PATTERN=index.js"
@@ -120,3 +164,8 @@ exit /b 0
 echo Waiting for Wilbur readiness on %STACK_WILBUR_READY_HOST%:%STACK_WILBUR_READY_PORT%...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$hostName = '%STACK_WILBUR_READY_HOST%'; $port = %STACK_WILBUR_READY_PORT%; $deadline = (Get-Date).AddSeconds(%STACK_WILBUR_READY_TIMEOUT_SECONDS%); while ((Get-Date) -lt $deadline) { $client = $null; try { $client = New-Object System.Net.Sockets.TcpClient; $async = $client.BeginConnect($hostName, $port, $null, $null); if ($async.AsyncWaitHandle.WaitOne(1000)) { $client.EndConnect($async); $client.Close(); exit 0 } } catch { } finally { if ($client) { $client.Close() } } Start-Sleep -Milliseconds 500 } exit 1"
 exit /b %errorlevel%
+
+
+
+
+

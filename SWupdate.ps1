@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [int]$DataDiskNumber = 1,
     [string]$BucketName = $(if ($env:SCALEWORLD_UPDATE_BUCKET) { $env:SCALEWORLD_UPDATE_BUCKET } else { 'scaleworlddepot' }),
@@ -11,7 +11,8 @@ param(
     [switch]$RollbackToPrevious,
     [switch]$ForceStopProcesses,
     [switch]$SkipRuntimeStatus,
-    [switch]$AllowUnchanged
+    [switch]$AllowUnchanged,
+    [switch]$PrepareOnly
 )
 
 Set-StrictMode -Version Latest
@@ -519,7 +520,7 @@ function Expand-ReleaseArchive {
         [object]$Metadata
     )
 
-    $stagingRoot = Join-Path $script:ReleasesRoot ('_staging-' + $ReleaseName)
+    $stagingRoot = Join-Path $script:ScratchRoot ('_staging-' + $ReleaseName)
     $finalReleasePath = Join-Path $script:ReleasesRoot $ReleaseName
 
     if (Test-Path -LiteralPath $stagingRoot) {
@@ -592,9 +593,24 @@ $script:DownloadRoot = if ($dataVolume) {
     New-DirectoryIfMissing -Path $fallbackRoot
     $fallbackRoot
 }
+$script:ScratchRoot = if ($dataVolume) {
+    $scratchRoot = Join-Path $script:DownloadRoot 'staging'
+    New-DirectoryIfMissing -Path $scratchRoot
+    $scratchRoot
+} else {
+    $fallbackScratchRoot = Join-Path $InstallBasePath 'scratch'
+    New-DirectoryIfMissing -Path $fallbackScratchRoot
+    $fallbackScratchRoot
+}
 
 Write-UpdateLog "Using AWS CLI: $script:AwsCliPath"
 Write-UpdateLog "Using download root: $script:DownloadRoot"
+Write-UpdateLog "Using scratch root: $script:ScratchRoot"
+
+if ($PrepareOnly.IsPresent) {
+    Write-UpdateLog 'Prepared update storage paths only.'
+    exit 0
+}
 
 try {
     Ensure-InstallTopology
@@ -643,4 +659,5 @@ try {
     Write-Error "SWupdate failed: $($_.Exception.Message)"
     exit 1
 }
+
 
