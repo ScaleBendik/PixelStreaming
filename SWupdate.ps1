@@ -13,6 +13,7 @@ param(
     [switch]$ForceStopProcesses,
     [switch]$SkipRuntimeStatus,
     [switch]$AllowUnchanged,
+    [bool]$FreeSpaceByRemovingCurrentRelease = $(if ($env:SCALEWORLD_DELETE_CURRENT_RELEASE_BEFORE_ACTIVATE) { [System.Boolean]::Parse($env:SCALEWORLD_DELETE_CURRENT_RELEASE_BEFORE_ACTIVATE) } else { $true }),
     [switch]$PrepareOnly
 )
 
@@ -407,6 +408,31 @@ function Set-ReleaseState {
     Write-StateMetadata -Path $script:PreviousReleaseStatePath -Value $Previous
 }
 
+function Remove-CurrentReleaseForUpdate {
+    param(
+        [object]$CurrentReleaseState
+    )
+
+    if (-not $CurrentReleaseState) {
+        return
+    }
+
+    if (Test-Path -LiteralPath $script:ActiveInstallPath) {
+        if (Test-IsReparsePoint -Path $script:ActiveInstallPath) {
+            cmd /c rmdir "$script:ActiveInstallPath" | Out-Null
+        } else {
+            Remove-Item -LiteralPath $script:ActiveInstallPath -Recurse -Force
+        }
+    }
+
+    if ($CurrentReleaseState.ReleasePath -and (Test-Path -LiteralPath $CurrentReleaseState.ReleasePath)) {
+        Remove-Item -LiteralPath $CurrentReleaseState.ReleasePath -Recurse -Force
+    }
+
+    Set-ReleaseState -Current $null -Previous $null
+    Write-UpdateLog "Removed current active release '$($CurrentReleaseState.BuildId)' to free space before activation." 'WARN'
+}
+
 function Switch-ActiveRelease {
     param(
         [object]$ReleaseState
@@ -662,6 +688,11 @@ try {
     Invoke-Download -Bucket $BucketName -ObjectKey $buildMetadata.ZipKey -DestinationPath $archivePath
     Assert-Checksum -Path $archivePath -ExpectedSha256 $buildMetadata.Sha256
 
+    if ($FreeSpaceByRemovingCurrentRelease -and $current -and (Test-Path -LiteralPath $current.ReleasePath)) {
+        Remove-CurrentReleaseForUpdate -CurrentReleaseState $current
+        $current = $null
+    }
+
     $releaseState = [pscustomobject]@{
         BuildId = $buildMetadata.BuildId
         ZipKey = $buildMetadata.ZipKey
@@ -686,4 +717,7 @@ try {
     Write-Error "SWupdate failed: $($_.Exception.Message)"
     exit 1
 }
+
+
+
 
