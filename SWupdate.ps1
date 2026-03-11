@@ -4,6 +4,7 @@ param(
     [string]$BucketName = $(if ($env:SCALEWORLD_UPDATE_BUCKET) { $env:SCALEWORLD_UPDATE_BUCKET } else { 'scaleworlddepot' }),
     [string]$ManifestKey = $(if ($env:SCALEWORLD_UPDATE_MANIFEST_KEY) { $env:SCALEWORLD_UPDATE_MANIFEST_KEY } else { 'Scaleworld_001/latest.json' }),
     [string]$BuildKey = $(if ($env:SCALEWORLD_UPDATE_BUILD_KEY) { $env:SCALEWORLD_UPDATE_BUILD_KEY } else { 'Scaleworld_001/ScaleWorld_Latest.zip' }),
+    [string]$ZipKey = '',
     [string]$InstallBasePath = $(if ($env:SCALEWORLD_INSTALL_BASE) { $env:SCALEWORLD_INSTALL_BASE } else { 'C:\PixelStreaming' }),
     [string]$ActiveInstallName = $(if ($env:SCALEWORLD_ACTIVE_INSTALL_NAME) { $env:SCALEWORLD_ACTIVE_INSTALL_NAME } else { 'WindowsNoEditor' }),
     [string]$ExecutableName = $(if ($env:SCALEWORLD_EXECUTABLE_NAME) { $env:SCALEWORLD_EXECUTABLE_NAME } else { 'ScaleWorld.exe' }),
@@ -198,6 +199,28 @@ function Convert-ManifestToBuildMetadata {
     }
 }
 
+function Get-ExplicitZipMetadata {
+    param(
+        [string]$Bucket,
+        [string]$ObjectKey
+    )
+
+    $headJson = & $script:AwsCliPath s3api head-object --bucket $Bucket --key $ObjectKey --output json
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to read metadata for s3://$Bucket/$ObjectKey."
+    }
+
+    $head = ($headJson | Out-String) | ConvertFrom-Json -ErrorAction Stop
+    $etag = ([string]$head.ETag).Trim('"')
+    $buildId = if (-not [string]::IsNullOrWhiteSpace($etag)) { $etag } else { [IO.Path]::GetFileNameWithoutExtension($ObjectKey) }
+    return [pscustomobject]@{
+        BuildId = $buildId
+        ZipKey = $ObjectKey
+        Sha256 = ''
+        CreatedAtUtc = [string]$head.LastModified
+        Source = 'explicit-zip-key'
+    }
+}
 function Get-BuildMetadata {
     param(
         [string]$Bucket,
@@ -622,7 +645,11 @@ try {
     }
 
     Publish-RuntimeStatus -Status 'updating_infra' -Reason 'ue_build_update'
-    $buildMetadata = Get-BuildMetadata -Bucket $BucketName -ManifestObjectKey $ManifestKey -FallbackObjectKey $BuildKey
+    $buildMetadata = if (-not [string]::IsNullOrWhiteSpace($ZipKey)) {
+        Get-ExplicitZipMetadata -Bucket $BucketName -ObjectKey $ZipKey
+    } else {
+        Get-BuildMetadata -Bucket $BucketName -ManifestObjectKey $ManifestKey -FallbackObjectKey $BuildKey
+    }
     $releaseName = Get-SafeReleaseName -BuildId $buildMetadata.BuildId
     $current = Get-CurrentReleaseState
 
@@ -659,5 +686,4 @@ try {
     Write-Error "SWupdate failed: $($_.Exception.Message)"
     exit 1
 }
-
 
