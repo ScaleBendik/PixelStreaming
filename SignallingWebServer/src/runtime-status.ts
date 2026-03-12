@@ -51,6 +51,10 @@ interface LocalStreamerHealthSnapshot {
     pingFreshMs: number;
 }
 
+const RUNTIME_STATUS_WAITING_FOR_STREAMER = 'waiting_for_streamer';
+const RUNTIME_STATUS_WARMING_UP_ASSETS = 'warming_up_assets';
+const RUNTIME_STATUS_READY = 'ready';
+
 function parseBoolean(rawValue: unknown, fallback: boolean): boolean {
     if (typeof rawValue === 'boolean') return rawValue;
     if (typeof rawValue !== 'string') return fallback;
@@ -278,7 +282,7 @@ export function wireSignallingRuntimeStatus(
         let reason = currentReason ?? 'runtime_status_unavailable';
         let healthy = false;
 
-        if (currentStatus === 'ready') {
+        if (currentStatus === RUNTIME_STATUS_READY) {
             if (lastStreamerPingAtMs === null) {
                 reason = 'waiting_for_streamer_ping';
             } else if (nowMs - lastStreamerPingAtMs > streamerPingFreshMs) {
@@ -288,7 +292,9 @@ export function wireSignallingRuntimeStatus(
                 reason = 'streamer_ping_fresh';
                 lastHealthyAtMs = nowMs;
             }
-        } else if (currentStatus === 'waiting_for_streamer') {
+        } else if (currentStatus === RUNTIME_STATUS_WARMING_UP_ASSETS) {
+            reason = currentReason ?? 'initial_unreal_asset_warmup';
+        } else if (currentStatus === RUNTIME_STATUS_WAITING_FOR_STREAMER) {
             reason = 'waiting_for_streamer';
         }
 
@@ -328,7 +334,13 @@ export function wireSignallingRuntimeStatus(
     const markStreamerPing = (streamerId: string): void => {
         lastStreamerPingAtMs = Date.now();
         lastStreamerId = streamerId;
-        if (currentStatus === 'ready') {
+        if (currentStatus !== RUNTIME_STATUS_READY) {
+            publishTransition(RUNTIME_STATUS_READY, 'streamer_ping_fresh');
+            startHeartbeat();
+            return;
+        }
+
+        if (currentStatus === RUNTIME_STATUS_READY) {
             lastHealthyAtMs = lastStreamerPingAtMs;
         }
         writeStreamerHealthSnapshot();
@@ -357,7 +369,7 @@ export function wireSignallingRuntimeStatus(
         currentStatus = status;
         currentReason = reason;
         lastStatusAtUtc = new Date().toISOString();
-        if (status !== 'ready') {
+        if (status !== RUNTIME_STATUS_READY) {
             lastStreamerPingAtMs = null;
             lastStreamerId = null;
         }
@@ -398,15 +410,15 @@ export function wireSignallingRuntimeStatus(
 
     const syncFromStreamerCount = (readyReason: string, waitingReason: string): void => {
         if (server.streamerRegistry.count() > 0) {
-            publishTransition('ready', readyReason);
+            publishTransition(RUNTIME_STATUS_WARMING_UP_ASSETS, readyReason);
             startHeartbeat();
             return;
         }
-        publishTransition('waiting_for_streamer', waitingReason);
+        publishTransition(RUNTIME_STATUS_WAITING_FOR_STREAMER, waitingReason);
         startHeartbeat();
     };
 
-    syncFromStreamerCount('streamer_present_on_startup', 'signalling_server_started');
+    syncFromStreamerCount('streamer_present_waiting_for_unreal_warmup', 'signalling_server_started');
     startStreamerHealthTimer();
 
     const initialStreamerId = server.streamerRegistry.getFirstStreamerId();
@@ -417,7 +429,7 @@ export function wireSignallingRuntimeStatus(
     server.streamerRegistry.on('added', (streamerId: string) => {
         log(`[runtime-status] Streamer connected (${streamerId}).`);
         attachStreamerHealthListeners(streamerId);
-        publishTransition('ready', 'streamer_connected');
+        publishTransition(RUNTIME_STATUS_WARMING_UP_ASSETS, 'initial_unreal_asset_warmup');
         startHeartbeat();
     });
 
@@ -425,7 +437,7 @@ export function wireSignallingRuntimeStatus(
         log(
             `[runtime-status] Streamer disconnected (${streamerId}). remaining=${server.streamerRegistry.count()}.`
         );
-        syncFromStreamerCount('another_streamer_still_connected', 'streamer_disconnected');
+        syncFromStreamerCount('another_streamer_waiting_for_unreal_warmup', 'streamer_disconnected');
         const nextStreamerId = server.streamerRegistry.getFirstStreamerId();
         if (nextStreamerId) {
             attachStreamerHealthListeners(nextStreamerId);
