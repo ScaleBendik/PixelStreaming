@@ -216,7 +216,10 @@ Manual and maintenance-mode helpers:
 - `SignallingWebServer/platform_scripts/cmd/run_unreal_update.bat`
 - `SignallingWebServer/platform_scripts/powershell/invoke_update_mode.ps1`
 
-`start_streamer_stack.bat` now checks instance maintenance tags before normal startup. If `ScaleWorldMaintenanceMode=update`, the instance runs the update path first instead of launching Wilbur/Unreal for user traffic.
+`start_streamer_stack.bat` now checks instance maintenance tags before normal startup.
+
+- If `ScaleWorldMaintenanceMode=update`, the instance runs the update path first instead of launching Wilbur/Unreal for user traffic.
+- If `ScaleWorldMaintenanceMode=provisioning`, the instance runs a bounded provisioning bootstrap first. That bootstrap waits for fresh-launch prerequisites, syncs the PixelStreaming repo if upstream changed, runs `build-all.bat` when needed, and then continues into normal Wilbur/Unreal startup. This keeps normal restarts fast while making new launches self-healing even if the AMI repo is behind or Windows networking is not ready at the first scheduler tick.
 
 During maintenance-mode updates, `invoke_update_mode.ps1` also syncs the PixelStreaming repo before running `SWupdate.ps1`:
 
@@ -229,6 +232,23 @@ During maintenance-mode updates, `invoke_update_mode.ps1` also syncs the PixelSt
 If tracked local changes exist in the repo, the maintenance update fails fast instead of overwriting instance-local edits.
 
 Prerequisite: the instance must have a valid PixelStreaming git checkout and Git installed so update mode can fetch/pull before building.
+
+Provisioning mode uses the same shared repo-sync helper:
+
+- `SignallingWebServer/platform_scripts/powershell/ensure_repo_current.ps1`
+- `SignallingWebServer/platform_scripts/powershell/invoke_provisioning_mode.ps1`
+
+Recommended Task Scheduler settings for fresh launches:
+
+1. trigger: `At startup`
+2. delay: `20 seconds`
+3. if the task fails, restart every `1 minute`
+4. attempt restart up to `30` times
+
+Recommended provisioning bootstrap env vars:
+
+- `SCALEWORLD_PROVISIONING_BOOTSTRAP_TIMEOUT_SECONDS` default `900`
+- `SCALEWORLD_PROVISIONING_BOOTSTRAP_RETRY_DELAY_SECONDS` default `15`
 
 Successful maintenance-mode update no longer clears Fleet command tags on the instance itself. The instance records the terminal result and requests stop, and the API clears Fleet command tags after it observes the stopped instance for the matching update job.
 

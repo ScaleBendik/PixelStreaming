@@ -6,6 +6,7 @@ for %%I in ("%SCRIPT_DIR%\..\..\..") do set "PIXELSTREAMING_ROOT=%%~fI"
 set "UPDATE_SCRIPT=%PIXELSTREAMING_ROOT%\SWupdate.ps1"
 set "DATA_DRIVE_SCRIPT=%SCRIPT_DIR%..\powershell\ensure_data_drive.ps1"
 set "UPDATE_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_update_mode.ps1"
+set "PROVISIONING_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_provisioning_mode.ps1"
 set "STACK_MODE=normal"
 set "STACK_START_WATCHDOG=true"
 set "STACK_START_UNREAL=true"
@@ -13,6 +14,7 @@ if not defined STACK_LAUNCH_UNREAL_BEFORE_WILBUR set "STACK_LAUNCH_UNREAL_BEFORE
 if not defined STACK_PREPARE_DATA_DRIVE set "STACK_PREPARE_DATA_DRIVE=true"
 if not defined STACK_REQUIRE_DATA_DRIVE set "STACK_REQUIRE_DATA_DRIVE=false"
 if not defined STACK_ENABLE_UPDATE_MODE set "STACK_ENABLE_UPDATE_MODE=true"
+if not defined STACK_ENABLE_PROVISIONING_MODE set "STACK_ENABLE_PROVISIONING_MODE=true"
 if not defined SCALEWORLD_DATA_DISK_NUMBER set "SCALEWORLD_DATA_DISK_NUMBER=1"
 
 if /i "%~1"=="--recovery" (
@@ -65,6 +67,20 @@ if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_UPDATE_MODE%"=="true" 
     )
   ) else (
     echo WARNING: Update mode script not found at "%UPDATE_MODE_SCRIPT%". Continuing with normal startup.
+  )
+)
+
+if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_PROVISIONING_MODE%"=="true" (
+  if exist "%PROVISIONING_MODE_SCRIPT%" (
+    echo Checking instance provisioning mode...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%PROVISIONING_MODE_SCRIPT%"
+    set "PROVISIONING_MODE_EXIT=!errorlevel!"
+    if not "!PROVISIONING_MODE_EXIT!"=="0" (
+      echo ERROR: Provisioning mode bootstrap failed with exit code !PROVISIONING_MODE_EXIT!.
+      exit /b !PROVISIONING_MODE_EXIT!
+    )
+  ) else (
+    echo WARNING: Provisioning mode script not found at "%PROVISIONING_MODE_SCRIPT%". Continuing with normal startup.
   )
 )
 

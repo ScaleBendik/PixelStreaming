@@ -192,9 +192,11 @@ Important:
 5. Manual update testing now goes through:
    - `platform_scripts/cmd/prepare_data_drive.bat`
    - `platform_scripts/cmd/run_unreal_update.bat -ZipKey "ScaleworldBuilds/<artifact>.zip"`
-6. `start_streamer_stack.bat` checks `ScaleWorldMaintenanceMode=update` before normal startup and can run a single-line Unreal update from `ScaleWorldTargetZipKey`.
-7. Maintenance-mode update now fetches the PixelStreaming repo first and only runs `git pull --ff-only` plus `build-all.bat` when the configured upstream branch has changed.
-8. If tracked local repo changes are present, maintenance-mode update fails fast instead of overwriting them.
+6. `start_streamer_stack.bat` checks maintenance tags before normal startup:
+   - `ScaleWorldMaintenanceMode=update` runs the update path first and can execute a single-line Unreal update from `ScaleWorldTargetZipKey`
+   - `ScaleWorldMaintenanceMode=provisioning` runs a bounded bootstrap path first so fresh launches can wait for AWS metadata/network readiness, self-sync the PixelStreaming repo, and build if upstream changed before the normal stack comes up
+7. Maintenance-mode repo sync uses `platform_scripts/powershell/ensure_repo_current.ps1` and only runs `git pull --ff-only` plus `build-all.bat` when the configured upstream branch has changed.
+8. If tracked local repo changes are present, maintenance-mode bootstrap fails fast instead of overwriting them.
 9. On successful maintenance validation, the instance keeps Fleet command tags in place, requests stop, and relies on the API to clear those command tags after the stopped instance is observed for the matching job.
 10. The updater uses the prepared data drive (preferably `D:`) for download/scratch space when available, while the final active install remains on `C:\PixelStreaming\WindowsNoEditor`.
 11. The current recommended Windows boot method is Task Scheduler:
@@ -203,6 +205,10 @@ Important:
    - user mode: `Run only when user is logged on`
    - `Run with highest privileges`
    - `Do not start a new instance`
+   - if the task fails, restart every `1 minute` for up to `30` attempts
+12. Provisioning bootstrap timing can be tuned with:
+   - `SCALEWORLD_PROVISIONING_BOOTSTRAP_TIMEOUT_SECONDS` (default `900`)
+   - `SCALEWORLD_PROVISIONING_BOOTSTRAP_RETRY_DELAY_SECONDS` (default `15`)
 
 Operational prerequisite: maintenance-mode update expects the instance's PixelStreaming directory to be a valid git checkout and `git` to be installed.
 Given these options, to start the server with the closest behaviour as the old cirrus, you would invoke,

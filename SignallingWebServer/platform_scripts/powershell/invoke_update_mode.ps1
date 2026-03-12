@@ -38,24 +38,6 @@ function Get-AwsCliPath {
     throw "AWS CLI ('aws') was not found."
 }
 
-function Get-GitCliPath {
-    $candidate = Get-Command git -ErrorAction SilentlyContinue
-    if ($candidate) {
-        return $candidate.Source
-    }
-
-    foreach ($path in @(
-        'C:\Program Files\Git\cmd\git.exe',
-        'C:\Program Files\Git\bin\git.exe'
-    )) {
-        if (Test-Path -LiteralPath $path) {
-            return $path
-        }
-    }
-
-    throw "Git ('git') was not found."
-}
-
 function Get-InstanceIdentity {
     $token = Invoke-RestMethod -Method Put -Uri 'http://169.254.169.254/latest/api/token' -Headers @{ 'X-aws-ec2-metadata-token-ttl-seconds' = '21600' }
     return [pscustomobject]@{
@@ -193,68 +175,6 @@ function Wait-ForStreamerValidation {
     return $false
 }
 
-function Invoke-PixelStreamingRepoSync {
-    param(
-        [string]$RepoRoot
-    )
-
-    $gitCli = Get-GitCliPath
-    $buildScript = Join-Path $RepoRoot 'build-all.bat'
-    if (-not (Test-Path -LiteralPath $buildScript)) {
-        throw "build-all.bat was not found at '$buildScript'."
-    }
-
-    Push-Location $RepoRoot
-    try {
-        & $gitCli rev-parse --is-inside-work-tree *> $null
-        if ($LASTEXITCODE -ne 0) {
-            throw "PixelStreaming root '$RepoRoot' is not a git repository."
-        }
-
-        Write-UpdateModeLog 'Fetching PixelStreaming repo before update mode.'
-        & $gitCli fetch --prune
-        if ($LASTEXITCODE -ne 0) {
-            throw "git fetch --prune failed."
-        }
-
-        $upstreamBranch = ((& $gitCli rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null) | Out-String).Trim()
-        if ([string]::IsNullOrWhiteSpace($upstreamBranch)) {
-            Write-UpdateModeLog 'No upstream branch configured for PixelStreaming repo. Skipping repo sync/build.' 'WARN'
-            return
-        }
-
-        $currentHead = ((& $gitCli rev-parse HEAD) | Out-String).Trim()
-        $upstreamHead = ((& $gitCli rev-parse '@{u}') | Out-String).Trim()
-        if ([string]::IsNullOrWhiteSpace($currentHead) -or [string]::IsNullOrWhiteSpace($upstreamHead)) {
-            throw "Failed to resolve local or upstream git commit for PixelStreaming repo."
-        }
-
-        if ($currentHead -eq $upstreamHead) {
-            Write-UpdateModeLog "PixelStreaming repo already matches $upstreamBranch. Continuing with Unreal update."
-            return
-        }
-
-        $trackedChanges = ((& $gitCli status --porcelain --untracked-files=no) | Out-String).Trim()
-        if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
-            throw "Tracked local changes are present in the PixelStreaming repo. Resolve them before fleet update mode can pull the latest repo."
-        }
-
-        Write-UpdateModeLog "Remote PixelStreaming changes detected on $upstreamBranch. Pulling latest before Unreal update."
-        & $gitCli pull --ff-only
-        if ($LASTEXITCODE -ne 0) {
-            throw "git pull --ff-only failed."
-        }
-
-        Write-UpdateModeLog 'Running build-all.bat after repo sync.'
-        & $buildScript
-        if ($LASTEXITCODE -ne 0) {
-            throw "build-all.bat failed with exit code $LASTEXITCODE."
-        }
-    } finally {
-        Pop-Location
-    }
-}
-
 $awsCli = Get-AwsCliPath
 $identity = Get-InstanceIdentity
 $instanceTags = Get-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId
@@ -296,6 +216,7 @@ $pixelStreamingRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $updateScript = Join-Path $pixelStreamingRoot 'SWupdate.ps1'
 $stackLauncher = Join-Path $PSScriptRoot '..\cmd\start_streamer_stack.bat'
 $streamerHealthPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\streamer-health.json'
+$repoSyncScript = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
 
 $prepareDataDrive = if ($env:STACK_PREPARE_DATA_DRIVE) { [System.Boolean]::Parse($env:STACK_PREPARE_DATA_DRIVE) } else { $true }
 $requireDataDrive = if ($env:STACK_REQUIRE_DATA_DRIVE) { [System.Boolean]::Parse($env:STACK_REQUIRE_DATA_DRIVE) } else { $false }
@@ -318,8 +239,15 @@ if ($prepareDataDrive) {
     }
 }
 
+if (-not (Test-Path -LiteralPath $repoSyncScript)) {
+    throw "Repo sync helper not found at '$repoSyncScript'."
+}
+
 Write-UpdateModeLog 'Checking PixelStreaming repo for remote updates before Unreal update.'
-Invoke-PixelStreamingRepoSync -RepoRoot $pixelStreamingRoot
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $repoSyncScript -RepoRoot $pixelStreamingRoot -Mode 'update'
+if ($LASTEXITCODE -ne 0) {
+    throw "ensure_repo_current.ps1 exited with code $LASTEXITCODE."
+}
 
 if (-not (Test-Path -LiteralPath $updateScript)) {
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{

@@ -178,11 +178,14 @@ For the current production-style setup, the known-good Task Scheduler configurat
 ### Settings
 
 - `If the task is already running` -> `Do not start a new instance`
+- `If the task fails` -> restart every `1 minute`
+- `Attempt to restart up to` -> `30 times`
 
 Operational note:
 
 - This mode depends on the instance getting its normal interactive logon session at boot.
 - It is the preferred configuration for the current fleet because it matches the long-running production operating model and keeps Wilbur/Unreal/watchdog windows visible for debugging.
+- New provisioning launches should rely on the bounded provisioning bootstrap in `start_streamer_stack.bat`, not on a much longer fixed startup delay.
 
 ## Operational Notes
 
@@ -197,6 +200,7 @@ Operational note:
 9. The first missing-process grace now applies only to initial watchdog boot, not to subsequent recoveries. Subsequent recoveries rely on the normal post-restart grace window instead.
 10. The current empirically stable defaults are:
    - Task Scheduler startup delay: `20s`
+   - Task Scheduler retry on failure: every `60s`, up to `30` attempts
    - watchdog process startup grace: `15s`
    - poll / threshold / cooldown / post-restart grace: `5 / 3 / 5 / 8`
 
