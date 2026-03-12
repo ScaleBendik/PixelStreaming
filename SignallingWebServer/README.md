@@ -136,13 +136,17 @@ Relevant CLI/config keys:
 - `viewer_idle_stop_retry_ms`
 - `viewer_idle_aws_cli_path`
 - `viewer_idle_stop_dry_run`
+- `viewer_idle_maintenance_refresh_ms`
+- `viewer_idle_maintenance_tag_key`
 
 Behavior:
 
 1. If `viewer_idle_stop=true`, Wilbur listens to internal player registry add/remove events.
 2. When viewer count drops to `0`, it schedules a stop after `viewer_idle_grace_ms`.
 3. If no viewer ever connects, it schedules a stop after `viewer_idle_first_viewer_delay_ms + viewer_idle_first_viewer_grace_ms`.
-4. Stop is executed via `aws ec2 stop-instances` against the current instance discovered from IMDSv2 metadata.
+4. While `ScaleWorldMaintenanceMode` is present, Wilbur suppresses idle-stop timers entirely. This keeps provisioning/update maintenance instances alive even if they are expected to have zero viewers.
+5. Once maintenance clears, the first-viewer timer starts from that point instead of from initial process boot.
+6. Stop is executed via `aws ec2 stop-instances` against the current instance discovered from IMDSv2 metadata.
 
 Operational notes:
 

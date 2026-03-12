@@ -107,9 +107,16 @@ Default behavior from `start_watchdog.bat`:
 - streamer health file: `state\streamer-health.json`
 - streamer health stale threshold: `75s`
 - streamer health startup grace: `120s`
+- provisioning streamer health startup grace: `3600s`
+- maintenance mode refresh: `60s`
 - Unreal CPU stall confirmation: enabled
 - Unreal CPU minimum delta: `0.001s`
 - Unreal CPU confirmation window: `10s`
+
+Provisioning note:
+
+- if the instance is still tagged `ScaleWorldMaintenanceMode=provisioning`, the watchdog extends streamer-health startup grace to the provisioning value above before treating `waiting_for_streamer` as a fault
+- this is intended for long first-boot Unreal warmup such as shader compilation and precache generation
 
 ## Runtime Status Behavior
 

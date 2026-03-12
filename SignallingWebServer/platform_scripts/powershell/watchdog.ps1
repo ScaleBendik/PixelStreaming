@@ -26,6 +26,8 @@ param(
     [string]$StreamerHealthPath = $(if ($env:WATCHDOG_STREAMER_HEALTH_PATH) { $env:WATCHDOG_STREAMER_HEALTH_PATH } else { 'state\streamer-health.json' }),
     [string]$StreamerHealthMaxStaleSeconds = $(if ($env:WATCHDOG_STREAMER_HEALTH_MAX_STALE_SECONDS) { $env:WATCHDOG_STREAMER_HEALTH_MAX_STALE_SECONDS } else { '75' }),
     [string]$StreamerHealthStartupGraceSeconds = $(if ($env:WATCHDOG_STREAMER_HEALTH_STARTUP_GRACE_SECONDS) { $env:WATCHDOG_STREAMER_HEALTH_STARTUP_GRACE_SECONDS } else { '120' }),
+    [string]$ProvisioningStreamerHealthStartupGraceSeconds = $(if ($env:WATCHDOG_PROVISIONING_STREAMER_HEALTH_STARTUP_GRACE_SECONDS) { $env:WATCHDOG_PROVISIONING_STREAMER_HEALTH_STARTUP_GRACE_SECONDS } else { '3600' }),
+    [string]$MaintenanceModeRefreshSeconds = $(if ($env:WATCHDOG_MAINTENANCE_MODE_REFRESH_SECONDS) { $env:WATCHDOG_MAINTENANCE_MODE_REFRESH_SECONDS } else { '60' }),
     [string]$UnrealCpuStallConfirmEnabled = $(if ($env:WATCHDOG_UNREAL_CPU_STALL_CONFIRM_ENABLED) { $env:WATCHDOG_UNREAL_CPU_STALL_CONFIRM_ENABLED } else { 'true' }),
     [string]$UnrealCpuStallMinDeltaSeconds = $(if ($env:WATCHDOG_UNREAL_CPU_STALL_MIN_DELTA_SECONDS) { $env:WATCHDOG_UNREAL_CPU_STALL_MIN_DELTA_SECONDS } else { '0.001' }),
     [string]$UnrealCpuStallConfirmSeconds = $(if ($env:WATCHDOG_UNREAL_CPU_STALL_CONFIRM_SECONDS) { $env:WATCHDOG_UNREAL_CPU_STALL_CONFIRM_SECONDS } else { '10' })
@@ -36,6 +38,10 @@ $ErrorActionPreference = 'Stop'
 
 $script:IdentityCache = $null
 $script:LastStatusPublishFailure = $null
+$script:LastMaintenanceModeReadAtUtc = [DateTimeOffset]::MinValue
+$script:MaintenanceModeCache = $null
+$script:LastMaintenanceModeReadFailure = $null
+$script:LastLoggedMaintenanceMode = '__uninitialized__'
 $script:SignallingWebServerRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $defaultLogPath = Join-Path $script:SignallingWebServerRoot 'logs\scaleworld-watchdog.log'
 $resolvedLogPath = if ([string]::IsNullOrWhiteSpace($LogPath)) { $defaultLogPath } elseif ([System.IO.Path]::IsPathRooted($LogPath)) { $LogPath } else { Join-Path $script:SignallingWebServerRoot $LogPath }
@@ -198,6 +204,66 @@ function Publish-RuntimeStatus {
             Write-WatchdogLog "Failed to publish runtime status '$Status': $failure" 'WARN'
             $script:LastStatusPublishFailure = $failure
         }
+    }
+}
+
+function Get-MaintenanceMode {
+    if ($maintenanceModeRefreshSecondsValue -le 0) {
+        return $null
+    }
+
+    $nowUtc = [DateTimeOffset]::UtcNow
+    if (
+        $script:LastMaintenanceModeReadAtUtc -ne [DateTimeOffset]::MinValue -and
+        ($nowUtc - $script:LastMaintenanceModeReadAtUtc).TotalSeconds -lt $maintenanceModeRefreshSecondsValue
+    ) {
+        return $script:MaintenanceModeCache
+    }
+
+    try {
+        $identity = Get-InstanceIdentity
+        $args = @(
+            'ec2', 'describe-tags',
+            '--region', $identity.Region,
+            '--filters',
+            ("Name=resource-id,Values={0}" -f $identity.InstanceId),
+            'Name=key,Values=ScaleWorldMaintenanceMode',
+            '--query', 'Tags[0].Value',
+            '--output', 'text'
+        )
+        $output = & $AwsCliPath @args 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw ($output | Out-String).Trim()
+        }
+
+        $maintenanceMode = (($output | Out-String).Trim())
+        if (
+            [string]::IsNullOrWhiteSpace($maintenanceMode) -or
+            $maintenanceMode.Equals('None', [System.StringComparison]::OrdinalIgnoreCase) -or
+            $maintenanceMode.Equals('null', [System.StringComparison]::OrdinalIgnoreCase)
+        ) {
+            $maintenanceMode = $null
+        }
+
+        $script:MaintenanceModeCache = $maintenanceMode
+        $script:LastMaintenanceModeReadAtUtc = $nowUtc
+        $script:LastMaintenanceModeReadFailure = $null
+
+        $loggedMode = if ($maintenanceMode) { $maintenanceMode } else { '<none>' }
+        if ($loggedMode -ne $script:LastLoggedMaintenanceMode) {
+            Write-WatchdogLog "Observed maintenance mode: $loggedMode"
+            $script:LastLoggedMaintenanceMode = $loggedMode
+        }
+
+        return $script:MaintenanceModeCache
+    } catch {
+        $failure = $_.Exception.Message
+        if ($script:LastMaintenanceModeReadFailure -ne $failure) {
+            Write-WatchdogLog "Failed to read maintenance mode: $failure" 'WARN'
+            $script:LastMaintenanceModeReadFailure = $failure
+        }
+
+        return $script:MaintenanceModeCache
     }
 }
 
@@ -469,6 +535,8 @@ $runtimeStatusEnabledValue = ConvertTo-Bool -Value $RuntimeStatusEnabled -Defaul
 $streamerHealthEnabledValue = ConvertTo-Bool -Value $StreamerHealthEnabled -Default $true
 $streamerHealthMaxStaleSecondsValue = ConvertTo-PositiveInt -Value $StreamerHealthMaxStaleSeconds -Default 75 -Name 'StreamerHealthMaxStaleSeconds'
 $streamerHealthStartupGraceSecondsValue = ConvertTo-PositiveInt -Value $StreamerHealthStartupGraceSeconds -Default 120 -Name 'StreamerHealthStartupGraceSeconds'
+$provisioningStreamerHealthStartupGraceSecondsValue = ConvertTo-PositiveInt -Value $ProvisioningStreamerHealthStartupGraceSeconds -Default 3600 -Name 'ProvisioningStreamerHealthStartupGraceSeconds'
+$maintenanceModeRefreshSecondsValue = ConvertTo-PositiveInt -Value $MaintenanceModeRefreshSeconds -Default 60 -Name 'MaintenanceModeRefreshSeconds'
 $unrealCpuStallConfirmEnabledValue = ConvertTo-Bool -Value $UnrealCpuStallConfirmEnabled -Default $true
 $unrealCpuStallMinDeltaSecondsValue = ConvertTo-NonNegativeDouble -Value $UnrealCpuStallMinDeltaSeconds -Default 0.001 -Name 'UnrealCpuStallMinDeltaSeconds'
 $unrealCpuStallConfirmSecondsValue = ConvertTo-NonNegativeDouble -Value $UnrealCpuStallConfirmSeconds -Default 10 -Name 'UnrealCpuStallConfirmSeconds'
@@ -552,7 +620,7 @@ $healthyLogged = $false
 $lastUnrealCpuSnapshot = $null
 $unrealCpuStallAccumulatedSeconds = 0.0
 
-Write-WatchdogLog ('Starting watchdog. Poll={0}s threshold={1} restartCooldown={2}s postRestartGrace={3}s processStartupGrace={4}s dryRun={5} runtimeStatus={6} streamerHealth={7} streamerHealthPath={8} streamerHealthMaxStale={9}s streamerHealthStartupGrace={10}s unrealCpuConfirm={11} unrealCpuMinDelta={12}s unrealCpuConfirmWindow={13}s' -f $pollIntervalSecondsValue, $failureThresholdValue, $restartCooldownSecondsValue, $postRestartGraceSecondsValue, $processStartupGraceSecondsValue, $dryRunValue, $runtimeStatusEnabledValue, $streamerHealthEnabledValue, $resolvedStreamerHealthPath, $streamerHealthMaxStaleSecondsValue, $streamerHealthStartupGraceSecondsValue, $unrealCpuStallConfirmEnabledValue, $unrealCpuStallMinDeltaSecondsValue, $unrealCpuStallConfirmSecondsValue)
+Write-WatchdogLog ('Starting watchdog. Poll={0}s threshold={1} restartCooldown={2}s postRestartGrace={3}s processStartupGrace={4}s dryRun={5} runtimeStatus={6} streamerHealth={7} streamerHealthPath={8} streamerHealthMaxStale={9}s streamerHealthStartupGrace={10}s provisioningStreamerHealthStartupGrace={11}s maintenanceRefresh={12}s unrealCpuConfirm={13} unrealCpuMinDelta={14}s unrealCpuConfirmWindow={15}s' -f $pollIntervalSecondsValue, $failureThresholdValue, $restartCooldownSecondsValue, $postRestartGraceSecondsValue, $processStartupGraceSecondsValue, $dryRunValue, $runtimeStatusEnabledValue, $streamerHealthEnabledValue, $resolvedStreamerHealthPath, $streamerHealthMaxStaleSecondsValue, $streamerHealthStartupGraceSecondsValue, $provisioningStreamerHealthStartupGraceSecondsValue, $maintenanceModeRefreshSecondsValue, $unrealCpuStallConfirmEnabledValue, $unrealCpuStallMinDeltaSecondsValue, $unrealCpuStallConfirmSecondsValue)
 Write-WatchdogLog ('Rules: {0}' -f (($rules | ForEach-Object { if ([string]::IsNullOrWhiteSpace($_.CommandLinePattern)) { $_.ProcessName } else { '{0} [{1}]' -f $_.ProcessName, $_.CommandLinePattern } }) -join ', '))
 
 while ($true) {
@@ -623,7 +691,19 @@ while ($true) {
     ) {
         $healthGraceReferenceUtc = if ($lastRestartAtUtc -ne [DateTimeOffset]::MinValue) { $lastRestartAtUtc } else { $watchdogStartedAtUtc }
         $secondsSinceHealthGraceReference = ([DateTimeOffset]::UtcNow - $healthGraceReferenceUtc).TotalSeconds
-        if ($secondsSinceHealthGraceReference -lt $streamerHealthStartupGraceSecondsValue) {
+        $maintenanceMode = Get-MaintenanceMode
+        $effectiveStreamerHealthStartupGraceSeconds = $streamerHealthStartupGraceSecondsValue
+        if (
+            -not [string]::IsNullOrWhiteSpace($maintenanceMode) -and
+            $maintenanceMode.Equals('provisioning', [System.StringComparison]::OrdinalIgnoreCase)
+        ) {
+            $effectiveStreamerHealthStartupGraceSeconds = [Math]::Max(
+                $effectiveStreamerHealthStartupGraceSeconds,
+                $provisioningStreamerHealthStartupGraceSecondsValue
+            )
+        }
+
+        if ($secondsSinceHealthGraceReference -lt $effectiveStreamerHealthStartupGraceSeconds) {
             $streamerHealthFailureCount = 0
         } else {
             $streamerHealthResult = Read-StreamerHealthSnapshot -Path $resolvedStreamerHealthPath

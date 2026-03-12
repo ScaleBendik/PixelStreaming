@@ -129,6 +129,23 @@ Supporting scripts:
 
 - `SignallingWebServer/platform_scripts/cmd/start_dev_turn.bat`
 - `SignallingWebServer/platform_scripts/cmd/start_unreal.bat`
+
+### Fleet Provisioning Template Baseline (Current)
+
+Approved launch templates used by Fleet provisioning should already boot into the same validated Windows runtime stack:
+
+- PixelStreaming repo checkout present on disk
+- `SignallingWebServer/platform_scripts/cmd/start_streamer_stack.bat` as the canonical startup entrypoint
+- SSM parameter access for TURN credentials and connect-ticket signing key
+- runtime status tags emitted normally after boot
+
+Fleet provisioning now assumes the API will:
+
+- launch the template into `ScaleWorldMaintenanceMode=provisioning`
+- create the per-instance target group and ALB host rule
+- wait for target health and runtime `ready`
+- only then clear provisioning maintenance and expose the instance to the normal pool
+- during provisioning maintenance, Wilbur suppresses no-viewer idle-stop timers and the watchdog uses an extended streamer-health startup grace so long Unreal shader/precache warmup does not trigger premature stop/restart
 - `SignallingWebServer/platform_scripts/cmd/start_watchdog.bat`
 - `SignallingWebServer/platform_scripts/cmd/start_stack.bat` (compatibility wrapper)
 

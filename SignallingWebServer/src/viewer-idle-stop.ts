@@ -11,8 +11,10 @@ const DEFAULT_FIRST_VIEWER_GRACE_MS = 60 * 60_000;
 const DEFAULT_FIRST_VIEWER_DELAY_MS = 0;
 const DEFAULT_STOP_RETRY_MS = 60_000;
 const DEFAULT_IDLE_STATUS_HEARTBEAT_MS = 60_000;
+const DEFAULT_MAINTENANCE_REFRESH_MS = 60_000;
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
 const IMDS_METADATA_BASE_URL = 'http://169.254.169.254/latest/meta-data';
+const DEFAULT_MAINTENANCE_TAG_KEY = 'ScaleWorldMaintenanceMode';
 
 export interface ViewerIdleOptions {
     enabled?: boolean;
@@ -21,10 +23,24 @@ export interface ViewerIdleOptions {
     firstViewerDelayMs?: number;
     stopRetryMs?: number;
     idleStatusHeartbeatMs?: number;
+    maintenanceRefreshMs?: number;
+    maintenanceTagKey?: string;
     awsCliPath?: string;
     dryRun?: boolean;
     logger?: (message: string) => void;
     runtimeStatusPublisher?: RuntimeStatusPublisher | null;
+}
+
+async function readCurrentInstanceIdentity(): Promise<{ instanceId: string; region: string }> {
+    const token = await readImdsToken();
+    const [instanceId, region] = await Promise.all([
+        readImdsValue('instance-id', token),
+        readImdsValue('placement/region', token)
+    ]);
+    return {
+        instanceId: instanceId.trim(),
+        region: region.trim()
+    };
 }
 
 function parseBoolean(rawValue: unknown, fallback: boolean): boolean {
@@ -90,11 +106,7 @@ async function stopCurrentInstance(
     dryRun: boolean,
     log: (message: string) => void
 ): Promise<void> {
-    const token = await readImdsToken();
-    const [instanceId, region] = await Promise.all([
-        readImdsValue('instance-id', token),
-        readImdsValue('placement/region', token)
-    ]);
+    const { instanceId, region } = await readCurrentInstanceIdentity();
 
     if (dryRun) {
         log(`[idle-stop] DRY RUN: would stop instance ${instanceId} in region ${region}.`);
@@ -106,6 +118,37 @@ async function stopCurrentInstance(
     if (stdout && stdout.trim().length > 0) log(`[idle-stop] StopInstances output: ${stdout.trim()}`);
     if (stderr && stderr.trim().length > 0) log(`[idle-stop] StopInstances stderr: ${stderr.trim()}`);
     log(`[idle-stop] StopInstances requested for ${instanceId} (${region}).`);
+}
+
+async function readCurrentMaintenanceMode(
+    awsCliPath: string,
+    maintenanceTagKey: string
+): Promise<string | null> {
+    const { instanceId, region } = await readCurrentInstanceIdentity();
+    const args = [
+        'ec2',
+        'describe-tags',
+        '--region',
+        region,
+        '--filters',
+        `Name=resource-id,Values=${instanceId}`,
+        `Name=key,Values=${maintenanceTagKey}`,
+        '--query',
+        'Tags[0].Value',
+        '--output',
+        'text'
+    ];
+    const { stdout } = await execFileAsync(awsCliPath, args, { windowsHide: true });
+    const normalized = stdout.trim();
+    if (
+        normalized.length === 0 ||
+        normalized.toLowerCase() === 'none' ||
+        normalized.toLowerCase() === 'null'
+    ) {
+        return null;
+    }
+
+    return normalized;
 }
 
 function mapStopReason(reason: string): string {
@@ -159,8 +202,19 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         'VIEWER_IDLE_STATUS_HEARTBEAT_MS',
         log
     );
+    const maintenanceRefreshMs = parseNonNegativeInteger(
+        options.maintenanceRefreshMs ?? process.env.VIEWER_IDLE_MAINTENANCE_REFRESH_MS,
+        DEFAULT_MAINTENANCE_REFRESH_MS,
+        'VIEWER_IDLE_MAINTENANCE_REFRESH_MS',
+        log
+    );
     const dryRun = parseBoolean(options.dryRun ?? process.env.VIEWER_IDLE_STOP_DRY_RUN ?? false, false);
     const awsCliPath = String(options.awsCliPath ?? process.env.VIEWER_IDLE_AWS_CLI_PATH ?? 'aws');
+    const maintenanceTagKey = String(
+        options.maintenanceTagKey ??
+            process.env.VIEWER_IDLE_MAINTENANCE_TAG_KEY ??
+            DEFAULT_MAINTENANCE_TAG_KEY
+    ).trim();
     const runtimeStatusPublisher = options.runtimeStatusPublisher ?? null;
 
     let zeroViewersTimer: NodeJS.Timeout | null = null;
@@ -168,6 +222,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     let idleStatusHeartbeatTimer: NodeJS.Timeout | null = null;
     let stopInFlight = false;
     let hasSeenViewer = server.playerRegistry.count() > 0;
+    let currentMaintenanceMode: string | null = null;
+    let maintenanceStateInitialized = false;
+    let maintenanceRefreshInFlight = false;
+    let lastMaintenanceReadFailure: string | null = null;
 
     const publishStatus = (
         status: string,
@@ -210,8 +268,73 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             publishStatus('idle_shutdown_pending', reason, { heartbeatOnly: true });
         }, idleStatusHeartbeatMs);
     };
+    const isMaintenanceActive = (): boolean => (currentMaintenanceMode?.trim().length ?? 0) > 0;
+    const clearAllIdleStopTimers = (): void => {
+        clearZeroTimer();
+        clearFirstViewerTimer();
+        clearIdleStatusHeartbeat();
+    };
+    const ensureFirstViewerWindow = (): void => {
+        clearFirstViewerTimer();
+        if (!maintenanceStateInitialized || isMaintenanceActive()) {
+            return;
+        }
+
+        if (hasSeenViewer || server.playerRegistry.count() > 0 || firstViewerGraceMs <= 0) {
+            return;
+        }
+
+        firstViewerTimer = setTimeout(() => {
+            firstViewerTimer = null;
+            if (hasSeenViewer || server.playerRegistry.count() > 0 || isMaintenanceActive()) return;
+            void requestStop('no-viewer-ever-connected');
+        }, firstViewerDelayMs + firstViewerGraceMs);
+
+        log(
+            `[idle-stop] First-viewer window active (delay=${firstViewerDelayMs} ms, grace=${firstViewerGraceMs} ms).`
+        );
+    };
+    const refreshMaintenanceMode = async (): Promise<void> => {
+        if (maintenanceRefreshInFlight || maintenanceTagKey.length === 0) {
+            return;
+        }
+
+        maintenanceRefreshInFlight = true;
+        try {
+            const nextMaintenanceMode = await readCurrentMaintenanceMode(awsCliPath, maintenanceTagKey);
+            maintenanceStateInitialized = true;
+            if (nextMaintenanceMode !== currentMaintenanceMode) {
+                currentMaintenanceMode = nextMaintenanceMode;
+                if (currentMaintenanceMode) {
+                    log(
+                        `[idle-stop] Maintenance mode '${currentMaintenanceMode}' detected. Suspending idle-stop timers.`
+                    );
+                    clearAllIdleStopTimers();
+                } else {
+                    log('[idle-stop] Maintenance mode cleared. Re-evaluating idle-stop timers.');
+                    ensureFirstViewerWindow();
+                }
+            } else if (!currentMaintenanceMode) {
+                ensureFirstViewerWindow();
+            }
+
+            lastMaintenanceReadFailure = null;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (message !== lastMaintenanceReadFailure) {
+                log(`[idle-stop] Failed to read maintenance mode: ${message}`);
+                lastMaintenanceReadFailure = message;
+            }
+        } finally {
+            maintenanceRefreshInFlight = false;
+        }
+    };
 
     const scheduleStop = (reason: string, delayMs: number): void => {
+        if (!maintenanceStateInitialized || isMaintenanceActive()) {
+            return;
+        }
+
         clearZeroTimer();
         const mappedReason = mapStopReason(reason);
         publishStatus('idle_shutdown_pending', mappedReason);
@@ -223,7 +346,15 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     };
 
     const scheduleRetryIfStillIdle = (): void => {
-        if (stopRetryMs <= 0 || server.playerRegistry.count() > 0) return;
+        if (
+            stopRetryMs <= 0 ||
+            server.playerRegistry.count() > 0 ||
+            !maintenanceStateInitialized ||
+            isMaintenanceActive()
+        ) {
+            return;
+        }
+
         publishStatus('idle_shutdown_pending', 'retry_after_stop_failure');
         scheduleStop('retry-after-failure', stopRetryMs);
     };
@@ -231,6 +362,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     const requestStop = async (reason: string): Promise<void> => {
         if (stopInFlight) return;
         clearIdleStatusHeartbeat();
+        if (!maintenanceStateInitialized || isMaintenanceActive()) {
+            return;
+        }
+
         if (server.playerRegistry.count() > 0) {
             log('[idle-stop] Stop request aborted because viewers are connected.');
             publishStatus('ready', 'viewer_connected_during_idle_shutdown', { preserveStatusAtUtc: true });
@@ -278,15 +413,13 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     server.playerRegistry.on('removed', onViewerRemoved);
     log('[idle-stop] Wired to player registry events.');
 
-    if (!hasSeenViewer && firstViewerGraceMs > 0) {
-        firstViewerTimer = setTimeout(() => {
-            firstViewerTimer = null;
-            if (hasSeenViewer || server.playerRegistry.count() > 0) return;
-            void requestStop('no-viewer-ever-connected');
-        }, firstViewerDelayMs + firstViewerGraceMs);
-
-        log(
-            `[idle-stop] First-viewer window active (delay=${firstViewerDelayMs} ms, grace=${firstViewerGraceMs} ms).`
-        );
+    if (maintenanceRefreshMs > 0 && maintenanceTagKey.length > 0) {
+        void refreshMaintenanceMode();
+        setInterval(() => {
+            void refreshMaintenanceMode();
+        }, maintenanceRefreshMs);
+    } else {
+        maintenanceStateInitialized = true;
+        ensureFirstViewerWindow();
     }
 }
