@@ -302,21 +302,28 @@ export function wireSignallingRuntimeStatus(
 
         const nowMs = Date.now();
         const streamerCount = server.streamerRegistry.count();
+        const playerVisibleStreamerCount = getPlayerVisibleStreamers().length;
         let reason = currentReason ?? 'runtime_status_unavailable';
         let healthy = false;
 
         if (currentStatus === RUNTIME_STATUS_READY) {
-            if (lastStreamerPingAtMs === null) {
-                reason = 'waiting_for_streamer_ping';
-            } else if (nowMs - lastStreamerPingAtMs > streamerPingFreshMs) {
+            if (playerVisibleStreamerCount > 0) {
+                healthy = true;
+                reason = currentReason ?? 'stream_player_visible';
+                lastHealthyAtMs = nowMs;
+            } else if (lastStreamerPingAtMs !== null && nowMs - lastStreamerPingAtMs > streamerPingFreshMs) {
                 reason = 'streamer_ping_stale';
             } else {
-                healthy = true;
-                reason = 'streamer_ping_fresh';
-                lastHealthyAtMs = nowMs;
+                reason = 'streamer_not_player_visible';
             }
         } else if (currentStatus === RUNTIME_STATUS_STABILIZING_STREAM) {
-            reason = currentReason ?? 'verifying_stream_stability';
+            if (playerVisibleStreamerCount > 0) {
+                healthy = true;
+                reason = currentReason ?? 'verifying_stream_stability';
+                lastHealthyAtMs = nowMs;
+            } else {
+                reason = currentReason ?? 'streamer_not_player_visible';
+            }
         } else if (currentStatus === RUNTIME_STATUS_WARMING_UP_ASSETS) {
             reason = currentReason ?? 'initial_unreal_asset_warmup';
         } else if (currentStatus === RUNTIME_STATUS_WAITING_FOR_STREAMER) {
@@ -427,23 +434,6 @@ export function wireSignallingRuntimeStatus(
         if (lastStreamerId && !visibleStreamerIds.has(lastStreamerId)) {
             lastStreamerPingAtMs = null;
             lastStreamerId = null;
-        }
-
-        const hasFreshVisibleStreamerPing =
-            lastStreamerPingAtMs !== null &&
-            lastStreamerId !== null &&
-            visibleStreamerIds.has(lastStreamerId) &&
-            nowMs - lastStreamerPingAtMs <= streamerPingFreshMs;
-
-        if (!hasFreshVisibleStreamerPing) {
-            resetReadySoak();
-            publishTransition(
-                RUNTIME_STATUS_STABILIZING_STREAM,
-                'waiting_for_streamer_ping',
-                transitionOptions
-            );
-            startHeartbeat();
-            return;
         }
 
         if (readySoakMs > 0) {
