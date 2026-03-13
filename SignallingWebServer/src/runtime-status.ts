@@ -436,6 +436,14 @@ export function wireSignallingRuntimeStatus(
             lastStreamerId = null;
         }
 
+        if (currentStatus === RUNTIME_STATUS_READY) {
+            resetReadySoak();
+            lastHealthyAtMs = nowMs;
+            writeStreamerHealthSnapshot();
+            startHeartbeat();
+            return;
+        }
+
         if (readySoakMs > 0) {
             if (readySoakStartedAtMs === null) {
                 readySoakStartedAtMs = nowMs;
