@@ -21,6 +21,9 @@ export interface RuntimeStatusUpdate {
 export interface RuntimeStatusPublisher {
     publish(update: RuntimeStatusUpdate): Promise<boolean>;
 }
+export interface SignallingRuntimeStatusController {
+    restoreDerivedStatus(options?: { preserveStatusAtUtc?: boolean }): void;
+}
 export interface RuntimeStatusPublisherOptions {
     enabled?: boolean;
     awsCliPath?: string;
@@ -32,6 +35,7 @@ export interface SignallingRuntimeStatusOptions {
     logger?: (message: string) => void;
     source?: string;
     heartbeatMs?: number;
+    readySoakMs?: number;
     streamerHealthEnabled?: boolean;
     streamerHealthPath?: string;
     streamerPingFreshMs?: number;
@@ -53,6 +57,7 @@ interface LocalStreamerHealthSnapshot {
 
 const RUNTIME_STATUS_WAITING_FOR_STREAMER = 'waiting_for_streamer';
 const RUNTIME_STATUS_WARMING_UP_ASSETS = 'warming_up_assets';
+const RUNTIME_STATUS_STABILIZING_STREAM = 'stabilizing_stream';
 const RUNTIME_STATUS_READY = 'ready';
 
 function parseBoolean(rawValue: unknown, fallback: boolean): boolean {
@@ -226,11 +231,15 @@ export function wireSignallingRuntimeStatus(
     server: SignallingServer,
     publisher: RuntimeStatusPublisher | null,
     options: SignallingRuntimeStatusOptions = {}
-): void {
+): SignallingRuntimeStatusController {
     const log = options.logger ?? ((message: string) => Logger.info(message));
     const heartbeatMs = parseNonNegativeInteger(
         options.heartbeatMs ?? process.env.RUNTIME_STATUS_HEARTBEAT_MS,
         60_000
+    );
+    const readySoakMs = parseNonNegativeInteger(
+        options.readySoakMs ?? process.env.RUNTIME_STATUS_READY_SOAK_MS,
+        45_000
     );
     const source = options.source ?? 'signalling-server';
     const defaultStreamerHealthPath = path.resolve(__dirname, '..', 'state', 'streamer-health.json');
@@ -260,6 +269,8 @@ export function wireSignallingRuntimeStatus(
     let lastHealthyAtMs: number | null = null;
     let lastStreamerId: string | null = null;
     let lastStreamerHealthWriteFailure: string | null = null;
+    let readySoakStartedAtMs: number | null = null;
+    let readySoakTimer: NodeJS.Timeout | null = null;
     const attachedStreamers = new WeakSet<object>();
 
     const clearHeartbeat = (): void => {
@@ -273,6 +284,18 @@ export function wireSignallingRuntimeStatus(
         clearInterval(streamerHealthTimer);
         streamerHealthTimer = null;
     };
+    const clearReadySoakTimer = (): void => {
+        if (!readySoakTimer) return;
+        clearTimeout(readySoakTimer);
+        readySoakTimer = null;
+    };
+    const resetReadySoak = (): void => {
+        readySoakStartedAtMs = null;
+        clearReadySoakTimer();
+    };
+
+    const getPlayerVisibleStreamers = () =>
+        server.streamerRegistry.streamers.filter((streamer) => streamer.streaming);
 
     const writeStreamerHealthSnapshot = (): void => {
         if (!streamerHealthEnabled) return;
@@ -292,6 +315,8 @@ export function wireSignallingRuntimeStatus(
                 reason = 'streamer_ping_fresh';
                 lastHealthyAtMs = nowMs;
             }
+        } else if (currentStatus === RUNTIME_STATUS_STABILIZING_STREAM) {
+            reason = currentReason ?? 'verifying_stream_stability';
         } else if (currentStatus === RUNTIME_STATUS_WARMING_UP_ASSETS) {
             reason = currentReason ?? 'initial_unreal_asset_warmup';
         } else if (currentStatus === RUNTIME_STATUS_WAITING_FOR_STREAMER) {
@@ -331,52 +356,161 @@ export function wireSignallingRuntimeStatus(
         }
     };
 
-    const markStreamerPing = (streamerId: string): void => {
-        lastStreamerPingAtMs = Date.now();
-        lastStreamerId = streamerId;
-        if (currentStatus !== RUNTIME_STATUS_READY) {
-            publishTransition(RUNTIME_STATUS_READY, 'streamer_ping_fresh');
+    const publishTransition = (
+        status: string,
+        reason: string,
+        transitionOptions: { force?: boolean; preserveStatusAtUtc?: boolean } = {}
+    ): void => {
+        const statusChanged = currentStatus !== status || currentReason !== reason;
+        const shouldPreserveStatusAtUtc = transitionOptions.preserveStatusAtUtc === true && !statusChanged;
+        currentStatus = status;
+        currentReason = reason;
+        if (statusChanged) {
+            lastStatusAtUtc = new Date().toISOString();
+        }
+        if (publisher && (statusChanged || transitionOptions.force || shouldPreserveStatusAtUtc)) {
+            void publisher.publish({
+                status,
+                reason,
+                source,
+                preserveStatusAtUtc: shouldPreserveStatusAtUtc
+            });
+        }
+        writeStreamerHealthSnapshot();
+    };
+
+    const scheduleReadySoakEvaluation = (remainingMs: number): void => {
+        clearReadySoakTimer();
+        if (remainingMs <= 0) return;
+        readySoakTimer = setTimeout(() => {
+            readySoakTimer = null;
+            evaluateDerivedStatus({ force: true });
+        }, remainingMs);
+    };
+
+    const evaluateDerivedStatus = (
+        transitionOptions: { force?: boolean; preserveStatusAtUtc?: boolean } = {}
+    ): void => {
+        const nowMs = Date.now();
+        const streamers = server.streamerRegistry.streamers;
+        if (streamers.length === 0) {
+            lastStreamerPingAtMs = null;
+            lastStreamerId = null;
+            resetReadySoak();
+            publishTransition(
+                RUNTIME_STATUS_WAITING_FOR_STREAMER,
+                'signalling_server_started',
+                transitionOptions
+            );
             startHeartbeat();
             return;
         }
 
-        if (currentStatus === RUNTIME_STATUS_READY) {
-            lastHealthyAtMs = lastStreamerPingAtMs;
+        const playerVisibleStreamers = getPlayerVisibleStreamers();
+        if (playerVisibleStreamers.length === 0) {
+            lastStreamerPingAtMs = null;
+            lastStreamerId = null;
+            resetReadySoak();
+            publishTransition(
+                RUNTIME_STATUS_WARMING_UP_ASSETS,
+                'initial_unreal_asset_warmup',
+                transitionOptions
+            );
+            startHeartbeat();
+            return;
         }
-        writeStreamerHealthSnapshot();
+
+        const visibleStreamerIds = new Set(
+            playerVisibleStreamers.map((streamer) => streamer.streamerId).filter(Boolean)
+        );
+
+        if (lastStreamerId && !visibleStreamerIds.has(lastStreamerId)) {
+            lastStreamerPingAtMs = null;
+            lastStreamerId = null;
+        }
+
+        const hasFreshVisibleStreamerPing =
+            lastStreamerPingAtMs !== null &&
+            lastStreamerId !== null &&
+            visibleStreamerIds.has(lastStreamerId) &&
+            nowMs - lastStreamerPingAtMs <= streamerPingFreshMs;
+
+        if (!hasFreshVisibleStreamerPing) {
+            resetReadySoak();
+            publishTransition(
+                RUNTIME_STATUS_STABILIZING_STREAM,
+                'waiting_for_streamer_ping',
+                transitionOptions
+            );
+            startHeartbeat();
+            return;
+        }
+
+        if (readySoakMs > 0) {
+            if (readySoakStartedAtMs === null) {
+                readySoakStartedAtMs = nowMs;
+            }
+
+            const remainingReadySoakMs = readySoakMs - Math.max(0, nowMs - readySoakStartedAtMs);
+            if (remainingReadySoakMs > 0) {
+                scheduleReadySoakEvaluation(remainingReadySoakMs);
+                publishTransition(
+                    RUNTIME_STATUS_STABILIZING_STREAM,
+                    'verifying_stream_stability',
+                    transitionOptions
+                );
+                startHeartbeat();
+                return;
+            }
+        }
+
+        resetReadySoak();
+        lastHealthyAtMs = nowMs;
+        publishTransition(RUNTIME_STATUS_READY, 'stream_stable', transitionOptions);
+        startHeartbeat();
+    };
+
+    const markStreamerPing = (streamerId: string): void => {
+        lastStreamerPingAtMs = Date.now();
+        lastStreamerId = streamerId;
+        evaluateDerivedStatus();
     };
 
     const attachStreamerHealthListeners = (streamerId: string): void => {
-        if (!streamerHealthEnabled) return;
-
         const streamer = server.streamerRegistry.find(streamerId);
         if (!streamer || attachedStreamers.has(streamer)) return;
 
         attachedStreamers.add(streamer);
+        const attachedStreamerId = streamerId;
+        streamer.protocol.on(Messages.endpointId.typeName, () => {
+            evaluateDerivedStatus({ force: true });
+        });
         streamer.protocol.on(Messages.ping.typeName, () => {
-            markStreamerPing(streamer.streamerId || streamerId);
+            if (streamer.streaming) {
+                markStreamerPing(streamer.streamerId || attachedStreamerId);
+            } else {
+                evaluateDerivedStatus({ force: true });
+            }
         });
         streamer.on('disconnect', () => {
-            writeStreamerHealthSnapshot();
+            if (
+                lastStreamerId &&
+                (lastStreamerId === streamer.streamerId || lastStreamerId === attachedStreamerId)
+            ) {
+                lastStreamerPingAtMs = null;
+                lastStreamerId = null;
+            }
+            evaluateDerivedStatus({ force: true });
         });
-        streamer.on('id_changed', () => {
-            lastStreamerId = streamer.streamerId || streamerId;
-            writeStreamerHealthSnapshot();
+        streamer.on('id_changed', (newId: string) => {
+            if (
+                lastStreamerId &&
+                (lastStreamerId === attachedStreamerId || lastStreamerId === streamer.streamerId)
+            ) {
+                lastStreamerId = newId;
+            }
+            evaluateDerivedStatus({ force: true });
         });
-    };
-
-    const publishTransition = (status: string, reason: string): void => {
-        currentStatus = status;
-        currentReason = reason;
-        lastStatusAtUtc = new Date().toISOString();
-        if (status !== RUNTIME_STATUS_READY) {
-            lastStreamerPingAtMs = null;
-            lastStreamerId = null;
-        }
-        if (publisher) {
-            void publisher.publish({ status, reason, source });
-        }
-        writeStreamerHealthSnapshot();
     };
 
     const publishHeartbeat = (): void => {
@@ -408,39 +542,32 @@ export function wireSignallingRuntimeStatus(
         }, streamerHealthWriteMs);
     };
 
-    const syncFromStreamerCount = (readyReason: string, waitingReason: string): void => {
-        if (server.streamerRegistry.count() > 0) {
-            publishTransition(RUNTIME_STATUS_WARMING_UP_ASSETS, readyReason);
-            startHeartbeat();
-            return;
-        }
-        publishTransition(RUNTIME_STATUS_WAITING_FOR_STREAMER, waitingReason);
-        startHeartbeat();
-    };
-
-    syncFromStreamerCount('streamer_present_waiting_for_unreal_warmup', 'signalling_server_started');
+    evaluateDerivedStatus({ force: true });
     startStreamerHealthTimer();
 
-    const initialStreamerId = server.streamerRegistry.getFirstStreamerId();
-    if (initialStreamerId) {
-        attachStreamerHealthListeners(initialStreamerId);
-    }
+    server.streamerRegistry.streamers.forEach((streamer) => {
+        attachStreamerHealthListeners(streamer.streamerId);
+    });
 
     server.streamerRegistry.on('added', (streamerId: string) => {
         log(`[runtime-status] Streamer connected (${streamerId}).`);
         attachStreamerHealthListeners(streamerId);
-        publishTransition(RUNTIME_STATUS_WARMING_UP_ASSETS, 'initial_unreal_asset_warmup');
-        startHeartbeat();
+        evaluateDerivedStatus({ force: true });
     });
 
     server.streamerRegistry.on('removed', (streamerId: string) => {
         log(
             `[runtime-status] Streamer disconnected (${streamerId}). remaining=${server.streamerRegistry.count()}.`
         );
-        syncFromStreamerCount('another_streamer_waiting_for_unreal_warmup', 'streamer_disconnected');
-        const nextStreamerId = server.streamerRegistry.getFirstStreamerId();
-        if (nextStreamerId) {
-            attachStreamerHealthListeners(nextStreamerId);
-        }
+        evaluateDerivedStatus({ force: true });
     });
+
+    return {
+        restoreDerivedStatus(restoreOptions = {}) {
+            evaluateDerivedStatus({
+                force: true,
+                preserveStatusAtUtc: restoreOptions.preserveStatusAtUtc === true
+            });
+        }
+    };
 }

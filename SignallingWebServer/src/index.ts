@@ -539,7 +539,7 @@ const runtimeStatusPublisher = createRuntimeStatusPublisher({
     logger: (message: string) => Logger.info(message)
 });
 
-wireSignallingRuntimeStatus(signallingServer, runtimeStatusPublisher, {
+const runtimeStatusController = wireSignallingRuntimeStatus(signallingServer, runtimeStatusPublisher, {
     logger: (message: string) => Logger.info(message),
     source: String(options.runtime_status_source || 'signalling-server')
 });
@@ -553,7 +553,8 @@ wireViewerIdleStop(signallingServer, {
     awsCliPath: options.viewer_idle_aws_cli_path,
     dryRun: options.viewer_idle_stop_dry_run,
     logger: (message: string) => Logger.info(message),
-    runtimeStatusPublisher
+    runtimeStatusPublisher,
+    runtimeStatusController
 });
 
 if (options.stdin) {

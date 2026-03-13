@@ -2,7 +2,7 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
-import { RuntimeStatusPublisher } from './runtime-status';
+import { RuntimeStatusPublisher, SignallingRuntimeStatusController } from './runtime-status';
 
 const execFileAsync = promisify(execFile);
 
@@ -29,6 +29,7 @@ export interface ViewerIdleOptions {
     dryRun?: boolean;
     logger?: (message: string) => void;
     runtimeStatusPublisher?: RuntimeStatusPublisher | null;
+    runtimeStatusController?: SignallingRuntimeStatusController | null;
 }
 
 async function readCurrentInstanceIdentity(): Promise<{ instanceId: string; region: string }> {
@@ -216,6 +217,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             DEFAULT_MAINTENANCE_TAG_KEY
     ).trim();
     const runtimeStatusPublisher = options.runtimeStatusPublisher ?? null;
+    const runtimeStatusController = options.runtimeStatusController ?? null;
 
     let zeroViewersTimer: NodeJS.Timeout | null = null;
     let firstViewerTimer: NodeJS.Timeout | null = null;
@@ -368,7 +370,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         if (server.playerRegistry.count() > 0) {
             log('[idle-stop] Stop request aborted because viewers are connected.');
-            publishStatus('ready', 'viewer_connected_during_idle_shutdown', { preserveStatusAtUtc: true });
+            runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
             return;
         }
 
@@ -392,7 +394,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         clearZeroTimer();
         clearFirstViewerTimer();
         clearIdleStatusHeartbeat();
-        publishStatus('ready', 'viewer_connected', { preserveStatusAtUtc: true });
+        runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
         log(`[idle-stop] Viewer connected (count=${server.playerRegistry.count()}).`);
     };
 
