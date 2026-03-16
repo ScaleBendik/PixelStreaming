@@ -248,44 +248,38 @@ $prepareDataDrive = if ($env:STACK_PREPARE_DATA_DRIVE) { [System.Boolean]::Parse
 $requireDataDrive = if ($env:STACK_REQUIRE_DATA_DRIVE) { [System.Boolean]::Parse($env:STACK_REQUIRE_DATA_DRIVE) } else { $false }
 $dataDiskNumber = if ($env:SCALEWORLD_DATA_DISK_NUMBER) { [int]$env:SCALEWORLD_DATA_DISK_NUMBER } else { 1 }
 
-if ($prepareDataDrive) {
-    $dataDriveScript = Join-Path $PSScriptRoot 'ensure_data_drive.ps1'
-    if (Test-Path -LiteralPath $dataDriveScript) {
-        Write-UpdateModeLog 'Preparing data drive for update mode.'
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $dataDriveScript -DataDiskNumber $dataDiskNumber -SkipIfUnavailable
-        if ($LASTEXITCODE -ne 0) {
-            if ($requireDataDrive) {
-                throw "Data drive preparation failed with code $LASTEXITCODE."
-            }
-
-            Write-UpdateModeLog "Data drive preparation failed with code $LASTEXITCODE. Continuing without prepared data drive." 'WARN'
-        }
-    } else {
-        Write-UpdateModeLog "Data drive script not found at '$dataDriveScript'. Continuing without prepared data drive." 'WARN'
-    }
-}
-
-if (-not (Test-Path -LiteralPath $repoSyncScript)) {
-    throw "Repo sync helper not found at '$repoSyncScript'."
-}
-
-Write-UpdateModeLog 'Checking PixelStreaming repo for remote updates before Unreal update.'
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $repoSyncScript -RepoRoot $pixelStreamingRoot -Mode 'update'
-if ($LASTEXITCODE -ne 0) {
-    throw "ensure_repo_current.ps1 exited with code $LASTEXITCODE."
-}
-
-if (-not (Test-Path -LiteralPath $updateScript)) {
-    Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
-        ScaleWorldUpdateState = 'failed'
-        ScaleWorldUpdateResultReason = 'missing_swupdate_script'
-        ScaleWorldUpdateCompletedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-    }
-    Schedule-DelayedStop -DelaySeconds $FailureStopDelaySeconds
-    throw "SWupdate.ps1 not found at '$updateScript'."
-}
-
 try {
+    if ($prepareDataDrive) {
+        $dataDriveScript = Join-Path $PSScriptRoot 'ensure_data_drive.ps1'
+        if (Test-Path -LiteralPath $dataDriveScript) {
+            Write-UpdateModeLog 'Preparing data drive for update mode.'
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $dataDriveScript -DataDiskNumber $dataDiskNumber -SkipIfUnavailable
+            if ($LASTEXITCODE -ne 0) {
+                if ($requireDataDrive) {
+                    throw "Data drive preparation failed with code $LASTEXITCODE."
+                }
+
+                Write-UpdateModeLog "Data drive preparation failed with code $LASTEXITCODE. Continuing without prepared data drive." 'WARN'
+            }
+        } else {
+            Write-UpdateModeLog "Data drive script not found at '$dataDriveScript'. Continuing without prepared data drive." 'WARN'
+        }
+    }
+
+    if (-not (Test-Path -LiteralPath $repoSyncScript)) {
+        throw "Repo sync helper not found at '$repoSyncScript'."
+    }
+
+    Write-UpdateModeLog 'Checking PixelStreaming repo for remote updates before Unreal update.'
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $repoSyncScript -RepoRoot $pixelStreamingRoot -Mode 'update'
+    if ($LASTEXITCODE -ne 0) {
+        throw "ensure_repo_current.ps1 exited with code $LASTEXITCODE."
+    }
+
+    if (-not (Test-Path -LiteralPath $updateScript)) {
+        throw "SWupdate.ps1 not found at '$updateScript'."
+    }
+
     $updateArgs = @('-ZipKey', $targetZipKey)
     if ($AllowUnchanged) {
         $updateArgs += '-AllowUnchanged'
