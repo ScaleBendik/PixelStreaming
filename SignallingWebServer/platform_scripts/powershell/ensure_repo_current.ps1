@@ -93,6 +93,7 @@ try {
 
     $upstreamBranch = ((& $gitCli rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null) | Out-String).Trim()
     $buildReasons = [System.Collections.Generic.List[string]]::new()
+    $trackedChanges = ((& $gitCli status --porcelain --untracked-files=no) | Out-String).Trim()
 
     if (-not [string]::IsNullOrWhiteSpace($upstreamBranch)) {
         $upstreamHead = ((& $gitCli rev-parse '@{u}') | Out-String).Trim()
@@ -100,28 +101,41 @@ try {
             throw 'Failed to resolve upstream git commit for PixelStreaming repo.'
         }
 
-        if ($currentHead -ne $upstreamHead) {
-            $trackedChanges = ((& $gitCli status --porcelain --untracked-files=no) | Out-String).Trim()
-            if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
-                throw 'Tracked local changes are present in the PixelStreaming repo. Resolve them before maintenance bootstrap can pull the latest repo.'
-            }
-
-            Write-RepoSyncLog "Remote PixelStreaming changes detected on $upstreamBranch. Pulling latest before continuing."
-            & $gitCli pull --ff-only
+        if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
+            Write-RepoSyncLog "Discarding tracked local PixelStreaming repo changes before $Mode mode."
+            & $gitCli reset --hard $upstreamHead
             if ($LASTEXITCODE -ne 0) {
-                throw 'git pull --ff-only failed.'
+                throw "git reset --hard $upstreamHead failed."
             }
+            $currentHead = ((& $gitCli rev-parse HEAD) | Out-String).Trim()
+            $trackedChanges = ''
+            $buildReasons.Add("discarded tracked local repo changes before $Mode mode")
+        }
 
+        if ($currentHead -ne $upstreamHead) {
+            Write-RepoSyncLog "Remote PixelStreaming changes detected on $upstreamBranch. Resetting local checkout to upstream before continuing."
+            & $gitCli reset --hard $upstreamHead
+            if ($LASTEXITCODE -ne 0) {
+                throw "git reset --hard $upstreamHead failed."
+            }
             $currentHead = ((& $gitCli rev-parse HEAD) | Out-String).Trim()
             if ([string]::IsNullOrWhiteSpace($currentHead)) {
-                throw 'Failed to resolve local git commit after git pull.'
+                throw 'Failed to resolve local git commit after hard reset to upstream.'
             }
-            $buildReasons.Add("repo updated to $currentHead")
+            $buildReasons.Add("repo aligned to upstream commit $currentHead")
         } else {
             Write-RepoSyncLog "PixelStreaming repo already matches $upstreamBranch."
         }
     } else {
         Write-RepoSyncLog 'No upstream branch configured for PixelStreaming repo. Skipping repo pull and validating local build freshness only.' 'WARN'
+        if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
+            Write-RepoSyncLog "Discarding tracked local PixelStreaming repo changes without upstream before $Mode mode."
+            & $gitCli reset --hard $currentHead
+            if ($LASTEXITCODE -ne 0) {
+                throw "git reset --hard $currentHead failed."
+            }
+            $buildReasons.Add("discarded tracked local repo changes before $Mode mode")
+        }
     }
 
     $buildStamp = Get-BuildStamp -Path $buildStampPath

@@ -271,10 +271,7 @@ try {
     }
 
     Write-UpdateModeLog 'Checking PixelStreaming repo for remote updates before Unreal update.'
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $repoSyncScript -RepoRoot $pixelStreamingRoot -Mode 'update'
-    if ($LASTEXITCODE -ne 0) {
-        throw "ensure_repo_current.ps1 exited with code $LASTEXITCODE."
-    }
+    & $repoSyncScript -RepoRoot $pixelStreamingRoot -Mode 'update'
 
     if (-not (Test-Path -LiteralPath $updateScript)) {
         throw "SWupdate.ps1 not found at '$updateScript'."
