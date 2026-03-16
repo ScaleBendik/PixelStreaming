@@ -525,8 +525,11 @@ export function wireSignallingRuntimeStatus(
     };
 
     const startHeartbeat = (): void => {
-        clearHeartbeat();
-        if (heartbeatMs <= 0) return;
+        if (heartbeatMs <= 0) {
+            clearHeartbeat();
+            return;
+        }
+        if (heartbeatTimer) return;
         heartbeatTimer = setInterval(() => {
             publishHeartbeat();
         }, heartbeatMs);
