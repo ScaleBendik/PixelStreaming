@@ -1,13 +1,16 @@
 How to use files in this directory:
 
-- setup.bat : Ensures the correct node is installed and builds the frontend if it isn't already
 - start.bat : Starts the signalling server with basic settings
 - common.bat : Contains a bunch of helper functions for the contained scripts. Shouldn't be run directly.
+- start_dev_turn.bat : Starts Wilbur with ScaleWorld-specific runtime config, secrets, and status publishing
+- start_streamer_stack.bat : Canonical Windows launcher for Wilbur + Unreal + watchdog
+- start_unreal.bat : Starts the ScaleWorld Unreal runtime
+- start_watchdog.bat : Starts the host watchdog
+- prepare_data_drive.bat : Prepares the update data drive
+- run_unreal_update.bat : Runs a manual Unreal update by exact ZIP key
 
-The following are provided as handy shortcuts but mostly leverage start.bat functionality
-- start_turn.bat : Starts the turn server only with basic settings
-- start_with_stun.bat : Starts the signalling server with basic STUN settings
-- start_with_turn.bat : Starts the TURN server and then the signalling server with STUN and TURN parameters
+Deprecated compatibility wrapper:
+- start_stack.bat : Redirects to start_streamer_stack.bat
 
 Tips:
 

@@ -6,7 +6,6 @@ param(
     [string]$InstallBasePath = $(if ($env:SCALEWORLD_INSTALL_BASE) { $env:SCALEWORLD_INSTALL_BASE } else { 'C:\PixelStreaming' }),
     [string]$ActiveInstallName = $(if ($env:SCALEWORLD_ACTIVE_INSTALL_NAME) { $env:SCALEWORLD_ACTIVE_INSTALL_NAME } else { 'WindowsNoEditor' }),
     [string]$ExecutableName = $(if ($env:SCALEWORLD_EXECUTABLE_NAME) { $env:SCALEWORLD_EXECUTABLE_NAME } else { 'ScaleWorld.exe' }),
-    [string[]]$PreserveTopLevelFiles = @('runScaleWorld.bat', 'Start_ScaleWorldWithparams.ps1'),
     [switch]$RollbackToPrevious,
     [switch]$ForceStopProcesses,
     [switch]$SkipRuntimeStatus,
@@ -271,42 +270,6 @@ function Test-IsReparsePoint {
     return ((Get-Item -LiteralPath $Path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
 }
 
-function Copy-PreservedTopLevelFiles {
-    param(
-        [string]$SourcePath,
-        [string]$SupportPath,
-        [string[]]$FileNames
-    )
-
-    New-DirectoryIfMissing -Path $SupportPath
-    foreach ($name in $FileNames) {
-        $sourceFile = Join-Path $SourcePath $name
-        if (Test-Path -LiteralPath $sourceFile) {
-            Copy-Item -LiteralPath $sourceFile -Destination (Join-Path $SupportPath $name) -Force
-        }
-    }
-}
-
-function Apply-PreservedTopLevelFiles {
-    param(
-        [string]$SupportPath,
-        [string]$DestinationPath,
-        [string[]]$FileNames
-    )
-
-    foreach ($name in $FileNames) {
-        $supportFile = Join-Path $SupportPath $name
-        if (-not (Test-Path -LiteralPath $supportFile)) {
-            continue
-        }
-
-        $destinationFile = Join-Path $DestinationPath $name
-        if (-not (Test-Path -LiteralPath $destinationFile)) {
-            Copy-Item -LiteralPath $supportFile -Destination $destinationFile -Force
-        }
-    }
-}
-
 function Assert-ExecutableExists {
     param(
         [string]$ReleasePath,
@@ -417,12 +380,9 @@ function Ensure-InstallTopology {
         return
     }
 
-    Copy-PreservedTopLevelFiles -SourcePath $script:ActiveInstallPath -SupportPath $script:SupportPath -FileNames $PreserveTopLevelFiles
-
     $legacyBuildId = 'legacy-' + (Get-Date -Format 'yyyyMMddHHmmss')
     $legacyReleasePath = Join-Path $script:ReleasesRoot $legacyBuildId
     Move-Item -LiteralPath $script:ActiveInstallPath -Destination $legacyReleasePath -Force
-    Apply-PreservedTopLevelFiles -SupportPath $script:SupportPath -DestinationPath $legacyReleasePath -FileNames $PreserveTopLevelFiles
     Assert-ExecutableExists -ReleasePath $legacyReleasePath -Executable $ExecutableName
 
     $legacyState = [pscustomobject]@{
@@ -573,7 +533,6 @@ function Expand-ReleaseArchive {
         Remove-Item -LiteralPath $stagingRoot -Recurse -Force
     }
 
-    Apply-PreservedTopLevelFiles -SupportPath $script:SupportPath -DestinationPath $finalReleasePath -FileNames $PreserveTopLevelFiles
     Assert-ExecutableExists -ReleasePath $finalReleasePath -Executable $ExecutableName
     Write-ReleaseMetadata -ReleasePath $finalReleasePath -Metadata $Metadata
 
@@ -598,14 +557,12 @@ $activeInstallPath = Join-Path $InstallBasePath $ActiveInstallName
 $script:ActiveInstallPath = $activeInstallPath
 $script:ReleasesRoot = Join-Path $InstallBasePath 'releases'
 $script:StateRoot = Join-Path $InstallBasePath 'state'
-$script:SupportPath = Join-Path $InstallBasePath 'support'
 $script:CurrentReleaseStatePath = Join-Path $script:StateRoot 'current-release.json'
 $script:PreviousReleaseStatePath = Join-Path $script:StateRoot 'previous-release.json'
 
 New-DirectoryIfMissing -Path $InstallBasePath
 New-DirectoryIfMissing -Path $script:ReleasesRoot
 New-DirectoryIfMissing -Path $script:StateRoot
-New-DirectoryIfMissing -Path $script:SupportPath
 
 $dataVolume = Get-OrCreate-DataVolume -DiskNumber $DataDiskNumber
 $script:DownloadRoot = if ($dataVolume) {
