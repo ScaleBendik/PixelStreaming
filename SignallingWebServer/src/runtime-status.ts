@@ -239,7 +239,7 @@ export function wireSignallingRuntimeStatus(
     );
     const readySoakMs = parseNonNegativeInteger(
         options.readySoakMs ?? process.env.RUNTIME_STATUS_READY_SOAK_MS,
-        45_000
+        10_000
     );
     const source = options.source ?? 'signalling-server';
     const defaultStreamerHealthPath = path.resolve(__dirname, '..', 'state', 'streamer-health.json');
