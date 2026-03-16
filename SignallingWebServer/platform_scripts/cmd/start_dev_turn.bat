@@ -32,6 +32,7 @@ if not defined VIEWER_IDLE_STOP_DRY_RUN set "VIEWER_IDLE_STOP_DRY_RUN=false"
 set "INSTANCE_ID="
 set "STARTUP_HEARTBEAT_STATE_FILE="
 set "STARTUP_HEARTBEAT_STOP_FILE="
+if not defined CURRENT_RELEASE_STATE_PATH set "CURRENT_RELEASE_STATE_PATH=C:\PixelStreaming\state\current-release.json"
 
 where aws >nul 2>nul
 if errorlevel 1 (
@@ -99,6 +100,14 @@ for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass
 
 if defined INSTANCE_ID (
   echo Detected EC2 instance id: %INSTANCE_ID%
+  if exist "%ROOT%\platform_scripts\powershell\publish_current_build_tags.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\platform_scripts\powershell\publish_current_build_tags.ps1" -InstanceId "%INSTANCE_ID%" -Region "%REGION%" -AwsCliPath "%AWS_EXE%" -CurrentReleaseStatePath "%CURRENT_RELEASE_STATE_PATH%"
+    if errorlevel 2 (
+      echo WARNING: Current build metadata was not available for tag publish.
+    ) else if errorlevel 1 (
+      echo WARNING: Failed to publish current build metadata tags.
+    )
+  )
   goto after_instance_id
 )
 

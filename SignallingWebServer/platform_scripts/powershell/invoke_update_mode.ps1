@@ -123,6 +123,33 @@ function Schedule-DelayedStop {
     Write-UpdateModeLog "Scheduled delayed instance stop in $DelaySeconds seconds."
 }
 
+function Publish-CurrentBuildTags {
+    param(
+        [string]$PublishScriptPath,
+        [string]$AwsCli,
+        [string]$Region,
+        [string]$InstanceId
+    )
+
+    if (-not (Test-Path -LiteralPath $PublishScriptPath)) {
+        Write-UpdateModeLog "Current build publish script not found at '$PublishScriptPath'." 'WARN'
+        return $false
+    }
+
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $PublishScriptPath -InstanceId $InstanceId -Region $Region -AwsCliPath $AwsCli
+    if ($LASTEXITCODE -eq 0) {
+        return $true
+    }
+
+    if ($LASTEXITCODE -eq 2) {
+        Write-UpdateModeLog 'Current release metadata was not available after update validation. Falling back to zip filename tags.' 'WARN'
+        return $false
+    }
+
+    Write-UpdateModeLog "Current build tag publish script failed with exit code $LASTEXITCODE. Falling back to zip filename tags." 'WARN'
+    return $false
+}
+
 function Get-StreamerHealthSnapshot {
     param(
         [string]$Path
@@ -217,6 +244,7 @@ $updateScript = Join-Path $pixelStreamingRoot 'SWupdate.ps1'
 $stackLauncher = Join-Path $PSScriptRoot '..\cmd\start_streamer_stack.bat'
 $streamerHealthPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\streamer-health.json'
 $repoSyncScript = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
+$publishCurrentBuildScript = Join-Path $PSScriptRoot 'publish_current_build_tags.ps1'
 
 $prepareDataDrive = if ($env:STACK_PREPARE_DATA_DRIVE) { [System.Boolean]::Parse($env:STACK_PREPARE_DATA_DRIVE) } else { $true }
 $requireDataDrive = if ($env:STACK_REQUIRE_DATA_DRIVE) { [System.Boolean]::Parse($env:STACK_REQUIRE_DATA_DRIVE) } else { $false }
@@ -295,13 +323,17 @@ try {
     }
 
     $completionTime = (Get-Date).ToUniversalTime().ToString('o')
-    Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
-        ScaleWorldCurrentBuild = $zipFileName
+    $publishedCurrentBuild = Publish-CurrentBuildTags -PublishScriptPath $publishCurrentBuildScript -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId
+    $successTags = @{
         ScaleWorldUpdateState = 'succeeded'
         ScaleWorldUpdateResultReason = 'validated_streamer_connected'
         ScaleWorldUpdateCompletedAtUtc = $completionTime
-        ScaleWorldLastUpdatedAtUtc = $completionTime
     }
+    if (-not $publishedCurrentBuild) {
+        $successTags.ScaleWorldCurrentBuild = $zipFileName
+        $successTags.ScaleWorldLastUpdatedAtUtc = $completionTime
+    }
+    Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags $successTags
     Write-UpdateModeLog "Update validated successfully for '$zipFileName'. Requesting instance stop and leaving Fleet command tags for API reconciliation."
     & $awsCli ec2 stop-instances --region $identity.Region --instance-ids $identity.InstanceId *> $null
     if ($LASTEXITCODE -ne 0) {
