@@ -231,12 +231,10 @@ if ([string]::IsNullOrWhiteSpace($targetZipKey)) {
 }
 
 $zipFileName = Split-Path -Leaf $targetZipKey
-$timestamp = (Get-Date).ToUniversalTime().ToString('o')
 Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
     ScaleWorldUpdateState = 'running'
     ScaleWorldUpdateResultReason = ''
     ScaleWorldUpdateCompletedAtUtc = ''
-    ScaleWorldLastUpdatedAtUtc = $timestamp
 }
 
 $pixelStreamingRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
@@ -302,7 +300,6 @@ try {
         ScaleWorldUpdateState = 'validating'
         ScaleWorldUpdateResultReason = ''
         ScaleWorldUpdateCompletedAtUtc = ''
-        ScaleWorldLastUpdatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     }
 
     if (-not (Test-Path -LiteralPath $stackLauncher)) {
@@ -346,7 +343,6 @@ try {
         ScaleWorldUpdateState = 'failed'
         ScaleWorldUpdateResultReason = $reason
         ScaleWorldUpdateCompletedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-        ScaleWorldLastUpdatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     }
     Schedule-DelayedStop -DelaySeconds $FailureStopDelaySeconds
     Write-UpdateModeLog "Update failed: $reason" 'ERROR'
