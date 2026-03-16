@@ -248,6 +248,7 @@ Recommended Task Scheduler settings for fresh launches:
 Recommended provisioning bootstrap env vars:
 
 - `SCALEWORLD_PROVISIONING_BOOTSTRAP_TIMEOUT_SECONDS` default `900`
+- `SCALEWORLD_PROVISIONING_DETECTION_TIMEOUT_SECONDS` default `90`
 - `SCALEWORLD_PROVISIONING_BOOTSTRAP_RETRY_DELAY_SECONDS` default `15`
 
 Successful maintenance-mode update no longer clears Fleet command tags on the instance itself. The instance records the terminal result and requests stop, and the API clears Fleet command tags after it observes the stopped instance for the matching update job.

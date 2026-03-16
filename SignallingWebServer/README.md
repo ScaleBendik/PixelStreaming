@@ -208,6 +208,7 @@ Important:
    - if the task fails, restart every `1 minute` for up to `30` attempts
 12. Provisioning bootstrap timing can be tuned with:
    - `SCALEWORLD_PROVISIONING_BOOTSTRAP_TIMEOUT_SECONDS` (default `900`)
+   - `SCALEWORLD_PROVISIONING_DETECTION_TIMEOUT_SECONDS` (default `90`)
    - `SCALEWORLD_PROVISIONING_BOOTSTRAP_RETRY_DELAY_SECONDS` (default `15`)
 
 Operational prerequisite: maintenance-mode update expects the instance's PixelStreaming directory to be a valid git checkout and `git` to be installed.

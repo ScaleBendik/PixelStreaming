@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [int]$BootstrapTimeoutSeconds = $(if ($env:SCALEWORLD_PROVISIONING_BOOTSTRAP_TIMEOUT_SECONDS) { [int]$env:SCALEWORLD_PROVISIONING_BOOTSTRAP_TIMEOUT_SECONDS } else { 900 }),
+    [int]$DetectionTimeoutSeconds = $(if ($env:SCALEWORLD_PROVISIONING_DETECTION_TIMEOUT_SECONDS) { [int]$env:SCALEWORLD_PROVISIONING_DETECTION_TIMEOUT_SECONDS } else { 90 }),
     [int]$RetryDelaySeconds = $(if ($env:SCALEWORLD_PROVISIONING_BOOTSTRAP_RETRY_DELAY_SECONDS) { [int]$env:SCALEWORLD_PROVISIONING_BOOTSTRAP_RETRY_DELAY_SECONDS } else { 15 })
 )
 
@@ -88,8 +89,10 @@ function Test-FatalBootstrapError {
 
 $pixelStreamingRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $repoSyncScript = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
-$deadline = (Get-Date).AddSeconds([Math]::Max($BootstrapTimeoutSeconds, 1))
+$bootstrapDeadline = (Get-Date).AddSeconds([Math]::Max($BootstrapTimeoutSeconds, 1))
+$detectionDeadline = (Get-Date).AddSeconds([Math]::Max($DetectionTimeoutSeconds, 1))
 $attempt = 0
+$provisioningConfirmed = $false
 
 while ($true) {
     $attempt++
@@ -105,6 +108,8 @@ while ($true) {
             exit 0
         }
 
+        $provisioningConfirmed = $true
+
         if (-not (Test-Path -LiteralPath $repoSyncScript)) {
             throw "ensure_repo_current.ps1 was not found at '$repoSyncScript'."
         }
@@ -119,12 +124,24 @@ while ($true) {
         exit 0
     } catch {
         $message = $_.Exception.Message
+
+        if (-not $provisioningConfirmed) {
+            if ((Get-Date) -ge $detectionDeadline) {
+                Write-ProvisioningLog "Provisioning maintenance state could not be confirmed within $DetectionTimeoutSeconds seconds. Continuing with normal startup. Last error: $message" 'WARN'
+                exit 0
+            }
+
+            Write-ProvisioningLog "Provisioning maintenance state not confirmed yet (attempt $attempt): $message" 'WARN'
+            Start-Sleep -Seconds ([Math]::Max($RetryDelaySeconds, 1))
+            continue
+        }
+
         if (Test-FatalBootstrapError -Message $message) {
             Write-ProvisioningLog "Provisioning bootstrap failed with a non-retryable error: $message" 'ERROR'
             exit 1
         }
 
-        if ((Get-Date) -ge $deadline) {
+        if ((Get-Date) -ge $bootstrapDeadline) {
             Write-ProvisioningLog "Provisioning bootstrap timed out after $BootstrapTimeoutSeconds seconds. Last error: $message" 'ERROR'
             exit 1
         }
