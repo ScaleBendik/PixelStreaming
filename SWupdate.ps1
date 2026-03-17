@@ -120,6 +120,86 @@ function Normalize-TagValue {
     return $normalized
 }
 
+function Invoke-AwsCliCapture {
+    param(
+        [string]$AwsCli,
+        [string[]]$Arguments
+    )
+
+    $stdoutPath = [System.IO.Path]::GetTempFileName()
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+
+    try {
+        $process = Start-Process -FilePath $AwsCli -ArgumentList $Arguments -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $stdout = if (Test-Path -LiteralPath $stdoutPath) {
+            (Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue | Out-String).Trim()
+        } else {
+            ''
+        }
+        $stderr = if (Test-Path -LiteralPath $stderrPath) {
+            (Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue | Out-String).Trim()
+        } else {
+            ''
+        }
+
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            StdOut = $stdout
+            StdErr = $stderr
+            Combined = (@($stdout, $stderr) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join [Environment]::NewLine
+        }
+    } finally {
+        Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Set-InstanceTags {
+    param(
+        [string]$AwsCli,
+        [string]$Region,
+        [string]$InstanceId,
+        [hashtable]$Tags
+    )
+
+    if (-not $Tags -or $Tags.Count -eq 0) {
+        return
+    }
+
+    $tagPayload = foreach ($key in $Tags.Keys) {
+        @{
+            Key = [string]$key
+            Value = Normalize-TagValue ([string]$Tags[$key])
+        }
+    }
+
+    $tagPayloadPath = [System.IO.Path]::GetTempFileName()
+    try {
+        [System.IO.File]::WriteAllText(
+            $tagPayloadPath,
+            ($tagPayload | ConvertTo-Json -Compress -Depth 4),
+            (New-Object System.Text.UTF8Encoding($false))
+        )
+
+        $args = @(
+            'ec2', 'create-tags',
+            '--region', $Region,
+            '--resources', $InstanceId,
+            '--tags', ("file://{0}" -f $tagPayloadPath)
+        )
+        $result = Invoke-AwsCliCapture -AwsCli $AwsCli -Arguments $args
+        if ($result.ExitCode -ne 0) {
+            if ([string]::IsNullOrWhiteSpace($result.Combined)) {
+                throw "Failed to set EC2 tags for $InstanceId. AWS CLI exited with code $($result.ExitCode)."
+            }
+
+            throw "Failed to set EC2 tags for $InstanceId. $($result.Combined)"
+        }
+    } finally {
+        Remove-Item -LiteralPath $tagPayloadPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Get-InstanceIdentity {
     try {
         $token = Invoke-RestMethod -Method Put -Uri 'http://169.254.169.254/latest/api/token' -Headers @{ 'X-aws-ec2-metadata-token-ttl-seconds' = '21600' }
@@ -153,19 +233,14 @@ function Publish-RuntimeStatus {
 
     try {
         $timestamp = (Get-Date).ToUniversalTime().ToString('o')
-        $args = @(
-            'ec2', 'create-tags',
-            '--region', $identity.Region,
-            '--resources', $identity.InstanceId,
-            '--tags',
-            ("Key=ScaleWorldRuntimeStatus,Value={0}" -f (Normalize-TagValue $Status)),
-            ("Key=ScaleWorldRuntimeStatusAtUtc,Value={0}" -f $timestamp),
-            ("Key=ScaleWorldRuntimeStatusHeartbeatAtUtc,Value={0}" -f $timestamp),
-            ("Key=ScaleWorldRuntimeStatusSource,Value={0}" -f 'unreal-updater'),
-            ("Key=ScaleWorldRuntimeStatusReason,Value={0}" -f (Normalize-TagValue $Reason)),
-            ("Key=ScaleWorldRuntimeStatusVersion,Value={0}" -f '')
-        )
-        & $script:AwsCliPath @args *> $null
+        Set-InstanceTags -AwsCli $script:AwsCliPath -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
+            ScaleWorldRuntimeStatus = $Status
+            ScaleWorldRuntimeStatusAtUtc = $timestamp
+            ScaleWorldRuntimeStatusHeartbeatAtUtc = $timestamp
+            ScaleWorldRuntimeStatusSource = 'unreal-updater'
+            ScaleWorldRuntimeStatusReason = $Reason
+            ScaleWorldRuntimeStatusVersion = ''
+        }
     } catch {
         Write-UpdateLog "Failed to publish runtime status '$Status': $($_.Exception.Message)" 'WARN'
     }

@@ -63,6 +63,87 @@ function Normalize-TagValue {
     return $normalized
 }
 
+function Invoke-AwsCliCapture {
+    param(
+        [string]$AwsCli,
+        [string[]]$Arguments
+    )
+
+    $stdoutPath = [System.IO.Path]::GetTempFileName()
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+
+    try {
+        $process = Start-Process -FilePath $AwsCli -ArgumentList $Arguments -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $stdout = if (Test-Path -LiteralPath $stdoutPath) {
+            (Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue | Out-String).Trim()
+        } else {
+            ''
+        }
+        $stderr = if (Test-Path -LiteralPath $stderrPath) {
+            (Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue | Out-String).Trim()
+        } else {
+            ''
+        }
+
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            StdOut = $stdout
+            StdErr = $stderr
+            Combined = (@($stdout, $stderr) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join [Environment]::NewLine
+        }
+    } finally {
+        Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Set-InstanceTags {
+    param(
+        [string]$AwsCli,
+        [string]$TargetRegion,
+        [string]$TargetInstanceId,
+        [hashtable]$Tags
+    )
+
+    if (-not $Tags -or $Tags.Count -eq 0) {
+        return
+    }
+
+    $tagPayload = foreach ($key in $Tags.Keys) {
+        @{
+            Key = [string]$key
+            Value = Normalize-TagValue ([string]$Tags[$key])
+        }
+    }
+
+    $tagPayloadPath = [System.IO.Path]::GetTempFileName()
+    try {
+        [System.IO.File]::WriteAllText(
+            $tagPayloadPath,
+            ($tagPayload | ConvertTo-Json -Compress -Depth 4),
+            (New-Object System.Text.UTF8Encoding($false))
+        )
+
+        $args = @(
+            'ec2', 'create-tags',
+            '--region', $TargetRegion,
+            '--resources', $TargetInstanceId,
+            '--tags', ("file://{0}" -f $tagPayloadPath)
+        )
+
+        $result = Invoke-AwsCliCapture -AwsCli $AwsCli -Arguments $args
+        if ($result.ExitCode -ne 0) {
+            if ([string]::IsNullOrWhiteSpace($result.Combined)) {
+                throw "Failed to set EC2 tags for $TargetInstanceId. AWS CLI exited with code $($result.ExitCode)."
+            }
+
+            throw "Failed to set EC2 tags for $TargetInstanceId. $($result.Combined)"
+        }
+    } finally {
+        Remove-Item -LiteralPath $tagPayloadPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Publish-Heartbeat {
     param([pscustomobject]$State)
 
@@ -72,23 +153,13 @@ function Publish-Heartbeat {
 
     $heartbeatAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     $statusAtUtc = if ([string]::IsNullOrWhiteSpace($State.StatusAtUtc)) { $heartbeatAtUtc } else { $State.StatusAtUtc }
-
-    $args = @(
-        'ec2', 'create-tags',
-        '--region', $Region,
-        '--resources', $InstanceId,
-        '--tags',
-        ("Key=ScaleWorldRuntimeStatus,Value={0}" -f (Normalize-TagValue $State.Status)),
-        ("Key=ScaleWorldRuntimeStatusAtUtc,Value={0}" -f $statusAtUtc),
-        ("Key=ScaleWorldRuntimeStatusHeartbeatAtUtc,Value={0}" -f $heartbeatAtUtc),
-        ("Key=ScaleWorldRuntimeStatusSource,Value={0}" -f (Normalize-TagValue $State.Source)),
-        ("Key=ScaleWorldRuntimeStatusReason,Value={0}" -f (Normalize-TagValue $State.Reason)),
-        ("Key=ScaleWorldRuntimeStatusVersion,Value={0}" -f (Normalize-TagValue $State.Version))
-    )
-
-    $output = & $AwsCliPath @args 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw ($output | Out-String).Trim()
+    Set-InstanceTags -AwsCli $AwsCliPath -TargetRegion $Region -TargetInstanceId $InstanceId -Tags @{
+        ScaleWorldRuntimeStatus = $State.Status
+        ScaleWorldRuntimeStatusAtUtc = $statusAtUtc
+        ScaleWorldRuntimeStatusHeartbeatAtUtc = $heartbeatAtUtc
+        ScaleWorldRuntimeStatusSource = $State.Source
+        ScaleWorldRuntimeStatusReason = $State.Reason
+        ScaleWorldRuntimeStatusVersion = $State.Version
     }
 }
 

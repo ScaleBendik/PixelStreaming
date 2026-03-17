@@ -171,6 +171,85 @@ function Get-InstanceIdentity {
     return $script:IdentityCache
 }
 
+function Invoke-AwsCliCapture {
+    param(
+        [string]$AwsCli,
+        [string[]]$Arguments
+    )
+
+    $stdoutPath = [System.IO.Path]::GetTempFileName()
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+
+    try {
+        $process = Start-Process -FilePath $AwsCli -ArgumentList $Arguments -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $stdout = if (Test-Path -LiteralPath $stdoutPath) {
+            (Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue | Out-String).Trim()
+        } else {
+            ''
+        }
+        $stderr = if (Test-Path -LiteralPath $stderrPath) {
+            (Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue | Out-String).Trim()
+        } else {
+            ''
+        }
+
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            StdOut = $stdout
+            StdErr = $stderr
+            Combined = (@($stdout, $stderr) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join [Environment]::NewLine
+        }
+    } finally {
+        Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Set-InstanceTags {
+    param(
+        [string]$AwsCli,
+        [string]$Region,
+        [string]$InstanceId,
+        [hashtable]$Tags
+    )
+
+    if (-not $Tags -or $Tags.Count -eq 0) {
+        return
+    }
+
+    $tagPayload = foreach ($key in $Tags.Keys) {
+        @{
+            Key = [string]$key
+            Value = Normalize-TagValue ([string]$Tags[$key])
+        }
+    }
+
+    $tagPayloadPath = [System.IO.Path]::GetTempFileName()
+    try {
+        [System.IO.File]::WriteAllText(
+            $tagPayloadPath,
+            ($tagPayload | ConvertTo-Json -Compress -Depth 4),
+            (New-Object System.Text.UTF8Encoding($false))
+        )
+        $args = @(
+            'ec2', 'create-tags',
+            '--region', $Region,
+            '--resources', $InstanceId,
+            '--tags', ("file://{0}" -f $tagPayloadPath)
+        )
+        $result = Invoke-AwsCliCapture -AwsCli $AwsCli -Arguments $args
+        if ($result.ExitCode -ne 0) {
+            if ([string]::IsNullOrWhiteSpace($result.Combined)) {
+                throw "Failed to set EC2 tags for $InstanceId. AWS CLI exited with code $($result.ExitCode)."
+            }
+
+            throw "Failed to set EC2 tags for $InstanceId. $($result.Combined)"
+        }
+    } finally {
+        Remove-Item -LiteralPath $tagPayloadPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Publish-RuntimeStatus {
     param(
         [string]$Status,
@@ -184,21 +263,13 @@ function Publish-RuntimeStatus {
     try {
         $identity = Get-InstanceIdentity
         $timestamp = (Get-Date).ToUniversalTime().ToString('o')
-        $args = @(
-            'ec2', 'create-tags',
-            '--region', $identity.Region,
-            '--resources', $identity.InstanceId,
-            '--tags',
-            ("Key=ScaleWorldRuntimeStatus,Value={0}" -f (Normalize-TagValue $Status)),
-            ("Key=ScaleWorldRuntimeStatusAtUtc,Value={0}" -f $timestamp),
-            ("Key=ScaleWorldRuntimeStatusHeartbeatAtUtc,Value={0}" -f $timestamp),
-            ("Key=ScaleWorldRuntimeStatusSource,Value={0}" -f (Normalize-TagValue $RuntimeStatusSource)),
-            ("Key=ScaleWorldRuntimeStatusReason,Value={0}" -f (Normalize-TagValue $Reason)),
-            ("Key=ScaleWorldRuntimeStatusVersion,Value={0}" -f (Normalize-TagValue $RuntimeStatusVersion))
-        )
-        $output = & $AwsCliPath @args 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            throw ($output | Out-String).Trim()
+        Set-InstanceTags -AwsCli $AwsCliPath -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
+            ScaleWorldRuntimeStatus = $Status
+            ScaleWorldRuntimeStatusAtUtc = $timestamp
+            ScaleWorldRuntimeStatusHeartbeatAtUtc = $timestamp
+            ScaleWorldRuntimeStatusSource = $RuntimeStatusSource
+            ScaleWorldRuntimeStatusReason = $Reason
+            ScaleWorldRuntimeStatusVersion = $RuntimeStatusVersion
         }
 
         Write-WatchdogLog "Published runtime status '$Status' (reason=$Reason)."
@@ -236,12 +307,16 @@ function Get-MaintenanceMode {
             '--query', 'Tags[0].Value',
             '--output', 'text'
         )
-        $output = & $AwsCliPath @args 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            throw ($output | Out-String).Trim()
+        $result = Invoke-AwsCliCapture -AwsCli $AwsCliPath -Arguments $args
+        if ($result.ExitCode -ne 0) {
+            if ([string]::IsNullOrWhiteSpace($result.Combined)) {
+                throw "Failed to read maintenance mode for $($identity.InstanceId). AWS CLI exited with code $($result.ExitCode)."
+            }
+
+            throw $result.Combined
         }
 
-        $maintenanceMode = (($output | Out-String).Trim())
+        $maintenanceMode = $result.StdOut.Trim()
         if (
             [string]::IsNullOrWhiteSpace($maintenanceMode) -or
             $maintenanceMode.Equals('None', [System.StringComparison]::OrdinalIgnoreCase) -or

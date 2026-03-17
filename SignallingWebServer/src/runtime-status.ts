@@ -1,8 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { pathToFileURL } from 'url';
 import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
 import { Messages } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
 
@@ -184,16 +186,25 @@ export function createRuntimeStatusPublisher(
             try {
                 const { instanceId, region } = await resolveIdentity();
                 const nowIso = new Date().toISOString();
-                const tags = [
-                    `Key=ScaleWorldRuntimeStatus,Value=${normalizedStatus}`,
-                    `Key=ScaleWorldRuntimeStatusHeartbeatAtUtc,Value=${nowIso}`,
-                    `Key=ScaleWorldRuntimeStatusSource,Value=${normalizeTagValue(update.source ?? defaultSource)}`,
-                    `Key=ScaleWorldRuntimeStatusReason,Value=${normalizeTagValue(update.reason)}`,
-                    `Key=ScaleWorldRuntimeStatusVersion,Value=${normalizeTagValue(update.version ?? defaultVersion)}`
+                const tags: Array<{ Key: string; Value: string }> = [
+                    { Key: 'ScaleWorldRuntimeStatus', Value: normalizedStatus },
+                    { Key: 'ScaleWorldRuntimeStatusHeartbeatAtUtc', Value: nowIso },
+                    {
+                        Key: 'ScaleWorldRuntimeStatusSource',
+                        Value: normalizeTagValue(update.source ?? defaultSource)
+                    },
+                    { Key: 'ScaleWorldRuntimeStatusReason', Value: normalizeTagValue(update.reason) },
+                    {
+                        Key: 'ScaleWorldRuntimeStatusVersion',
+                        Value: normalizeTagValue(update.version ?? defaultVersion)
+                    }
                 ];
                 if (!heartbeatOnly && !preservesCurrentStatusTimestamp) {
-                    tags.splice(1, 0, `Key=ScaleWorldRuntimeStatusAtUtc,Value=${nowIso}`);
+                    tags.splice(1, 0, { Key: 'ScaleWorldRuntimeStatusAtUtc', Value: nowIso });
                 }
+                const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sw-runtime-status-'));
+                const tagPayloadPath = path.join(tempDir, 'tags.json');
+                const tagPayloadUri = pathToFileURL(tagPayloadPath).toString();
                 const args = [
                     'ec2',
                     'create-tags',
@@ -202,9 +213,14 @@ export function createRuntimeStatusPublisher(
                     '--resources',
                     instanceId,
                     '--tags',
-                    ...tags
+                    tagPayloadUri
                 ];
-                await execFileAsync(awsCliPath, args, { windowsHide: true });
+                try {
+                    await fs.promises.writeFile(tagPayloadPath, JSON.stringify(tags), 'utf8');
+                    await execFileAsync(awsCliPath, args, { windowsHide: true });
+                } finally {
+                    await fs.promises.rm(tempDir, { recursive: true, force: true });
+                }
                 if (!heartbeatOnly || preservesCurrentStatusTimestamp) {
                     lastPublishedStatus = normalizedStatus;
                 }
