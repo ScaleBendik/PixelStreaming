@@ -4,7 +4,6 @@ import os from 'os';
 import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { pathToFileURL } from 'url';
 import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
 import { Messages } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
 
@@ -116,6 +115,14 @@ function normalizeTagValue(value: unknown): string {
     return normalized.length <= 256 ? normalized : normalized.slice(0, 256);
 }
 
+function toAwsCliParamFileUri(filePath: string): string {
+    if (process.platform === 'win32') {
+        return `file://${filePath}`;
+    }
+
+    return `file://${filePath}`;
+}
+
 async function readImdsToken(): Promise<string> {
     const response = await fetch(IMDS_TOKEN_URL, {
         method: 'PUT',
@@ -204,7 +211,7 @@ export function createRuntimeStatusPublisher(
                 }
                 const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sw-runtime-status-'));
                 const tagPayloadPath = path.join(tempDir, 'tags.json');
-                const tagPayloadUri = pathToFileURL(tagPayloadPath).toString();
+                const tagPayloadUri = toAwsCliParamFileUri(tagPayloadPath);
                 const args = [
                     'ec2',
                     'create-tags',
