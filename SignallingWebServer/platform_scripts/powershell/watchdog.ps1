@@ -29,6 +29,9 @@ param(
     [string]$ProvisioningStreamerHealthStartupGraceSeconds = $(if ($env:WATCHDOG_PROVISIONING_STREAMER_HEALTH_STARTUP_GRACE_SECONDS) { $env:WATCHDOG_PROVISIONING_STREAMER_HEALTH_STARTUP_GRACE_SECONDS } else { '3600' }),
     [string]$ProvisioningStreamerConnectTimeoutSeconds = $(if ($env:WATCHDOG_PROVISIONING_STREAMER_CONNECT_TIMEOUT_SECONDS) { $env:WATCHDOG_PROVISIONING_STREAMER_CONNECT_TIMEOUT_SECONDS } else { '900' }),
     [string]$ProvisioningMaxRecoveryRestarts = $(if ($env:WATCHDOG_PROVISIONING_MAX_RECOVERY_RESTARTS) { $env:WATCHDOG_PROVISIONING_MAX_RECOVERY_RESTARTS } else { '1' }),
+    [string]$UpdateStreamerHealthStartupGraceSeconds = $(if ($env:WATCHDOG_UPDATE_STREAMER_HEALTH_STARTUP_GRACE_SECONDS) { $env:WATCHDOG_UPDATE_STREAMER_HEALTH_STARTUP_GRACE_SECONDS } else { '3600' }),
+    [string]$UpdateStreamerConnectTimeoutSeconds = $(if ($env:WATCHDOG_UPDATE_STREAMER_CONNECT_TIMEOUT_SECONDS) { $env:WATCHDOG_UPDATE_STREAMER_CONNECT_TIMEOUT_SECONDS } else { '2700' }),
+    [string]$UpdateMaxRecoveryRestarts = $(if ($env:WATCHDOG_UPDATE_MAX_RECOVERY_RESTARTS) { $env:WATCHDOG_UPDATE_MAX_RECOVERY_RESTARTS } else { '1' }),
     [string]$MaintenanceModeRefreshSeconds = $(if ($env:WATCHDOG_MAINTENANCE_MODE_REFRESH_SECONDS) { $env:WATCHDOG_MAINTENANCE_MODE_REFRESH_SECONDS } else { '60' }),
     [string]$UnrealCpuStallConfirmEnabled = $(if ($env:WATCHDOG_UNREAL_CPU_STALL_CONFIRM_ENABLED) { $env:WATCHDOG_UNREAL_CPU_STALL_CONFIRM_ENABLED } else { 'true' }),
     [string]$UnrealCpuStallMinDeltaSeconds = $(if ($env:WATCHDOG_UNREAL_CPU_STALL_MIN_DELTA_SECONDS) { $env:WATCHDOG_UNREAL_CPU_STALL_MIN_DELTA_SECONDS } else { '0.001' }),
@@ -540,6 +543,9 @@ $streamerHealthStartupGraceSecondsValue = ConvertTo-PositiveInt -Value $Streamer
 $provisioningStreamerHealthStartupGraceSecondsValue = ConvertTo-PositiveInt -Value $ProvisioningStreamerHealthStartupGraceSeconds -Default 3600 -Name 'ProvisioningStreamerHealthStartupGraceSeconds'
 $provisioningStreamerConnectTimeoutSecondsValue = ConvertTo-PositiveInt -Value $ProvisioningStreamerConnectTimeoutSeconds -Default 900 -Name 'ProvisioningStreamerConnectTimeoutSeconds'
 $provisioningMaxRecoveryRestartsValue = ConvertTo-PositiveInt -Value $ProvisioningMaxRecoveryRestarts -Default 1 -Name 'ProvisioningMaxRecoveryRestarts'
+$updateStreamerHealthStartupGraceSecondsValue = ConvertTo-PositiveInt -Value $UpdateStreamerHealthStartupGraceSeconds -Default 3600 -Name 'UpdateStreamerHealthStartupGraceSeconds'
+$updateStreamerConnectTimeoutSecondsValue = ConvertTo-PositiveInt -Value $UpdateStreamerConnectTimeoutSeconds -Default 2700 -Name 'UpdateStreamerConnectTimeoutSeconds'
+$updateMaxRecoveryRestartsValue = ConvertTo-PositiveInt -Value $UpdateMaxRecoveryRestarts -Default 1 -Name 'UpdateMaxRecoveryRestarts'
 $maintenanceModeRefreshSecondsValue = ConvertTo-PositiveInt -Value $MaintenanceModeRefreshSeconds -Default 60 -Name 'MaintenanceModeRefreshSeconds'
 $unrealCpuStallConfirmEnabledValue = ConvertTo-Bool -Value $UnrealCpuStallConfirmEnabled -Default $true
 $unrealCpuStallMinDeltaSecondsValue = ConvertTo-NonNegativeDouble -Value $UnrealCpuStallMinDeltaSeconds -Default 0.001 -Name 'UnrealCpuStallMinDeltaSeconds'
@@ -624,8 +630,9 @@ $healthyLogged = $false
 $lastUnrealCpuSnapshot = $null
 $unrealCpuStallAccumulatedSeconds = 0.0
 $provisioningRecoveryRestartCount = 0
+$updateRecoveryRestartCount = 0
 
-Write-WatchdogLog ('Starting watchdog. Poll={0}s threshold={1} restartCooldown={2}s postRestartGrace={3}s processStartupGrace={4}s dryRun={5} runtimeStatus={6} streamerHealth={7} streamerHealthPath={8} streamerHealthMaxStale={9}s streamerHealthStartupGrace={10}s provisioningStreamerHealthStartupGrace={11}s provisioningConnectTimeout={12}s provisioningMaxRecoveryRestarts={13}s maintenanceRefresh={14}s unrealCpuConfirm={15} unrealCpuMinDelta={16}s unrealCpuConfirmWindow={17}s' -f $pollIntervalSecondsValue, $failureThresholdValue, $restartCooldownSecondsValue, $postRestartGraceSecondsValue, $processStartupGraceSecondsValue, $dryRunValue, $runtimeStatusEnabledValue, $streamerHealthEnabledValue, $resolvedStreamerHealthPath, $streamerHealthMaxStaleSecondsValue, $streamerHealthStartupGraceSecondsValue, $provisioningStreamerHealthStartupGraceSecondsValue, $provisioningStreamerConnectTimeoutSecondsValue, $provisioningMaxRecoveryRestartsValue, $maintenanceModeRefreshSecondsValue, $unrealCpuStallConfirmEnabledValue, $unrealCpuStallMinDeltaSecondsValue, $unrealCpuStallConfirmSecondsValue)
+Write-WatchdogLog ('Starting watchdog. Poll={0}s threshold={1} restartCooldown={2}s postRestartGrace={3}s processStartupGrace={4}s dryRun={5} runtimeStatus={6} streamerHealth={7} streamerHealthPath={8} streamerHealthMaxStale={9}s streamerHealthStartupGrace={10}s provisioningStreamerHealthStartupGrace={11}s provisioningConnectTimeout={12}s provisioningMaxRecoveryRestarts={13}s updateStreamerHealthStartupGrace={14}s updateConnectTimeout={15}s updateMaxRecoveryRestarts={16}s maintenanceRefresh={17}s unrealCpuConfirm={18} unrealCpuMinDelta={19}s unrealCpuConfirmWindow={20}s' -f $pollIntervalSecondsValue, $failureThresholdValue, $restartCooldownSecondsValue, $postRestartGraceSecondsValue, $processStartupGraceSecondsValue, $dryRunValue, $runtimeStatusEnabledValue, $streamerHealthEnabledValue, $resolvedStreamerHealthPath, $streamerHealthMaxStaleSecondsValue, $streamerHealthStartupGraceSecondsValue, $provisioningStreamerHealthStartupGraceSecondsValue, $provisioningStreamerConnectTimeoutSecondsValue, $provisioningMaxRecoveryRestartsValue, $updateStreamerHealthStartupGraceSecondsValue, $updateStreamerConnectTimeoutSecondsValue, $updateMaxRecoveryRestartsValue, $maintenanceModeRefreshSecondsValue, $unrealCpuStallConfirmEnabledValue, $unrealCpuStallMinDeltaSecondsValue, $unrealCpuStallConfirmSecondsValue)
 Write-WatchdogLog ('Rules: {0}' -f (($rules | ForEach-Object { if ([string]::IsNullOrWhiteSpace($_.CommandLinePattern)) { $_.ProcessName } else { '{0} [{1}]' -f $_.ProcessName, $_.CommandLinePattern } }) -join ', '))
 
 while ($true) {
@@ -636,8 +643,12 @@ while ($true) {
     $failedRules = @()
     $currentMaintenanceMode = Get-MaintenanceMode
     $isProvisioningMaintenance = -not [string]::IsNullOrWhiteSpace($currentMaintenanceMode) -and $currentMaintenanceMode.Equals('provisioning', [System.StringComparison]::OrdinalIgnoreCase)
+    $isUpdateMaintenance = -not [string]::IsNullOrWhiteSpace($currentMaintenanceMode) -and $currentMaintenanceMode.Equals('update', [System.StringComparison]::OrdinalIgnoreCase)
     if (-not $isProvisioningMaintenance) {
         $provisioningRecoveryRestartCount = 0
+    }
+    if (-not $isUpdateMaintenance) {
+        $updateRecoveryRestartCount = 0
     }
 
     foreach ($rule in $rules) {
@@ -709,6 +720,14 @@ while ($true) {
                     $provisioningStreamerHealthStartupGraceSecondsValue
                 ),
                 $provisioningStreamerConnectTimeoutSecondsValue
+            )
+        } elseif ($isUpdateMaintenance) {
+            $effectiveStreamerHealthStartupGraceSeconds = [Math]::Min(
+                [Math]::Max(
+                    $effectiveStreamerHealthStartupGraceSeconds,
+                    $updateStreamerHealthStartupGraceSecondsValue
+                ),
+                $updateStreamerConnectTimeoutSecondsValue
             )
         }
 
@@ -886,6 +905,16 @@ while ($true) {
         Start-Sleep -Seconds $pollIntervalSecondsValue
         continue
     }
+    if ($isUpdateMaintenance -and $updateRecoveryRestartCount -ge $updateMaxRecoveryRestartsValue) {
+        Write-WatchdogLog "Update validation recovery budget exhausted. Leaving maintenance in place and publishing runtime fault for: $faultSummary" 'WARN'
+        Publish-RuntimeStatus -Status 'runtime_fault' -Reason 'update_recovery_exhausted'
+        if ($runOnceValue) {
+            break
+        }
+
+        Start-Sleep -Seconds $pollIntervalSecondsValue
+        continue
+    }
 
     $secondsSinceRestart = if ($lastRestartAtUtc -eq [DateTimeOffset]::MinValue) {
         [double]::PositiveInfinity
@@ -925,6 +954,9 @@ while ($true) {
         if ($isProvisioningMaintenance) {
             $provisioningRecoveryRestartCount = $provisioningRecoveryRestartCount + 1
             Write-WatchdogLog "Provisioning recovery restart $provisioningRecoveryRestartCount/$provisioningMaxRecoveryRestartsValue launched."
+        } elseif ($isUpdateMaintenance) {
+            $updateRecoveryRestartCount = $updateRecoveryRestartCount + 1
+            Write-WatchdogLog "Update validation recovery restart $updateRecoveryRestartCount/$updateMaxRecoveryRestartsValue launched."
         }
         foreach ($rule in $rules) {
             $ruleFailures[$rule.Name] = 0

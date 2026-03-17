@@ -9,7 +9,7 @@ Set-Location $repoRoot
 
 if (-not $SkipInstall) {
     Write-Host "Installing workspace dependencies..." -ForegroundColor Cyan
-    npm install --include=dev
+    npm ci --include=dev
 }
 
 Write-Host "Building Common..." -ForegroundColor Cyan

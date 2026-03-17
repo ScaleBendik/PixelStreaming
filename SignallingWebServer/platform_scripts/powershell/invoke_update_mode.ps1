@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
     [int]$FailureStopDelaySeconds = $(if ($env:SCALEWORLD_UPDATE_FAILURE_STOP_DELAY_SECONDS) { [int]$env:SCALEWORLD_UPDATE_FAILURE_STOP_DELAY_SECONDS } else { 1800 }),
-    [int]$ValidationTimeoutSeconds = $(if ($env:SCALEWORLD_UPDATE_VALIDATION_TIMEOUT_SECONDS) { [int]$env:SCALEWORLD_UPDATE_VALIDATION_TIMEOUT_SECONDS } else { 180 }),
+    [int]$DetectionTimeoutSeconds = $(if ($env:SCALEWORLD_UPDATE_DETECTION_TIMEOUT_SECONDS) { [int]$env:SCALEWORLD_UPDATE_DETECTION_TIMEOUT_SECONDS } else { 90 }),
+    [int]$RetryDelaySeconds = $(if ($env:SCALEWORLD_UPDATE_RETRY_DELAY_SECONDS) { [int]$env:SCALEWORLD_UPDATE_RETRY_DELAY_SECONDS } else { 15 }),
+    [int]$ValidationTimeoutSeconds = $(if ($env:SCALEWORLD_UPDATE_VALIDATION_TIMEOUT_SECONDS) { [int]$env:SCALEWORLD_UPDATE_VALIDATION_TIMEOUT_SECONDS } else { 2700 }),
     [int]$ValidationStableSeconds = $(if ($env:SCALEWORLD_UPDATE_VALIDATION_STABLE_SECONDS) { [int]$env:SCALEWORLD_UPDATE_VALIDATION_STABLE_SECONDS } else { 15 }),
     [bool]$AllowUnchanged = $true
 )
@@ -202,14 +204,38 @@ function Wait-ForStreamerValidation {
     return $false
 }
 
-$awsCli = Get-AwsCliPath
-$identity = Get-InstanceIdentity
-$instanceTags = Get-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId
+$detectionDeadline = (Get-Date).AddSeconds([Math]::Max($DetectionTimeoutSeconds, 1))
+$attempt = 0
+$awsCli = $null
+$identity = $null
+$instanceTags = $null
 
-$maintenanceMode = [string]$instanceTags['ScaleWorldMaintenanceMode']
-if ($maintenanceMode -ne 'update') {
-    Write-UpdateModeLog 'No update maintenance mode requested. Continuing with normal startup.'
-    exit 0
+while ($true) {
+    $attempt++
+
+    try {
+        $awsCli = Get-AwsCliPath
+        $identity = Get-InstanceIdentity
+        $instanceTags = Get-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId
+
+        $maintenanceMode = ([string]$instanceTags['ScaleWorldMaintenanceMode']).Trim().ToLowerInvariant()
+        if ($maintenanceMode -ne 'update') {
+            Write-UpdateModeLog 'No update maintenance mode requested. Continuing with normal startup.'
+            exit 0
+        }
+
+        break
+    } catch {
+        $message = $_.Exception.Message
+
+        if ((Get-Date) -ge $detectionDeadline) {
+            Write-UpdateModeLog "Update maintenance state could not be confirmed within $DetectionTimeoutSeconds seconds. Continuing with normal startup. Last error: $message" 'WARN'
+            exit 0
+        }
+
+        Write-UpdateModeLog "Update maintenance state not confirmed yet (attempt $attempt): $message" 'WARN'
+        Start-Sleep -Seconds ([Math]::Max($RetryDelaySeconds, 1))
+    }
 }
 
 $currentUpdateState = ([string]$instanceTags['ScaleWorldUpdateState']).Trim().ToLowerInvariant()

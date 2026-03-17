@@ -25,7 +25,6 @@ if /i "%~1"=="--recovery" (
 
 if /i "%~1"=="--validation" (
   set "STACK_MODE=validation"
-  set "STACK_START_WATCHDOG=false"
   set "STACK_ENABLE_UPDATE_MODE=false"
   set "STACK_RUN_UNREAL_UPDATE_CHECK=false"
   shift
