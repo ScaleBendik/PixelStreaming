@@ -84,6 +84,40 @@ function Get-InstanceTags {
     return $map
 }
 
+function Invoke-AwsCliCapture {
+    param(
+        [string]$AwsCli,
+        [string[]]$Arguments
+    )
+
+    $stdoutPath = [System.IO.Path]::GetTempFileName()
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+
+    try {
+        $process = Start-Process -FilePath $AwsCli -ArgumentList $Arguments -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $stdout = if (Test-Path -LiteralPath $stdoutPath) {
+            (Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue | Out-String).Trim()
+        } else {
+            ''
+        }
+        $stderr = if (Test-Path -LiteralPath $stderrPath) {
+            (Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue | Out-String).Trim()
+        } else {
+            ''
+        }
+
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            StdOut = $stdout
+            StdErr = $stderr
+            Combined = (@($stdout, $stderr) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join [Environment]::NewLine
+        }
+    } finally {
+        Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Set-InstanceTags {
     param(
         [string]$AwsCli,
@@ -103,21 +137,32 @@ function Set-InstanceTags {
         }
     }
 
-    $args = @(
-        'ec2',
-        'create-tags',
-        '--region', $Region,
-        '--resources', $InstanceId,
-        '--tags', ($tagPayload | ConvertTo-Json -Compress -Depth 4)
-    )
+    $tagPayloadPath = [System.IO.Path]::GetTempFileName()
+    try {
+        [System.IO.File]::WriteAllText(
+            $tagPayloadPath,
+            ($tagPayload | ConvertTo-Json -Compress -Depth 4),
+            (New-Object System.Text.UTF8Encoding($false))
+        )
 
-    $output = (& $AwsCli @args 2>&1 | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0) {
-        if ([string]::IsNullOrWhiteSpace($output)) {
-            throw "Failed to set EC2 tags for $InstanceId. AWS CLI exited with code $LASTEXITCODE."
+        $args = @(
+            'ec2',
+            'create-tags',
+            '--region', $Region,
+            '--resources', $InstanceId,
+            '--tags', ("file://{0}" -f $tagPayloadPath)
+        )
+
+        $result = Invoke-AwsCliCapture -AwsCli $AwsCli -Arguments $args
+        if ($result.ExitCode -ne 0) {
+            if ([string]::IsNullOrWhiteSpace($result.Combined)) {
+                throw "Failed to set EC2 tags for $InstanceId. AWS CLI exited with code $($result.ExitCode)."
+            }
+
+            throw "Failed to set EC2 tags for $InstanceId. $($result.Combined)"
         }
-
-        throw "Failed to set EC2 tags for $InstanceId. $output"
+    } finally {
+        Remove-Item -LiteralPath $tagPayloadPath -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -140,6 +185,23 @@ function Schedule-DelayedStop {
     ) -WindowStyle Hidden | Out-Null
 
     Write-UpdateModeLog "Scheduled delayed instance stop in $DelaySeconds seconds."
+}
+
+function Set-UpdatePhase {
+    param(
+        [string]$AwsCli,
+        [string]$Region,
+        [string]$InstanceId,
+        [string]$Phase
+    )
+
+    try {
+        Set-InstanceTags -AwsCli $AwsCli -Region $Region -InstanceId $InstanceId -Tags @{
+            ScaleWorldUpdatePhase = $Phase
+        }
+    } catch {
+        Write-UpdateModeLog "Failed to publish update phase '$Phase': $($_.Exception.Message)" 'WARN'
+    }
 }
 
 function Publish-CurrentBuildTags {
@@ -318,6 +380,7 @@ $targetZipKey = [string]$instanceTags['ScaleWorldTargetZipKey']
 if ([string]::IsNullOrWhiteSpace($targetZipKey)) {
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldUpdateState = 'failed'
+        ScaleWorldUpdatePhase = ''
         ScaleWorldUpdateResultReason = 'missing_target_zip'
         ScaleWorldUpdateCompletedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     }
@@ -329,6 +392,7 @@ if ([string]::IsNullOrWhiteSpace($targetZipKey)) {
 $zipFileName = Split-Path -Leaf $targetZipKey
 Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
     ScaleWorldUpdateState = 'running'
+    ScaleWorldUpdatePhase = 'syncing_repo'
     ScaleWorldUpdateResultReason = ''
     ScaleWorldUpdateCompletedAtUtc = ''
 }
@@ -373,7 +437,7 @@ try {
     }
 
     Write-UpdateModeLog 'Checking PixelStreaming repo for remote updates before Unreal update.'
-    & $repoSyncScript -RepoRoot $pixelStreamingRoot -Mode 'update'
+    & $repoSyncScript -RepoRoot $pixelStreamingRoot -Mode 'update' -PhaseAwsCli $awsCli -PhaseRegion $identity.Region -PhaseInstanceId $identity.InstanceId -BuildingUpdatePhase 'building_pixelstreaming'
 
     if (-not (Test-Path -LiteralPath $updateScript)) {
         throw "SWupdate.ps1 not found at '$updateScript'."
@@ -399,6 +463,7 @@ try {
         '-File', $updateScript
     ) + $updateArgs + @('-PrepareReleaseOnly')
 
+    Set-UpdatePhase -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Phase 'preparing_release'
     Write-UpdateModeLog "Preparing Unreal update payload for '$zipFileName' in parallel with PixelStreaming repo sync."
     if ($showVisiblePrepareWindow) {
         $quotedUpdateScript = $updateScript.Replace("'", "''")
@@ -430,7 +495,7 @@ try {
     }
 
     Write-UpdateModeLog 'Checking PixelStreaming repo for remote updates before Unreal activation.'
-    & $repoSyncScript -RepoRoot $pixelStreamingRoot -Mode 'update'
+    & $repoSyncScript -RepoRoot $pixelStreamingRoot -Mode 'update' -PhaseAwsCli $awsCli -PhaseRegion $identity.Region -PhaseInstanceId $identity.InstanceId -BuildingUpdatePhase 'building_pixelstreaming'
     if ($LASTEXITCODE -ne 0) {
         throw "ensure_repo_current.ps1 exited with code $LASTEXITCODE."
     }
@@ -450,6 +515,7 @@ try {
     $prepareUpdateProcess = $null
 
     if (Test-Path -LiteralPath $pendingReleaseStatePath) {
+        Set-UpdatePhase -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Phase 'activating_release'
         Write-UpdateModeLog "Activating prepared build '$zipFileName'."
         $activateUpdateArgs = @('-ZipKey', $targetZipKey, '-ActivatePreparedRelease')
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $updateScript @activateUpdateArgs
@@ -463,6 +529,7 @@ try {
 
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldUpdateState = 'validating'
+        ScaleWorldUpdatePhase = 'validating'
         ScaleWorldUpdateResultReason = ''
         ScaleWorldUpdateCompletedAtUtc = ''
     }
@@ -488,6 +555,7 @@ try {
     $publishedCurrentBuild = Publish-CurrentBuildTags -PublishScriptPath $publishCurrentBuildScript -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId
     $successTags = @{
         ScaleWorldUpdateState = 'succeeded'
+        ScaleWorldUpdatePhase = ''
         ScaleWorldUpdateResultReason = 'validated_streamer_connected'
         ScaleWorldUpdateCompletedAtUtc = $completionTime
     }

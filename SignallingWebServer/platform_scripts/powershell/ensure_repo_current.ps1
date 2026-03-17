@@ -1,7 +1,11 @@
 [CmdletBinding()]
 param(
     [string]$RepoRoot = $(Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path,
-    [string]$Mode = 'maintenance'
+    [string]$Mode = 'maintenance',
+    [string]$PhaseAwsCli = '',
+    [string]$PhaseRegion = '',
+    [string]$PhaseInstanceId = '',
+    [string]$BuildingUpdatePhase = ''
 )
 
 Set-StrictMode -Version Latest
@@ -16,6 +20,106 @@ function Write-RepoSyncLog {
 
     $timestamp = (Get-Date).ToUniversalTime().ToString('o')
     Write-Host "[$timestamp] [$Level] [repo-sync] $Message"
+}
+
+function Normalize-TagValue {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return ''
+    }
+
+    $normalized = ($Value -replace '\s+', ' ').Trim()
+    if ($normalized.Length -gt 256) {
+        return $normalized.Substring(0, 256)
+    }
+
+    return $normalized
+}
+
+function Invoke-AwsCliCapture {
+    param(
+        [string]$AwsCli,
+        [string[]]$Arguments
+    )
+
+    $stdoutPath = [System.IO.Path]::GetTempFileName()
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+
+    try {
+        $process = Start-Process -FilePath $AwsCli -ArgumentList $Arguments -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $stdout = if (Test-Path -LiteralPath $stdoutPath) {
+            (Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue | Out-String).Trim()
+        } else {
+            ''
+        }
+        $stderr = if (Test-Path -LiteralPath $stderrPath) {
+            (Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue | Out-String).Trim()
+        } else {
+            ''
+        }
+
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            StdOut = $stdout
+            StdErr = $stderr
+            Combined = (@($stdout, $stderr) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join [Environment]::NewLine
+        }
+    } finally {
+        Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Set-OptionalUpdatePhase {
+    param([string]$Phase)
+
+    if ([string]::IsNullOrWhiteSpace($Phase)) {
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace($PhaseAwsCli)
+        -or [string]::IsNullOrWhiteSpace($PhaseRegion)
+        -or [string]::IsNullOrWhiteSpace($PhaseInstanceId)) {
+        return
+    }
+
+    try {
+        $tagPayload = @(
+            @{
+                Key = 'ScaleWorldUpdatePhase'
+                Value = Normalize-TagValue $Phase
+            }
+        )
+
+        $tagPayloadPath = [System.IO.Path]::GetTempFileName()
+        try {
+            [System.IO.File]::WriteAllText(
+                $tagPayloadPath,
+                ($tagPayload | ConvertTo-Json -Compress -Depth 3),
+                (New-Object System.Text.UTF8Encoding($false))
+            )
+            $args = @(
+                'ec2',
+                'create-tags',
+                '--region', $PhaseRegion,
+                '--resources', $PhaseInstanceId,
+                '--tags', ("file://{0}" -f $tagPayloadPath)
+            )
+            $result = Invoke-AwsCliCapture -AwsCli $PhaseAwsCli -Arguments $args
+            if ($result.ExitCode -ne 0) {
+                if ([string]::IsNullOrWhiteSpace($result.Combined)) {
+                    Write-RepoSyncLog "Failed to publish update phase '$Phase' while preparing $Mode mode." 'WARN'
+                } else {
+                    Write-RepoSyncLog "Failed to publish update phase '$Phase' while preparing $Mode mode. $($result.Combined)" 'WARN'
+                }
+            }
+        } finally {
+            Remove-Item -LiteralPath $tagPayloadPath -Force -ErrorAction SilentlyContinue
+        }
+    } catch {
+        Write-RepoSyncLog "Failed to publish update phase '$Phase' while preparing $Mode mode. $($_.Exception.Message)" 'WARN'
+    }
 }
 
 function Get-GitCliPath {
@@ -145,6 +249,7 @@ try {
     }
 
     if ($buildReasons.Count -gt 0) {
+        Set-OptionalUpdatePhase -Phase $BuildingUpdatePhase
         Write-RepoSyncLog ("Running build-all.bat before {0} mode because: {1}." -f $Mode, ($buildReasons -join '; '))
         & $buildScript
         if ($LASTEXITCODE -ne 0) {
