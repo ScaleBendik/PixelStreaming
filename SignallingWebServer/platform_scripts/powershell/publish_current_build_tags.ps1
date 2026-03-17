@@ -56,22 +56,35 @@ try {
         exit 2
     }
 
-    $tagArgs = @(
-        'ec2', 'create-tags',
-        '--region', $Region,
-        '--resources', $InstanceId,
-        '--tags',
-        ("Key=ScaleWorldCurrentBuild,Value={0}" -f (Normalize-TagValue $buildName))
+    $tagPayload = @(
+        @{
+            Key = 'ScaleWorldCurrentBuild'
+            Value = Normalize-TagValue $buildName
+        }
     )
 
     $activatedAtUtc = [string]$state.ActivatedAtUtc
     if (-not [string]::IsNullOrWhiteSpace($activatedAtUtc)) {
-        $tagArgs += ("Key=ScaleWorldLastUpdatedAtUtc,Value={0}" -f (Normalize-TagValue $activatedAtUtc))
+        $tagPayload += @{
+            Key = 'ScaleWorldLastUpdatedAtUtc'
+            Value = Normalize-TagValue $activatedAtUtc
+        }
     }
 
-    & $AwsCliPath @tagArgs *> $null
+    $tagArgs = @(
+        'ec2', 'create-tags',
+        '--region', $Region,
+        '--resources', $InstanceId,
+        '--tags', ($tagPayload | ConvertTo-Json -Compress -Depth 4)
+    )
+
+    $output = (& $AwsCliPath @tagArgs 2>&1 | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) {
-        throw "AWS CLI exited with code $LASTEXITCODE."
+        if ([string]::IsNullOrWhiteSpace($output)) {
+            throw "AWS CLI exited with code $LASTEXITCODE."
+        }
+
+        throw $output
     }
 
     Write-BuildTagLog "Published build tag '$buildName' for instance '$InstanceId'."

@@ -96,12 +96,29 @@ function Set-InstanceTags {
         return
     }
 
-    $args = @('ec2', 'create-tags', '--region', $Region, '--resources', $InstanceId, '--tags')
-    foreach ($key in $Tags.Keys) {
-        $args += ("Key={0},Value={1}" -f $key, (Normalize-TagValue ([string]$Tags[$key])))
+    $tagPayload = foreach ($key in $Tags.Keys) {
+        @{
+            Key = [string]$key
+            Value = Normalize-TagValue ([string]$Tags[$key])
+        }
     }
 
-    & $AwsCli @args *> $null
+    $args = @(
+        'ec2',
+        'create-tags',
+        '--region', $Region,
+        '--resources', $InstanceId,
+        '--tags', ($tagPayload | ConvertTo-Json -Compress -Depth 4)
+    )
+
+    $output = (& $AwsCli @args 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        if ([string]::IsNullOrWhiteSpace($output)) {
+            throw "Failed to set EC2 tags for $InstanceId. AWS CLI exited with code $LASTEXITCODE."
+        }
+
+        throw "Failed to set EC2 tags for $InstanceId. $output"
+    }
 }
 
 function Schedule-DelayedStop {
@@ -172,6 +189,21 @@ function Get-LogTail {
     } catch {
         return $null
     }
+}
+
+function ConvertTo-EncodedPowerShellCommand {
+    param([string]$Script)
+
+    $bytes = [System.Text.Encoding]::Unicode.GetBytes($Script)
+    return [Convert]::ToBase64String($bytes)
+}
+
+function Get-VisiblePrepareWindowEnabled {
+    if (-not [string]::IsNullOrWhiteSpace($env:SCALEWORLD_UPDATE_PREPARE_VISIBLE)) {
+        return [System.Boolean]::Parse($env:SCALEWORLD_UPDATE_PREPARE_VISIBLE)
+    }
+
+    return [Environment]::UserInteractive
 }
 
 function Stop-ProcessIfRunning {
@@ -312,6 +344,7 @@ $pendingReleaseStatePath = Join-Path $installBasePath 'state\pending-release.jso
 $prepareUpdateStdOutPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\update-prepare.stdout.log'
 $prepareUpdateStdErrPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\update-prepare.stderr.log'
 $prepareUpdateProcess = $null
+$showVisiblePrepareWindow = Get-VisiblePrepareWindowEnabled
 
 $prepareDataDrive = if ($env:STACK_PREPARE_DATA_DRIVE) { [System.Boolean]::Parse($env:STACK_PREPARE_DATA_DRIVE) } else { $true }
 $requireDataDrive = if ($env:STACK_REQUIRE_DATA_DRIVE) { [System.Boolean]::Parse($env:STACK_REQUIRE_DATA_DRIVE) } else { $false }
@@ -367,13 +400,34 @@ try {
     ) + $updateArgs + @('-PrepareReleaseOnly')
 
     Write-UpdateModeLog "Preparing Unreal update payload for '$zipFileName' in parallel with PixelStreaming repo sync."
-    $prepareUpdateProcess = Start-Process `
-        -FilePath 'powershell.exe' `
-        -ArgumentList $prepareUpdateArgs `
-        -WindowStyle Hidden `
-        -PassThru `
-        -RedirectStandardOutput $prepareUpdateStdOutPath `
-        -RedirectStandardError $prepareUpdateStdErrPath
+    if ($showVisiblePrepareWindow) {
+        $quotedUpdateScript = $updateScript.Replace("'", "''")
+        $quotedZipKey = $targetZipKey.Replace("'", "''")
+        $quotedStdOutPath = $prepareUpdateStdOutPath.Replace("'", "''")
+        $allowUnchangedLiteral = if ($AllowUnchanged) { '$true' } else { '$false' }
+        $prepareCommand = @(
+            ("`$args = @('-ZipKey', '{0}', '-PrepareReleaseOnly')" -f $quotedZipKey),
+            ("if ({0}) {{" -f $allowUnchangedLiteral),
+            "    `$args += '-AllowUnchanged'",
+            "}",
+            ("& '{0}' @args 2>&1 | Tee-Object -FilePath '{1}' -Append" -f $quotedUpdateScript, $quotedStdOutPath),
+            'exit $LASTEXITCODE'
+        ) -join "`r`n"
+        $encodedPrepareCommand = ConvertTo-EncodedPowerShellCommand -Script $prepareCommand
+        $prepareUpdateProcess = Start-Process `
+            -FilePath 'cmd.exe' `
+            -ArgumentList @('/c', "powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedPrepareCommand") `
+            -WindowStyle Normal `
+            -PassThru
+    } else {
+        $prepareUpdateProcess = Start-Process `
+            -FilePath 'powershell.exe' `
+            -ArgumentList $prepareUpdateArgs `
+            -WindowStyle Hidden `
+            -PassThru `
+            -RedirectStandardOutput $prepareUpdateStdOutPath `
+            -RedirectStandardError $prepareUpdateStdErrPath
+    }
 
     Write-UpdateModeLog 'Checking PixelStreaming repo for remote updates before Unreal activation.'
     & $repoSyncScript -RepoRoot $pixelStreamingRoot -Mode 'update'
