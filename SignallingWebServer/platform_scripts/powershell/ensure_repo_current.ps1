@@ -109,7 +109,6 @@ try {
             }
             $currentHead = ((& $gitCli rev-parse HEAD) | Out-String).Trim()
             $trackedChanges = ''
-            $buildReasons.Add("discarded tracked local repo changes before $Mode mode")
         }
 
         if ($currentHead -ne $upstreamHead) {
@@ -134,7 +133,6 @@ try {
             if ($LASTEXITCODE -ne 0) {
                 throw "git reset --hard $currentHead failed."
             }
-            $buildReasons.Add("discarded tracked local repo changes before $Mode mode")
         }
     }
 
