@@ -4,6 +4,7 @@ param(
     [int]$DetectionTimeoutSeconds = $(if ($env:SCALEWORLD_UPDATE_DETECTION_TIMEOUT_SECONDS) { [int]$env:SCALEWORLD_UPDATE_DETECTION_TIMEOUT_SECONDS } else { 90 }),
     [int]$RetryDelaySeconds = $(if ($env:SCALEWORLD_UPDATE_RETRY_DELAY_SECONDS) { [int]$env:SCALEWORLD_UPDATE_RETRY_DELAY_SECONDS } else { 15 }),
     [int]$ValidationTimeoutSeconds = $(if ($env:SCALEWORLD_UPDATE_VALIDATION_TIMEOUT_SECONDS) { [int]$env:SCALEWORLD_UPDATE_VALIDATION_TIMEOUT_SECONDS } else { 2700 }),
+    [int]$RuntimeStatusValidationTimeoutSeconds = $(if ($env:SCALEWORLD_UPDATE_RUNTIME_STATUS_VALIDATION_TIMEOUT_SECONDS) { [int]$env:SCALEWORLD_UPDATE_RUNTIME_STATUS_VALIDATION_TIMEOUT_SECONDS } else { 120 }),
     [int]$ValidationStableSeconds = $(if ($env:SCALEWORLD_UPDATE_VALIDATION_STABLE_SECONDS) { [int]$env:SCALEWORLD_UPDATE_VALIDATION_STABLE_SECONDS } else { 15 }),
     [bool]$AllowUnchanged = $true
 )
@@ -260,6 +261,21 @@ function ConvertTo-EncodedPowerShellCommand {
     return [Convert]::ToBase64String($bytes)
 }
 
+function Parse-UtcTimestamp {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $null
+    }
+
+    $parsed = [DateTimeOffset]::MinValue
+    if ([DateTimeOffset]::TryParse($Value, [ref]$parsed)) {
+        return $parsed.ToUniversalTime()
+    }
+
+    return $null
+}
+
 function Get-VisiblePrepareWindowEnabled {
     if (-not [string]::IsNullOrWhiteSpace($env:SCALEWORLD_UPDATE_PREPARE_VISIBLE)) {
         return [System.Boolean]::Parse($env:SCALEWORLD_UPDATE_PREPARE_VISIBLE)
@@ -334,6 +350,51 @@ function Wait-ForStreamerValidation {
     }
 
     return $false
+}
+
+function Wait-ForRuntimeStatusValidation {
+    param(
+        [string]$AwsCli,
+        [string]$Region,
+        [string]$InstanceId,
+        [DateTimeOffset]$ValidationStartedAtUtc,
+        [int]$TimeoutSeconds
+    )
+
+    $deadline = (Get-Date).ToUniversalTime().AddSeconds($TimeoutSeconds)
+    $minimumObservedAtUtc = $ValidationStartedAtUtc.AddSeconds(-5)
+    $lastSummary = 'no_runtime_status_observed'
+
+    while ((Get-Date).ToUniversalTime() -lt $deadline) {
+        try {
+            $tags = Get-InstanceTags -AwsCli $AwsCli -Region $Region -InstanceId $InstanceId
+            $status = ([string]$tags['ScaleWorldRuntimeStatus']).Trim().ToLowerInvariant()
+            $source = ([string]$tags['ScaleWorldRuntimeStatusSource']).Trim().ToLowerInvariant()
+            $statusAtUtc = Parse-UtcTimestamp ([string]$tags['ScaleWorldRuntimeStatusAtUtc'])
+            $heartbeatAtUtc = Parse-UtcTimestamp ([string]$tags['ScaleWorldRuntimeStatusHeartbeatAtUtc'])
+
+            $lastSummary = "status='$status'; source='$source'; statusAtUtc='$statusAtUtc'; heartbeatAtUtc='$heartbeatAtUtc'"
+
+            $hasFreshObservation = ($statusAtUtc -and $statusAtUtc -ge $minimumObservedAtUtc) -or
+                ($heartbeatAtUtc -and $heartbeatAtUtc -ge $minimumObservedAtUtc)
+
+            if ($status -eq 'ready' -and $source -eq 'signalling-server' -and $hasFreshObservation) {
+                return [pscustomobject]@{
+                    Success = $true
+                    Summary = $lastSummary
+                }
+            }
+        } catch {
+            $lastSummary = "failed_to_read_runtime_tags: $($_.Exception.Message)"
+        }
+
+        Start-Sleep -Seconds 2
+    }
+
+    return [pscustomobject]@{
+        Success = $false
+        Summary = $lastSummary
+    }
 }
 
 $detectionDeadline = (Get-Date).AddSeconds([Math]::Max($DetectionTimeoutSeconds, 1))
@@ -546,12 +607,24 @@ try {
     }
 
     Write-UpdateModeLog "Launching validation stack for '$zipFileName'."
+    $validationStartedAtUtc = (Get-Date).ToUniversalTime()
     Start-Process -FilePath $stackLauncher -ArgumentList '--validation' -WindowStyle Hidden | Out-Null
 
     Write-UpdateModeLog "Waiting up to $ValidationTimeoutSeconds seconds for streamer validation."
     $validated = Wait-ForStreamerValidation -HealthPath $streamerHealthPath -TimeoutSeconds $ValidationTimeoutSeconds -StableSeconds $ValidationStableSeconds
     if (-not $validated) {
         throw "Updated build failed validation within $ValidationTimeoutSeconds seconds."
+    }
+
+    Write-UpdateModeLog "Waiting up to $RuntimeStatusValidationTimeoutSeconds seconds for EC2 runtime status validation."
+    $runtimeStatusValidated = Wait-ForRuntimeStatusValidation `
+        -AwsCli $awsCli `
+        -Region $identity.Region `
+        -InstanceId $identity.InstanceId `
+        -ValidationStartedAtUtc $validationStartedAtUtc `
+        -TimeoutSeconds $RuntimeStatusValidationTimeoutSeconds
+    if (-not $runtimeStatusValidated.Success) {
+        throw "EC2 runtime status validation did not reach ready within $RuntimeStatusValidationTimeoutSeconds seconds. Last observed: $($runtimeStatusValidated.Summary)"
     }
 
     $completionTime = (Get-Date).ToUniversalTime().ToString('o')
