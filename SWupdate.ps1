@@ -11,7 +11,9 @@ param(
     [switch]$SkipRuntimeStatus,
     [switch]$AllowUnchanged,
     [bool]$FreeSpaceByRemovingCurrentRelease = $(if ($env:SCALEWORLD_DELETE_CURRENT_RELEASE_BEFORE_ACTIVATE) { [System.Boolean]::Parse($env:SCALEWORLD_DELETE_CURRENT_RELEASE_BEFORE_ACTIVATE) } else { $true }),
-    [switch]$PrepareOnly
+    [switch]$PrepareOnly,
+    [switch]$PrepareReleaseOnly,
+    [switch]$ActivatePreparedRelease
 )
 
 Set-StrictMode -Version Latest
@@ -290,6 +292,16 @@ function Get-PreviousReleaseState {
     return Read-StateMetadata -Path $script:PreviousReleaseStatePath
 }
 
+function Get-PendingReleaseState {
+    return Read-StateMetadata -Path $script:PendingReleaseStatePath
+}
+
+function Set-PendingReleaseState {
+    param([object]$Pending)
+
+    Write-StateMetadata -Path $script:PendingReleaseStatePath -Value $Pending
+}
+
 function Set-ReleaseState {
     param(
         [object]$Current,
@@ -493,18 +505,18 @@ function Assert-Checksum {
 function Expand-ReleaseArchive {
     param(
         [string]$ArchivePath,
-        [string]$ReleaseName,
+        [string]$DestinationPath,
         [object]$Metadata
     )
 
-    $stagingRoot = Join-Path $script:ScratchRoot ('_staging-' + $ReleaseName)
-    $finalReleasePath = Join-Path $script:ReleasesRoot $ReleaseName
+    $leafName = Split-Path -Leaf $DestinationPath
+    $stagingRoot = Join-Path $script:ScratchRoot ('_staging-' + $leafName)
 
     if (Test-Path -LiteralPath $stagingRoot) {
         Remove-Item -LiteralPath $stagingRoot -Recurse -Force
     }
-    if (Test-Path -LiteralPath $finalReleasePath) {
-        Remove-Item -LiteralPath $finalReleasePath -Recurse -Force
+    if (Test-Path -LiteralPath $DestinationPath) {
+        Remove-Item -LiteralPath $DestinationPath -Recurse -Force
     }
 
     New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
@@ -525,18 +537,120 @@ function Expand-ReleaseArchive {
     }
 
     if ($contentSource -ne $stagingRoot) {
-        Move-Item -LiteralPath $contentSource -Destination $finalReleasePath -Force
+        Move-Item -LiteralPath $contentSource -Destination $DestinationPath -Force
         Remove-Item -LiteralPath $stagingRoot -Recurse -Force
     } else {
-        New-Item -ItemType Directory -Path $finalReleasePath -Force | Out-Null
-        Get-ChildItem -LiteralPath $stagingRoot -Force | Move-Item -Destination $finalReleasePath -Force
+        New-Item -ItemType Directory -Path $DestinationPath -Force | Out-Null
+        Get-ChildItem -LiteralPath $stagingRoot -Force | Move-Item -Destination $DestinationPath -Force
         Remove-Item -LiteralPath $stagingRoot -Recurse -Force
     }
 
-    Assert-ExecutableExists -ReleasePath $finalReleasePath -Executable $ExecutableName
-    Write-ReleaseMetadata -ReleasePath $finalReleasePath -Metadata $Metadata
+    Assert-ExecutableExists -ReleasePath $DestinationPath -Executable $ExecutableName
+    Write-ReleaseMetadata -ReleasePath $DestinationPath -Metadata $Metadata
 
-    return $finalReleasePath
+    return $DestinationPath
+}
+
+function Prepare-ReleaseArchive {
+    param(
+        [object]$BuildMetadata,
+        [bool]$AllowSameBuild
+    )
+
+    Set-PendingReleaseState -Pending $null
+
+    $releaseName = Get-SafeReleaseName -BuildId $BuildMetadata.BuildId
+    $current = Get-CurrentReleaseState
+
+    if (-not $AllowSameBuild `
+        -and $current `
+        -and $current.BuildId -eq $BuildMetadata.BuildId `
+        -and $current.ZipKey -eq $BuildMetadata.ZipKey `
+        -and (Test-Path -LiteralPath $current.ReleasePath)) {
+        Set-PendingReleaseState -Pending $null
+        Write-UpdateLog "Build '$($BuildMetadata.BuildId)' is already active. No update required."
+        return $null
+    }
+
+    $archivePath = Get-DownloadDestination -FileName ("{0}.zip" -f $releaseName)
+    Invoke-Download -Bucket $BucketName -ObjectKey $BuildMetadata.ZipKey -DestinationPath $archivePath
+    Assert-Checksum -Path $archivePath -ExpectedSha256 $BuildMetadata.Sha256
+
+    $preparedRoot = Join-Path $script:ScratchRoot ('prepared-' + $releaseName)
+    $preparedState = [pscustomobject]@{
+        BuildId = $BuildMetadata.BuildId
+        ZipKey = $BuildMetadata.ZipKey
+        Source = $BuildMetadata.Source
+        ReleaseName = $releaseName
+        PreparedPath = ''
+        ActivatedAtUtc = ''
+        CreatedAtUtc = $BuildMetadata.CreatedAtUtc
+        DownloadedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+        Sha256 = $BuildMetadata.Sha256
+    }
+
+    $preparedPath = Expand-ReleaseArchive -ArchivePath $archivePath -DestinationPath $preparedRoot -Metadata $preparedState
+    $preparedState.PreparedPath = $preparedPath
+    Write-ReleaseMetadata -ReleasePath $preparedPath -Metadata $preparedState
+    Set-PendingReleaseState -Pending $preparedState
+    Write-UpdateLog "Prepared build '$($preparedState.BuildId)' at '$preparedPath'."
+    return $preparedState
+}
+
+function Activate-PreparedRelease {
+    param(
+        [string]$ExpectedZipKey,
+        [bool]$RemoveCurrentReleaseFirst
+    )
+
+    $prepared = Get-PendingReleaseState
+    if (-not $prepared) {
+        throw 'No prepared release metadata was found.'
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedZipKey) -and $prepared.ZipKey -ne $ExpectedZipKey) {
+        throw "Prepared release zip '$($prepared.ZipKey)' did not match requested zip '$ExpectedZipKey'."
+    }
+
+    if (-not $prepared.PreparedPath -or -not (Test-Path -LiteralPath $prepared.PreparedPath)) {
+        throw "Prepared release path '$($prepared.PreparedPath)' was not found."
+    }
+
+    $current = Get-CurrentReleaseState
+    $rollbackBackup = $null
+    if ($RemoveCurrentReleaseFirst -and $current -and (Test-Path -LiteralPath $current.ReleasePath)) {
+        $rollbackBackup = Remove-CurrentReleaseForUpdate -CurrentReleaseState $current
+        $current = $null
+    }
+
+    $releaseState = [pscustomobject]@{
+        BuildId = $prepared.BuildId
+        ZipKey = $prepared.ZipKey
+        Source = $prepared.Source
+        ReleasePath = ''
+        ActivatedAtUtc = ''
+        CreatedAtUtc = if ($prepared.PSObject.Properties.Name -contains 'CreatedAtUtc') { $prepared.CreatedAtUtc } else { '' }
+        DownloadedAtUtc = if ($prepared.PSObject.Properties.Name -contains 'DownloadedAtUtc') { $prepared.DownloadedAtUtc } else { '' }
+        Sha256 = if ($prepared.PSObject.Properties.Name -contains 'Sha256') { $prepared.Sha256 } else { '' }
+    }
+
+    $releasePath = Join-Path $script:ReleasesRoot $prepared.ReleaseName
+    if (Test-Path -LiteralPath $releasePath) {
+        Remove-Item -LiteralPath $releasePath -Recurse -Force
+    }
+
+    Move-Item -LiteralPath $prepared.PreparedPath -Destination $releasePath -Force
+    $releaseState.ReleasePath = $releasePath
+    $releaseState.ActivatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    Write-ReleaseMetadata -ReleasePath $releasePath -Metadata $releaseState
+    Switch-ActiveRelease -ReleaseState $releaseState
+    if ($rollbackBackup) {
+        Set-ReleaseState -Current $releaseState -Previous $rollbackBackup
+    }
+
+    Set-PendingReleaseState -Pending $null
+    Write-UpdateLog "Activated prepared build '$($releaseState.BuildId)' from s3://$BucketName/$($releaseState.ZipKey)."
+    return $releaseState
 }
 
 function Invoke-Rollback {
@@ -559,6 +673,7 @@ $script:ReleasesRoot = Join-Path $InstallBasePath 'releases'
 $script:StateRoot = Join-Path $InstallBasePath 'state'
 $script:CurrentReleaseStatePath = Join-Path $script:StateRoot 'current-release.json'
 $script:PreviousReleaseStatePath = Join-Path $script:StateRoot 'previous-release.json'
+$script:PendingReleaseStatePath = Join-Path $script:StateRoot 'pending-release.json'
 
 New-DirectoryIfMissing -Path $InstallBasePath
 New-DirectoryIfMissing -Path $script:ReleasesRoot
@@ -609,49 +724,33 @@ try {
     }
 
     $buildMetadata = Get-ZipMetadata -Bucket $BucketName -ObjectKey $normalizedZipKey
-    $releaseName = Get-SafeReleaseName -BuildId $buildMetadata.BuildId
-    $current = Get-CurrentReleaseState
+    if ($PrepareReleaseOnly.IsPresent) {
+        $prepared = Prepare-ReleaseArchive -BuildMetadata $buildMetadata -AllowSameBuild $AllowUnchanged.IsPresent
+        if (-not $prepared) {
+            exit 0
+        }
 
-    if (-not $AllowUnchanged.IsPresent `
-        -and $current `
-        -and $current.BuildId -eq $buildMetadata.BuildId `
-        -and $current.ZipKey -eq $buildMetadata.ZipKey `
-        -and (Test-Path -LiteralPath $current.ReleasePath)) {
-        Write-UpdateLog "Build '$($buildMetadata.BuildId)' is already active. No update required."
         exit 0
     }
 
-    $archivePath = Get-DownloadDestination -FileName ("{0}.zip" -f $releaseName)
-    Invoke-Download -Bucket $BucketName -ObjectKey $buildMetadata.ZipKey -DestinationPath $archivePath
-    Assert-Checksum -Path $archivePath -ExpectedSha256 $buildMetadata.Sha256
+    if ($ActivatePreparedRelease.IsPresent) {
+        $activated = Activate-PreparedRelease -ExpectedZipKey $normalizedZipKey -RemoveCurrentReleaseFirst $FreeSpaceByRemovingCurrentRelease
+        if (-not $activated) {
+            throw 'Prepared release activation did not return a release state.'
+        }
 
-    $rollbackBackup = $null
-    if ($FreeSpaceByRemovingCurrentRelease -and $current -and (Test-Path -LiteralPath $current.ReleasePath)) {
-        $rollbackBackup = Remove-CurrentReleaseForUpdate -CurrentReleaseState $current
-        $current = $null
+        exit 0
     }
 
-    $releaseState = [pscustomobject]@{
-        BuildId = $buildMetadata.BuildId
-        ZipKey = $buildMetadata.ZipKey
-        Source = $buildMetadata.Source
-        ReleasePath = ''
-        ActivatedAtUtc = ''
-        CreatedAtUtc = $buildMetadata.CreatedAtUtc
-        DownloadedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-        Sha256 = $buildMetadata.Sha256
+    $prepared = Prepare-ReleaseArchive -BuildMetadata $buildMetadata -AllowSameBuild $AllowUnchanged.IsPresent
+    if (-not $prepared) {
+        exit 0
     }
 
-    $releasePath = Expand-ReleaseArchive -ArchivePath $archivePath -ReleaseName $releaseName -Metadata $releaseState
-    $releaseState.ReleasePath = $releasePath
-    $releaseState.ActivatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-    Write-ReleaseMetadata -ReleasePath $releasePath -Metadata $releaseState
-    Switch-ActiveRelease -ReleaseState $releaseState
-    if ($rollbackBackup) {
-        Set-ReleaseState -Current $releaseState -Previous $rollbackBackup
+    $activated = Activate-PreparedRelease -ExpectedZipKey $normalizedZipKey -RemoveCurrentReleaseFirst $FreeSpaceByRemovingCurrentRelease
+    if (-not $activated) {
+        throw 'Prepared release activation did not return a release state.'
     }
-
-    Write-UpdateLog "Activated build '$($releaseState.BuildId)' from s3://$BucketName/$($releaseState.ZipKey)."
 } catch {
     $reason = if ($RollbackToPrevious.IsPresent) { 'ue_build_rollback_failed' } else { 'ue_build_update_failed' }
     Publish-RuntimeStatus -Status 'runtime_fault' -Reason $reason

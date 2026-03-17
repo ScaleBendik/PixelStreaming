@@ -152,6 +152,44 @@ function Publish-CurrentBuildTags {
     return $false
 }
 
+function Get-LogTail {
+    param(
+        [string]$Path,
+        [int]$Tail = 20
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $null
+    }
+
+    try {
+        $lines = @(Get-Content -LiteralPath $Path -Tail $Tail -ErrorAction Stop)
+        if ($lines.Count -eq 0) {
+            return $null
+        }
+
+        return ($lines -join [Environment]::NewLine).Trim()
+    } catch {
+        return $null
+    }
+}
+
+function Stop-ProcessIfRunning {
+    param([System.Diagnostics.Process]$Process)
+
+    if ($null -eq $Process) {
+        return
+    }
+
+    try {
+        if (-not $Process.HasExited) {
+            Stop-Process -Id $Process.Id -Force -ErrorAction Stop
+        }
+    } catch {
+        Write-UpdateModeLog "Failed to stop background process $($Process.Id): $($_.Exception.Message)" 'WARN'
+    }
+}
+
 function Get-StreamerHealthSnapshot {
     param(
         [string]$Path
@@ -269,6 +307,11 @@ $stackLauncher = Join-Path $PSScriptRoot '..\cmd\start_streamer_stack.bat'
 $streamerHealthPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\streamer-health.json'
 $repoSyncScript = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
 $publishCurrentBuildScript = Join-Path $PSScriptRoot 'publish_current_build_tags.ps1'
+$installBasePath = if ($env:SCALEWORLD_INSTALL_BASE) { $env:SCALEWORLD_INSTALL_BASE } else { 'C:\PixelStreaming' }
+$pendingReleaseStatePath = Join-Path $installBasePath 'state\pending-release.json'
+$prepareUpdateStdOutPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\update-prepare.stdout.log'
+$prepareUpdateStdErrPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\update-prepare.stderr.log'
+$prepareUpdateProcess = $null
 
 $prepareDataDrive = if ($env:STACK_PREPARE_DATA_DRIVE) { [System.Boolean]::Parse($env:STACK_PREPARE_DATA_DRIVE) } else { $true }
 $requireDataDrive = if ($env:STACK_REQUIRE_DATA_DRIVE) { [System.Boolean]::Parse($env:STACK_REQUIRE_DATA_DRIVE) } else { $false }
@@ -303,12 +346,63 @@ try {
         throw "SWupdate.ps1 not found at '$updateScript'."
     }
 
+    if (Test-Path -LiteralPath $pendingReleaseStatePath) {
+        Remove-Item -LiteralPath $pendingReleaseStatePath -Force
+    }
+    foreach ($path in @($prepareUpdateStdOutPath, $prepareUpdateStdErrPath)) {
+        if (Test-Path -LiteralPath $path) {
+            Remove-Item -LiteralPath $path -Force
+        }
+    }
+
     $updateArgs = @('-ZipKey', $targetZipKey)
     if ($AllowUnchanged) {
         $updateArgs += '-AllowUnchanged'
     }
 
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $updateScript @updateArgs
+    $prepareUpdateArgs = @(
+        '-NoProfile',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', $updateScript
+    ) + $updateArgs + @('-PrepareReleaseOnly')
+
+    Write-UpdateModeLog "Preparing Unreal update payload for '$zipFileName' in parallel with PixelStreaming repo sync."
+    $prepareUpdateProcess = Start-Process `
+        -FilePath 'powershell.exe' `
+        -ArgumentList $prepareUpdateArgs `
+        -WindowStyle Hidden `
+        -PassThru `
+        -RedirectStandardOutput $prepareUpdateStdOutPath `
+        -RedirectStandardError $prepareUpdateStdErrPath
+
+    Write-UpdateModeLog 'Checking PixelStreaming repo for remote updates before Unreal activation.'
+    & $repoSyncScript -RepoRoot $pixelStreamingRoot -Mode 'update'
+    if ($LASTEXITCODE -ne 0) {
+        throw "ensure_repo_current.ps1 exited with code $LASTEXITCODE."
+    }
+
+    Write-UpdateModeLog "Waiting for Unreal update payload preparation for '$zipFileName' to finish."
+    $prepareUpdateProcess.WaitForExit()
+    if ($prepareUpdateProcess.ExitCode -ne 0) {
+        $stdOutTail = Get-LogTail -Path $prepareUpdateStdOutPath
+        $stdErrTail = Get-LogTail -Path $prepareUpdateStdErrPath
+        $detail = @($stdErrTail, $stdOutTail) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
+        if (-not [string]::IsNullOrWhiteSpace($detail)) {
+            throw "SWupdate preparation failed with exit code $($prepareUpdateProcess.ExitCode). Last output: $detail"
+        }
+
+        throw "SWupdate preparation failed with exit code $($prepareUpdateProcess.ExitCode)."
+    }
+    $prepareUpdateProcess = $null
+
+    if (Test-Path -LiteralPath $pendingReleaseStatePath) {
+        Write-UpdateModeLog "Activating prepared build '$zipFileName'."
+        $activateUpdateArgs = @('-ZipKey', $targetZipKey, '-ActivatePreparedRelease')
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $updateScript @activateUpdateArgs
+    } else {
+        Write-UpdateModeLog "No prepared release activation was required for '$zipFileName'. Assuming the target build is already active."
+    }
+
     if ($LASTEXITCODE -ne 0) {
         throw "SWupdate.ps1 exited with code $LASTEXITCODE."
     }
@@ -355,6 +449,7 @@ try {
     }
     exit 10
 } catch {
+    Stop-ProcessIfRunning -Process $prepareUpdateProcess
     $reason = $_.Exception.Message
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldUpdateState = 'failed'
