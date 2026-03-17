@@ -438,6 +438,9 @@ try {
 
     Write-UpdateModeLog 'Checking PixelStreaming repo for remote updates before Unreal update.'
     & $repoSyncScript -RepoRoot $pixelStreamingRoot -Mode 'update' -PhaseAwsCli $awsCli -PhaseRegion $identity.Region -PhaseInstanceId $identity.InstanceId -BuildingUpdatePhase 'building_pixelstreaming'
+    if ($LASTEXITCODE -ne 0) {
+        throw "ensure_repo_current.ps1 exited with code $LASTEXITCODE."
+    }
 
     if (-not (Test-Path -LiteralPath $updateScript)) {
         throw "SWupdate.ps1 not found at '$updateScript'."

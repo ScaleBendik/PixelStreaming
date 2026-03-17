@@ -116,6 +116,9 @@ while ($true) {
 
         Write-ProvisioningLog "Provisioning maintenance detected for instance '$($identity.InstanceId)'. Ensuring repo/bootstrap prerequisites before first startup."
         & $repoSyncScript -RepoRoot $pixelStreamingRoot -Mode 'provisioning'
+        if ($LASTEXITCODE -ne 0) {
+            throw "ensure_repo_current.ps1 exited with code $LASTEXITCODE."
+        }
 
         Write-ProvisioningLog 'Provisioning bootstrap completed. Continuing with normal startup.'
         exit 0
