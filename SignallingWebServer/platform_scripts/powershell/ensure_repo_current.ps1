@@ -78,9 +78,12 @@ function Set-OptionalUpdatePhase {
         return
     }
 
-    if ([string]::IsNullOrWhiteSpace($PhaseAwsCli)
-        -or [string]::IsNullOrWhiteSpace($PhaseRegion)
-        -or [string]::IsNullOrWhiteSpace($PhaseInstanceId)) {
+    $missingPhaseTarget =
+        [string]::IsNullOrWhiteSpace($PhaseAwsCli) -or
+        [string]::IsNullOrWhiteSpace($PhaseRegion) -or
+        [string]::IsNullOrWhiteSpace($PhaseInstanceId)
+
+    if ($missingPhaseTarget) {
         return
     }
 
