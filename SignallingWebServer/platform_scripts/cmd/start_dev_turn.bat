@@ -313,13 +313,20 @@ if not defined UTC_TIMESTAMP exit /b 0
 
 call :write_startup_status_state
 
-%AWS_CALL% ec2 create-tags --region "%REGION%" --resources "%INSTANCE_ID%" --tags ^
-  "Key=ScaleWorldRuntimeStatus,Value=%STATUS_VALUE%" ^
-  "Key=ScaleWorldRuntimeStatusAtUtc,Value=%UTC_TIMESTAMP%" ^
-  "Key=ScaleWorldRuntimeStatusHeartbeatAtUtc,Value=%UTC_TIMESTAMP%" ^
-  "Key=ScaleWorldRuntimeStatusSource,Value=%STATUS_SOURCE%" ^
-  "Key=ScaleWorldRuntimeStatusReason,Value=%STATUS_REASON%" ^
-  "Key=ScaleWorldRuntimeStatusVersion,Value=%STATUS_VERSION%" >nul 2>nul
+if not exist "%ROOT%\platform_scripts\powershell\publish_runtime_status_tags.ps1" (
+  echo WARNING: Runtime status publish helper not found. Skipping EC2 tag publish for "%STATUS_VALUE%".
+  exit /b 0
+)
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\platform_scripts\powershell\publish_runtime_status_tags.ps1" ^
+  -InstanceId "%INSTANCE_ID%" ^
+  -Region "%REGION%" ^
+  -AwsCliPath "%AWS_EXE%" ^
+  -Status "%STATUS_VALUE%" ^
+  -Source "%STATUS_SOURCE%" ^
+  -Reason "%STATUS_REASON%" ^
+  -Version "%STATUS_VERSION%" ^
+  -StatusAtUtc "%UTC_TIMESTAMP%" >nul 2>nul
 
 if errorlevel 1 (
   echo WARNING: Failed to publish runtime status "%STATUS_VALUE%" ^(reason=%STATUS_REASON%^).
