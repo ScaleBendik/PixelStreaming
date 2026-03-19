@@ -183,6 +183,7 @@ Current lane selection:
   - `TURN_CREDENTIAL_PARAM`
   - `CONNECT_TICKET_SIGNING_KEY_PARAM`
   - `CONNECT_TICKET_ISSUER`
+- Wilbur auth settings now resolve from process environment instead of carrying the signing key on the startup command line
 
 Recovery flow:
 
@@ -299,7 +300,7 @@ Archive contract and naming rules are documented in:
 ### Current Security Gaps
 
 - nonprod streamer startup still reads the signing key from the shared generic SSM path
-- streamer startup still passes the signing key on the command line
+- streamer startup still loads the signing key into process environment at launch time
 - stage still shares the dev-shaped connect-ticket contract
 - prod is only prepared for ticketed connect, not yet active on that model
 
@@ -364,4 +365,5 @@ Note:
 - 2026-03-09: Updated streamer runtime source of truth to reflect canonical stack launcher, SSM-backed connect-ticket signing key, startup heartbeats, staged Unreal updater, and watchdog recovery flow.
 - 2026-03-19: Documented the API-side Key Vault secret cutover, validated dev/stage key rotation, and the remaining shared-streamer SSM/key-exposure gaps.
 - 2026-03-19: Added lane-aware streamer startup defaults for `nonprod` and `prod`, while keeping current nonprod behavior unchanged.
+- 2026-03-19: Removed connect-ticket signing key exposure from the Wilbur command line and redacted sensitive startup config logging.
 

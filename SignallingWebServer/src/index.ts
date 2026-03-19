@@ -23,6 +23,13 @@ const pjson = require('../package.json') as PackageJsonMetadata;
 
 const ENV_PLACEHOLDER_REGEX = /\$\{ENV:([A-Z0-9_]+)\}/g;
 
+const REDACTED_LOG_FIELDS = new Set([
+    'auth_signing_key',
+    'peer_options',
+    'peer_options_player',
+    'peer_options_streamer'
+]);
+
 function resolveEnvPlaceholders(value: unknown, missing: Set<string>): unknown {
     if (typeof value === 'string') {
         return value.replace(ENV_PLACEHOLDER_REGEX, (_match: string, envVarName: string) => {
@@ -57,6 +64,32 @@ function normalizeAuthMode(value: string): ConnectTicketAuthMode {
     }
 
     throw new Error(`Invalid auth_mode '${value}'. Expected one of: off, soft, enforce.`);
+}
+
+function resolveAuthOption(currentValue: unknown, envVarName: string): string {
+    const normalizedCurrent = typeof currentValue === 'string' ? currentValue.trim() : '';
+    if (normalizedCurrent) {
+        return normalizedCurrent;
+    }
+
+    return (process.env[envVarName] || '').trim();
+}
+
+function sanitizeOptionsForLogging(input: IProgramOptions): IProgramOptions {
+    const sanitized: IProgramOptions = { ...input };
+    for (const field of REDACTED_LOG_FIELDS) {
+        const hasValue = Object.prototype.hasOwnProperty.call(input, field);
+        if (
+            hasValue &&
+            sanitized[field] !== undefined &&
+            sanitized[field] !== null &&
+            sanitized[field] !== ''
+        ) {
+            sanitized[field] = '[redacted]';
+        }
+    }
+
+    return sanitized;
 }
 
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument */
@@ -454,10 +487,20 @@ if (missingEnvVars.size > 0) {
     throw Error(`Missing required environment variables referenced in configuration: ${missing}`);
 }
 
+options.auth_issuer = resolveAuthOption(options.auth_issuer, 'CONNECT_TICKET_ISSUER');
+options.auth_audience = resolveAuthOption(options.auth_audience, 'CONNECT_TICKET_AUDIENCE');
+options.auth_signing_key = resolveAuthOption(options.auth_signing_key, 'CONNECT_TICKET_SIGNING_KEY');
+options.auth_instance_id = resolveAuthOption(options.auth_instance_id, 'INSTANCE_ID');
+options.auth_route_host_suffix = resolveAuthOption(
+    options.auth_route_host_suffix,
+    'CONNECT_TICKET_ROUTE_HOST_SUFFIX'
+);
+
 if (options.log_config) {
     Logger.info('Config:');
-    for (const key in options) {
-        Logger.info(`"${key}": ${JSON.stringify(options[key])}`);
+    const sanitizedOptions = sanitizeOptionsForLogging(options);
+    for (const key in sanitizedOptions) {
+        Logger.info(`"${key}": ${JSON.stringify(sanitizedOptions[key])}`);
     }
 }
 
