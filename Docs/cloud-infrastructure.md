@@ -1,6 +1,6 @@
 ﻿# ScaleWorld Cloud Infrastructure (Source of Truth)
 
-Last updated: 2026-03-09
+Last updated: 2026-03-19
 Owner: ScaleWorld Platform
 
 ## Purpose
@@ -40,7 +40,8 @@ Minimum update steps for every infra change:
 
 - Session Manager web: user UI for instance lifecycle and connect actions.
 - Session Manager API: ownership checks, start/stop orchestration, runtime state.
-- API secrets/settings are managed in Azure (Key Vault-backed app settings pattern).
+- API `ConnectTicket__SigningKey` now comes from Azure Key Vault-backed workload env injection.
+- API repo `appsettings` no longer carry active hosted connect-ticket signing keys.
 
 ### Streaming Plane (Current)
 
@@ -88,6 +89,16 @@ Current SSM SecureString parameters used by streamer startup:
 - `/pixelstreaming/turn/username`
 - `/pixelstreaming/turn/credential`
 - `/pixelstreaming/connect-ticket/signing-key`
+
+Current Azure Key Vault secret used by the API workload in each environment:
+
+- `kv-scaleworld-dev` -> `connect-ticket-signing-key`
+- `kv-scaleworld-stage` -> `connect-ticket-signing-key`
+- `kv-scaleworld-prod` -> `connect-ticket-signing-key`
+
+Current note:
+- `dev` and `stage` intentionally still share the same active connect-ticket signer on the streamer side
+- `prod` secret is prepared, but old prod runtime is not yet active on ticketed connect
 
 TURN server cert materials were previously managed via SSM as well (`/turn/*` pattern).
 
@@ -262,10 +273,18 @@ Archive contract and naming rules are documented in:
 ### Current
 
 - TURN credentials are not hardcoded in repo JSON.
-- Connect-ticket signing key is no longer committed in startup scripts.
+- API-side connect-ticket signing key is no longer committed in hosted API config.
 - Streamer runtime secrets are loaded from SSM at launch.
+- Active dev/stage connect-ticket signing key rotation was validated on 2026-03-19.
 - TURN is separated from streamer host.
 - Runtime tag write scope should remain limited to `ScaleWorldRuntime*`.
+
+### Current Security Gaps
+
+- streamer startup still reads the signing key from the shared generic SSM path
+- streamer startup still passes the signing key on the command line
+- stage still shares the dev-shaped connect-ticket contract
+- prod is only prepared for ticketed connect, not yet active on that model
 
 ### In Progress / Planned
 
@@ -311,6 +330,8 @@ Note:
 
 - HTTPS ingress migration from direct streamer IP access
 - Connect ticket issuance + signalling validation
+- Env-specific streamer SSM parameter names for TURN credentials and connect-ticket signing key
+- Removal of signing-key exposure from streamer command line / config logging
 - Dedicated TURN sizing/failover hardening
 - Short-lived TURN credentials from API
 - Watchdog validation and replacement of legacy crash monitor
@@ -322,4 +343,5 @@ Note:
 
 - 2026-03-04: Created initial cloud-infrastructure source-of-truth document; captured current validated TURN/SSM startup model and AWS prerequisites for HTTPS + ticketed access rollout.
 - 2026-03-09: Updated streamer runtime source of truth to reflect canonical stack launcher, SSM-backed connect-ticket signing key, startup heartbeats, staged Unreal updater, and watchdog recovery flow.
+- 2026-03-19: Documented the API-side Key Vault secret cutover, validated dev/stage key rotation, and the remaining shared-streamer SSM/key-exposure gaps.
 
