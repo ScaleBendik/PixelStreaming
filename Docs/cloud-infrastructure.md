@@ -99,6 +99,11 @@ Current Azure Key Vault secret used by the API workload in each environment:
 Current note:
 - `dev` and `stage` intentionally still share the same active connect-ticket signer on the streamer side
 - `prod` secret is prepared, but old prod runtime is not yet active on ticketed connect
+- streamer startup is now lane-aware through `SCALEWORLD_STREAMING_LANE=nonprod|prod`
+- current bootstrap defaults are:
+  - `nonprod` -> SSM `/pixelstreaming/connect-ticket/signing-key`, issuer `scaleworld-dev-connect-ticket`
+  - `prod` -> SSM `/pixelstreaming/prod/connect-ticket/signing-key`, issuer `scaleworld-prod-connect-ticket`
+- TURN credentials still default to the current shared SSM paths for all lanes
 
 TURN server cert materials were previously managed via SSM as well (`/turn/*` pattern).
 
@@ -166,6 +171,18 @@ Current startup flow:
 2. Wilbur launch through `start_dev_turn.bat`
 3. Unreal launch through `start_unreal.bat`
 4. watchdog launch through `start_watchdog.bat`
+
+Current lane selection:
+
+- `SCALEWORLD_STREAMING_LANE=nonprod`
+  - backward-compatible default for current dev/stage-style behavior
+- `SCALEWORLD_STREAMING_LANE=prod`
+  - enables prod issuer and prod signing-key SSM path defaults
+- explicit env overrides still win when set:
+  - `TURN_USER_PARAM`
+  - `TURN_CREDENTIAL_PARAM`
+  - `CONNECT_TICKET_SIGNING_KEY_PARAM`
+  - `CONNECT_TICKET_ISSUER`
 
 Recovery flow:
 
@@ -281,7 +298,7 @@ Archive contract and naming rules are documented in:
 
 ### Current Security Gaps
 
-- streamer startup still reads the signing key from the shared generic SSM path
+- nonprod streamer startup still reads the signing key from the shared generic SSM path
 - streamer startup still passes the signing key on the command line
 - stage still shares the dev-shaped connect-ticket contract
 - prod is only prepared for ticketed connect, not yet active on that model
@@ -330,6 +347,8 @@ Note:
 
 - HTTPS ingress migration from direct streamer IP access
 - Connect ticket issuance + signalling validation
+- Separate nonprod/prod streamer pools and lane selection tags
+- Nonprod rename from dev-shaped issuer/key contract to proper nonprod contract
 - Env-specific streamer SSM parameter names for TURN credentials and connect-ticket signing key
 - Removal of signing-key exposure from streamer command line / config logging
 - Dedicated TURN sizing/failover hardening
@@ -344,4 +363,5 @@ Note:
 - 2026-03-04: Created initial cloud-infrastructure source-of-truth document; captured current validated TURN/SSM startup model and AWS prerequisites for HTTPS + ticketed access rollout.
 - 2026-03-09: Updated streamer runtime source of truth to reflect canonical stack launcher, SSM-backed connect-ticket signing key, startup heartbeats, staged Unreal updater, and watchdog recovery flow.
 - 2026-03-19: Documented the API-side Key Vault secret cutover, validated dev/stage key rotation, and the remaining shared-streamer SSM/key-exposure gaps.
+- 2026-03-19: Added lane-aware streamer startup defaults for `nonprod` and `prod`, while keeping current nonprod behavior unchanged.
 

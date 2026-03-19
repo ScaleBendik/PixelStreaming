@@ -3,9 +3,27 @@ setlocal
 
 set "ROOT=C:\PixelStreaming\PixelStreaming\SignallingWebServer"
 set "REGION=eu-north-1"
-set "TURN_USER_PARAM=/pixelstreaming/turn/username"
-set "TURN_CREDENTIAL_PARAM=/pixelstreaming/turn/credential"
-set "CONNECT_TICKET_SIGNING_KEY_PARAM=/pixelstreaming/connect-ticket/signing-key"
+if not defined SCALEWORLD_STREAMING_LANE set "SCALEWORLD_STREAMING_LANE=nonprod"
+if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" goto apply_streaming_lane_prod
+if /i "%SCALEWORLD_STREAMING_LANE%"=="nonprod" goto apply_streaming_lane_nonprod
+echo ERROR: Unsupported SCALEWORLD_STREAMING_LANE "%SCALEWORLD_STREAMING_LANE%". Expected nonprod or prod.
+exit /b 1
+
+:apply_streaming_lane_nonprod
+if not defined TURN_USER_PARAM set "TURN_USER_PARAM=/pixelstreaming/turn/username"
+if not defined TURN_CREDENTIAL_PARAM set "TURN_CREDENTIAL_PARAM=/pixelstreaming/turn/credential"
+if not defined CONNECT_TICKET_SIGNING_KEY_PARAM set "CONNECT_TICKET_SIGNING_KEY_PARAM=/pixelstreaming/connect-ticket/signing-key"
+if not defined CONNECT_TICKET_ISSUER set "CONNECT_TICKET_ISSUER=scaleworld-dev-connect-ticket"
+goto after_streaming_lane_defaults
+
+:apply_streaming_lane_prod
+if not defined TURN_USER_PARAM set "TURN_USER_PARAM=/pixelstreaming/turn/username"
+if not defined TURN_CREDENTIAL_PARAM set "TURN_CREDENTIAL_PARAM=/pixelstreaming/turn/credential"
+if not defined CONNECT_TICKET_SIGNING_KEY_PARAM set "CONNECT_TICKET_SIGNING_KEY_PARAM=/pixelstreaming/prod/connect-ticket/signing-key"
+if not defined CONNECT_TICKET_ISSUER set "CONNECT_TICKET_ISSUER=scaleworld-prod-connect-ticket"
+goto after_streaming_lane_defaults
+
+:after_streaming_lane_defaults
 set "AWS_EXE=aws"
 set "ENABLE_GIT_SYNC_BEFORE_START=false"
 set "DISCARD_LOCAL_GIT_CHANGES_ON_SYNC=true"
@@ -15,7 +33,6 @@ if not defined STARTUP_RUNTIME_STATUS_HEARTBEAT_INTERVAL_SECONDS set "STARTUP_RU
 if not defined IMDS_INSTANCE_ID_RETRY_COUNT set "IMDS_INSTANCE_ID_RETRY_COUNT=12"
 if not defined IMDS_INSTANCE_ID_RETRY_DELAY_SECONDS set "IMDS_INSTANCE_ID_RETRY_DELAY_SECONDS=5"
 set "CONNECT_TICKET_AUTH_MODE=enforce"
-set "CONNECT_TICKET_ISSUER=scaleworld-dev-connect-ticket"
 set "CONNECT_TICKET_AUDIENCE=scaleworld-pixelstreaming"
 if not defined CONNECT_TICKET_SIGNING_KEY set "CONNECT_TICKET_SIGNING_KEY="
 set "CONNECT_TICKET_ROUTE_HOST_SUFFIX=stream.scaleworld.net"
@@ -47,6 +64,7 @@ if errorlevel 1 (
 )
 
 echo Using AWS CLI: "%AWS_EXE%"
+echo Using streaming lane: "%SCALEWORLD_STREAMING_LANE%"
 
 set "AWS_CALL=aws"
 if /i not "%AWS_EXE%"=="aws" (
