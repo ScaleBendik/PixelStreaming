@@ -36,6 +36,8 @@ set "CONNECT_TICKET_AUTH_MODE=enforce"
 set "CONNECT_TICKET_AUDIENCE=scaleworld-pixelstreaming"
 if not defined CONNECT_TICKET_SIGNING_KEY set "CONNECT_TICKET_SIGNING_KEY="
 set "CONNECT_TICKET_ROUTE_HOST_SUFFIX=stream.scaleworld.net"
+if not defined ENABLE_REVERSE_PROXY set "ENABLE_REVERSE_PROXY=true"
+if not defined REVERSE_PROXY_NUM_PROXIES set "REVERSE_PROXY_NUM_PROXIES=1"
 if not defined PLAYER_KEEPALIVE set "PLAYER_KEEPALIVE=true"
 if not defined PLAYER_KEEPALIVE_INTERVAL_MS set "PLAYER_KEEPALIVE_INTERVAL_MS=30000"
 if not defined PLAYER_KEEPALIVE_MAX_MISSED_PONGS set "PLAYER_KEEPALIVE_MAX_MISSED_PONGS=2"
@@ -167,6 +169,8 @@ call :stop_startup_heartbeat
 call :set_runtime_status "waiting_for_streamer" "startup-script" "signalling_server_starting"
 cd /d "%ROOT%\platform_scripts\cmd"
 
+if /i "%ENABLE_REVERSE_PROXY%"=="true" goto start_signalling_with_reverse_proxy
+
 call start.bat -- ^
   --peer_options_player_file="%ROOT%\peer_options.player.json" ^
   --peer_options_streamer_file="%ROOT%\peer_options.streamer.json" ^
@@ -183,6 +187,28 @@ call start.bat -- ^
   --runtime_status="%RUNTIME_STATUS_ENABLED%" ^
   --runtime_status_aws_cli_path="%AWS_EXE%" ^
   --runtime_status_source="signalling-server"
+
+exit /b %errorlevel%
+
+:start_signalling_with_reverse_proxy
+call start.bat -- ^
+  --peer_options_player_file="%ROOT%\peer_options.player.json" ^
+  --peer_options_streamer_file="%ROOT%\peer_options.streamer.json" ^
+  --auth_mode="%CONNECT_TICKET_AUTH_MODE%" ^
+  --player_keepalive="%PLAYER_KEEPALIVE%" ^
+  --player_keepalive_interval_ms="%PLAYER_KEEPALIVE_INTERVAL_MS%" ^
+  --player_keepalive_max_missed_pongs="%PLAYER_KEEPALIVE_MAX_MISSED_PONGS%" ^
+  --viewer_idle_stop="%VIEWER_IDLE_STOP%" ^
+  --viewer_idle_grace_ms="%VIEWER_IDLE_GRACE_MS%" ^
+  --viewer_idle_first_viewer_grace_ms="%VIEWER_IDLE_FIRST_VIEWER_GRACE_MS%" ^
+  --viewer_idle_first_viewer_delay_ms="%VIEWER_IDLE_FIRST_VIEWER_DELAY_MS%" ^
+  --viewer_idle_stop_retry_ms="%VIEWER_IDLE_STOP_RETRY_MS%" ^
+  --viewer_idle_stop_dry_run="%VIEWER_IDLE_STOP_DRY_RUN%" ^
+  --runtime_status="%RUNTIME_STATUS_ENABLED%" ^
+  --runtime_status_aws_cli_path="%AWS_EXE%" ^
+  --runtime_status_source="signalling-server" ^
+  --reverse-proxy ^
+  --reverse-proxy-num-proxies="%REVERSE_PROXY_NUM_PROXIES%"
 
 exit /b %errorlevel%
 

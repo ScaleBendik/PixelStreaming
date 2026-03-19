@@ -104,6 +104,10 @@ Current note:
   - `nonprod` -> SSM `/pixelstreaming/connect-ticket/signing-key`, issuer `scaleworld-dev-connect-ticket`
   - `prod` -> SSM `/pixelstreaming/prod/connect-ticket/signing-key`, issuer `scaleworld-prod-connect-ticket`
 - TURN credentials still default to the current shared SSM paths for all lanes
+- cloud startup now enables Wilbur reverse-proxy mode by default
+  - `ENABLE_REVERSE_PROXY=true`
+  - `REVERSE_PROXY_NUM_PROXIES=1`
+  - this matches the current ALB/X-Forwarded-For path and avoids `express-rate-limit` proxy warnings
 
 TURN server cert materials were previously managed via SSM as well (`/turn/*` pattern).
 
