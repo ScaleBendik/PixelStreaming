@@ -108,6 +108,11 @@ Current note:
   - `ENABLE_REVERSE_PROXY=true`
   - `REVERSE_PROXY_NUM_PROXIES=1`
   - this matches the current ALB/X-Forwarded-For path and avoids `express-rate-limit` proxy warnings
+- repo/bootstrap sync policy now supports:
+  - `SCALEWORLD_GIT_SYNC_MODE=upstream|pinned|off`
+  - default `nonprod` behavior: `upstream`
+  - default `prod` behavior: `pinned`
+  - `SCALEWORLD_GIT_TARGET_REF=<tag-or-commit>` is required for `pinned`
 
 TURN server cert materials were previously managed via SSM as well (`/turn/*` pattern).
 

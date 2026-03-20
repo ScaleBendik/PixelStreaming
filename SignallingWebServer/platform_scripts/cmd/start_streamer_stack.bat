@@ -10,6 +10,14 @@ set "PROVISIONING_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_provisioning_mode
 set "STACK_MODE=normal"
 set "STACK_START_WATCHDOG=true"
 set "STACK_START_UNREAL=true"
+if not defined SCALEWORLD_STREAMING_LANE set "SCALEWORLD_STREAMING_LANE=nonprod"
+if not defined SCALEWORLD_GIT_SYNC_MODE (
+  if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
+    set "SCALEWORLD_GIT_SYNC_MODE=pinned"
+  ) else (
+    set "SCALEWORLD_GIT_SYNC_MODE=upstream"
+  )
+)
 if not defined STACK_LAUNCH_UNREAL_BEFORE_WILBUR set "STACK_LAUNCH_UNREAL_BEFORE_WILBUR=true"
 if not defined STACK_PREPARE_DATA_DRIVE set "STACK_PREPARE_DATA_DRIVE=true"
 if not defined STACK_REQUIRE_DATA_DRIVE set "STACK_REQUIRE_DATA_DRIVE=false"

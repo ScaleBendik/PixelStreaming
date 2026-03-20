@@ -5,7 +5,9 @@ param(
     [string]$PhaseAwsCli = '',
     [string]$PhaseRegion = '',
     [string]$PhaseInstanceId = '',
-    [string]$BuildingUpdatePhase = ''
+    [string]$BuildingUpdatePhase = '',
+    [string]$GitSyncMode = $(if ($env:SCALEWORLD_GIT_SYNC_MODE) { $env:SCALEWORLD_GIT_SYNC_MODE } elseif ($env:SCALEWORLD_STREAMING_LANE -and $env:SCALEWORLD_STREAMING_LANE.Trim().ToLowerInvariant() -eq 'prod') { 'pinned' } else { 'upstream' }),
+    [string]$GitTargetRef = $(if ($env:SCALEWORLD_GIT_TARGET_REF) { $env:SCALEWORLD_GIT_TARGET_REF } else { '' })
 )
 
 Set-StrictMode -Version Latest
@@ -143,6 +145,36 @@ function Get-GitCliPath {
     throw "Git ('git') was not found."
 }
 
+function Normalize-GitSyncMode {
+    param([string]$Value)
+
+    $normalized = if ([string]::IsNullOrWhiteSpace($Value)) {
+        'upstream'
+    } else {
+        $Value.Trim().ToLowerInvariant()
+    }
+
+    if ($normalized -notin @('upstream', 'pinned', 'off')) {
+        throw "Unsupported git sync mode '$Value'. Expected upstream, pinned, or off."
+    }
+
+    return $normalized
+}
+
+function Resolve-CommitFromRef {
+    param(
+        [string]$GitCli,
+        [string]$Ref
+    )
+
+    $resolved = ((& $GitCli rev-parse $Ref) | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($resolved)) {
+        throw "Failed to resolve git ref '$Ref'."
+    }
+
+    return $resolved
+}
+
 $gitCli = Get-GitCliPath
 $buildScript = Join-Path $RepoRoot 'build-all.bat'
 if (-not (Test-Path -LiteralPath $buildScript)) {
@@ -150,6 +182,8 @@ if (-not (Test-Path -LiteralPath $buildScript)) {
 }
 $buildStampPath = Join-Path $RepoRoot 'SignallingWebServer\state\repo-build-head.txt'
 $wilburDistPath = Join-Path $RepoRoot 'SignallingWebServer\dist\index.js'
+$gitSyncModeNormalized = Normalize-GitSyncMode -Value $GitSyncMode
+$gitTargetRefNormalized = if ([string]::IsNullOrWhiteSpace($GitTargetRef)) { '' } else { $GitTargetRef.Trim() }
 
 function Get-BuildStamp {
     param([string]$Path)
@@ -187,59 +221,102 @@ try {
         throw "PixelStreaming root '$RepoRoot' is not a git repository."
     }
 
-    Write-RepoSyncLog "Fetching PixelStreaming repo before $Mode mode."
-    & $gitCli fetch --prune
-    if ($LASTEXITCODE -ne 0) {
-        throw 'git fetch --prune failed.'
-    }
-
     $currentHead = ((& $gitCli rev-parse HEAD) | Out-String).Trim()
     if ([string]::IsNullOrWhiteSpace($currentHead)) {
         throw 'Failed to resolve local git commit for PixelStreaming repo.'
     }
 
-    $upstreamBranch = ((& $gitCli rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null) | Out-String).Trim()
     $buildReasons = [System.Collections.Generic.List[string]]::new()
     $trackedChanges = ((& $gitCli status --porcelain --untracked-files=no) | Out-String).Trim()
 
-    if (-not [string]::IsNullOrWhiteSpace($upstreamBranch)) {
-        $upstreamHead = ((& $gitCli rev-parse '@{u}') | Out-String).Trim()
-        if ([string]::IsNullOrWhiteSpace($upstreamHead)) {
-            throw 'Failed to resolve upstream git commit for PixelStreaming repo.'
-        }
+    Write-RepoSyncLog "Applying git sync mode '$gitSyncModeNormalized' before $Mode mode."
 
-        if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
-            Write-RepoSyncLog "Discarding tracked local PixelStreaming repo changes before $Mode mode."
-            & $gitCli reset --hard $upstreamHead
+    switch ($gitSyncModeNormalized) {
+        'upstream' {
+            Write-RepoSyncLog "Fetching PixelStreaming repo before $Mode mode."
+            & $gitCli fetch --prune
             if ($LASTEXITCODE -ne 0) {
-                throw "git reset --hard $upstreamHead failed."
+                throw 'git fetch --prune failed.'
             }
-            $currentHead = ((& $gitCli rev-parse HEAD) | Out-String).Trim()
-            $trackedChanges = ''
-        }
 
-        if ($currentHead -ne $upstreamHead) {
-            Write-RepoSyncLog "Remote PixelStreaming changes detected on $upstreamBranch. Resetting local checkout to upstream before continuing."
-            & $gitCli reset --hard $upstreamHead
-            if ($LASTEXITCODE -ne 0) {
-                throw "git reset --hard $upstreamHead failed."
+            $upstreamBranch = ((& $gitCli rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null) | Out-String).Trim()
+            if (-not [string]::IsNullOrWhiteSpace($upstreamBranch)) {
+                $upstreamHead = Resolve-CommitFromRef -GitCli $gitCli -Ref '@{u}'
+
+                if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
+                    Write-RepoSyncLog "Discarding tracked local PixelStreaming repo changes before $Mode mode."
+                    & $gitCli reset --hard $upstreamHead
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "git reset --hard $upstreamHead failed."
+                    }
+                    $currentHead = Resolve-CommitFromRef -GitCli $gitCli -Ref 'HEAD'
+                    $trackedChanges = ''
+                }
+
+                if ($currentHead -ne $upstreamHead) {
+                    Write-RepoSyncLog "Remote PixelStreaming changes detected on $upstreamBranch. Resetting local checkout to upstream before continuing."
+                    & $gitCli reset --hard $upstreamHead
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "git reset --hard $upstreamHead failed."
+                    }
+                    $currentHead = Resolve-CommitFromRef -GitCli $gitCli -Ref 'HEAD'
+                    $buildReasons.Add("repo aligned to upstream commit $currentHead")
+                } else {
+                    Write-RepoSyncLog "PixelStreaming repo already matches $upstreamBranch."
+                }
+            } else {
+                Write-RepoSyncLog 'No upstream branch configured for PixelStreaming repo. Skipping repo pull and validating local build freshness only.' 'WARN'
+                if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
+                    Write-RepoSyncLog "Discarding tracked local PixelStreaming repo changes without upstream before $Mode mode."
+                    & $gitCli reset --hard $currentHead
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "git reset --hard $currentHead failed."
+                    }
+                    $trackedChanges = ''
+                }
             }
-            $currentHead = ((& $gitCli rev-parse HEAD) | Out-String).Trim()
-            if ([string]::IsNullOrWhiteSpace($currentHead)) {
-                throw 'Failed to resolve local git commit after hard reset to upstream.'
-            }
-            $buildReasons.Add("repo aligned to upstream commit $currentHead")
-        } else {
-            Write-RepoSyncLog "PixelStreaming repo already matches $upstreamBranch."
         }
-    } else {
-        Write-RepoSyncLog 'No upstream branch configured for PixelStreaming repo. Skipping repo pull and validating local build freshness only.' 'WARN'
-        if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
-            Write-RepoSyncLog "Discarding tracked local PixelStreaming repo changes without upstream before $Mode mode."
-            & $gitCli reset --hard $currentHead
-            if ($LASTEXITCODE -ne 0) {
-                throw "git reset --hard $currentHead failed."
+        'pinned' {
+            if ([string]::IsNullOrWhiteSpace($gitTargetRefNormalized)) {
+                throw 'Pinned git sync mode requires SCALEWORLD_GIT_TARGET_REF.'
             }
+
+            Write-RepoSyncLog "Fetching PixelStreaming repo before resolving pinned ref '$gitTargetRefNormalized'."
+            & $gitCli fetch --prune --tags
+            if ($LASTEXITCODE -ne 0) {
+                throw 'git fetch --prune --tags failed.'
+            }
+
+            $targetHead = Resolve-CommitFromRef -GitCli $gitCli -Ref $gitTargetRefNormalized
+
+            if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
+                Write-RepoSyncLog "Discarding tracked local PixelStreaming repo changes before pinned reset to '$gitTargetRefNormalized'."
+                & $gitCli reset --hard $targetHead
+                if ($LASTEXITCODE -ne 0) {
+                    throw "git reset --hard $targetHead failed."
+                }
+                $currentHead = Resolve-CommitFromRef -GitCli $gitCli -Ref 'HEAD'
+                $trackedChanges = ''
+            }
+
+            if ($currentHead -ne $targetHead) {
+                Write-RepoSyncLog "Resetting local checkout to pinned ref '$gitTargetRefNormalized' ($targetHead)."
+                & $gitCli reset --hard $targetHead
+                if ($LASTEXITCODE -ne 0) {
+                    throw "git reset --hard $targetHead failed."
+                }
+                $currentHead = Resolve-CommitFromRef -GitCli $gitCli -Ref 'HEAD'
+                $buildReasons.Add("repo aligned to pinned ref '$gitTargetRefNormalized' ($currentHead)")
+            } else {
+                Write-RepoSyncLog "PixelStreaming repo already matches pinned ref '$gitTargetRefNormalized' ($targetHead)."
+            }
+        }
+        'off' {
+            if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
+                throw 'Tracked local changes are present while SCALEWORLD_GIT_SYNC_MODE=off.'
+            }
+
+            Write-RepoSyncLog "Git sync is disabled for $Mode mode. Using current checkout at HEAD $currentHead."
         }
     }
 

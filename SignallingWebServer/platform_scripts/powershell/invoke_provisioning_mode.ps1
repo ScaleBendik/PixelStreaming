@@ -75,7 +75,9 @@ function Test-FatalBootstrapError {
         'build-all.bat was not found',
         'is not a git repository',
         'Tracked local changes are present',
-        'ensure_repo_current.ps1 was not found'
+        'ensure_repo_current.ps1 was not found',
+        'Pinned git sync mode requires SCALEWORLD_GIT_TARGET_REF.',
+        'Unsupported git sync mode'
     )
 
     foreach ($fragment in $fatalFragments) {

@@ -28,6 +28,13 @@ set "AWS_EXE=aws"
 set "ENABLE_GIT_SYNC_BEFORE_START=false"
 set "DISCARD_LOCAL_GIT_CHANGES_ON_SYNC=true"
 set "REQUIRE_EC2_INSTANCE_FOR_GIT_SYNC=true"
+if not defined SCALEWORLD_GIT_SYNC_MODE (
+  if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
+    set "SCALEWORLD_GIT_SYNC_MODE=pinned"
+  ) else (
+    set "SCALEWORLD_GIT_SYNC_MODE=upstream"
+  )
+)
 set "RUNTIME_STATUS_ENABLED=true"
 if not defined STARTUP_RUNTIME_STATUS_HEARTBEAT_INTERVAL_SECONDS set "STARTUP_RUNTIME_STATUS_HEARTBEAT_INTERVAL_SECONDS=30"
 if not defined IMDS_INSTANCE_ID_RETRY_COUNT set "IMDS_INSTANCE_ID_RETRY_COUNT=12"
@@ -214,95 +221,25 @@ exit /b %errorlevel%
 
 :sync_repo_and_build
 for %%I in ("%ROOT%\..") do set "REPO_ROOT=%%~fI"
+set "REPO_SYNC_SCRIPT=%ROOT%\platform_scripts\powershell\ensure_repo_current.ps1"
 
-where git >nul 2>nul
-if errorlevel 1 (
-  echo ERROR: Git not found in PATH while ENABLE_GIT_SYNC_BEFORE_START=true.
-  call :set_runtime_status "runtime_fault" "startup-script" "git_not_found"
+if not exist "%REPO_SYNC_SCRIPT%" (
+  echo ERROR: Repo sync helper not found at "%REPO_SYNC_SCRIPT%".
+  call :set_runtime_status "runtime_fault" "startup-script" "repo_sync_script_missing"
   call :stop_startup_heartbeat
   exit /b 1
 )
 
-pushd "%REPO_ROOT%"
-
-echo Checking PixelStreaming repo for remote updates...
-git fetch --prune
-if errorlevel 1 (
-  echo ERROR: git fetch failed.
-  call :set_runtime_status "runtime_fault" "startup-script" "git_fetch_failed"
-  call :stop_startup_heartbeat
-  popd
-  exit /b 1
-)
-
-set "UPSTREAM_BRANCH="
-for /f "usebackq delims=" %%I in (`git rev-parse --abbrev-ref --symbolic-full-name @{u} 2^>nul`) do (
-  set "UPSTREAM_BRANCH=%%I"
-)
-
-if not defined UPSTREAM_BRANCH (
-  echo WARNING: No upstream branch configured. Skipping git pull/build step.
-  popd
-  exit /b 0
-)
-
-set "CURRENT_HEAD="
-for /f "usebackq delims=" %%I in (`git rev-parse HEAD`) do (
-  set "CURRENT_HEAD=%%I"
-)
-
-set "UPSTREAM_HEAD="
-for /f "usebackq delims=" %%I in (`git rev-parse @{u}`) do (
-  set "UPSTREAM_HEAD=%%I"
-)
-
-set "HAS_LOCAL_TRACKED_CHANGES=0"
-for /f "usebackq delims=" %%I in (`git status --porcelain --untracked-files=no`) do (
-  set "HAS_LOCAL_TRACKED_CHANGES=1"
-)
-
-set "REPO_RESET_REQUIRED=0"
-if not "%CURRENT_HEAD%"=="%UPSTREAM_HEAD%" set "REPO_RESET_REQUIRED=1"
-if "%HAS_LOCAL_TRACKED_CHANGES%"=="1" set "REPO_RESET_REQUIRED=1"
-
-if "%REPO_RESET_REQUIRED%"=="0" (
-  echo Repo already matches %UPSTREAM_BRANCH% and has no tracked local changes.
-  popd
-  exit /b 0
-)
-
-if /i not "%DISCARD_LOCAL_GIT_CHANGES_ON_SYNC%"=="true" (
-  echo ERROR: Local or branch differences detected, but DISCARD_LOCAL_GIT_CHANGES_ON_SYNC is disabled.
-  call :set_runtime_status "runtime_fault" "startup-script" "repo_dirty"
-  call :stop_startup_heartbeat
-  popd
-  exit /b 1
-)
-
-if "%HAS_LOCAL_TRACKED_CHANGES%"=="1" echo Discarding tracked local repository changes before startup sync...
-if not "%CURRENT_HEAD%"=="%UPSTREAM_HEAD%" echo Resetting repo from %CURRENT_HEAD% to %UPSTREAM_BRANCH% ^(%UPSTREAM_HEAD%^)...
-
+echo Checking PixelStreaming repo using git sync mode "%SCALEWORLD_GIT_SYNC_MODE%".
 call :set_runtime_status "updating_infra" "startup-script" "git_sync_in_progress"
-git reset --hard @{u}
+powershell -NoProfile -ExecutionPolicy Bypass -File "%REPO_SYNC_SCRIPT%" -RepoRoot "%REPO_ROOT%" -Mode "startup"
 if errorlevel 1 (
-  echo ERROR: git reset --hard @{u} failed.
-  call :set_runtime_status "runtime_fault" "startup-script" "git_reset_failed"
+  echo ERROR: Repo sync helper failed.
+  call :set_runtime_status "runtime_fault" "startup-script" "repo_sync_failed"
   call :stop_startup_heartbeat
-  popd
   exit /b 1
 )
 
-echo Running build-all.bat after repository sync...
-call "%REPO_ROOT%\build-all.bat"
-if errorlevel 1 (
-  echo ERROR: build-all.bat failed.
-  call :set_runtime_status "runtime_fault" "startup-script" "build_failed"
-  call :stop_startup_heartbeat
-  popd
-  exit /b 1
-)
-
-popd
 exit /b 0
 
 :reset_startup_heartbeat

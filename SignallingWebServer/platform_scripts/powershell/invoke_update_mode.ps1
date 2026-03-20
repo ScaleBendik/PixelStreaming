@@ -497,7 +497,7 @@ try {
         throw "Repo sync helper not found at '$repoSyncScript'."
     }
 
-    Write-UpdateModeLog 'Checking PixelStreaming repo for remote updates before Unreal update.'
+    Write-UpdateModeLog 'Preparing PixelStreaming repo/bootstrap state before Unreal update.'
     & $repoSyncScript -RepoRoot $pixelStreamingRoot -Mode 'update' -PhaseAwsCli $awsCli -PhaseRegion $identity.Region -PhaseInstanceId $identity.InstanceId -BuildingUpdatePhase 'building_pixelstreaming'
     if ($LASTEXITCODE -ne 0) {
         throw "ensure_repo_current.ps1 exited with code $LASTEXITCODE."
@@ -558,7 +558,7 @@ try {
             -RedirectStandardError $prepareUpdateStdErrPath
     }
 
-    Write-UpdateModeLog 'Checking PixelStreaming repo for remote updates before Unreal activation.'
+    Write-UpdateModeLog 'Preparing PixelStreaming repo/bootstrap state before Unreal activation.'
     & $repoSyncScript -RepoRoot $pixelStreamingRoot -Mode 'update' -PhaseAwsCli $awsCli -PhaseRegion $identity.Region -PhaseInstanceId $identity.InstanceId -BuildingUpdatePhase 'building_pixelstreaming'
     if ($LASTEXITCODE -ne 0) {
         throw "ensure_repo_current.ps1 exited with code $LASTEXITCODE."
