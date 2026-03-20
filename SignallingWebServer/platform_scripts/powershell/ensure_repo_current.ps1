@@ -241,7 +241,7 @@ function Resolve-CommitFromRef {
         [string]$Ref
     )
 
-    $resolved = ((& $GitCli rev-parse $Ref) | Out-String).Trim()
+    $resolved = ((& $GitCli rev-parse "$Ref^{commit}") | Out-String).Trim()
     if ([string]::IsNullOrWhiteSpace($resolved)) {
         throw "Failed to resolve git ref '$Ref'."
     }
