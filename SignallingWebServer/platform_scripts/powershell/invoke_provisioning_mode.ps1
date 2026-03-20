@@ -89,6 +89,96 @@ function Test-FatalBootstrapError {
     return $false
 }
 
+function New-ProvisioningHeartbeatContext {
+    param(
+        [string]$AwsCli,
+        [string]$Region,
+        [string]$InstanceId
+    )
+
+    $heartbeatScript = Join-Path $PSScriptRoot 'runtime-status-heartbeat.ps1'
+    if (-not (Test-Path -LiteralPath $heartbeatScript)) {
+        Write-ProvisioningLog "Runtime status heartbeat helper was not found at '$heartbeatScript'. Continuing without provisioning heartbeat refresh." 'WARN'
+        return $null
+    }
+
+    $token = '{0}-{1}' -f $InstanceId, ([guid]::NewGuid().ToString('N'))
+    $stateFilePath = Join-Path ([System.IO.Path]::GetTempPath()) "scaleworld-provisioning-status-$token.state"
+    $stopFilePath = Join-Path ([System.IO.Path]::GetTempPath()) "scaleworld-provisioning-status-$token.stop"
+
+    return [pscustomobject]@{
+        ScriptPath = $heartbeatScript
+        AwsCli = $AwsCli
+        Region = $Region
+        InstanceId = $InstanceId
+        StateFilePath = $stateFilePath
+        StopFilePath = $stopFilePath
+        Source = 'startup-script'
+    }
+}
+
+function Set-ProvisioningHeartbeatState {
+    param(
+        [pscustomobject]$Context,
+        [string]$Status,
+        [string]$Reason
+    )
+
+    if (-not $Context) {
+        return
+    }
+
+    $lines = @(
+        "status=$Status",
+        "source=$($Context.Source)",
+        "reason=$Reason",
+        'version=',
+        ("status_at_utc={0}" -f ((Get-Date).ToUniversalTime().ToString('o')))
+    )
+    [System.IO.File]::WriteAllLines($Context.StateFilePath, $lines, (New-Object System.Text.UTF8Encoding($false)))
+}
+
+function Start-ProvisioningHeartbeat {
+    param([pscustomobject]$Context)
+
+    if (-not $Context) {
+        return
+    }
+
+    if (Test-Path -LiteralPath $Context.StopFilePath) {
+        Remove-Item -LiteralPath $Context.StopFilePath -Force -ErrorAction SilentlyContinue
+    }
+
+    Start-Process -FilePath 'powershell' -WindowStyle Hidden -ArgumentList @(
+        '-NoProfile',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', $Context.ScriptPath,
+        '-InstanceId', $Context.InstanceId,
+        '-Region', $Context.Region,
+        '-AwsCliPath', $Context.AwsCli,
+        '-StateFilePath', $Context.StateFilePath,
+        '-StopFilePath', $Context.StopFilePath,
+        '-IntervalSeconds', '30'
+    ) | Out-Null
+}
+
+function Stop-ProvisioningHeartbeat {
+    param([pscustomobject]$Context)
+
+    if (-not $Context) {
+        return
+    }
+
+    try {
+        [System.IO.File]::WriteAllText($Context.StopFilePath, 'stop', (New-Object System.Text.UTF8Encoding($false)))
+    } catch {
+    }
+
+    Start-Sleep -Milliseconds 250
+    Remove-Item -LiteralPath $Context.StateFilePath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $Context.StopFilePath -Force -ErrorAction SilentlyContinue
+}
+
 $pixelStreamingRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $repoSyncScript = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
 $bootstrapDeadline = (Get-Date).AddSeconds([Math]::Max($BootstrapTimeoutSeconds, 1))
@@ -116,10 +206,25 @@ while ($true) {
             throw "ensure_repo_current.ps1 was not found at '$repoSyncScript'."
         }
 
-        Write-ProvisioningLog "Provisioning maintenance detected for instance '$($identity.InstanceId)'. Ensuring repo/bootstrap prerequisites before first startup."
-        & $repoSyncScript -RepoRoot $pixelStreamingRoot -Mode 'provisioning'
-        if ($LASTEXITCODE -ne 0) {
-            throw "ensure_repo_current.ps1 exited with code $LASTEXITCODE."
+        $heartbeatContext = New-ProvisioningHeartbeatContext -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId
+        try {
+            Set-ProvisioningHeartbeatState -Context $heartbeatContext -Status 'booting' -Reason 'provisioning_bootstrap'
+            Start-ProvisioningHeartbeat -Context $heartbeatContext
+
+            Write-ProvisioningLog "Provisioning maintenance detected for instance '$($identity.InstanceId)'. Ensuring repo/bootstrap prerequisites before first startup."
+            Set-ProvisioningHeartbeatState -Context $heartbeatContext -Status 'updating_infra' -Reason 'provisioning_repo_sync'
+            & $repoSyncScript `
+                -RepoRoot $pixelStreamingRoot `
+                -Mode 'provisioning' `
+                -PhaseAwsCli $awsCli `
+                -PhaseRegion $identity.Region `
+                -PhaseInstanceId $identity.InstanceId `
+                -BuildingUpdatePhase 'provisioning_repo_sync'
+            if ($LASTEXITCODE -ne 0) {
+                throw "ensure_repo_current.ps1 exited with code $LASTEXITCODE."
+            }
+        } finally {
+            Stop-ProvisioningHeartbeat -Context $heartbeatContext
         }
 
         Write-ProvisioningLog 'Provisioning bootstrap completed. Continuing with normal startup.'
