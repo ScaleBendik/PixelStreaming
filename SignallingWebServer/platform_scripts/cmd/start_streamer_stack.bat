@@ -10,6 +10,7 @@ set "PROVISIONING_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_provisioning_mode
 set "STACK_MODE=normal"
 set "STACK_START_WATCHDOG=true"
 set "STACK_START_UNREAL=true"
+call :resolve_streaming_lane_from_instance_tag
 if not defined SCALEWORLD_STREAMING_LANE set "SCALEWORLD_STREAMING_LANE=nonprod"
 if not defined SCALEWORLD_GIT_SYNC_MODE (
   if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
@@ -18,6 +19,7 @@ if not defined SCALEWORLD_GIT_SYNC_MODE (
     set "SCALEWORLD_GIT_SYNC_MODE=upstream"
   )
 )
+if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" if not defined SCALEWORLD_GIT_TARGET_REF_PARAM set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref"
 if not defined STACK_LAUNCH_UNREAL_BEFORE_WILBUR set "STACK_LAUNCH_UNREAL_BEFORE_WILBUR=true"
 if not defined STACK_PREPARE_DATA_DRIVE set "STACK_PREPARE_DATA_DRIVE=true"
 if not defined STACK_REQUIRE_DATA_DRIVE set "STACK_REQUIRE_DATA_DRIVE=false"
@@ -153,6 +155,15 @@ if /i "%STACK_START_WATCHDOG%"=="true" (
 )
 
 echo Stack launch completed.
+exit /b 0
+
+:resolve_streaming_lane_from_instance_tag
+if defined SCALEWORLD_STREAMING_LANE exit /b 0
+
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { $aws = $null; $candidate = Get-Command aws -ErrorAction SilentlyContinue; if ($candidate) { $aws = $candidate.Source } elseif (Test-Path 'C:\Program Files\Amazon\AWSCLIV2\aws.exe') { $aws = 'C:\Program Files\Amazon\AWSCLIV2\aws.exe' } elseif (Test-Path 'C:\Program Files\Amazon\AWSCLI\bin\aws.exe') { $aws = 'C:\Program Files\Amazon\AWSCLI\bin\aws.exe' }; if (-not $aws) { return }; $token = Invoke-RestMethod -Method Put -Uri 'http://169.254.169.254/latest/api/token' -Headers @{'X-aws-ec2-metadata-token-ttl-seconds'='21600'}; $instanceId = (Invoke-RestMethod -Method Get -Uri 'http://169.254.169.254/latest/meta-data/instance-id' -Headers @{'X-aws-ec2-metadata-token'=$token}).Trim(); $region = (Invoke-RestMethod -Method Get -Uri 'http://169.254.169.254/latest/meta-data/placement/region' -Headers @{'X-aws-ec2-metadata-token'=$token}).Trim(); $json = & $aws ec2 describe-tags --region $region --filters \"Name=resource-id,Values=$instanceId\" 'Name=key,Values=ScaleWorldLane' --output json; if ($LASTEXITCODE -ne 0) { return }; $doc = $json | ConvertFrom-Json -ErrorAction Stop; $value = @($doc.Tags | Select-Object -First 1 -ExpandProperty Value); if (-not [string]::IsNullOrWhiteSpace($value)) { Write-Output $value.Trim().ToLowerInvariant() } } catch { }"` ) do (
+  set "SCALEWORLD_STREAMING_LANE=%%I"
+)
+
 exit /b 0
 
 :launch_unreal_if_needed

@@ -193,6 +193,8 @@ Current lane selection:
   - backward-compatible default for current dev/stage-style behavior
 - `SCALEWORLD_STREAMING_LANE=prod`
   - enables prod issuer and prod signing-key SSM path defaults
+- if `SCALEWORLD_STREAMING_LANE` is missing, startup now falls back to the instance tag:
+  - `ScaleWorldLane=nonprod|prod`
 - explicit env overrides still win when set:
   - `TURN_USER_PARAM`
   - `TURN_CREDENTIAL_PARAM`
