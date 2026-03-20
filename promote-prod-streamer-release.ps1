@@ -327,14 +327,21 @@ try {
         "Promoted at (UTC): $($promotedAtUtc.ToString('o'))"
     ) -join "`n"
 
-    Write-PromotionLog "Creating annotated prod promotion tag '$TagName' for HEAD $headCommit."
-    $tagResult = Invoke-ExternalCapture -FilePath $gitCli -Arguments @('tag', '-a', $TagName, $headCommit, '-m', $annotation)
-    if ($tagResult.ExitCode -ne 0) {
-        if ([string]::IsNullOrWhiteSpace($tagResult.Combined)) {
-            throw "Failed to create git tag '$TagName'."
-        }
+    $annotationPath = [System.IO.Path]::GetTempFileName()
+    try {
+        [System.IO.File]::WriteAllText($annotationPath, $annotation, (New-Object System.Text.UTF8Encoding($false)))
 
-        throw "Failed to create git tag '$TagName'. $($tagResult.Combined)"
+        Write-PromotionLog "Creating annotated prod promotion tag '$TagName' for HEAD $headCommit."
+        $tagResult = Invoke-ExternalCapture -FilePath $gitCli -Arguments @('tag', '-a', $TagName, $headCommit, '-F', $annotationPath)
+        if ($tagResult.ExitCode -ne 0) {
+            if ([string]::IsNullOrWhiteSpace($tagResult.Combined)) {
+                throw "Failed to create git tag '$TagName'."
+            }
+
+            throw "Failed to create git tag '$TagName'. $($tagResult.Combined)"
+        }
+    } finally {
+        Remove-Item -LiteralPath $annotationPath -Force -ErrorAction SilentlyContinue
     }
 
     try {
