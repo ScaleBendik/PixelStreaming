@@ -90,6 +90,10 @@ Current SSM SecureString parameters used by streamer startup:
 - `/pixelstreaming/turn/credential`
 - `/pixelstreaming/connect-ticket/signing-key`
 
+Current SSM String parameter used for prod streamer release pinning:
+
+- `/pixelstreaming/prod/git-target-ref`
+
 Current Azure Key Vault secret used by the API workload in each environment:
 
 - `kv-scaleworld-dev` -> `connect-ticket-signing-key`
@@ -112,7 +116,9 @@ Current note:
   - `SCALEWORLD_GIT_SYNC_MODE=upstream|pinned|off`
   - default `nonprod` behavior: `upstream`
   - default `prod` behavior: `pinned`
-  - `SCALEWORLD_GIT_TARGET_REF=<tag-or-commit>` is required for `pinned`
+  - `SCALEWORLD_GIT_TARGET_REF=<tag-or-commit>` or `SCALEWORLD_GIT_TARGET_REF_PARAM=<ssm-parameter-name>` is required for `pinned`
+  - recommended prod launch-template setting:
+    - `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref`
 
 TURN server cert materials were previously managed via SSM as well (`/turn/*` pattern).
 
@@ -234,6 +240,16 @@ Standard update/start flow on instance:
 1. fetch latest PixelStreaming repo changes
 2. fast-forward pull and `build-all.bat` only when upstream changed
 3. run `start_streamer_stack.bat`
+
+Prod promotion flow:
+
+1. validate the desired PixelStreaming commit on the gold/nonprod baseline
+2. run `promote-prod-streamer-release.ps1` on the gold instance
+3. the script creates an annotated tag using:
+   - `pixelstreaming-prod-ddmmyyyy<letter>`
+4. the script pushes the tag and updates:
+   - `/pixelstreaming/prod/git-target-ref`
+5. prod streamer instances in `pinned` mode resolve their startup ref from that SSM parameter
 
 ### Unreal Update Flow (Current)
 

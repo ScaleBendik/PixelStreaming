@@ -7,7 +7,8 @@ param(
     [string]$PhaseInstanceId = '',
     [string]$BuildingUpdatePhase = '',
     [string]$GitSyncMode = $(if ($env:SCALEWORLD_GIT_SYNC_MODE) { $env:SCALEWORLD_GIT_SYNC_MODE } elseif ($env:SCALEWORLD_STREAMING_LANE -and $env:SCALEWORLD_STREAMING_LANE.Trim().ToLowerInvariant() -eq 'prod') { 'pinned' } else { 'upstream' }),
-    [string]$GitTargetRef = $(if ($env:SCALEWORLD_GIT_TARGET_REF) { $env:SCALEWORLD_GIT_TARGET_REF } else { '' })
+    [string]$GitTargetRef = $(if ($env:SCALEWORLD_GIT_TARGET_REF) { $env:SCALEWORLD_GIT_TARGET_REF } else { '' }),
+    [string]$GitTargetRefParam = $(if ($env:SCALEWORLD_GIT_TARGET_REF_PARAM) { $env:SCALEWORLD_GIT_TARGET_REF_PARAM } else { '' })
 )
 
 Set-StrictMode -Version Latest
@@ -145,6 +146,24 @@ function Get-GitCliPath {
     throw "Git ('git') was not found."
 }
 
+function Get-AwsCliPath {
+    $candidate = Get-Command aws -ErrorAction SilentlyContinue
+    if ($candidate) {
+        return $candidate.Source
+    }
+
+    foreach ($path in @(
+        'C:\Program Files\Amazon\AWSCLIV2\aws.exe',
+        'C:\Program Files\Amazon\AWSCLI\bin\aws.exe'
+    )) {
+        if (Test-Path -LiteralPath $path) {
+            return $path
+        }
+    }
+
+    throw "AWS CLI ('aws') was not found."
+}
+
 function Normalize-GitSyncMode {
     param([string]$Value)
 
@@ -159,6 +178,61 @@ function Normalize-GitSyncMode {
     }
 
     return $normalized
+}
+
+function Resolve-SsmRegion {
+    if (-not [string]::IsNullOrWhiteSpace($env:AWS_REGION)) {
+        return $env:AWS_REGION.Trim()
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:AWS_DEFAULT_REGION)) {
+        return $env:AWS_DEFAULT_REGION.Trim()
+    }
+
+    $token = Invoke-RestMethod -Method Put -Uri 'http://169.254.169.254/latest/api/token' -Headers @{ 'X-aws-ec2-metadata-token-ttl-seconds' = '21600' }
+    return (Invoke-RestMethod -Method Get -Uri 'http://169.254.169.254/latest/meta-data/placement/region' -Headers @{ 'X-aws-ec2-metadata-token' = $token }).Trim()
+}
+
+function Resolve-GitTargetRefValue {
+    param(
+        [string]$ExplicitRef,
+        [string]$TargetRefParam
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitRef)) {
+        return $ExplicitRef.Trim()
+    }
+
+    if ([string]::IsNullOrWhiteSpace($TargetRefParam)) {
+        return ''
+    }
+
+    $awsCli = Get-AwsCliPath
+    $region = Resolve-SsmRegion
+
+    Write-RepoSyncLog "Resolving pinned git target ref from SSM parameter '$TargetRefParam' in region '$region'."
+    $result = Invoke-AwsCliCapture -AwsCli $awsCli -Arguments @(
+        'ssm',
+        'get-parameter',
+        '--region', $region,
+        '--name', $TargetRefParam,
+        '--query', 'Parameter.Value',
+        '--output', 'text'
+    )
+    if ($result.ExitCode -ne 0) {
+        if ([string]::IsNullOrWhiteSpace($result.Combined)) {
+            throw "Failed to resolve pinned git target ref from SSM parameter '$TargetRefParam'."
+        }
+
+        throw "Failed to resolve pinned git target ref from SSM parameter '$TargetRefParam'. $($result.Combined)"
+    }
+
+    $resolved = ($result.StdOut | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($resolved)) {
+        throw "SSM parameter '$TargetRefParam' did not contain a pinned git target ref."
+    }
+
+    return $resolved
 }
 
 function Resolve-CommitFromRef {
@@ -183,7 +257,7 @@ if (-not (Test-Path -LiteralPath $buildScript)) {
 $buildStampPath = Join-Path $RepoRoot 'SignallingWebServer\state\repo-build-head.txt'
 $wilburDistPath = Join-Path $RepoRoot 'SignallingWebServer\dist\index.js'
 $gitSyncModeNormalized = Normalize-GitSyncMode -Value $GitSyncMode
-$gitTargetRefNormalized = if ([string]::IsNullOrWhiteSpace($GitTargetRef)) { '' } else { $GitTargetRef.Trim() }
+$gitTargetRefNormalized = Resolve-GitTargetRefValue -ExplicitRef $GitTargetRef -TargetRefParam $GitTargetRefParam
 
 function Get-BuildStamp {
     param([string]$Path)
@@ -278,7 +352,7 @@ try {
         }
         'pinned' {
             if ([string]::IsNullOrWhiteSpace($gitTargetRefNormalized)) {
-                throw 'Pinned git sync mode requires SCALEWORLD_GIT_TARGET_REF.'
+                throw 'Pinned git sync mode requires SCALEWORLD_GIT_TARGET_REF or SCALEWORLD_GIT_TARGET_REF_PARAM.'
             }
 
             Write-RepoSyncLog "Fetching PixelStreaming repo before resolving pinned ref '$gitTargetRefNormalized'."
