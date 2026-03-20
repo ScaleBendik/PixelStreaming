@@ -19,7 +19,7 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($LedgerPath)) {
-    $LedgerPath = Join-Path $scriptRoot 'Docs\prod-promotions.md'
+    $LedgerPath = Join-Path $scriptRoot 'Docs\prod-promotions.local.md'
 }
 
 function Write-PromotionLog {
@@ -243,7 +243,9 @@ function Ensure-LedgerFile {
     $header = @(
         '# Prod Streamer Promotions',
         '',
-        'Canonical promotion log for the SSM-backed prod streamer target ref.',
+        'Local promotion log for the SSM-backed prod streamer target ref.',
+        '',
+        'This file is intentionally untracked so gold-instance promotions do not block future pulls.',
         '',
         '| PromotedAtUtc | Tag | Commit | Region | SSM Parameter | SourceMachine | Notes |',
         '| --- | --- | --- | --- | --- | --- | --- |'

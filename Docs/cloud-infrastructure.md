@@ -256,7 +256,10 @@ Prod promotion flow:
    - `pixelstreaming-prod-ddmmyyyy<letter>`
 4. the script pushes the tag and updates:
    - `/pixelstreaming/prod/git-target-ref`
-5. prod streamer instances in `pinned` mode resolve their startup ref from that SSM parameter
+5. the script records the promotion in:
+   - `Docs/prod-promotions.local.md`
+   - this file is intentionally untracked on gold so promotions do not block future pulls
+6. prod streamer instances in `pinned` mode resolve their startup ref from that SSM parameter
 
 ### Unreal Update Flow (Current)
 
