@@ -1,17 +1,26 @@
 [CmdletBinding()]
 param(
-    [string]$RepoRoot = $(Resolve-Path $PSScriptRoot).Path,
+    [string]$RepoRoot = '',
     [string]$RemoteName = 'origin',
     [string]$Region = '',
     [string]$TargetRefParameterName = '/pixelstreaming/prod/git-target-ref',
     [string]$TagName = '',
     [datetime]$PromotionDate = (Get-Date),
-    [string]$LedgerPath = $(Join-Path $PSScriptRoot 'Docs\prod-promotions.md'),
+    [string]$LedgerPath = '',
     [string]$Notes = ''
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    $RepoRoot = $scriptRoot
+}
+
+if ([string]::IsNullOrWhiteSpace($LedgerPath)) {
+    $LedgerPath = Join-Path $scriptRoot 'Docs\prod-promotions.md'
+}
 
 function Write-PromotionLog {
     param(
