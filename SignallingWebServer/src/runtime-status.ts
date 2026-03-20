@@ -156,7 +156,8 @@ export function createRuntimeStatusPublisher(
     );
     const defaultVersion = normalizeTagValue(options.version ?? process.env.RUNTIME_STATUS_VERSION ?? '');
     let identityPromise: Promise<{ instanceId: string; region: string }> | null = null;
-    let lastPublishedStatus: string | null = null;
+    let desiredStatus: string | null = null;
+    let publishQueue: Promise<void> = Promise.resolve();
 
     const resolveIdentity = async (): Promise<{ instanceId: string; region: string }> => {
         if (!identityPromise) {
@@ -183,69 +184,87 @@ export function createRuntimeStatusPublisher(
             const preserveStatusAtUtc = update.preserveStatusAtUtc === true;
             const preservesCurrentStatusTimestamp = preserveStatusAtUtc && !heartbeatOnly;
 
-            if (heartbeatOnly && lastPublishedStatus && normalizedStatus !== lastPublishedStatus) {
+            if (!heartbeatOnly || preservesCurrentStatusTimestamp) {
+                desiredStatus = normalizedStatus;
+            }
+
+            if (heartbeatOnly && desiredStatus && normalizedStatus !== desiredStatus) {
                 log(
-                    `[runtime-status] Ignoring stale heartbeat for status='${normalizedStatus}' while current status='${lastPublishedStatus}'.`
+                    `[runtime-status] Ignoring stale heartbeat for status='${normalizedStatus}' while current status='${desiredStatus}'.`
                 );
                 return false;
             }
 
-            try {
-                const { instanceId, region } = await resolveIdentity();
-                const nowIso = new Date().toISOString();
-                const tags: Array<{ Key: string; Value: string }> = [
-                    { Key: 'ScaleWorldRuntimeStatus', Value: normalizedStatus },
-                    { Key: 'ScaleWorldRuntimeStatusHeartbeatAtUtc', Value: nowIso },
-                    {
-                        Key: 'ScaleWorldRuntimeStatusSource',
-                        Value: normalizeTagValue(update.source ?? defaultSource)
-                    },
-                    { Key: 'ScaleWorldRuntimeStatusReason', Value: normalizeTagValue(update.reason) },
-                    {
-                        Key: 'ScaleWorldRuntimeStatusVersion',
-                        Value: normalizeTagValue(update.version ?? defaultVersion)
-                    }
-                ];
-                if (!heartbeatOnly && !preservesCurrentStatusTimestamp) {
-                    tags.splice(1, 0, { Key: 'ScaleWorldRuntimeStatusAtUtc', Value: nowIso });
+            const previousPublish = publishQueue.catch(() => undefined);
+            const publishTask = previousPublish.then(async () => {
+                if (heartbeatOnly && desiredStatus && normalizedStatus !== desiredStatus) {
+                    log(
+                        `[runtime-status] Ignoring stale heartbeat for status='${normalizedStatus}' while current status='${desiredStatus}'.`
+                    );
+                    return false;
                 }
-                const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sw-runtime-status-'));
-                const tagPayloadPath = path.join(tempDir, 'tags.json');
-                const tagPayloadUri = toAwsCliParamFileUri(tagPayloadPath);
-                const args = [
-                    'ec2',
-                    'create-tags',
-                    '--region',
-                    region,
-                    '--resources',
-                    instanceId,
-                    '--tags',
-                    tagPayloadUri
-                ];
+
                 try {
-                    await fs.promises.writeFile(tagPayloadPath, JSON.stringify(tags), 'utf8');
-                    await execFileAsync(awsCliPath, args, { windowsHide: true });
-                } finally {
-                    await fs.promises.rm(tempDir, { recursive: true, force: true });
+                    const { instanceId, region } = await resolveIdentity();
+                    const nowIso = new Date().toISOString();
+                    const tags: Array<{ Key: string; Value: string }> = [
+                        { Key: 'ScaleWorldRuntimeStatus', Value: normalizedStatus },
+                        { Key: 'ScaleWorldRuntimeStatusHeartbeatAtUtc', Value: nowIso },
+                        {
+                            Key: 'ScaleWorldRuntimeStatusSource',
+                            Value: normalizeTagValue(update.source ?? defaultSource)
+                        },
+                        { Key: 'ScaleWorldRuntimeStatusReason', Value: normalizeTagValue(update.reason) },
+                        {
+                            Key: 'ScaleWorldRuntimeStatusVersion',
+                            Value: normalizeTagValue(update.version ?? defaultVersion)
+                        }
+                    ];
+                    if (!heartbeatOnly && !preservesCurrentStatusTimestamp) {
+                        tags.splice(1, 0, { Key: 'ScaleWorldRuntimeStatusAtUtc', Value: nowIso });
+                    }
+                    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sw-runtime-status-'));
+                    const tagPayloadPath = path.join(tempDir, 'tags.json');
+                    const tagPayloadUri = toAwsCliParamFileUri(tagPayloadPath);
+                    const args = [
+                        'ec2',
+                        'create-tags',
+                        '--region',
+                        region,
+                        '--resources',
+                        instanceId,
+                        '--tags',
+                        tagPayloadUri
+                    ];
+                    try {
+                        await fs.promises.writeFile(tagPayloadPath, JSON.stringify(tags), 'utf8');
+                        await execFileAsync(awsCliPath, args, { windowsHide: true });
+                    } finally {
+                        await fs.promises.rm(tempDir, { recursive: true, force: true });
+                    }
+                    log(
+                        `[runtime-status] Published status='${normalizedStatus}'${
+                            heartbeatOnly
+                                ? ' heartbeat'
+                                : preservesCurrentStatusTimestamp
+                                  ? ' (preserved status timestamp)'
+                                  : ''
+                        } for ${instanceId} (${region}).`
+                    );
+                    return true;
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    log(`[runtime-status] Failed to publish status '${update.status}': ${message}`);
+                    return false;
                 }
-                if (!heartbeatOnly || preservesCurrentStatusTimestamp) {
-                    lastPublishedStatus = normalizedStatus;
-                }
-                log(
-                    `[runtime-status] Published status='${normalizedStatus}'${
-                        heartbeatOnly
-                            ? ' heartbeat'
-                            : preservesCurrentStatusTimestamp
-                              ? ' (preserved status timestamp)'
-                              : ''
-                    } for ${instanceId} (${region}).`
-                );
-                return true;
-            } catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
-                log(`[runtime-status] Failed to publish status '${update.status}': ${message}`);
-                return false;
-            }
+            });
+
+            publishQueue = publishTask.then(
+                () => undefined,
+                () => undefined
+            );
+
+            return publishTask;
         }
     };
 }
