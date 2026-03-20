@@ -27,7 +27,7 @@ param(
     [string]$StreamerHealthMaxStaleSeconds = $(if ($env:WATCHDOG_STREAMER_HEALTH_MAX_STALE_SECONDS) { $env:WATCHDOG_STREAMER_HEALTH_MAX_STALE_SECONDS } else { '75' }),
     [string]$StreamerHealthStartupGraceSeconds = $(if ($env:WATCHDOG_STREAMER_HEALTH_STARTUP_GRACE_SECONDS) { $env:WATCHDOG_STREAMER_HEALTH_STARTUP_GRACE_SECONDS } else { '120' }),
     [string]$ProvisioningStreamerHealthStartupGraceSeconds = $(if ($env:WATCHDOG_PROVISIONING_STREAMER_HEALTH_STARTUP_GRACE_SECONDS) { $env:WATCHDOG_PROVISIONING_STREAMER_HEALTH_STARTUP_GRACE_SECONDS } else { '3600' }),
-    [string]$ProvisioningStreamerConnectTimeoutSeconds = $(if ($env:WATCHDOG_PROVISIONING_STREAMER_CONNECT_TIMEOUT_SECONDS) { $env:WATCHDOG_PROVISIONING_STREAMER_CONNECT_TIMEOUT_SECONDS } else { '900' }),
+    [string]$ProvisioningStreamerConnectTimeoutSeconds = $(if ($env:WATCHDOG_PROVISIONING_STREAMER_CONNECT_TIMEOUT_SECONDS) { $env:WATCHDOG_PROVISIONING_STREAMER_CONNECT_TIMEOUT_SECONDS } else { '960' }),
     [string]$ProvisioningMaxRecoveryRestarts = $(if ($env:WATCHDOG_PROVISIONING_MAX_RECOVERY_RESTARTS) { $env:WATCHDOG_PROVISIONING_MAX_RECOVERY_RESTARTS } else { '1' }),
     [string]$UpdateStreamerHealthStartupGraceSeconds = $(if ($env:WATCHDOG_UPDATE_STREAMER_HEALTH_STARTUP_GRACE_SECONDS) { $env:WATCHDOG_UPDATE_STREAMER_HEALTH_STARTUP_GRACE_SECONDS } else { '3600' }),
     [string]$UpdateStreamerConnectTimeoutSeconds = $(if ($env:WATCHDOG_UPDATE_STREAMER_CONNECT_TIMEOUT_SECONDS) { $env:WATCHDOG_UPDATE_STREAMER_CONNECT_TIMEOUT_SECONDS } else { '2700' }),
@@ -616,7 +616,7 @@ $streamerHealthEnabledValue = ConvertTo-Bool -Value $StreamerHealthEnabled -Defa
 $streamerHealthMaxStaleSecondsValue = ConvertTo-PositiveInt -Value $StreamerHealthMaxStaleSeconds -Default 75 -Name 'StreamerHealthMaxStaleSeconds'
 $streamerHealthStartupGraceSecondsValue = ConvertTo-PositiveInt -Value $StreamerHealthStartupGraceSeconds -Default 120 -Name 'StreamerHealthStartupGraceSeconds'
 $provisioningStreamerHealthStartupGraceSecondsValue = ConvertTo-PositiveInt -Value $ProvisioningStreamerHealthStartupGraceSeconds -Default 3600 -Name 'ProvisioningStreamerHealthStartupGraceSeconds'
-$provisioningStreamerConnectTimeoutSecondsValue = ConvertTo-PositiveInt -Value $ProvisioningStreamerConnectTimeoutSeconds -Default 900 -Name 'ProvisioningStreamerConnectTimeoutSeconds'
+$provisioningStreamerConnectTimeoutSecondsValue = ConvertTo-PositiveInt -Value $ProvisioningStreamerConnectTimeoutSeconds -Default 960 -Name 'ProvisioningStreamerConnectTimeoutSeconds'
 $provisioningMaxRecoveryRestartsValue = ConvertTo-PositiveInt -Value $ProvisioningMaxRecoveryRestarts -Default 1 -Name 'ProvisioningMaxRecoveryRestarts'
 $updateStreamerHealthStartupGraceSecondsValue = ConvertTo-PositiveInt -Value $UpdateStreamerHealthStartupGraceSeconds -Default 3600 -Name 'UpdateStreamerHealthStartupGraceSeconds'
 $updateStreamerConnectTimeoutSecondsValue = ConvertTo-PositiveInt -Value $UpdateStreamerConnectTimeoutSeconds -Default 2700 -Name 'UpdateStreamerConnectTimeoutSeconds'

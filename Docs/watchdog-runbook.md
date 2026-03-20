@@ -108,6 +108,7 @@ Default behavior from `start_watchdog.bat`:
 - streamer health stale threshold: `75s`
 - streamer health startup grace: `120s`
 - provisioning streamer health startup grace: `3600s`
+- provisioning streamer connect timeout: `960s`
 - maintenance mode refresh: `60s`
 - Unreal CPU stall confirmation: enabled
 - Unreal CPU minimum delta: `0.001s`
