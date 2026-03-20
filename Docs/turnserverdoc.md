@@ -233,17 +233,17 @@ Fail-fast behavior:
 From repo root (`C:\PixelStreaming\PixelStreaming`), use the helper scripts:
 
 ```bat
-pull-latest.bat
-build-all.bat
+BuildScripts\pull-latest.bat
+BuildScripts\build-all.bat
 ```
 
 PowerShell alternative:
 
 ```powershell
-.\build-all.ps1
+.\BuildScripts\build-all.ps1
 ```
 
-`build-all.ps1` executes build in required order:
+`BuildScripts\build-all.ps1` executes build in required order:
 
 1. `Common`
 2. `Signalling`
@@ -272,7 +272,7 @@ Host github-pixelstreaming
 git@github-pixelstreaming:ScaleBendik/PixelStreaming.git
 ```
 
-4. Pull with `pull-latest.bat`.
+4. Pull with `BuildScripts\pull-latest.bat`.
 
 ## Validation Checklist
 

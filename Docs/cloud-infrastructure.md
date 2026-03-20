@@ -230,21 +230,26 @@ The watchdog now has a defined restart path through the stack launcher, but full
 
 Repo root helpers:
 
-- `pull-latest.bat`: fetch + fast-forward pull current branch
-- `build-all.ps1`: build Common -> Signalling -> SignallingWebServer
-- `build-all.bat`: wrapper for `build-all.ps1`
+- `BuildScripts/pull-latest.bat`: fetch + fast-forward pull current branch
+- `BuildScripts/build-all.ps1`: build Common -> Signalling -> SignallingWebServer
+- `BuildScripts/build-all.bat`: wrapper for `BuildScripts/build-all.ps1`
+- `BuildScripts/promote-prod-streamer-release.bat`: wrapper for prod promotion/tagging
 - `SWupdate.ps1`: staged Unreal updater with explicit ZIP-key targeting and rollback
+
+Compatibility note:
+
+- root-level `build-all.*` and `pull-latest.bat` wrappers remain for backward compatibility, but operator use should prefer `BuildScripts/`
 
 Standard update/start flow on instance:
 
 1. fetch latest PixelStreaming repo changes
-2. fast-forward pull and `build-all.bat` only when upstream changed
+2. fast-forward pull and `BuildScripts/build-all.bat` only when upstream changed
 3. run `start_streamer_stack.bat`
 
 Prod promotion flow:
 
 1. validate the desired PixelStreaming commit on the gold/nonprod baseline
-2. run `promote-prod-streamer-release.ps1` on the gold instance
+2. run `BuildScripts/promote-prod-streamer-release.bat` on the gold instance
 3. the script creates an annotated tag using:
    - `pixelstreaming-prod-ddmmyyyy<letter>`
 4. the script pushes the tag and updates:
@@ -273,14 +278,14 @@ Manual and maintenance-mode helpers:
 `start_streamer_stack.bat` now checks instance maintenance tags before normal startup.
 
 - If `ScaleWorldMaintenanceMode=update`, the instance runs the update path first instead of launching Wilbur/Unreal for user traffic.
-- If `ScaleWorldMaintenanceMode=provisioning`, the instance runs a bounded provisioning bootstrap first. That bootstrap waits for fresh-launch prerequisites, syncs the PixelStreaming repo if upstream changed, runs `build-all.bat` when needed, and then continues into normal Wilbur/Unreal startup. This keeps normal restarts fast while making new launches self-healing even if the AMI repo is behind or Windows networking is not ready at the first scheduler tick.
+- If `ScaleWorldMaintenanceMode=provisioning`, the instance runs a bounded provisioning bootstrap first. That bootstrap waits for fresh-launch prerequisites, syncs the PixelStreaming repo if upstream changed, runs `BuildScripts/build-all.bat` when needed, and then continues into normal Wilbur/Unreal startup. This keeps normal restarts fast while making new launches self-healing even if the AMI repo is behind or Windows networking is not ready at the first scheduler tick.
 
 During maintenance-mode updates, `invoke_update_mode.ps1` also syncs the PixelStreaming repo before running `SWupdate.ps1`:
 
 1. `git fetch --prune`
 2. compare `HEAD` with the configured upstream branch
 3. if upstream changed and there are no tracked local edits, run `git pull --ff-only`
-4. run `build-all.bat`
+4. run `BuildScripts/build-all.bat`
 5. continue with the Unreal update sequence
 
 If tracked local changes exist in the repo, the maintenance update fails fast instead of overwriting instance-local edits.
