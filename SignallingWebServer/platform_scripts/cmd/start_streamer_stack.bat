@@ -163,10 +163,11 @@ exit /b 0
 :resolve_streaming_lane_from_instance_tag
 set "RESOLVED_STREAMING_LANE="
 set /a STREAMING_LANE_TAG_ATTEMPT=0
+set "RESOLVE_STREAMING_LANE_SCRIPT=%SCRIPT_DIR%..\powershell\resolve_streaming_lane_from_instance_tag.ps1"
 
 :resolve_streaming_lane_retry
 set /a STREAMING_LANE_TAG_ATTEMPT+=1
-for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { $aws = $null; $candidate = Get-Command aws -ErrorAction SilentlyContinue; if ($candidate) { $aws = $candidate.Source } elseif (Test-Path 'C:\Program Files\Amazon\AWSCLIV2\aws.exe') { $aws = 'C:\Program Files\Amazon\AWSCLIV2\aws.exe' } elseif (Test-Path 'C:\Program Files\Amazon\AWSCLI\bin\aws.exe') { $aws = 'C:\Program Files\Amazon\AWSCLI\bin\aws.exe' }; if (-not $aws) { return }; $token = Invoke-RestMethod -Method Put -Uri 'http://169.254.169.254/latest/api/token' -Headers @{'X-aws-ec2-metadata-token-ttl-seconds'='21600'}; $instanceId = (Invoke-RestMethod -Method Get -Uri 'http://169.254.169.254/latest/meta-data/instance-id' -Headers @{'X-aws-ec2-metadata-token'=$token}).Trim(); $region = (Invoke-RestMethod -Method Get -Uri 'http://169.254.169.254/latest/meta-data/placement/region' -Headers @{'X-aws-ec2-metadata-token'=$token}).Trim(); $json = & $aws ec2 describe-tags --region $region --filters \"Name=resource-id,Values=$instanceId\" 'Name=key,Values=ScaleWorldLane,ScaleWorldlane' --output json; if ($LASTEXITCODE -ne 0) { return }; $doc = $json | ConvertFrom-Json -ErrorAction Stop; $value = $doc.Tags | Select-Object -First 1 -ExpandProperty Value; if (-not [string]::IsNullOrWhiteSpace($value)) { Write-Output $value.Trim().ToLowerInvariant() } } catch { }"` ) do (
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%RESOLVE_STREAMING_LANE_SCRIPT%"`) do (
   set "RESOLVED_STREAMING_LANE=%%I"
 )
 
