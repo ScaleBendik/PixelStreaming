@@ -3,7 +3,10 @@ setlocal
 
 set "ROOT=C:\PixelStreaming\PixelStreaming\SignallingWebServer"
 set "REGION=eu-north-1"
+if not defined STREAMING_LANE_TAG_RETRY_COUNT set "STREAMING_LANE_TAG_RETRY_COUNT=12"
+if not defined STREAMING_LANE_TAG_RETRY_DELAY_SECONDS set "STREAMING_LANE_TAG_RETRY_DELAY_SECONDS=5"
 call :resolve_streaming_lane_from_instance_tag
+if defined RESOLVED_STREAMING_LANE set "SCALEWORLD_STREAMING_LANE=%RESOLVED_STREAMING_LANE%"
 if not defined SCALEWORLD_STREAMING_LANE set "SCALEWORLD_STREAMING_LANE=nonprod"
 if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" goto apply_streaming_lane_prod
 if /i "%SCALEWORLD_STREAMING_LANE%"=="nonprod" goto apply_streaming_lane_nonprod
@@ -222,9 +225,22 @@ call start.bat -- ^
 exit /b %errorlevel%
 
 :resolve_streaming_lane_from_instance_tag
-for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { $aws = $null; $candidate = Get-Command aws -ErrorAction SilentlyContinue; if ($candidate) { $aws = $candidate.Source } elseif (Test-Path 'C:\Program Files\Amazon\AWSCLIV2\aws.exe') { $aws = 'C:\Program Files\Amazon\AWSCLIV2\aws.exe' } elseif (Test-Path 'C:\Program Files\Amazon\AWSCLI\bin\aws.exe') { $aws = 'C:\Program Files\Amazon\AWSCLI\bin\aws.exe' }; if (-not $aws) { return }; $token = Invoke-RestMethod -Method Put -Uri 'http://169.254.169.254/latest/api/token' -Headers @{'X-aws-ec2-metadata-token-ttl-seconds'='21600'}; $instanceId = (Invoke-RestMethod -Method Get -Uri 'http://169.254.169.254/latest/meta-data/instance-id' -Headers @{'X-aws-ec2-metadata-token'=$token}).Trim(); $region = (Invoke-RestMethod -Method Get -Uri 'http://169.254.169.254/latest/meta-data/placement/region' -Headers @{'X-aws-ec2-metadata-token'=$token}).Trim(); $json = & $aws ec2 describe-tags --region $region --filters \"Name=resource-id,Values=$instanceId\" 'Name=key,Values=ScaleWorldLane,ScaleWorldlane' --output json; if ($LASTEXITCODE -ne 0) { return }; $doc = $json | ConvertFrom-Json -ErrorAction Stop; $value = @($doc.Tags | Select-Object -First 1 -ExpandProperty Value); if (-not [string]::IsNullOrWhiteSpace($value)) { Write-Output $value.Trim().ToLowerInvariant() } } catch { }"` ) do (
-  set "SCALEWORLD_STREAMING_LANE=%%I"
+set "RESOLVED_STREAMING_LANE="
+set /a STREAMING_LANE_TAG_ATTEMPT=0
+
+:resolve_streaming_lane_retry
+set /a STREAMING_LANE_TAG_ATTEMPT+=1
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { $aws = $null; $candidate = Get-Command aws -ErrorAction SilentlyContinue; if ($candidate) { $aws = $candidate.Source } elseif (Test-Path 'C:\Program Files\Amazon\AWSCLIV2\aws.exe') { $aws = 'C:\Program Files\Amazon\AWSCLIV2\aws.exe' } elseif (Test-Path 'C:\Program Files\Amazon\AWSCLI\bin\aws.exe') { $aws = 'C:\Program Files\Amazon\AWSCLI\bin\aws.exe' }; if (-not $aws) { return }; $token = Invoke-RestMethod -Method Put -Uri 'http://169.254.169.254/latest/api/token' -Headers @{'X-aws-ec2-metadata-token-ttl-seconds'='21600'}; $instanceId = (Invoke-RestMethod -Method Get -Uri 'http://169.254.169.254/latest/meta-data/instance-id' -Headers @{'X-aws-ec2-metadata-token'=$token}).Trim(); $region = (Invoke-RestMethod -Method Get -Uri 'http://169.254.169.254/latest/meta-data/placement/region' -Headers @{'X-aws-ec2-metadata-token'=$token}).Trim(); $json = & $aws ec2 describe-tags --region $region --filters \"Name=resource-id,Values=$instanceId\" 'Name=key,Values=ScaleWorldLane,ScaleWorldlane' --output json; if ($LASTEXITCODE -ne 0) { return }; $doc = $json | ConvertFrom-Json -ErrorAction Stop; $value = $doc.Tags | Select-Object -First 1 -ExpandProperty Value; if (-not [string]::IsNullOrWhiteSpace($value)) { Write-Output $value.Trim().ToLowerInvariant() } } catch { }"` ) do (
+  set "RESOLVED_STREAMING_LANE=%%I"
 )
+
+if defined RESOLVED_STREAMING_LANE exit /b 0
+if %STREAMING_LANE_TAG_ATTEMPT% geq %STREAMING_LANE_TAG_RETRY_COUNT% exit /b 0
+
+echo WARNING: Failed to resolve ScaleWorldLane instance tag on attempt %STREAMING_LANE_TAG_ATTEMPT% of %STREAMING_LANE_TAG_RETRY_COUNT%.
+echo WARNING: Retrying in %STREAMING_LANE_TAG_RETRY_DELAY_SECONDS% seconds before falling back to default lane.
+timeout /t %STREAMING_LANE_TAG_RETRY_DELAY_SECONDS% /nobreak >nul
+goto resolve_streaming_lane_retry
 
 exit /b 0
 
