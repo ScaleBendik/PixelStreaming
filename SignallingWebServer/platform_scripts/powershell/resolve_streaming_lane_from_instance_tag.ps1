@@ -20,6 +20,25 @@ function Get-AwsCliPath {
     return $null
 }
 
+function Get-InstanceRegion {
+    $envCandidates = @(
+        $env:SCALEWORLD_AWS_REGION,
+        $env:AWS_REGION,
+        $env:AWS_DEFAULT_REGION
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+    if ($envCandidates.Count -gt 0) {
+        return $envCandidates[0].Trim()
+    }
+
+    $identityDocument = Invoke-RestMethod -Method Get -Uri 'http://169.254.169.254/latest/dynamic/instance-identity/document'
+    if ($identityDocument -and -not [string]::IsNullOrWhiteSpace($identityDocument.region)) {
+        return $identityDocument.region.Trim()
+    }
+
+    return $null
+}
+
 try {
     $aws = Get-AwsCliPath
     if (-not $aws) {
@@ -32,9 +51,10 @@ try {
     $instanceId = (Invoke-RestMethod -Method Get -Uri 'http://169.254.169.254/latest/meta-data/instance-id' -Headers @{
         'X-aws-ec2-metadata-token' = $token
     }).Trim()
-    $region = (Invoke-RestMethod -Method Get -Uri 'http://169.254.169.254/latest/meta-data/placement/region' -Headers @{
-        'X-aws-ec2-metadata-token' = $token
-    }).Trim()
+    $region = Get-InstanceRegion
+    if ([string]::IsNullOrWhiteSpace($region)) {
+        return
+    }
 
     $tagValue = & $aws ec2 describe-tags `
         --region $region `
