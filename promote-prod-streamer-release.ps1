@@ -141,6 +141,17 @@ function Invoke-GitText {
     return $result.StdOut
 }
 
+function Get-CurrentBranchName {
+    param([string]$GitCli)
+
+    $branch = Invoke-GitText -GitCli $GitCli -Arguments @('rev-parse', '--abbrev-ref', 'HEAD') -ErrorMessage 'Failed to resolve current git branch.'
+    if ([string]::IsNullOrWhiteSpace($branch) -or $branch -eq 'HEAD') {
+        throw 'Prod promotion must run from a checked-out branch, not a detached HEAD.'
+    }
+
+    return $branch.Trim()
+}
+
 function Get-RepoRelativePath {
     param(
         [string]$RepoRoot,
@@ -308,7 +319,14 @@ try {
         throw "Failed to fetch tags from remote '$RemoteName'. $($fetchResult.Combined)"
     }
 
+    $currentBranch = Get-CurrentBranchName -GitCli $gitCli
+    $remoteBranchRef = "refs/remotes/$RemoteName/$currentBranch"
+    $remoteBranchCommit = Invoke-GitText -GitCli $gitCli -Arguments @('rev-parse', '--verify', '--quiet', $remoteBranchRef) -ErrorMessage "Failed to resolve remote branch '$RemoteName/$currentBranch'."
     $headCommit = Invoke-GitText -GitCli $gitCli -Arguments @('rev-parse', 'HEAD') -ErrorMessage 'Failed to resolve current HEAD commit.'
+    if ($headCommit.Trim() -ne $remoteBranchCommit.Trim()) {
+        throw "Refusing to promote from local commit '$headCommit' because it does not match '$RemoteName/$currentBranch' ('$remoteBranchCommit'). Run BuildScripts\\pull-latest.bat on the correct gold branch before promoting."
+    }
+
     if ([string]::IsNullOrWhiteSpace($TagName)) {
         $TagName = Get-NextPromotionTagName -GitCli $gitCli -Date $PromotionDate
     }
