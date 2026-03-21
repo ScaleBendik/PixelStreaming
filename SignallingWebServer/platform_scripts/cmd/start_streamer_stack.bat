@@ -23,6 +23,13 @@ if not defined SCALEWORLD_GIT_SYNC_MODE (
   )
 )
 if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" if not defined SCALEWORLD_GIT_TARGET_REF_PARAM set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref"
+if not defined STACK_ENABLE_BOOT_GIT_SYNC (
+  if /i "%SCALEWORLD_GIT_SYNC_MODE%"=="pinned" (
+    set "STACK_ENABLE_BOOT_GIT_SYNC=true"
+  ) else (
+    set "STACK_ENABLE_BOOT_GIT_SYNC=false"
+  )
+)
 if not defined STACK_LAUNCH_UNREAL_BEFORE_WILBUR set "STACK_LAUNCH_UNREAL_BEFORE_WILBUR=true"
 if not defined STACK_PREPARE_DATA_DRIVE set "STACK_PREPARE_DATA_DRIVE=true"
 if not defined STACK_REQUIRE_DATA_DRIVE set "STACK_REQUIRE_DATA_DRIVE=false"
@@ -59,6 +66,11 @@ if not defined WATCHDOG_RESTART_COMMAND set "WATCHDOG_RESTART_COMMAND=""%SCRIPT_
 if not defined WATCHDOG_TERMINATE_MATCHED_PROCESSES set "WATCHDOG_TERMINATE_MATCHED_PROCESSES=true"
 
 if /i "%STACK_MODE%"=="recovery" set "STACK_RUN_UNREAL_UPDATE_CHECK=false"
+
+if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_BOOT_GIT_SYNC%"=="true" (
+  call :sync_repo_before_stack
+  if errorlevel 1 exit /b 1
+)
 
 if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_UPDATE_MODE%"=="true" (
   if exist "%UPDATE_MODE_SCRIPT%" (
@@ -158,6 +170,23 @@ if /i "%STACK_START_WATCHDOG%"=="true" (
 )
 
 echo Stack launch completed.
+exit /b 0
+
+:sync_repo_before_stack
+set "REPO_SYNC_SCRIPT=%SCRIPT_DIR%..\powershell\ensure_repo_current.ps1"
+
+if not exist "%REPO_SYNC_SCRIPT%" (
+  echo ERROR: Repo sync helper not found at "%REPO_SYNC_SCRIPT%".
+  exit /b 1
+)
+
+echo Applying git sync mode "%SCALEWORLD_GIT_SYNC_MODE%" before normal startup...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%REPO_SYNC_SCRIPT%" -RepoRoot "%PIXELSTREAMING_ROOT%" -Mode "startup"
+if errorlevel 1 (
+  echo ERROR: Boot-time repo sync failed.
+  exit /b 1
+)
+
 exit /b 0
 
 :resolve_streaming_lane_from_instance_tag
