@@ -1,6 +1,6 @@
 ﻿# ScaleWorld Cloud Infrastructure (Source of Truth)
 
-Last updated: 2026-03-19
+Last updated: 2026-03-21
 Owner: ScaleWorld Platform
 
 ## Purpose
@@ -89,6 +89,7 @@ Current SSM SecureString parameters used by streamer startup:
 - `/pixelstreaming/turn/username`
 - `/pixelstreaming/turn/credential`
 - `/pixelstreaming/connect-ticket/signing-key`
+- `/pixelstreaming/prod/connect-ticket/signing-key`
 
 Current SSM String parameter used for prod streamer release pinning:
 
@@ -102,7 +103,7 @@ Current Azure Key Vault secret used by the API workload in each environment:
 
 Current note:
 - `dev` and `stage` intentionally still share the same active connect-ticket signer on the streamer side
-- `prod` secret is prepared, but old prod runtime is not yet active on ticketed connect
+- prod streamer dark-launch validation now succeeds end to end with the prod lane defaults plus manual ALB dark-route setup and a manual prod-shaped connect ticket, but live prod traffic is not yet cut over to the prod lane
 - streamer startup is now lane-aware through `SCALEWORLD_STREAMING_LANE=nonprod|prod`
 - current bootstrap defaults are:
   - `nonprod` -> SSM `/pixelstreaming/connect-ticket/signing-key`, issuer `scaleworld-dev-connect-ticket`
@@ -119,6 +120,8 @@ Current note:
   - `SCALEWORLD_GIT_TARGET_REF=<tag-or-commit>` or `SCALEWORLD_GIT_TARGET_REF_PARAM=<ssm-parameter-name>` is required for `pinned`
   - recommended prod launch-template setting:
     - `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref`
+  - normal prod boot through `start_streamer_stack.bat` now applies pinned repo sync before the stack launch
+  - if the AMI repo/build baseline is behind the promoted prod tag, first boot may spend several minutes in repo reset + `BuildScripts/build-all.bat` before Wilbur starts
 
 TURN server cert materials were previously managed via SSM as well (`/turn/*` pattern).
 
@@ -128,6 +131,10 @@ Streamer/TURN instance role must currently support:
 
 - SSM parameter retrieval with decryption in `eu-north-1`
 - `ec2:CreateTags` for the approved `ScaleWorldRuntime*` tag keys on self
+
+Gold/promotion operator context must also support:
+
+- `ssm:PutParameter` on `/pixelstreaming/prod/git-target-ref`
 
 ## Pixel Streaming Runtime Configuration
 
@@ -189,12 +196,16 @@ Current startup flow:
 
 Current lane selection:
 
-- `SCALEWORLD_STREAMING_LANE=nonprod`
-  - backward-compatible default for current dev/stage-style behavior
-- `SCALEWORLD_STREAMING_LANE=prod`
-  - enables prod issuer and prod signing-key SSM path defaults
-- if `SCALEWORLD_STREAMING_LANE` is missing, startup now falls back to the instance tag:
+- startup first tries to resolve the instance tag:
   - `ScaleWorldLane=nonprod|prod`
+- temporary migration compatibility also accepts the typo:
+  - `ScaleWorldlane=nonprod|prod`
+- if the instance tag resolves successfully, that value overrides any stale inherited machine `SCALEWORLD_STREAMING_LANE`
+- if no lane tag is available, startup still supports:
+  - `SCALEWORLD_STREAMING_LANE=nonprod`
+  - `SCALEWORLD_STREAMING_LANE=prod`
+- if neither tag nor env is available, startup falls back to:
+  - `nonprod`
 - explicit env overrides still win when set:
   - `TURN_USER_PARAM`
   - `TURN_CREDENTIAL_PARAM`
@@ -248,18 +259,27 @@ Standard update/start flow on instance:
 2. fast-forward pull and `BuildScripts/build-all.bat` only when upstream changed
 3. run `start_streamer_stack.bat`
 
+Current prod startup note:
+
+1. prod launch normally relies on the AMI already containing the intended promoted code/build outputs
+2. `start_streamer_stack.bat` still applies pinned repo sync on prod boot as a safety net
+3. if the checkout/build stamp already match the promoted prod tag, startup should skip rebuild
+4. if the AMI is behind, prod boot can self-heal by resetting to the promoted tag and running `BuildScripts/build-all.bat`, but this makes launch materially slower
+
 Prod promotion flow:
 
 1. validate the desired PixelStreaming commit on the gold/nonprod baseline
-2. run `BuildScripts/promote-prod-streamer-release.bat` on the gold instance
+2. bake the gold AMI from that same validated commit
+3. run `BuildScripts/promote-prod-streamer-release.bat` on the gold instance
 3. the script creates an annotated tag using:
    - `pixelstreaming-prod-ddmmyyyy<letter>`
-4. the script pushes the tag and updates:
+4. the script refuses to promote if local `HEAD` does not exactly match `origin/<current-branch>`
+5. the script pushes the tag and updates:
    - `/pixelstreaming/prod/git-target-ref`
-5. the script records the promotion in:
+6. the script records the promotion in:
    - `Docs/prod-promotions.local.md`
    - this file is intentionally untracked on gold so promotions do not block future pulls
-6. prod streamer instances in `pinned` mode resolve their startup ref from that SSM parameter
+7. prod streamer instances in `pinned` mode resolve their startup ref from that SSM parameter at normal boot
 
 ### Unreal Update Flow (Current)
 
@@ -337,7 +357,8 @@ Archive contract and naming rules are documented in:
 - nonprod streamer startup still reads the signing key from the shared generic SSM path
 - streamer startup still loads the signing key into process environment at launch time
 - stage still shares the dev-shaped connect-ticket contract
-- prod is only prepared for ticketed connect, not yet active on that model
+- prod dark-launch startup is validated, but prod control-plane/live-traffic cutover is still pending
+- the Windows runtime still relies on the current shared autologon/admin access pattern
 
 ### In Progress / Planned
 
@@ -382,11 +403,12 @@ Note:
 ## Open Work Items (Summary)
 
 - HTTPS ingress migration from direct streamer IP access
-- Connect ticket issuance + signalling validation
-- Separate nonprod/prod streamer pools and lane selection tags
+- Live prod cutover onto ticketed connect on the isolated prod lane
+- Complete separate nonprod/prod streamer pools and control-plane selection
 - Nonprod rename from dev-shaped issuer/key contract to proper nonprod contract
 - Env-specific streamer SSM parameter names for TURN credentials and connect-ticket signing key
-- Removal of signing-key exposure from streamer command line / config logging
+- Prod API/control-plane cutover onto the isolated prod lane
+- Runtime access hardening for Windows autologon vs human admin access
 - Dedicated TURN sizing/failover hardening
 - Short-lived TURN credentials from API
 - Watchdog validation and replacement of legacy crash monitor
@@ -401,4 +423,7 @@ Note:
 - 2026-03-19: Documented the API-side Key Vault secret cutover, validated dev/stage key rotation, and the remaining shared-streamer SSM/key-exposure gaps.
 - 2026-03-19: Added lane-aware streamer startup defaults for `nonprod` and `prod`, while keeping current nonprod behavior unchanged.
 - 2026-03-19: Removed connect-ticket signing key exposure from the Wilbur command line and redacted sensitive startup config logging.
+- 2026-03-20: Added SSM-backed prod streamer promotion flow, `BuildScripts/` operator entrypoints, runtime-status publish ordering fixes, and provisioning-heartbeat visibility during repo/bootstrap work.
+- 2026-03-21: Added helper-based lane fallback from instance tag `ScaleWorldLane` (with temporary `ScaleWorldlane` compatibility), switched prod promotion ledger writes to a local untracked file, fixed annotated-tag pinned-sync resolution, added a stale-HEAD guard to prod promotion, and validated a dark-launch prod instance booting successfully in the prod lane after pinned catch-up.
+- 2026-03-22: Added a manual dark-connect helper (`mint-prod-dark-connect-ticket.ps1`) and validated end-to-end prod dark connect through manual ALB routing plus a prod-shaped ticket against the current promoted prod ref.
 
