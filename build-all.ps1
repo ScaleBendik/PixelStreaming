@@ -1,5 +1,7 @@
 param(
-    [switch]$SkipInstall
+    [switch]$SkipInstall,
+    [ValidateSet('full', 'runtime')]
+    [string]$BuildScope = 'full'
 )
 
 $ErrorActionPreference = 'Stop'

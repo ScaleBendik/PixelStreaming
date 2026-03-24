@@ -256,6 +256,7 @@ if (-not (Test-Path -LiteralPath $buildScript)) {
 }
 $buildStampPath = Join-Path $RepoRoot 'SignallingWebServer\state\repo-build-head.txt'
 $wilburDistPath = Join-Path $RepoRoot 'SignallingWebServer\dist\index.js'
+$frontendBundlePath = Join-Path $RepoRoot 'SignallingWebServer\www\player.html'
 $gitSyncModeNormalized = Normalize-GitSyncMode -Value $GitSyncMode
 $gitTargetRefNormalized = Resolve-GitTargetRefValue -ExplicitRef $GitTargetRef -TargetRefParam $GitTargetRefParam
 
@@ -288,6 +289,118 @@ function Write-BuildStamp {
     Set-Content -LiteralPath $Path -Value $Head -Encoding ASCII
 }
 
+function Get-ChangedFilesBetweenCommits {
+    param(
+        [string]$GitCli,
+        [string]$FromCommit,
+        [string]$ToCommit
+    )
+
+    if ([string]::IsNullOrWhiteSpace($FromCommit) -or [string]::IsNullOrWhiteSpace($ToCommit)) {
+        return $null
+    }
+
+    & $GitCli cat-file -e "$FromCommit^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+
+    & $GitCli cat-file -e "$ToCommit^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+
+    $output = & $GitCli diff --name-only $FromCommit $ToCommit --
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+
+    return @(
+        $output |
+            ForEach-Object { ($_ | Out-String).Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+}
+
+function Test-IsNonBuildAffectingPath {
+    param([string]$Path)
+
+    $normalized = ($Path -replace '\\', '/').Trim()
+    if ([string]::IsNullOrWhiteSpace($normalized)) {
+        return $true
+    }
+
+    if ($normalized.EndsWith('.md', [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+
+    switch -Regex ($normalized) {
+        '^Docs/' { return $true }
+        '^BuildScripts/' { return $true }
+        '^\.gitignore$' { return $true }
+        '^build-all\.(bat|ps1)$' { return $true }
+        '^pull-latest\.bat$' { return $true }
+        '^promote-prod-(streamer-release|dark-connect-ticket)\.(bat|ps1)$' { return $true }
+        '^SWupdate\.ps1$' { return $true }
+        '^SignallingWebServer/platform_scripts/' { return $true }
+        '^SignallingWebServer/(config\.json|peer_options\.player\.json|peer_options\.streamer\.json)$' { return $true }
+        '^SignallingWebServer/(apidoc|logs)/' { return $true }
+        '^Common/docs/' { return $true }
+        '^Signalling/docs/' { return $true }
+        '^Frontend/Docs/' { return $true }
+        default { return $false }
+    }
+}
+
+function Get-BuildImpactFromChangedFiles {
+    param([string[]]$ChangedFiles)
+
+    $runtimeReason = $null
+
+    foreach ($path in $ChangedFiles) {
+        $normalized = ($path -replace '\\', '/').Trim()
+        if (Test-IsNonBuildAffectingPath -Path $normalized) {
+            continue
+        }
+
+        if ($normalized -eq 'package.json' -or
+            $normalized -eq 'package-lock.json' -or
+            $normalized.StartsWith('Common/', [System.StringComparison]::OrdinalIgnoreCase) -or
+            $normalized.StartsWith('Frontend/', [System.StringComparison]::OrdinalIgnoreCase)) {
+            return [pscustomobject]@{
+                Scope = 'full'
+                Reason = "full build required because '$normalized' changed"
+            }
+        }
+
+        if ($normalized.StartsWith('Signalling/', [System.StringComparison]::OrdinalIgnoreCase) -or
+            $normalized.StartsWith('SignallingWebServer/', [System.StringComparison]::OrdinalIgnoreCase)) {
+            if ([string]::IsNullOrWhiteSpace($runtimeReason)) {
+                $runtimeReason = "runtime build required because '$normalized' changed"
+            }
+
+            continue
+        }
+
+        return [pscustomobject]@{
+            Scope = 'full'
+            Reason = "full build required because unclassified path '$normalized' changed"
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($runtimeReason)) {
+        return [pscustomobject]@{
+            Scope = 'runtime'
+            Reason = $runtimeReason
+        }
+    }
+
+    return [pscustomobject]@{
+        Scope = 'none'
+        Reason = 'only non-build-affecting files changed'
+    }
+}
+
 Push-Location $RepoRoot
 try {
     & $gitCli rev-parse --is-inside-work-tree *> $null
@@ -301,6 +414,8 @@ try {
     }
 
     $buildReasons = [System.Collections.Generic.List[string]]::new()
+    $buildScope = 'none'
+    $updateBuildStampWithoutBuild = $false
     $trackedChanges = ((& $gitCli status --porcelain --untracked-files=no) | Out-String).Trim()
 
     Write-RepoSyncLog "Applying git sync mode '$gitSyncModeNormalized' before $Mode mode."
@@ -334,7 +449,6 @@ try {
                         throw "git reset --hard $upstreamHead failed."
                     }
                     $currentHead = Resolve-CommitFromRef -GitCli $gitCli -Ref 'HEAD'
-                    $buildReasons.Add("repo aligned to upstream commit $currentHead")
                 } else {
                     Write-RepoSyncLog "PixelStreaming repo already matches $upstreamBranch."
                 }
@@ -380,7 +494,6 @@ try {
                     throw "git reset --hard $targetHead failed."
                 }
                 $currentHead = Resolve-CommitFromRef -GitCli $gitCli -Ref 'HEAD'
-                $buildReasons.Add("repo aligned to pinned ref '$gitTargetRefNormalized' ($currentHead)")
             } else {
                 Write-RepoSyncLog "PixelStreaming repo already matches pinned ref '$gitTargetRefNormalized' ($targetHead)."
             }
@@ -395,23 +508,58 @@ try {
     }
 
     $buildStamp = Get-BuildStamp -Path $buildStampPath
-    if (-not (Test-Path -LiteralPath $wilburDistPath)) {
-        $buildReasons.Add('wilbur dist/index.js missing')
-    }
-    if ($buildStamp -ne $currentHead) {
-        $buildReasons.Add("build stamp '$buildStamp' does not match HEAD '$currentHead'")
+    if (-not (Test-Path -LiteralPath $frontendBundlePath)) {
+        $buildScope = 'full'
+        $buildReasons.Add("frontend bundle '$frontendBundlePath' missing")
     }
 
-    if ($buildReasons.Count -gt 0) {
+    if (-not (Test-Path -LiteralPath $wilburDistPath)) {
+        if ($buildScope -ne 'full') {
+            $buildScope = 'runtime'
+        }
+        $buildReasons.Add("wilbur dist '$wilburDistPath' missing")
+    }
+
+    if ($buildStamp -ne $currentHead) {
+        $changedFiles = Get-ChangedFilesBetweenCommits -GitCli $gitCli -FromCommit $buildStamp -ToCommit $currentHead
+        if ($null -eq $changedFiles) {
+            if ($buildScope -ne 'full') {
+                $buildScope = 'full'
+            }
+            $buildReasons.Add("build stamp '$buildStamp' does not match HEAD '$currentHead'")
+        } else {
+            $buildImpact = Get-BuildImpactFromChangedFiles -ChangedFiles $changedFiles
+            switch ($buildImpact.Scope) {
+                'full' {
+                    $buildScope = 'full'
+                    $buildReasons.Add($buildImpact.Reason)
+                }
+                'runtime' {
+                    if ($buildScope -eq 'none') {
+                        $buildScope = 'runtime'
+                    }
+                    $buildReasons.Add($buildImpact.Reason)
+                }
+                'none' {
+                    $updateBuildStampWithoutBuild = $true
+                }
+            }
+        }
+    }
+
+    if ($buildScope -ne 'none') {
         Set-OptionalUpdatePhase -Phase $BuildingUpdatePhase
-        Write-RepoSyncLog ("Running build-all.bat before {0} mode because: {1}." -f $Mode, ($buildReasons -join '; '))
-        & $buildScript
+        Write-RepoSyncLog ("Running build-all.bat before {0} mode with build scope '{1}' because: {2}." -f $Mode, $buildScope, ($buildReasons -join '; '))
+        & $buildScript -BuildScope $buildScope
         if ($LASTEXITCODE -ne 0) {
             throw "build-all.bat failed with exit code $LASTEXITCODE."
         }
 
         Write-BuildStamp -Path $buildStampPath -Head $currentHead
         Write-RepoSyncLog "Recorded build stamp for HEAD $currentHead."
+    } elseif ($updateBuildStampWithoutBuild) {
+        Write-BuildStamp -Path $buildStampPath -Head $currentHead
+        Write-RepoSyncLog "Updated build stamp to HEAD $currentHead without rebuild because only non-build-affecting files changed."
     } else {
         Write-RepoSyncLog "Build artifacts already match HEAD $currentHead. Skipping build-all.bat."
     }
