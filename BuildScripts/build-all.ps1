@@ -13,6 +13,24 @@ $installStampPath = Join-Path $repoRoot 'SignallingWebServer\state\workspace-ins
 $packageLockPath = Join-Path $repoRoot 'package-lock.json'
 $rootNodeModulesPath = Join-Path $repoRoot 'node_modules'
 
+function Get-NpmCliPath {
+    $candidate = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    if ($candidate) {
+        return $candidate.Source
+    }
+
+    foreach ($path in @(
+        'C:\Program Files\nodejs\npm.cmd',
+        'C:\Program Files (x86)\nodejs\npm.cmd'
+    )) {
+        if (Test-Path -LiteralPath $path) {
+            return $path
+        }
+    }
+
+    throw "npm.cmd was not found."
+}
+
 function Get-FileSha256 {
     param([string]$Path)
 
@@ -59,7 +77,8 @@ function Invoke-NpmStep {
     )
 
     Write-Host $Description -ForegroundColor Cyan
-    & npm @Arguments
+    $npmCli = Get-NpmCliPath
+    & $npmCli @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "npm $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
     }
