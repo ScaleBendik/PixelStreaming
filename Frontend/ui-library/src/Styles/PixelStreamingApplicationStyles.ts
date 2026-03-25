@@ -458,9 +458,6 @@ export class PixelStreamingApplicationStyle {
             alignItems: 'baseline'
         },
         '.settingsSectionHeader': {
-            appearance: 'none',
-            '-webkit-appearance': 'none',
-            '-moz-appearance': 'none',
             display: 'flex',
             flexDirection: 'row',
             alignItems: 'center',
@@ -475,7 +472,12 @@ export class PixelStreamingApplicationStyle {
             cursor: 'pointer',
             padding: '0',
             margin: '0',
-            textAlign: 'left'
+            minHeight: '2rem',
+            textAlign: 'left',
+            userSelect: 'none'
+        },
+        '.settingsSectionLabel': {
+            flex: '0 1 auto'
         },
         '.settingsSectionHeader:hover': {
             color: 'var(--color3)'
@@ -487,8 +489,9 @@ export class PixelStreamingApplicationStyle {
         '.settingsSectionChevron': {
             fontStyle: 'normal',
             fontWeight: 'bold',
-            minWidth: '1em',
-            textAlign: 'right'
+            marginLeft: '0.25rem',
+            minWidth: '0.75rem',
+            textAlign: 'left'
         },
         '.settingsSectionBody': {
             display: 'flex',

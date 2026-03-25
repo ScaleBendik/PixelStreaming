@@ -118,19 +118,22 @@ export class ConfigUI {
             sectionElem.classList.add('settingsSection-collapsed');
         }
 
-        const settingsHeader = document.createElement('button');
-        settingsHeader.type = 'button';
+        const settingsHeader = document.createElement('div');
         settingsHeader.classList.add('settingsHeader');
         settingsHeader.classList.add('settings-text');
         settingsHeader.classList.add('settingsSectionHeader');
+        settingsHeader.setAttribute('role', 'button');
+        settingsHeader.tabIndex = 0;
         settingsHeader.setAttribute('aria-expanded', isExpandedByDefault ? 'true' : 'false');
 
         const settingsHeaderLabel = document.createElement('span');
+        settingsHeaderLabel.classList.add('settingsSectionLabel');
         settingsHeaderLabel.textContent = sectionHeading;
 
         const settingsHeaderChevron = document.createElement('span');
         settingsHeaderChevron.classList.add('settingsSectionChevron');
-        settingsHeaderChevron.textContent = isExpandedByDefault ? '▾' : '▸';
+        settingsHeaderChevron.setAttribute('aria-hidden', 'true');
+        settingsHeaderChevron.textContent = isExpandedByDefault ? 'v' : '>';
 
         settingsHeader.appendChild(settingsHeaderLabel);
         settingsHeader.appendChild(settingsHeaderChevron);
@@ -139,12 +142,22 @@ export class ConfigUI {
         settingsBody.classList.add('settingsSectionBody');
         settingsBody.hidden = !isExpandedByDefault;
 
-        settingsHeader.addEventListener('click', () => {
+        const toggleSection = () => {
             const isExpanded = settingsBody.hidden;
             settingsBody.hidden = !isExpanded;
             sectionElem.classList.toggle('settingsSection-collapsed', !isExpanded);
             settingsHeader.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
-            settingsHeaderChevron.textContent = isExpanded ? '▾' : '▸';
+            settingsHeaderChevron.textContent = isExpanded ? 'v' : '>';
+        };
+
+        settingsHeader.addEventListener('click', toggleSection);
+        settingsHeader.addEventListener('keydown', (event: KeyboardEvent) => {
+            if (event.key !== 'Enter' && event.key !== ' ') {
+                return;
+            }
+
+            event.preventDefault();
+            toggleSection();
         });
 
         sectionElem.appendChild(settingsHeader);
