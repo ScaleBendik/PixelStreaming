@@ -349,6 +349,12 @@ document.body.onload = function() {
             [Flags.HoveringMouseMode]: true
         }
     });
+    const shouldAutoConnect = config.isFlagEnabled(Flags.AutoConnect);
+    if (shouldAutoConnect) {
+        // PixelStreaming auto-connects during construction, so pause it until the ct-aware
+        // signalling URL builder is in place.
+        config.setFlagEnabled(Flags.AutoConnect, false);
+    }
 
     // Create the main Pixel Streaming object for interfacing with the web-API of Pixel Streaming
     const stream = new PixelStreaming(config);
@@ -368,6 +374,9 @@ document.body.onload = function() {
 
             return parsed.toString();
         });
+    }
+    if (shouldAutoConnect) {
+        config.setFlagEnabled(Flags.AutoConnect, true);
     }
 
     stream.addEventListener('webRtcDisconnected', (event) => {
@@ -391,6 +400,10 @@ document.body.onload = function() {
         onColorModeChanged: (isLightMode) => PixelStreamingApplicationStyles.setColorMode(isLightMode)
     });
     document.body.appendChild(application.rootElement);
+
+    if (shouldAutoConnect) {
+        stream.connect();
+    }
 
     window.pixelStreaming = stream;
 }

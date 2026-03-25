@@ -98,22 +98,18 @@ Important:
 
 ## Recording Real Rollouts
 
-For a real prod rollout, the local ledger should capture the full release tuple, not just the code ref:
+For a real prod rollout, the local ledger only needs the minimum operator note that is hard to recover later:
 
-1. promoted tag
-2. commit
-3. AMI id
-4. prod launch template version
-5. validation timestamp
-6. operator notes
+1. prod launch template version used
+2. validation timestamp
+3. operator notes
 
-Why this matters:
+Why this is enough in practice:
 
-1. the prod tag/commit tell you which code was promoted
-2. the AMI id tells you which machine image the instance actually booted from
-3. the launch-template version tells you which concrete launch configuration was used
+1. prod tag / commit are already recoverable from the promotion flow and `/pixelstreaming/prod/git-target-ref`
+2. the AMI id is recoverable from the launch template version
 
-That makes it possible to reconstruct exactly what was rolled out when something later needs rollback or incident review.
+If you want redundancy, you can still record the full tuple, but it is not required for every rollout.
 
 ## Dark-Connect Validation Without Prod API
 
@@ -148,9 +144,9 @@ The helper:
 
 Recommended columns for `Docs/prod-promotions.local.md`:
 
-| PromotedAtUtc | Tag | Commit | Region | SSM Parameter | SourceMachine | AmiId | LaunchTemplateVersion | Notes |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| PromotedAtUtc | LaunchTemplateVersion | Notes |
+| --- | --- | --- |
 
 Example:
 
-| 2026-03-22T18:45:00Z | pixelstreaming-prod-21032026c | 9dd171f2 | eu-north-1 | /pixelstreaming/prod/git-target-ref | GOLD-INSTANCE | ami-0123456789abcdef0 | ScaleWorld_Prod v7 | dark connect succeeded |
+| 2026-03-22T18:45:00Z | ScaleWorld_Prod v7 | dark connect succeeded |

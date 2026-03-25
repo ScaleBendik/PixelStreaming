@@ -152,6 +152,19 @@ async function readCurrentMaintenanceMode(
     return normalized;
 }
 
+function mapPendingReason(reason: string): string {
+    switch (reason) {
+        case 'grace-after-last-viewer':
+            return 'grace_after_last_viewer';
+        case 'retry-after-failure':
+            return 'retry_after_stop_failure';
+        case 'no-viewer-ever-connected':
+            return 'waiting_for_first_viewer_timeout';
+        default:
+            return reason.replace(/[^a-z0-9]+/gi, '_').toLowerCase();
+    }
+}
+
 function mapStopReason(reason: string): string {
     switch (reason) {
         case 'grace-after-last-viewer':
@@ -338,13 +351,15 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         clearZeroTimer();
-        const mappedReason = mapStopReason(reason);
-        publishStatus('idle_shutdown_pending', mappedReason);
-        startIdleStatusHeartbeat(mappedReason);
+        const mappedPendingReason = mapPendingReason(reason);
+        publishStatus('idle_shutdown_pending', mappedPendingReason);
+        startIdleStatusHeartbeat(mappedPendingReason);
         zeroViewersTimer = setTimeout(() => {
             void requestStop(reason);
         }, delayMs);
-        log(`[idle-stop] Scheduled stop in ${delayMs} ms (reason=${reason}).`);
+        log(
+            `[idle-stop] Scheduled stop in ${delayMs} ms (reason=${reason}, pendingReason=${mappedPendingReason}).`
+        );
     };
 
     const scheduleRetryIfStillIdle = (): void => {
