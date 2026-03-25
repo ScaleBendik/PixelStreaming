@@ -38,6 +38,8 @@ import {
 } from '../UI/UIConfigurationTypes';
 
 export class ConfigUI {
+    private static readonly defaultExpandedSections = new Set<string>([SettingsSections.WebRTC]);
+
     private customFlags = new Map<FlagsIdsExtended, SettingFlag<FlagsIdsExtended>>();
 
     /* A map of flags that can be toggled - options that can be set in the application - e.g. Use Mic? */
@@ -107,20 +109,48 @@ export class ConfigUI {
      * @returns The constructed DOM element for the section.
      */
     buildSectionWithHeading(settingsElem: HTMLElement, sectionHeading: string) {
-        // make section element
+        const isExpandedByDefault = ConfigUI.defaultExpandedSections.has(sectionHeading);
+
         const sectionElem = document.createElement('section');
         sectionElem.classList.add('settingsContainer');
+        sectionElem.classList.add('settingsSection');
+        if (!isExpandedByDefault) {
+            sectionElem.classList.add('settingsSection-collapsed');
+        }
 
-        // make section heading
-        const psSettingsHeader = document.createElement('div');
-        psSettingsHeader.classList.add('settingsHeader');
-        psSettingsHeader.classList.add('settings-text');
-        psSettingsHeader.textContent = sectionHeading;
+        const settingsHeader = document.createElement('button');
+        settingsHeader.type = 'button';
+        settingsHeader.classList.add('settingsHeader');
+        settingsHeader.classList.add('settings-text');
+        settingsHeader.classList.add('settingsSectionHeader');
+        settingsHeader.setAttribute('aria-expanded', isExpandedByDefault ? 'true' : 'false');
 
-        // add section and heading to parent settings element
-        sectionElem.appendChild(psSettingsHeader);
+        const settingsHeaderLabel = document.createElement('span');
+        settingsHeaderLabel.textContent = sectionHeading;
+
+        const settingsHeaderChevron = document.createElement('span');
+        settingsHeaderChevron.classList.add('settingsSectionChevron');
+        settingsHeaderChevron.textContent = isExpandedByDefault ? '▾' : '▸';
+
+        settingsHeader.appendChild(settingsHeaderLabel);
+        settingsHeader.appendChild(settingsHeaderChevron);
+
+        const settingsBody = document.createElement('div');
+        settingsBody.classList.add('settingsSectionBody');
+        settingsBody.hidden = !isExpandedByDefault;
+
+        settingsHeader.addEventListener('click', () => {
+            const isExpanded = settingsBody.hidden;
+            settingsBody.hidden = !isExpanded;
+            sectionElem.classList.toggle('settingsSection-collapsed', !isExpanded);
+            settingsHeader.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+            settingsHeaderChevron.textContent = isExpanded ? '▾' : '▸';
+        });
+
+        sectionElem.appendChild(settingsHeader);
+        sectionElem.appendChild(settingsBody);
         settingsElem.appendChild(sectionElem);
-        return sectionElem;
+        return settingsBody;
     }
 
     /**

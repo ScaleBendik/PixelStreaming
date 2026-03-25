@@ -457,6 +457,33 @@ export class PixelStreamingApplicationStyle {
             flexDirection: 'row',
             alignItems: 'baseline'
         },
+        '.settingsSectionHeader': {
+            width: '100%',
+            background: 'transparent',
+            border: '0',
+            color: 'inherit',
+            cursor: 'pointer',
+            paddingLeft: '0',
+            paddingRight: '0',
+            textAlign: 'left'
+        },
+        '.settingsSectionHeader:hover': {
+            color: 'var(--color3)'
+        },
+        '.settingsSectionHeader:focus-visible': {
+            outline: '1px solid var(--color3)',
+            outlineOffset: '2px'
+        },
+        '.settingsSectionChevron': {
+            fontStyle: 'normal',
+            fontWeight: 'bold',
+            minWidth: '1em',
+            textAlign: 'right'
+        },
+        '.settingsSectionBody': {
+            display: 'flex',
+            flexDirection: 'column'
+        },
         '.collapse': {
             paddingLeft: '5%'
         },

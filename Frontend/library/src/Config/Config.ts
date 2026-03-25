@@ -301,7 +301,7 @@ export class Config {
                 'Whether we should attempt to auto connect to the signalling server or show a click to start prompt.',
                 settings && Object.prototype.hasOwnProperty.call(settings, Flags.AutoConnect)
                     ? settings[Flags.AutoConnect]
-                    : false,
+                    : true,
                 useUrlParams
             )
         );
@@ -366,7 +366,7 @@ export class Config {
                 'Video will start muted if true.',
                 settings && Object.prototype.hasOwnProperty.call(settings, Flags.StartVideoMuted)
                     ? settings[Flags.StartVideoMuted]
-                    : false,
+                    : true,
                 useUrlParams
             )
         );
@@ -622,7 +622,7 @@ export class Config {
                 null /*max*/,
                 settings && Object.prototype.hasOwnProperty.call(settings, NumericParameters.AFKTimeoutSecs)
                     ? settings[NumericParameters.AFKTimeoutSecs]
-                    : 300 /*value*/,
+                    : 600 /*value*/,
                 useUrlParams
             )
         );
@@ -635,7 +635,7 @@ export class Config {
                 'The time (in seconds) for a user to respond before the stream is ended after an AFK timeout.',
                 10 /*min*/,
                 null /*max*/,
-                10 /*value*/,
+                60 /*value*/,
                 useUrlParams
             )
         );
@@ -756,7 +756,7 @@ export class Config {
                 999 /*max*/,
                 settings && Object.prototype.hasOwnProperty.call(settings, NumericParameters.WebRTCFPS)
                     ? settings[NumericParameters.WebRTCFPS]
-                    : 60 /*value*/,
+                    : 30 /*value*/,
                 useUrlParams
             )
         );
@@ -786,7 +786,7 @@ export class Config {
                 500000 /*max*/,
                 settings && Object.prototype.hasOwnProperty.call(settings, NumericParameters.WebRTCMaxBitrate)
                     ? settings[NumericParameters.WebRTCMaxBitrate]
-                    : 0 /*value*/,
+                    : 25000 /*value*/,
                 useUrlParams
             )
         );
