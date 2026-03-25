@@ -484,6 +484,9 @@ export class PixelStreamingApplicationStyle {
             display: 'flex',
             flexDirection: 'column'
         },
+        '.settingsSectionBody[hidden]': {
+            display: 'none'
+        },
         '.collapse': {
             paddingLeft: '5%'
         },
