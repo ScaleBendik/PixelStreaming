@@ -82,6 +82,8 @@ export interface UIOptions {
  * managing connection endpoints, as well as displaying stats and other information about it.
  */
 export class Application {
+    private isInitialAutoConnectPending: boolean;
+
     stream: PixelStreaming;
 
     _rootElement: HTMLElement;
@@ -116,6 +118,7 @@ export class Application {
         this._options = options;
 
         this.stream = options.stream;
+        this.isInitialAutoConnectPending = this.stream.config.isFlagEnabled(Flags.AutoConnect);
 
         // Explicitly create ui features now so creation time is known
         this._uiFeatureElement = this.createUIFeaturesElement();
@@ -162,6 +165,10 @@ export class Application {
         if (this.stream.config.isFlagEnabled(Flags.HideUI)) {
             this._uiFeatureElement.style.visibility = 'hidden';
         }
+    }
+
+    private showOpeningStreamOverlay() {
+        this.showTextOverlay('Opening stream...');
     }
 
     public createOverlays(): void {
@@ -582,7 +589,7 @@ export class Application {
      * Show the webRtcAutoConnect Overlay and connect
      */
     onWebRtcAutoConnect() {
-        this.showTextOverlay('Auto Connecting Now');
+        this.showOpeningStreamOverlay();
     }
 
     /**
@@ -619,6 +626,12 @@ export class Application {
      * @param allowClickToReconnect - true if we want to allow the user to click to reconnect. Otherwise it's just a message.
      */
     onDisconnect(eventString: string, allowClickToReconnect: boolean) {
+        if (this.isInitialAutoConnectPending && !allowClickToReconnect && !eventString.trim()) {
+            this.showOpeningStreamOverlay();
+            this.statsPanel?.onDisconnect();
+            return;
+        }
+
         const overlayMessage = 'Disconnected' + (eventString ? `: ${eventString}` : '.');
         if (allowClickToReconnect) {
             this.showDisconnectOverlay(`${overlayMessage} Click To Restart.`);
@@ -633,14 +646,14 @@ export class Application {
      * Handles when Web Rtc is connecting
      */
     onWebRtcConnecting() {
-        this.showTextOverlay('Starting connection to server, please wait');
+        this.showOpeningStreamOverlay();
     }
 
     /**
      * Handles when Web Rtc has connected
      */
     onWebRtcConnected() {
-        this.showTextOverlay('WebRTC connected, waiting for video');
+        this.showOpeningStreamOverlay();
     }
 
     /**
@@ -671,6 +684,7 @@ export class Application {
     }
 
     onVideoInitialized() {
+        this.isInitialAutoConnectPending = false;
         if (!this.stream.config.isFlagEnabled(Flags.AutoPlayVideo)) {
             this.showPlayOverlay();
         }

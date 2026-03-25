@@ -110,6 +110,7 @@ export class WebRtcPlayerController {
     autoJoinTimer: ReturnType<typeof setTimeout> = undefined;
     keepalive: KeepaliveMonitor;
     playerId: string | null = null;
+    hasCompletedInitialVideo: boolean;
 
     /**
      *
@@ -121,6 +122,7 @@ export class WebRtcPlayerController {
         this.pixelStreaming = pixelStreaming;
         this.responseController = new ResponseController();
         this.file = new FileTemplate();
+        this.hasCompletedInitialVideo = false;
 
         this.sdpConstraints = {
             offerToReceiveAudio: true,
@@ -262,11 +264,12 @@ export class WebRtcPlayerController {
             this.setGamePadInputEnabled(false);
 
             if (willTryReconnect) {
+                const reconnectDelayMs = this.hasCompletedInitialVideo ? 2000 : 750;
                 // need a small delay here to prevent reconnect spamming
                 setTimeout(() => {
                     this.reconnectAttempt++;
                     this.doReconnect(event.reason);
-                }, 2000);
+                }, reconnectDelayMs);
             }
         });
 
@@ -1953,6 +1956,7 @@ export class WebRtcPlayerController {
      * Handles when the video element has been loaded with a srcObject
      */
     handleVideoInitialized() {
+        this.hasCompletedInitialVideo = true;
         this.pixelStreaming._onVideoInitialized();
 
         // either autoplay the video or set up the play overlay

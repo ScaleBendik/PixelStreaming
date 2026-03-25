@@ -458,13 +458,23 @@ export class PixelStreamingApplicationStyle {
             alignItems: 'baseline'
         },
         '.settingsSectionHeader': {
+            appearance: 'none',
+            '-webkit-appearance': 'none',
+            '-moz-appearance': 'none',
+            display: 'flex',
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'flex-start',
+            gap: '0.5rem',
+            boxSizing: 'border-box',
             width: '100%',
             background: 'transparent',
             border: '0',
+            boxShadow: 'none',
             color: 'inherit',
             cursor: 'pointer',
-            paddingLeft: '0',
-            paddingRight: '0',
+            padding: '0',
+            margin: '0',
             textAlign: 'left'
         },
         '.settingsSectionHeader:hover': {
