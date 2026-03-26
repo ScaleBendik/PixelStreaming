@@ -297,12 +297,12 @@ function Get-ReleaseStateSnapshot {
         return [pscustomobject]@{
             Exists = $true
             Path = $Path
-            BuildId = [string]$state.BuildId
-            ZipKey = [string]$state.ZipKey
-            ReleasePath = [string]$state.ReleasePath
-            PreparedPath = [string]$state.PreparedPath
-            ActivatedAtUtc = [string]$state.ActivatedAtUtc
-            DownloadedAtUtc = [string]$state.DownloadedAtUtc
+            BuildId = if ($state.PSObject.Properties.Name -contains 'BuildId') { [string]$state.BuildId } else { '' }
+            ZipKey = if ($state.PSObject.Properties.Name -contains 'ZipKey') { [string]$state.ZipKey } else { '' }
+            ReleasePath = if ($state.PSObject.Properties.Name -contains 'ReleasePath') { [string]$state.ReleasePath } else { '' }
+            PreparedPath = if ($state.PSObject.Properties.Name -contains 'PreparedPath') { [string]$state.PreparedPath } else { '' }
+            ActivatedAtUtc = if ($state.PSObject.Properties.Name -contains 'ActivatedAtUtc') { [string]$state.ActivatedAtUtc } else { '' }
+            DownloadedAtUtc = if ($state.PSObject.Properties.Name -contains 'DownloadedAtUtc') { [string]$state.DownloadedAtUtc } else { '' }
         }
     } catch {
         return [pscustomobject]@{
@@ -449,7 +449,7 @@ function Get-VisiblePrepareWindowEnabled {
         return [System.Boolean]::Parse($env:SCALEWORLD_UPDATE_PREPARE_VISIBLE)
     }
 
-    return [Environment]::UserInteractive
+    return $false
 }
 
 function Stop-ProcessIfRunning {
