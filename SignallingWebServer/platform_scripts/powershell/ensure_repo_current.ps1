@@ -102,7 +102,7 @@ function Set-OptionalUpdatePhase {
         try {
             [System.IO.File]::WriteAllText(
                 $tagPayloadPath,
-                ($tagPayload | ConvertTo-Json -Compress -Depth 3),
+                (ConvertTo-Json -InputObject @($tagPayload) -Compress -Depth 3),
                 (New-Object System.Text.UTF8Encoding($false))
             )
             $args = @(
