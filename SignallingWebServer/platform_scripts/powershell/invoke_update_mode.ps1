@@ -385,6 +385,50 @@ function ConvertTo-EncodedPowerShellCommand {
     return [Convert]::ToBase64String($bytes)
 }
 
+function Enter-UpdateModeLock {
+    param(
+        [string]$Name
+    )
+
+    $createdNew = $false
+    $mutex = New-Object System.Threading.Mutex($false, $Name, [ref]$createdNew)
+    $acquired = $false
+
+    try {
+        $acquired = $mutex.WaitOne(0)
+    } catch [System.Threading.AbandonedMutexException] {
+        $acquired = $true
+    }
+
+    return [pscustomobject]@{
+        Mutex = $mutex
+        Acquired = $acquired
+    }
+}
+
+function Exit-UpdateModeLock {
+    param(
+        [object]$Handle
+    )
+
+    if ($null -eq $Handle -or $null -eq $Handle.Mutex) {
+        return
+    }
+
+    try {
+        if ($Handle.Acquired) {
+            $Handle.Mutex.ReleaseMutex()
+        }
+    } catch {
+        Write-UpdateModeLog "Failed to release update-mode lock: $($_.Exception.Message)" 'WARN'
+    } finally {
+        try {
+            $Handle.Mutex.Dispose()
+        } catch {
+        }
+    }
+}
+
 function Parse-UtcTimestamp {
     param([string]$Value)
 
@@ -526,6 +570,7 @@ $attempt = 0
 $awsCli = $null
 $identity = $null
 $instanceTags = $null
+$updateModeLock = $null
 
 while ($true) {
     $attempt++
@@ -553,6 +598,12 @@ while ($true) {
         Write-UpdateModeLog "Update maintenance state not confirmed yet (attempt $attempt): $message" 'WARN'
         Start-Sleep -Seconds ([Math]::Max($RetryDelaySeconds, 1))
     }
+}
+
+$updateModeLock = Enter-UpdateModeLock -Name 'Global\ScaleWorldUpdateMode'
+if (-not $updateModeLock.Acquired) {
+    Write-UpdateModeLog 'Another update-mode process is already running. Leaving this invocation in maintenance hold.' 'WARN'
+    exit 11
 }
 
 $currentUpdateState = ([string]$instanceTags['ScaleWorldUpdateState']).Trim().ToLowerInvariant()
@@ -848,4 +899,6 @@ try {
     Schedule-DelayedStop -DelaySeconds $FailureStopDelaySeconds
     Write-UpdateModeLog "Update failed: $reason" 'ERROR'
     exit 11
+} finally {
+    Exit-UpdateModeLock -Handle $updateModeLock
 }
