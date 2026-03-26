@@ -23,6 +23,37 @@ function Write-UpdateModeLog {
     Write-Host "[$timestamp] [$Level] [update-mode] $Message"
 }
 
+function Write-UpdateModeTrace {
+    param(
+        [string]$Step,
+        [object]$Data = $null
+    )
+
+    if ([string]::IsNullOrWhiteSpace($script:UpdateModeTracePath)) {
+        return
+    }
+
+    try {
+        $directory = Split-Path -Parent $script:UpdateModeTracePath
+        if (-not (Test-Path -LiteralPath $directory)) {
+            New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        }
+
+        $entry = [ordered]@{
+            TimestampUtc = (Get-Date).ToUniversalTime().ToString('o')
+            Step = $Step
+        }
+
+        if ($null -ne $Data) {
+            $entry.Data = $Data
+        }
+
+        Add-Content -LiteralPath $script:UpdateModeTracePath -Value (($entry | ConvertTo-Json -Compress -Depth 8) + [Environment]::NewLine) -Encoding UTF8
+    } catch {
+        Write-UpdateModeLog "Failed to write update trace '$Step': $($_.Exception.Message)" 'WARN'
+    }
+}
+
 function Get-AwsCliPath {
     $candidate = Get-Command aws -ErrorAction SilentlyContinue
     if ($candidate) {
@@ -246,6 +277,82 @@ function Get-CurrentReleaseStateSnapshot {
         return Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
     } catch {
         throw "Current release state file '$Path' could not be parsed after update activation. $($_.Exception.Message)"
+    }
+}
+
+function Get-ReleaseStateSnapshot {
+    param(
+        [string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
+        return [pscustomobject]@{
+            Exists = $false
+            Path = $Path
+        }
+    }
+
+    try {
+        $state = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        return [pscustomobject]@{
+            Exists = $true
+            Path = $Path
+            BuildId = [string]$state.BuildId
+            ZipKey = [string]$state.ZipKey
+            ReleasePath = [string]$state.ReleasePath
+            PreparedPath = [string]$state.PreparedPath
+            ActivatedAtUtc = [string]$state.ActivatedAtUtc
+            DownloadedAtUtc = [string]$state.DownloadedAtUtc
+        }
+    } catch {
+        return [pscustomobject]@{
+            Exists = $true
+            Path = $Path
+            ParseError = $_.Exception.Message
+        }
+    }
+}
+
+function Get-ActiveInstallTargetSnapshot {
+    param(
+        [string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
+        return [pscustomobject]@{
+            Exists = $false
+            Path = $Path
+        }
+    }
+
+    try {
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        $isReparsePoint = (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)
+        $target = $null
+        if ($isReparsePoint) {
+            $parent = Split-Path -Parent $Path
+            $leaf = Split-Path -Leaf $Path
+            $output = cmd /c dir /AL "$parent" 2>$null
+            foreach ($line in $output) {
+                if ($line -match ([regex]::Escape($leaf) + '\s+\[(.+)\]')) {
+                    $target = $matches[1]
+                    break
+                }
+            }
+        }
+
+        return [pscustomobject]@{
+            Exists = $true
+            Path = $Path
+            IsReparsePoint = $isReparsePoint
+            Target = $target
+        }
+    } catch {
+        return [pscustomobject]@{
+            Exists = $true
+            Path = $Path
+            ReadError = $_.Exception.Message
+        }
     }
 }
 
@@ -482,8 +589,10 @@ $streamerHealthPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\s
 $repoSyncScript = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
 $publishCurrentBuildScript = Join-Path $PSScriptRoot 'publish_current_build_tags.ps1'
 $installBasePath = if ($env:SCALEWORLD_INSTALL_BASE) { $env:SCALEWORLD_INSTALL_BASE } else { 'C:\PixelStreaming' }
+$activeInstallPath = Join-Path $installBasePath 'WindowsNoEditor'
 $currentReleaseStatePath = Join-Path $installBasePath 'state\current-release.json'
 $pendingReleaseStatePath = Join-Path $installBasePath 'state\pending-release.json'
+$script:UpdateModeTracePath = Join-Path $installBasePath 'state\update-mode-trace.log'
 $prepareUpdateStdOutPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\update-prepare.stdout.log'
 $prepareUpdateStdErrPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\update-prepare.stderr.log'
 $prepareUpdateProcess = $null
@@ -494,6 +603,14 @@ $requireDataDrive = if ($env:STACK_REQUIRE_DATA_DRIVE) { [System.Boolean]::Parse
 $dataDiskNumber = if ($env:SCALEWORLD_DATA_DISK_NUMBER) { [int]$env:SCALEWORLD_DATA_DISK_NUMBER } else { 1 }
 
 try {
+    Write-UpdateModeTrace -Step 'update_mode_started' -Data @{
+        TargetZipKey = $targetZipKey
+        CurrentRelease = Get-ReleaseStateSnapshot -Path $currentReleaseStatePath
+        PendingRelease = Get-ReleaseStateSnapshot -Path $pendingReleaseStatePath
+        ActiveInstall = Get-ActiveInstallTargetSnapshot -Path $activeInstallPath
+        VisiblePrepareWindow = $showVisiblePrepareWindow
+    }
+
     if ($prepareDataDrive) {
         $dataDriveScript = Join-Path $PSScriptRoot 'ensure_data_drive.ps1'
         if (Test-Path -LiteralPath $dataDriveScript) {
@@ -595,10 +712,24 @@ try {
         throw "SWupdate preparation failed with exit code $($prepareUpdateProcess.ExitCode)."
     }
     $prepareUpdateProcess = $null
+    Write-UpdateModeTrace -Step 'prepare_release_completed' -Data @{
+        TargetZipKey = $targetZipKey
+        PrepareExitCode = 0
+        PendingRelease = Get-ReleaseStateSnapshot -Path $pendingReleaseStatePath
+        CurrentRelease = Get-ReleaseStateSnapshot -Path $currentReleaseStatePath
+        PrepareStdOutExists = (Test-Path -LiteralPath $prepareUpdateStdOutPath)
+        PrepareStdErrExists = (Test-Path -LiteralPath $prepareUpdateStdErrPath)
+    }
 
     if (Test-Path -LiteralPath $pendingReleaseStatePath) {
         Set-UpdatePhase -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Phase 'activating_release'
         Write-UpdateModeLog "Activating prepared build '$zipFileName'."
+        Write-UpdateModeTrace -Step 'before_activation' -Data @{
+            TargetZipKey = $targetZipKey
+            CurrentRelease = Get-ReleaseStateSnapshot -Path $currentReleaseStatePath
+            PendingRelease = Get-ReleaseStateSnapshot -Path $pendingReleaseStatePath
+            ActiveInstall = Get-ActiveInstallTargetSnapshot -Path $activeInstallPath
+        }
         $activateUpdateArgs = @('-ZipKey', $targetZipKey, '-ActivatePreparedRelease')
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $updateScript @activateUpdateArgs
     } else {
@@ -617,6 +748,12 @@ try {
 
     if ($LASTEXITCODE -ne 0) {
         throw "SWupdate.ps1 exited with code $LASTEXITCODE."
+    }
+    Write-UpdateModeTrace -Step 'after_activation' -Data @{
+        TargetZipKey = $targetZipKey
+        CurrentRelease = Get-ReleaseStateSnapshot -Path $currentReleaseStatePath
+        PendingRelease = Get-ReleaseStateSnapshot -Path $pendingReleaseStatePath
+        ActiveInstall = Get-ActiveInstallTargetSnapshot -Path $activeInstallPath
     }
 
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
@@ -654,6 +791,13 @@ try {
     if (-not $runtimeStatusValidated.Success) {
         throw "EC2 runtime status validation did not reach ready within $RuntimeStatusValidationTimeoutSeconds seconds. Last observed: $($runtimeStatusValidated.Summary)"
     }
+    Write-UpdateModeTrace -Step 'after_validation' -Data @{
+        TargetZipKey = $targetZipKey
+        RuntimeStatusSummary = $runtimeStatusValidated.Summary
+        CurrentRelease = Get-ReleaseStateSnapshot -Path $currentReleaseStatePath
+        PendingRelease = Get-ReleaseStateSnapshot -Path $pendingReleaseStatePath
+        ActiveInstall = Get-ActiveInstallTargetSnapshot -Path $activeInstallPath
+    }
 
     $currentReleaseState = Get-CurrentReleaseStateSnapshot -Path $currentReleaseStatePath
     $activatedZipKey = [string]$currentReleaseState.ZipKey
@@ -687,6 +831,15 @@ try {
 } catch {
     Stop-ProcessIfRunning -Process $prepareUpdateProcess
     $reason = $_.Exception.Message
+    Write-UpdateModeTrace -Step 'update_failed' -Data @{
+        TargetZipKey = $targetZipKey
+        Reason = $reason
+        CurrentRelease = Get-ReleaseStateSnapshot -Path $currentReleaseStatePath
+        PendingRelease = Get-ReleaseStateSnapshot -Path $pendingReleaseStatePath
+        ActiveInstall = Get-ActiveInstallTargetSnapshot -Path $activeInstallPath
+        PrepareStdOutExists = (Test-Path -LiteralPath $prepareUpdateStdOutPath)
+        PrepareStdErrExists = (Test-Path -LiteralPath $prepareUpdateStdErrPath)
+    }
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldUpdateState = 'failed'
         ScaleWorldUpdateResultReason = $reason
