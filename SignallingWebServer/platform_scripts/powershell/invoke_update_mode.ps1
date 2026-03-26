@@ -644,8 +644,8 @@ $activeInstallPath = Join-Path $installBasePath 'WindowsNoEditor'
 $currentReleaseStatePath = Join-Path $installBasePath 'state\current-release.json'
 $pendingReleaseStatePath = Join-Path $installBasePath 'state\pending-release.json'
 $script:UpdateModeTracePath = Join-Path $installBasePath 'state\update-mode-trace.log'
-$prepareUpdateStdOutPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\update-prepare.stdout.log'
-$prepareUpdateStdErrPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\update-prepare.stderr.log'
+$prepareUpdateStdOutPath = Join-Path $installBasePath 'state\update-prepare.stdout.log'
+$prepareUpdateStdErrPath = Join-Path $installBasePath 'state\update-prepare.stderr.log'
 $prepareUpdateProcess = $null
 $showVisiblePrepareWindow = Get-VisiblePrepareWindowEnabled
 
@@ -927,6 +927,7 @@ try {
     }
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldUpdateState = 'failed'
+        ScaleWorldUpdatePhase = ''
         ScaleWorldUpdateResultReason = $reason
         ScaleWorldUpdateCompletedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     }
