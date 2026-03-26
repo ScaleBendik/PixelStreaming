@@ -752,21 +752,55 @@ try {
 
     Write-UpdateModeLog "Waiting for Unreal update payload preparation for '$zipFileName' to finish."
     $prepareUpdateProcess.WaitForExit()
-    if ($prepareUpdateProcess.ExitCode -ne 0) {
+    try {
+        $prepareUpdateProcess.Refresh()
+    } catch {
+    }
+
+    $prepareExitCode = $prepareUpdateProcess.ExitCode
+    $preparedReleaseState = if (Test-Path -LiteralPath $pendingReleaseStatePath) {
+        Get-ReleaseStateSnapshot -Path $pendingReleaseStatePath
+    } else {
+        $null
+    }
+    $preparedReleaseZipKey = if ($preparedReleaseState -and $preparedReleaseState.PSObject.Properties.Name -contains 'ZipKey') {
+        [string]$preparedReleaseState.ZipKey
+    } else {
+        ''
+    }
+    $preparedReleasePath = if ($preparedReleaseState -and $preparedReleaseState.PSObject.Properties.Name -contains 'PreparedPath') {
+        [string]$preparedReleaseState.PreparedPath
+    } else {
+        ''
+    }
+    $hasPreparedReleaseForTarget = `
+        $preparedReleaseState `
+        -and -not [string]::IsNullOrWhiteSpace($preparedReleaseZipKey) `
+        -and [string]::Equals($preparedReleaseZipKey.Trim(), $targetZipKey.Trim(), [System.StringComparison]::Ordinal) `
+        -and -not [string]::IsNullOrWhiteSpace($preparedReleasePath) `
+        -and (Test-Path -LiteralPath $preparedReleasePath)
+
+    if ($null -eq $prepareExitCode -and $hasPreparedReleaseForTarget) {
+        Write-UpdateModeLog "Prepare process did not report an exit code, but prepared release metadata for '$zipFileName' is present. Continuing with activation." 'WARN'
+        $prepareExitCode = 0
+    }
+
+    if ($prepareExitCode -ne 0) {
         $stdOutTail = Get-LogTail -Path $prepareUpdateStdOutPath
         $stdErrTail = Get-LogTail -Path $prepareUpdateStdErrPath
         $detail = @($stdErrTail, $stdOutTail) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
+        $prepareExitCodeText = if ($null -eq $prepareExitCode) { 'unknown' } else { [string]$prepareExitCode }
         if (-not [string]::IsNullOrWhiteSpace($detail)) {
-            throw "SWupdate preparation failed with exit code $($prepareUpdateProcess.ExitCode). Last output: $detail"
+            throw "SWupdate preparation failed with exit code $prepareExitCodeText. Last output: $detail"
         }
 
-        throw "SWupdate preparation failed with exit code $($prepareUpdateProcess.ExitCode)."
+        throw "SWupdate preparation failed with exit code $prepareExitCodeText."
     }
     $prepareUpdateProcess = $null
     Write-UpdateModeTrace -Step 'prepare_release_completed' -Data @{
         TargetZipKey = $targetZipKey
-        PrepareExitCode = 0
-        PendingRelease = Get-ReleaseStateSnapshot -Path $pendingReleaseStatePath
+        PrepareExitCode = $prepareExitCode
+        PendingRelease = if ($preparedReleaseState) { $preparedReleaseState } else { Get-ReleaseStateSnapshot -Path $pendingReleaseStatePath }
         CurrentRelease = Get-ReleaseStateSnapshot -Path $currentReleaseStatePath
         PrepareStdOutExists = (Test-Path -LiteralPath $prepareUpdateStdOutPath)
         PrepareStdErrExists = (Test-Path -LiteralPath $prepareUpdateStdErrPath)
