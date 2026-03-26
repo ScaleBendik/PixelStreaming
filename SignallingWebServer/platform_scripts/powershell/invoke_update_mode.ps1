@@ -210,7 +210,8 @@ function Publish-CurrentBuildTags {
         [string]$PublishScriptPath,
         [string]$AwsCli,
         [string]$Region,
-        [string]$InstanceId
+        [string]$InstanceId,
+        [string]$CurrentReleaseStatePath
     )
 
     if (-not (Test-Path -LiteralPath $PublishScriptPath)) {
@@ -218,7 +219,7 @@ function Publish-CurrentBuildTags {
         return $false
     }
 
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $PublishScriptPath -InstanceId $InstanceId -Region $Region -AwsCliPath $AwsCli
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $PublishScriptPath -InstanceId $InstanceId -Region $Region -AwsCliPath $AwsCli -CurrentReleaseStatePath $CurrentReleaseStatePath
     if ($LASTEXITCODE -eq 0) {
         return $true
     }
@@ -230,6 +231,22 @@ function Publish-CurrentBuildTags {
 
     Write-UpdateModeLog "Current build tag publish script failed with exit code $LASTEXITCODE. Falling back to zip filename tags." 'WARN'
     return $false
+}
+
+function Get-CurrentReleaseStateSnapshot {
+    param(
+        [string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Current release state file '$Path' was not found after update activation."
+    }
+
+    try {
+        return Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw "Current release state file '$Path' could not be parsed after update activation. $($_.Exception.Message)"
+    }
 }
 
 function Get-LogTail {
@@ -465,6 +482,7 @@ $streamerHealthPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\s
 $repoSyncScript = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
 $publishCurrentBuildScript = Join-Path $PSScriptRoot 'publish_current_build_tags.ps1'
 $installBasePath = if ($env:SCALEWORLD_INSTALL_BASE) { $env:SCALEWORLD_INSTALL_BASE } else { 'C:\PixelStreaming' }
+$currentReleaseStatePath = Join-Path $installBasePath 'state\current-release.json'
 $pendingReleaseStatePath = Join-Path $installBasePath 'state\pending-release.json'
 $prepareUpdateStdOutPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\update-prepare.stdout.log'
 $prepareUpdateStdErrPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\update-prepare.stderr.log'
@@ -627,8 +645,18 @@ try {
         throw "EC2 runtime status validation did not reach ready within $RuntimeStatusValidationTimeoutSeconds seconds. Last observed: $($runtimeStatusValidated.Summary)"
     }
 
+    $currentReleaseState = Get-CurrentReleaseStateSnapshot -Path $currentReleaseStatePath
+    $activatedZipKey = [string]$currentReleaseState.ZipKey
+    if ([string]::IsNullOrWhiteSpace($activatedZipKey)) {
+        throw "Current release state at '$currentReleaseStatePath' had no ZipKey after validation."
+    }
+
+    if (-not [string]::Equals($activatedZipKey.Trim(), $targetZipKey.Trim(), [System.StringComparison]::Ordinal)) {
+        throw "Validated runtime is still reporting zip '$activatedZipKey' instead of requested update '$targetZipKey'."
+    }
+
     $completionTime = (Get-Date).ToUniversalTime().ToString('o')
-    $publishedCurrentBuild = Publish-CurrentBuildTags -PublishScriptPath $publishCurrentBuildScript -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId
+    $publishedCurrentBuild = Publish-CurrentBuildTags -PublishScriptPath $publishCurrentBuildScript -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -CurrentReleaseStatePath $currentReleaseStatePath
     $successTags = @{
         ScaleWorldUpdateState = 'succeeded'
         ScaleWorldUpdatePhase = ''
