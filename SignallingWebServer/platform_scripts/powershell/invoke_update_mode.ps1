@@ -602,7 +602,17 @@ try {
         $activateUpdateArgs = @('-ZipKey', $targetZipKey, '-ActivatePreparedRelease')
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $updateScript @activateUpdateArgs
     } else {
-        Write-UpdateModeLog "No prepared release activation was required for '$zipFileName'. Assuming the target build is already active."
+        $currentReleaseState = Get-CurrentReleaseStateSnapshot -Path $currentReleaseStatePath
+        $alreadyActiveZipKey = [string]$currentReleaseState.ZipKey
+        if ([string]::IsNullOrWhiteSpace($alreadyActiveZipKey)) {
+            throw "Prepared release metadata was missing and current release state at '$currentReleaseStatePath' had no ZipKey for requested update '$targetZipKey'."
+        }
+
+        if (-not [string]::Equals($alreadyActiveZipKey.Trim(), $targetZipKey.Trim(), [System.StringComparison]::Ordinal)) {
+            throw "Prepared release metadata was missing and current release state still reported zip '$alreadyActiveZipKey' instead of requested update '$targetZipKey'."
+        }
+
+        Write-UpdateModeLog "No prepared release activation was required for '$zipFileName' because the requested build is already active."
     }
 
     if ($LASTEXITCODE -ne 0) {
