@@ -481,7 +481,7 @@ export function wireSignallingRuntimeStatus(
         if (currentStatus === RUNTIME_STATUS_READY) {
             resetReadySoak();
             lastHealthyAtMs = nowMs;
-            writeStreamerHealthSnapshot();
+            publishTransition(RUNTIME_STATUS_READY, currentReason ?? 'stream_stable', transitionOptions);
             startHeartbeat();
             return;
         }

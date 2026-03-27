@@ -103,7 +103,8 @@ Current Azure Key Vault secret used by the API workload in each environment:
 
 Current note:
 - `dev` and `stage` intentionally still share the same active connect-ticket signer on the streamer side
-- prod streamer dark-launch validation now succeeds end to end with the prod lane defaults plus manual ALB dark-route setup and a manual prod-shaped connect ticket, but live prod traffic is not yet cut over to the prod lane
+- prod lane is now live for normal Session Manager traffic
+- prod API startup requires `kv-scaleworld-prod/connect-ticket-signing-key` to be populated with the real prod signing key and that value must match streamer-side SSM `/pixelstreaming/prod/connect-ticket/signing-key`
 - streamer startup is now lane-aware through `SCALEWORLD_STREAMING_LANE=nonprod|prod`
 - current bootstrap defaults are:
   - `nonprod` -> SSM `/pixelstreaming/connect-ticket/signing-key`, issuer `scaleworld-dev-connect-ticket`
@@ -357,7 +358,7 @@ Archive contract and naming rules are documented in:
 - nonprod streamer startup still reads the signing key from the shared generic SSM path
 - streamer startup still loads the signing key into process environment at launch time
 - stage still shares the dev-shaped connect-ticket contract
-- prod dark-launch startup is validated, but prod control-plane/live-traffic cutover is still pending
+- prod is now live, but the prod API Key Vault signer and streamer-side prod SSM signer must remain aligned
 - the Windows runtime still relies on the current shared autologon/admin access pattern
 
 ### In Progress / Planned

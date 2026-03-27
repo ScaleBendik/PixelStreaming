@@ -19,6 +19,7 @@ Operational note:
 - that local ledger is intentionally untracked so prod promotions do not block future pulls on the gold instance
 - the promotion script now refuses to create a prod tag unless local `HEAD` exactly matches `origin/<current-branch>`
 - keep the AMI bake and promotion on the same validated commit so prod startup does not need an expensive first-boot catch-up build
+- prod API startup also depends on Azure Key Vault secret `kv-scaleworld-prod/connect-ticket-signing-key`; it must contain the same value as streamer-side SSM `/pixelstreaming/prod/connect-ticket/signing-key`
 
 ## Naming Convention
 
@@ -73,7 +74,33 @@ Prod launch templates should use:
 - `SCALEWORLD_GIT_SYNC_MODE=pinned`
 - `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref`
 
-## Validated Prod Dark-Connect Milestone
+Release reminder:
+- verify the launch template AMI id before provisioning
+- a wrong AMI can leave fresh prod instances stuck on stale API-owned `booting` tags without ever publishing instance-owned runtime status
+
+## Current Live Prod Release
+
+Current validated live prod tuple:
+
+- prod tag: `pixelstreaming-prod-26032026b`
+- commit: `b7ef17499255bb20d6ae8b3be103b23cb62109b4`
+- SSM target ref parameter:
+  - `/pixelstreaming/prod/git-target-ref`
+
+Validated on `2026-03-26`:
+
+1. prod API/control plane was brought up successfully with the Key Vault-injected connect-ticket signing key
+2. prod admin access, release-notes access, and normal server discovery were confirmed
+3. prod provisioning succeeded on the promoted streamer code and corrected AMI launch template
+4. regular browser connection succeeded end to end for normal prod traffic
+
+Important:
+
+- this is the first validated live prod Session Manager + streamer cutover, not just a dark-connect milestone
+- the prod Key Vault secret must stay aligned with streamer-side SSM `/pixelstreaming/prod/connect-ticket/signing-key`
+- the launch template AMI is part of the rollout tuple and should be recorded in `Docs/prod-promotions.local.md`
+
+## Historical Dark-Connect Milestone
 
 Current validated promoted code ref:
 
@@ -92,8 +119,7 @@ Validation achieved on `2026-03-22`:
 
 Important:
 
-- this validates the current prod streamer runtime/auth/routing contract
-- it does not by itself mean the hosted prod API/control plane is cut over
+- this validated the prod streamer runtime/auth/routing contract before the later live control-plane cutover
 - AMI id and launch-template version are operator-local rollout details and should be recorded in `Docs/prod-promotions.local.md` for each real prod release tuple
 
 ## Recording Real Rollouts
