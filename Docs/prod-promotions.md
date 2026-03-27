@@ -30,32 +30,44 @@ The suffix letter allows multiple same-day promotions without reusing a tag name
 
 ## Operator Flow
 
-Run from the repo root on the gold instance:
+Run from the repo root on an operator workstation or the validated gold instance:
 
 ```bat
-BuildScripts\promote-prod-streamer-release.bat
+BuildScripts\promote-prod-streamer-release.bat -Region eu-north-1
 ```
 
 Optional notes:
 
 ```bat
-BuildScripts\promote-prod-streamer-release.bat -Notes "Initial prod dark launch"
+BuildScripts\promote-prod-streamer-release.bat -Region eu-north-1 -Notes "Initial prod dark launch"
+```
+
+Optional explicit validated commit/ref:
+
+```bat
+BuildScripts\promote-prod-streamer-release.bat -Region eu-north-1 -TargetCommit b7ef17499255bb20d6ae8b3be103b23cb62109b4
 ```
 
 What the script does:
 1. fetch tags from `origin`
-2. verify local `HEAD` exactly matches `origin/<current-branch>`
+2. resolve the promotion commit:
+   - default: verify local `HEAD` exactly matches `origin/<current-branch>`
+   - optional: resolve `-TargetCommit` and verify fetched `origin/*` contains it
 3. determine the next tag for today
-4. create an annotated tag on `HEAD`
+4. create an annotated tag on the resolved promotion commit
 5. push the tag
 6. update `/pixelstreaming/prod/git-target-ref`
 7. append a local entry to `Docs/prod-promotions.local.md`
 
 ## Prerequisites
 
-The operator context on the gold instance must be able to:
+The operator context on the workstation or gold instance must be able to:
 - push tags to the PixelStreaming remote
 - `ssm:PutParameter` on `/pixelstreaming/prod/git-target-ref`
+
+If you run from a workstation instead of EC2:
+- pass `-Region eu-north-1` explicitly unless `AWS_REGION` / `AWS_DEFAULT_REGION` is already set
+- use `-TargetCommit <validated-sha-or-ref>` when you want promotion to be tied to a previously validated commit instead of the currently checked-out `HEAD`
 
 If the SSM update fails after tag push:
 - the tag may already exist remotely

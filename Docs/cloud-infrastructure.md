@@ -271,16 +271,18 @@ Prod promotion flow:
 
 1. validate the desired PixelStreaming commit on the gold/nonprod baseline
 2. bake the gold AMI from that same validated commit
-3. run `BuildScripts/promote-prod-streamer-release.bat` on the gold instance
-3. the script creates an annotated tag using:
+3. run `BuildScripts/promote-prod-streamer-release.bat -Region eu-north-1` from the operator workstation or validated gold instance
+4. the script creates an annotated tag using:
    - `pixelstreaming-prod-ddmmyyyy<letter>`
-4. the script refuses to promote if local `HEAD` does not exactly match `origin/<current-branch>`
-5. the script pushes the tag and updates:
+5. the script either:
+   - promotes checked-out `HEAD` after verifying it exactly matches `origin/<current-branch>`
+   - or promotes `-TargetCommit <sha-or-ref>` after verifying fetched `origin/*` contains it
+6. the script pushes the tag and updates:
    - `/pixelstreaming/prod/git-target-ref`
-6. the script records the promotion in:
+7. the script records the promotion in:
    - `Docs/prod-promotions.local.md`
-   - this file is intentionally untracked on gold so promotions do not block future pulls
-7. prod streamer instances in `pinned` mode resolve their startup ref from that SSM parameter at normal boot
+   - this file is intentionally untracked so promotions do not block future pulls on the machine that ran the promotion
+8. prod streamer instances in `pinned` mode resolve their startup ref from that SSM parameter at normal boot
 
 ### Unreal Update Flow (Current)
 

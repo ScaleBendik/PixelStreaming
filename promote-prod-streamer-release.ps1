@@ -4,6 +4,7 @@ param(
     [string]$RemoteName = 'origin',
     [string]$Region = '',
     [string]$TargetRefParameterName = '/pixelstreaming/prod/git-target-ref',
+    [string]$TargetCommit = '',
     [string]$TagName = '',
     [datetime]$PromotionDate = (Get-Date),
     [string]$LedgerPath = '',
@@ -150,6 +151,48 @@ function Get-CurrentBranchName {
     }
 
     return $branch.Trim()
+}
+
+function Resolve-PromotionCommit {
+    param(
+        [string]$GitCli,
+        [string]$RemoteName,
+        [string]$RequestedCommit
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RequestedCommit)) {
+        $currentBranch = Get-CurrentBranchName -GitCli $GitCli
+        $remoteBranchRef = "refs/remotes/$RemoteName/$currentBranch"
+        $remoteBranchCommit = Invoke-GitText -GitCli $GitCli -Arguments @('rev-parse', '--verify', '--quiet', $remoteBranchRef) -ErrorMessage "Failed to resolve remote branch '$RemoteName/$currentBranch'."
+        $headCommit = Invoke-GitText -GitCli $GitCli -Arguments @('rev-parse', 'HEAD') -ErrorMessage 'Failed to resolve current HEAD commit.'
+        if ($headCommit.Trim() -ne $remoteBranchCommit.Trim()) {
+            throw "Refusing to promote from local commit '$headCommit' because it does not match '$RemoteName/$currentBranch' ('$remoteBranchCommit'). Run BuildScripts\pull-latest.bat on the correct branch before promoting."
+        }
+
+        return [pscustomobject]@{
+            Commit = $headCommit.Trim()
+            Source = "HEAD ($currentBranch)"
+        }
+    }
+
+    $requestedCommitRef = ('{0}^{{commit}}' -f $RequestedCommit.Trim())
+    $resolvedCommit = Invoke-GitText -GitCli $GitCli -Arguments @('rev-parse', '--verify', '--quiet', $requestedCommitRef) -ErrorMessage "Failed to resolve target commit '$RequestedCommit'."
+    $remoteContainingBranches = Invoke-GitText -GitCli $GitCli -Arguments @('branch', '-r', '--contains', $resolvedCommit.Trim()) -ErrorMessage "Failed to inspect remote containment for target commit '$RequestedCommit'."
+    $matchingRemoteBranches = @(
+        $remoteContainingBranches -split "`r?`n" |
+        ForEach-Object { $_.Trim() } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        ForEach-Object { if ($_.StartsWith('* ')) { $_.Substring(2).Trim() } else { $_ } } |
+        Where-Object { $_ -like "$RemoteName/*" }
+    )
+    if ($matchingRemoteBranches.Count -eq 0) {
+        throw "Refusing to promote target commit '$RequestedCommit' because fetched remote '$RemoteName' does not contain commit '$resolvedCommit' on any branch."
+    }
+
+    return [pscustomobject]@{
+        Commit = $resolvedCommit.Trim()
+        Source = "explicit target '$RequestedCommit'"
+    }
 }
 
 function Get-RepoRelativePath {
@@ -319,13 +362,9 @@ try {
         throw "Failed to fetch tags from remote '$RemoteName'. $($fetchResult.Combined)"
     }
 
-    $currentBranch = Get-CurrentBranchName -GitCli $gitCli
-    $remoteBranchRef = "refs/remotes/$RemoteName/$currentBranch"
-    $remoteBranchCommit = Invoke-GitText -GitCli $gitCli -Arguments @('rev-parse', '--verify', '--quiet', $remoteBranchRef) -ErrorMessage "Failed to resolve remote branch '$RemoteName/$currentBranch'."
-    $headCommit = Invoke-GitText -GitCli $gitCli -Arguments @('rev-parse', 'HEAD') -ErrorMessage 'Failed to resolve current HEAD commit.'
-    if ($headCommit.Trim() -ne $remoteBranchCommit.Trim()) {
-        throw "Refusing to promote from local commit '$headCommit' because it does not match '$RemoteName/$currentBranch' ('$remoteBranchCommit'). Run BuildScripts\\pull-latest.bat on the correct gold branch before promoting."
-    }
+    $promotionCommitInfo = Resolve-PromotionCommit -GitCli $gitCli -RemoteName $RemoteName -RequestedCommit $TargetCommit
+    $promotionCommit = $promotionCommitInfo.Commit
+    Write-PromotionLog "Using promotion commit '$promotionCommit' from $($promotionCommitInfo.Source)."
 
     if ([string]::IsNullOrWhiteSpace($TagName)) {
         $TagName = Get-NextPromotionTagName -GitCli $gitCli -Date $PromotionDate
@@ -341,7 +380,7 @@ try {
     $annotation = @(
         "Promote PixelStreaming prod release $TagName",
         '',
-        "Commit: $headCommit",
+        "Commit: $promotionCommit",
         "SSM parameter: $TargetRefParameterName",
         "Region: $resolvedRegion",
         "Promoted at (UTC): $($promotedAtUtc.ToString('o'))"
@@ -351,8 +390,8 @@ try {
     try {
         [System.IO.File]::WriteAllText($annotationPath, $annotation, (New-Object System.Text.UTF8Encoding($false)))
 
-        Write-PromotionLog "Creating annotated prod promotion tag '$TagName' for HEAD $headCommit."
-        $tagResult = Invoke-ExternalCapture -FilePath $gitCli -Arguments @('tag', '-a', $TagName, $headCommit, '-F', $annotationPath)
+        Write-PromotionLog "Creating annotated prod promotion tag '$TagName' for commit $promotionCommit."
+        $tagResult = Invoke-ExternalCapture -FilePath $gitCli -Arguments @('tag', '-a', $TagName, $promotionCommit, '-F', $annotationPath)
         if ($tagResult.ExitCode -ne 0) {
             if ([string]::IsNullOrWhiteSpace($tagResult.Combined)) {
                 throw "Failed to create git tag '$TagName'."
@@ -397,7 +436,7 @@ try {
         throw
     }
 
-    Append-LedgerEntry -Path $LedgerPath -PromotedAtUtc $promotedAtUtc -Tag $TagName -Commit $headCommit -Region $resolvedRegion -ParameterName $TargetRefParameterName -SourceMachine $env:COMPUTERNAME -Notes $Notes
+    Append-LedgerEntry -Path $LedgerPath -PromotedAtUtc $promotedAtUtc -Tag $TagName -Commit $promotionCommit -Region $resolvedRegion -ParameterName $TargetRefParameterName -SourceMachine $env:COMPUTERNAME -Notes $Notes
 
     Write-PromotionLog "Prod promotion complete. Tag '$TagName' now backs SSM parameter '$TargetRefParameterName'."
 } finally {
