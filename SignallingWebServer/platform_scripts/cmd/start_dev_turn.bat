@@ -8,6 +8,13 @@ if not defined STREAMING_LANE_TAG_RETRY_DELAY_SECONDS set "STREAMING_LANE_TAG_RE
 call :resolve_streaming_lane_from_instance_tag
 if defined RESOLVED_STREAMING_LANE set "SCALEWORLD_STREAMING_LANE=%RESOLVED_STREAMING_LANE%"
 if not defined SCALEWORLD_STREAMING_LANE set "SCALEWORLD_STREAMING_LANE=nonprod"
+if not defined SCALEWORLD_DEPLOYMENT_TRACK (
+  if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
+    set "SCALEWORLD_DEPLOYMENT_TRACK=prod"
+  ) else (
+    set "SCALEWORLD_DEPLOYMENT_TRACK=dev"
+  )
+)
 if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" goto apply_streaming_lane_prod
 if /i "%SCALEWORLD_STREAMING_LANE%"=="nonprod" goto apply_streaming_lane_nonprod
 echo ERROR: Unsupported SCALEWORLD_STREAMING_LANE "%SCALEWORLD_STREAMING_LANE%". Expected nonprod or prod.
@@ -33,13 +40,21 @@ set "ENABLE_GIT_SYNC_BEFORE_START=false"
 set "DISCARD_LOCAL_GIT_CHANGES_ON_SYNC=true"
 set "REQUIRE_EC2_INSTANCE_FOR_GIT_SYNC=true"
 if not defined SCALEWORLD_GIT_SYNC_MODE (
-  if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
+  if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
+    set "SCALEWORLD_GIT_SYNC_MODE=pinned"
+  ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
     set "SCALEWORLD_GIT_SYNC_MODE=pinned"
   ) else (
     set "SCALEWORLD_GIT_SYNC_MODE=upstream"
   )
 )
-if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" if not defined SCALEWORLD_GIT_TARGET_REF_PARAM set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref"
+if not defined SCALEWORLD_GIT_TARGET_REF_PARAM (
+  if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
+    set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref"
+  ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
+    set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/nonprod/git-target-ref"
+  )
+)
 set "RUNTIME_STATUS_ENABLED=true"
 if not defined STARTUP_RUNTIME_STATUS_HEARTBEAT_INTERVAL_SECONDS set "STARTUP_RUNTIME_STATUS_HEARTBEAT_INTERVAL_SECONDS=30"
 if not defined IMDS_INSTANCE_ID_RETRY_COUNT set "IMDS_INSTANCE_ID_RETRY_COUNT=12"
@@ -79,6 +94,7 @@ if errorlevel 1 (
 
 echo Using AWS CLI: "%AWS_EXE%"
 echo Using streaming lane: "%SCALEWORLD_STREAMING_LANE%"
+echo Using deployment track: "%SCALEWORLD_DEPLOYMENT_TRACK%"
 
 set "AWS_CALL=aws"
 if /i not "%AWS_EXE%"=="aws" (

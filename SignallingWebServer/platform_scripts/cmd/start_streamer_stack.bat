@@ -15,14 +15,29 @@ if not defined STREAMING_LANE_TAG_RETRY_DELAY_SECONDS set "STREAMING_LANE_TAG_RE
 call :resolve_streaming_lane_from_instance_tag
 if defined RESOLVED_STREAMING_LANE set "SCALEWORLD_STREAMING_LANE=%RESOLVED_STREAMING_LANE%"
 if not defined SCALEWORLD_STREAMING_LANE set "SCALEWORLD_STREAMING_LANE=nonprod"
-if not defined SCALEWORLD_GIT_SYNC_MODE (
+if not defined SCALEWORLD_DEPLOYMENT_TRACK (
   if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
+    set "SCALEWORLD_DEPLOYMENT_TRACK=prod"
+  ) else (
+    set "SCALEWORLD_DEPLOYMENT_TRACK=dev"
+  )
+)
+if not defined SCALEWORLD_GIT_SYNC_MODE (
+  if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
+    set "SCALEWORLD_GIT_SYNC_MODE=pinned"
+  ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
     set "SCALEWORLD_GIT_SYNC_MODE=pinned"
   ) else (
     set "SCALEWORLD_GIT_SYNC_MODE=upstream"
   )
 )
-if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" if not defined SCALEWORLD_GIT_TARGET_REF_PARAM set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref"
+if not defined SCALEWORLD_GIT_TARGET_REF_PARAM (
+  if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
+    set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref"
+  ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
+    set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/nonprod/git-target-ref"
+  )
+)
 if not defined STACK_ENABLE_BOOT_GIT_SYNC (
   if /i "%SCALEWORLD_GIT_SYNC_MODE%"=="pinned" (
     set "STACK_ENABLE_BOOT_GIT_SYNC=true"

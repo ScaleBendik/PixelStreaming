@@ -95,6 +95,10 @@ Current SSM String parameter used for prod streamer release pinning:
 
 - `/pixelstreaming/prod/git-target-ref`
 
+Current SSM String parameter used for the stage/candidate nonprod streamer release pinning:
+
+- `/pixelstreaming/nonprod/git-target-ref`
+
 Current Azure Key Vault secret used by the API workload in each environment:
 
 - `kv-scaleworld-dev` -> `connect-ticket-signing-key`
@@ -106,6 +110,7 @@ Current note:
 - prod lane is now live for normal Session Manager traffic
 - prod API startup requires `kv-scaleworld-prod/connect-ticket-signing-key` to be populated with the real prod signing key and that value must match streamer-side SSM `/pixelstreaming/prod/connect-ticket/signing-key`
 - streamer startup is now lane-aware through `SCALEWORLD_STREAMING_LANE=nonprod|prod`
+- startup also supports a deployment-track override through `SCALEWORLD_DEPLOYMENT_TRACK=dev|stage|prod`
 - current bootstrap defaults are:
   - `nonprod` -> SSM `/pixelstreaming/connect-ticket/signing-key`, issuer `scaleworld-dev-connect-ticket`
   - `prod` -> SSM `/pixelstreaming/prod/connect-ticket/signing-key`, issuer `scaleworld-prod-connect-ticket`
@@ -118,9 +123,16 @@ Current note:
   - `SCALEWORLD_GIT_SYNC_MODE=upstream|pinned|off`
   - default `nonprod` behavior: `upstream`
   - default `prod` behavior: `pinned`
+  - deployment-track defaults:
+    - `dev` -> `upstream`
+    - `stage` -> `pinned` with `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/nonprod/git-target-ref`
+    - `prod` -> `pinned` with `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref`
   - `SCALEWORLD_GIT_TARGET_REF=<tag-or-commit>` or `SCALEWORLD_GIT_TARGET_REF_PARAM=<ssm-parameter-name>` is required for `pinned`
   - recommended prod launch-template setting:
     - `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref`
+  - recommended stage-like nonprod launch-template setting:
+    - `SCALEWORLD_DEPLOYMENT_TRACK=stage`
+    - `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/nonprod/git-target-ref`
   - normal prod boot through `start_streamer_stack.bat` now applies pinned repo sync before the stack launch
   - if the AMI repo/build baseline is behind the promoted prod tag, first boot may spend several minutes in repo reset + `BuildScripts/build-all.bat` before Wilbur starts
 
@@ -135,6 +147,7 @@ Streamer/TURN instance role must currently support:
 
 Gold/promotion operator context must also support:
 
+- `ssm:PutParameter` on `/pixelstreaming/nonprod/git-target-ref`
 - `ssm:PutParameter` on `/pixelstreaming/prod/git-target-ref`
 
 ## Pixel Streaming Runtime Configuration

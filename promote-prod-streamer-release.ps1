@@ -4,6 +4,7 @@ param(
     [string]$RemoteName = 'origin',
     [string]$Region = '',
     [string]$TargetRefParameterName = '/pixelstreaming/prod/git-target-ref',
+    [string]$TagPrefix = 'pixelstreaming-prod',
     [string]$TargetCommit = '',
     [string]$TagName = '',
     [datetime]$PromotionDate = (Get-Date),
@@ -31,7 +32,7 @@ function Write-PromotionLog {
     )
 
     $timestamp = (Get-Date).ToUniversalTime().ToString('o')
-    Write-Host "[$timestamp] [$Level] [prod-promotion] $Message"
+    Write-Host "[$timestamp] [$Level] [streamer-promotion] $Message"
 }
 
 function Get-GitCliPath {
@@ -147,7 +148,7 @@ function Get-CurrentBranchName {
 
     $branch = Invoke-GitText -GitCli $GitCli -Arguments @('rev-parse', '--abbrev-ref', 'HEAD') -ErrorMessage 'Failed to resolve current git branch.'
     if ([string]::IsNullOrWhiteSpace($branch) -or $branch -eq 'HEAD') {
-        throw 'Prod promotion must run from a checked-out branch, not a detached HEAD.'
+        throw 'Streamer promotion must run from a checked-out branch, not a detached HEAD.'
     }
 
     return $branch.Trim()
@@ -244,17 +245,19 @@ function Test-TrackedWorktreeClean {
 function Get-NextPromotionTagName {
     param(
         [string]$GitCli,
-        [datetime]$Date
+        [datetime]$Date,
+        [string]$TagPrefix
     )
 
     $dateToken = $Date.ToString('ddMMyyyy')
-    $prefix = "pixelstreaming-prod-$dateToken"
+    $prefix = "$TagPrefix-$dateToken"
     $rawTags = Invoke-GitText -GitCli $GitCli -Arguments @('tag', '--list', "$prefix*") -ErrorMessage "Failed to list existing promotion tags for $dateToken."
     $tags = @($rawTags -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $escapedPrefix = [Regex]::Escape($TagPrefix)
 
     $highestLetter = $null
     foreach ($tag in $tags) {
-        if ($tag -match "^pixelstreaming-prod-$dateToken(?<suffix>[a-z])$") {
+        if ($tag -match "^$escapedPrefix-$dateToken(?<suffix>[a-z])$") {
             $candidate = [char]$Matches['suffix']
             if (-not $highestLetter -or [int][char]$candidate -gt [int][char]$highestLetter) {
                 $highestLetter = $candidate
@@ -275,10 +278,14 @@ function Get-NextPromotionTagName {
 }
 
 function Validate-TagName {
-    param([string]$Value)
+    param(
+        [string]$Value,
+        [string]$TagPrefix
+    )
 
-    if ($Value -notmatch '^pixelstreaming-prod-\d{8}[a-z]$') {
-        throw "Tag name '$Value' does not match the required format 'pixelstreaming-prod-ddmmyyyy<letter>'."
+    $pattern = '^{0}-\d{{8}}[a-z]$' -f [Regex]::Escape($TagPrefix)
+    if ($Value -notmatch $pattern) {
+        throw "Tag name '$Value' does not match the required format '$TagPrefix-ddmmyyyy<letter>'."
     }
 }
 
@@ -295,9 +302,9 @@ function Ensure-LedgerFile {
     }
 
     $header = @(
-        '# Prod Streamer Promotions',
+        '# Streamer Promotions',
         '',
-        'Local promotion log for the SSM-backed prod streamer target ref.',
+        'Local promotion log for the SSM-backed streamer target ref.',
         '',
         'This file is intentionally untracked so gold-instance promotions do not block future pulls.',
         '',
@@ -349,7 +356,7 @@ try {
     }
 
     if (-not (Test-TrackedWorktreeClean -GitCli $gitCli -IgnoredPaths @($ledgerRelativePath))) {
-        throw 'Tracked local changes are present. Commit or discard them before promoting a prod streamer release.'
+        throw 'Tracked local changes are present. Commit or discard them before promoting a streamer release.'
     }
 
     Write-PromotionLog "Fetching tags from remote '$RemoteName' before promotion."
@@ -367,10 +374,10 @@ try {
     Write-PromotionLog "Using promotion commit '$promotionCommit' from $($promotionCommitInfo.Source)."
 
     if ([string]::IsNullOrWhiteSpace($TagName)) {
-        $TagName = Get-NextPromotionTagName -GitCli $gitCli -Date $PromotionDate
+        $TagName = Get-NextPromotionTagName -GitCli $gitCli -Date $PromotionDate -TagPrefix $TagPrefix
     }
 
-    Validate-TagName -Value $TagName
+    Validate-TagName -Value $TagName -TagPrefix $TagPrefix
 
     $existingTag = Invoke-ExternalCapture -FilePath $gitCli -Arguments @('rev-parse', '--verify', '--quiet', "refs/tags/$TagName")
     if ($existingTag.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($existingTag.StdOut)) {
@@ -378,7 +385,7 @@ try {
     }
 
     $annotation = @(
-        "Promote PixelStreaming prod release $TagName",
+        "Promote PixelStreaming release $TagName",
         '',
         "Commit: $promotionCommit",
         "SSM parameter: $TargetRefParameterName",
@@ -390,7 +397,7 @@ try {
     try {
         [System.IO.File]::WriteAllText($annotationPath, $annotation, (New-Object System.Text.UTF8Encoding($false)))
 
-        Write-PromotionLog "Creating annotated prod promotion tag '$TagName' for commit $promotionCommit."
+        Write-PromotionLog "Creating annotated promotion tag '$TagName' for commit $promotionCommit."
         $tagResult = Invoke-ExternalCapture -FilePath $gitCli -Arguments @('tag', '-a', $TagName, $promotionCommit, '-F', $annotationPath)
         if ($tagResult.ExitCode -ne 0) {
             if ([string]::IsNullOrWhiteSpace($tagResult.Combined)) {
@@ -438,7 +445,7 @@ try {
 
     Append-LedgerEntry -Path $LedgerPath -PromotedAtUtc $promotedAtUtc -Tag $TagName -Commit $promotionCommit -Region $resolvedRegion -ParameterName $TargetRefParameterName -SourceMachine $env:COMPUTERNAME -Notes $Notes
 
-    Write-PromotionLog "Prod promotion complete. Tag '$TagName' now backs SSM parameter '$TargetRefParameterName'."
+    Write-PromotionLog "Promotion complete. Tag '$TagName' now backs SSM parameter '$TargetRefParameterName'."
 } finally {
     Pop-Location
 }

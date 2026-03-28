@@ -2,6 +2,10 @@
 
 This document is the current reference for how prod streamer code is promoted.
 
+Stage/candidate promotion now exists as a separate first step:
+- Gold validation can promote the tested checkout to `/pixelstreaming/nonprod/git-target-ref`
+- prod promotion can then promote that already-tested stage candidate to `/pixelstreaming/prod/git-target-ref`
+
 ## Current Model
 
 Prod streamer startup should not track moving upstream directly.
@@ -58,6 +62,11 @@ What the script does:
 5. push the tag
 6. update `/pixelstreaming/prod/git-target-ref`
 7. append a local entry to `Docs/prod-promotions.local.md`
+
+The same script also supports the stage/candidate path when called with:
+- `-TargetRefParameterName /pixelstreaming/nonprod/git-target-ref`
+- `-TagPrefix pixelstreaming-stage`
+- `-LedgerPath Docs/stage-promotions.local.md`
 
 ## Prerequisites
 
