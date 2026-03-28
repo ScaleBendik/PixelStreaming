@@ -211,10 +211,15 @@ Important:
    - `ScaleWorldDeploymentTrack=dev|stage|prod`
    - temporary migration compatibility also accepts `ScaleWorldDeploymenttrack`
    - a resolved tag overrides stale inherited machine `SCALEWORLD_DEPLOYMENT_TRACK`
-12. If tracked local repo changes are present, repo-sync recovery fails fast instead of overwriting them.
-13. On successful maintenance validation, the instance keeps Fleet command tags in place, requests stop, and relies on the API to clear those command tags after the stopped instance is observed for the matching job.
-14. The updater uses the prepared data drive (preferably `D:`) for download/scratch space when available, while the final active install remains on `C:\PixelStreaming\WindowsNoEditor`.
-15. The current recommended Windows boot method is Task Scheduler:
+12. Current intended deployment-track defaults are:
+   - `ScaleWorldLane=prod` -> deployment track `prod`
+   - `ScaleWorldLane=nonprod` -> deployment track `stage`
+   - `Gold` should be explicitly tagged `ScaleWorldDeploymentTrack=dev`
+13. Boot repo sync now defaults on for all tracks unless `SCALEWORLD_GIT_SYNC_MODE=off`.
+14. If tracked local repo changes are present, repo-sync recovery fails fast instead of overwriting them.
+15. On successful maintenance validation, the instance keeps Fleet command tags in place, requests stop, and relies on the API to clear those command tags after the stopped instance is observed for the matching job.
+16. The updater uses the prepared data drive (preferably `D:`) for download/scratch space when available, while the final active install remains on `C:\PixelStreaming\WindowsNoEditor`.
+17. The current recommended Windows boot method is Task Scheduler:
    - trigger: `At startup`
    - delay: `20 seconds`
    - user mode: `Run only when user is logged on`

@@ -21,7 +21,7 @@ if not defined SCALEWORLD_DEPLOYMENT_TRACK (
   if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
     set "SCALEWORLD_DEPLOYMENT_TRACK=prod"
   ) else (
-    set "SCALEWORLD_DEPLOYMENT_TRACK=dev"
+    set "SCALEWORLD_DEPLOYMENT_TRACK=stage"
   )
 )
 if not defined SCALEWORLD_GIT_SYNC_MODE (
@@ -41,10 +41,10 @@ if not defined SCALEWORLD_GIT_TARGET_REF_PARAM (
   )
 )
 if not defined STACK_ENABLE_BOOT_GIT_SYNC (
-  if /i "%SCALEWORLD_GIT_SYNC_MODE%"=="pinned" (
-    set "STACK_ENABLE_BOOT_GIT_SYNC=true"
-  ) else (
+  if /i "%SCALEWORLD_GIT_SYNC_MODE%"=="off" (
     set "STACK_ENABLE_BOOT_GIT_SYNC=false"
+  ) else (
+    set "STACK_ENABLE_BOOT_GIT_SYNC=true"
   )
 )
 if not defined STACK_LAUNCH_UNREAL_BEFORE_WILBUR set "STACK_LAUNCH_UNREAL_BEFORE_WILBUR=true"

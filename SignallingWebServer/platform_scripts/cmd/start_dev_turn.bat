@@ -14,7 +14,7 @@ if not defined SCALEWORLD_DEPLOYMENT_TRACK (
   if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
     set "SCALEWORLD_DEPLOYMENT_TRACK=prod"
   ) else (
-    set "SCALEWORLD_DEPLOYMENT_TRACK=dev"
+    set "SCALEWORLD_DEPLOYMENT_TRACK=stage"
   )
 )
 if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" goto apply_streaming_lane_prod

@@ -114,6 +114,10 @@ Current note:
   - instance tag `ScaleWorldDeploymentTrack=dev|stage|prod`
   - fallback env `SCALEWORLD_DEPLOYMENT_TRACK=dev|stage|prod`
 - if the instance tag resolves successfully, that value overrides stale inherited machine `SCALEWORLD_DEPLOYMENT_TRACK`
+- current intended deployment-track model:
+  - `Gold` -> tag `ScaleWorldDeploymentTrack=dev`
+  - normal nonprod fleet -> default `stage`
+  - prod fleet -> default `prod`
 - current bootstrap defaults are:
   - `nonprod` -> SSM `/pixelstreaming/connect-ticket/signing-key`, issuer `scaleworld-dev-connect-ticket`
   - `prod` -> SSM `/pixelstreaming/prod/connect-ticket/signing-key`, issuer `scaleworld-prod-connect-ticket`
@@ -124,16 +128,19 @@ Current note:
   - this matches the current ALB/X-Forwarded-For path and avoids `express-rate-limit` proxy warnings
 - repo/bootstrap sync policy now supports:
   - `SCALEWORLD_GIT_SYNC_MODE=upstream|pinned|off`
-  - default `nonprod` behavior: `upstream`
+  - default `nonprod` behavior: `pinned` through deployment track `stage`
   - default `prod` behavior: `pinned`
   - deployment-track defaults:
     - `dev` -> `upstream`
     - `stage` -> `pinned` with `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/nonprod/git-target-ref`
     - `prod` -> `pinned` with `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref`
   - `SCALEWORLD_GIT_TARGET_REF=<tag-or-commit>` or `SCALEWORLD_GIT_TARGET_REF_PARAM=<ssm-parameter-name>` is required for `pinned`
+  - boot-time repo sync now defaults on for any sync mode except `off`
   - recommended prod launch-template setting:
     - `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref`
-  - recommended stage-like nonprod launch-template / instance tag setting:
+  - recommended Gold instance tag setting:
+    - `ScaleWorldDeploymentTrack=dev`
+  - recommended stage-like nonprod launch-template / provisioning tag setting:
     - `ScaleWorldDeploymentTrack=stage`
   - note:
     - explicit machine env vars such as `SCALEWORLD_GIT_SYNC_MODE` or `SCALEWORLD_GIT_TARGET_REF_PARAM` still override the derived track defaults if they were manually set on the box
