@@ -2,7 +2,8 @@
 param(
     [string]$RepoRoot = $(Resolve-Path (Join-Path $PSScriptRoot '..')).Path,
     [string]$StackTaskName = '',
-    [int]$WaitForWilburTimeoutSeconds = 120
+    [int]$WaitForWilburTimeoutSeconds = 120,
+    [string]$RemoteName = 'origin'
 )
 
 Set-StrictMode -Version Latest
@@ -92,9 +93,27 @@ function Wait-ForWilbur {
     return $false
 }
 
+function Get-OptionalTextFileValue {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $null
+    }
+
+    $value = (Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return $null
+    }
+
+    return $value
+}
+
 $script:goldRefreshStep = 'initializing'
 $repoSyncScript = Join-Path $RepoRoot 'SignallingWebServer\platform_scripts\powershell\ensure_repo_current.ps1'
 $stackLauncher = Join-Path $RepoRoot 'SignallingWebServer\platform_scripts\cmd\start_streamer_stack.bat'
+$buildStampPath = Join-Path $RepoRoot 'SignallingWebServer\state\repo-build-head.txt'
+$wilburDistPath = Join-Path $RepoRoot 'SignallingWebServer\dist\index.js'
+$frontendBundlePath = Join-Path $RepoRoot 'SignallingWebServer\www\player.html'
 
 try {
     if (-not (Test-Path -LiteralPath $repoSyncScript)) {
@@ -106,6 +125,50 @@ try {
     }
 
     $stoppedProcesses = [System.Collections.Generic.List[string]]::new()
+
+    $script:goldRefreshStep = 'preflight_repo_freshness'
+    Set-Location -LiteralPath $RepoRoot
+    $branch = ((git rev-parse --abbrev-ref HEAD) | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Failed to resolve the current Gold branch before refresh.'
+    }
+
+    $currentHead = ((git rev-parse HEAD) | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($currentHead)) {
+        throw 'Failed to resolve the current Gold HEAD before refresh.'
+    }
+
+    $trackedChanges = ((git status --porcelain --untracked-files=no) | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Failed to inspect Gold repo dirtiness before refresh.'
+    }
+
+    git fetch $RemoteName --prune *> $null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to fetch '$RemoteName' before Gold refresh."
+    }
+
+    $upstreamBranch = ((git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null) | Out-String).Trim()
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($upstreamBranch)) {
+        $upstreamHead = ((git rev-parse '@{u}' 2>$null) | Out-String).Trim()
+        $buildStamp = Get-OptionalTextFileValue -Path $buildStampPath
+        $buildArtifactsMatch =
+            (Test-Path -LiteralPath $wilburDistPath) -and
+            (Test-Path -LiteralPath $frontendBundlePath) -and
+            ($buildStamp -eq $currentHead)
+
+        if (
+            [string]::IsNullOrWhiteSpace($trackedChanges) -and
+            -not [string]::IsNullOrWhiteSpace($upstreamHead) -and
+            $currentHead -eq $upstreamHead -and
+            $buildArtifactsMatch
+        ) {
+            Write-GoldRefreshLog "Gold already matches $upstreamBranch at $currentHead and build artifacts match HEAD. Skipping refresh."
+            Write-Output ('Startup method: no-op')
+            Write-Output 'Gold repo already matches upstream and build artifacts match HEAD. No refresh was needed.'
+            return
+        }
+    }
 
     $script:goldRefreshStep = 'stopping_existing_processes'
     Stop-GoldProcessMatches -Label 'watchdog-launcher' -NamePattern 'cmd.exe' -CommandLinePattern '*start_watchdog.bat*' -StoppedProcesses $stoppedProcesses
