@@ -203,6 +203,28 @@ function Resolve-Ec2InstanceId {
     return (Invoke-RestMethod -Method Get -Uri 'http://169.254.169.254/latest/meta-data/instance-id' -Headers @{ 'X-aws-ec2-metadata-token' = $Token }).Trim()
 }
 
+function New-RepoHeadTagContext {
+    try {
+        $awsCliPath = Get-AwsCliPath
+        $imdsToken = Resolve-ImdsV2Token
+        $region = Resolve-SsmRegion
+        $instanceId = Resolve-Ec2InstanceId -Token $imdsToken
+        if ([string]::IsNullOrWhiteSpace($instanceId)) {
+            return $null
+        }
+
+        return [pscustomobject]@{
+            AwsCliPath = $awsCliPath
+            Region = $region
+            InstanceId = $instanceId
+            PublishScriptPath = Join-Path $PSScriptRoot 'publish_repo_head_tags.ps1'
+        }
+    } catch {
+        Write-RepoSyncLog "Unable to initialize repo head tag publishing. $($_.Exception.Message)" 'WARN'
+        return $null
+    }
+}
+
 function New-StartupRuntimeStatusContext {
     param([string]$CurrentMode)
 
@@ -355,6 +377,46 @@ function Stop-StartupRuntimeStatusHeartbeat {
     'stop' | Set-Content -LiteralPath $Context.StopFilePath -Encoding ASCII -Force
 }
 
+function Publish-RepoHeadTag {
+    param(
+        [pscustomobject]$Context,
+        [string]$CurrentHead
+    )
+
+    if ($null -eq $Context) {
+        return
+    }
+
+    if (-not (Test-Path -LiteralPath $Context.PublishScriptPath)) {
+        Write-RepoSyncLog "Repo head publish helper '$($Context.PublishScriptPath)' was not found." 'WARN'
+        return
+    }
+
+    $publishResult = Invoke-AwsCliCapture -AwsCli 'powershell.exe' -Arguments @(
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        $Context.PublishScriptPath,
+        '-InstanceId',
+        $Context.InstanceId,
+        '-Region',
+        $Context.Region,
+        '-AwsCliPath',
+        $Context.AwsCliPath,
+        '-CurrentRepoHead',
+        $CurrentHead
+    )
+
+    if ($publishResult.ExitCode -ne 0) {
+        if ([string]::IsNullOrWhiteSpace($publishResult.Combined)) {
+            Write-RepoSyncLog "Failed to publish current repo head '$CurrentHead'." 'WARN'
+        } else {
+            Write-RepoSyncLog "Failed to publish current repo head '$CurrentHead'. $($publishResult.Combined)" 'WARN'
+        }
+    }
+}
+
 function Resolve-GitTargetRefValue {
     param(
         [string]$ExplicitRef,
@@ -422,6 +484,7 @@ $frontendBundlePath = Join-Path $RepoRoot 'SignallingWebServer\www\player.html'
 $gitSyncModeNormalized = Normalize-GitSyncMode -Value $GitSyncMode
 $gitTargetRefNormalized = Resolve-GitTargetRefValue -ExplicitRef $GitTargetRef -TargetRefParam $GitTargetRefParam
 $startupRuntimeStatusContext = New-StartupRuntimeStatusContext -CurrentMode $Mode
+$repoHeadTagContext = New-RepoHeadTagContext
 
 function Get-BuildStamp {
     param([string]$Path)
@@ -731,6 +794,8 @@ try {
     } else {
         Write-RepoSyncLog "Build artifacts already match HEAD $currentHead. Skipping build-all.bat."
     }
+
+    Publish-RepoHeadTag -Context $repoHeadTagContext -CurrentHead $currentHead
 } catch {
     if ($startupRuntimeStatusContext) {
         Invoke-PublishRuntimeStatusScript -Context $startupRuntimeStatusContext -Status 'runtime_fault' -Reason 'repo_sync_failed'
