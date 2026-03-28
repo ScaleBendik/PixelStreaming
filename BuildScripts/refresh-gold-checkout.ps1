@@ -7,6 +7,16 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$script:CurrentProcessId = $PID
+$script:CurrentParentProcessId = $null
+$script:GoldRefreshLogPath = Join-Path $RepoRoot 'SignallingWebServer\state\gold-refresh.log'
+
+try {
+    $currentProcess = Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $PID) -ErrorAction Stop
+    $script:CurrentParentProcessId = [int]$currentProcess.ParentProcessId
+} catch {
+    $script:CurrentParentProcessId = $null
+}
 
 function Write-GoldRefreshLog {
     param(
@@ -16,7 +26,19 @@ function Write-GoldRefreshLog {
     )
 
     $timestamp = (Get-Date).ToUniversalTime().ToString('o')
-    Write-Host "[$timestamp] [$Level] [gold-refresh] $Message"
+    $line = "[$timestamp] [$Level] [gold-refresh] $Message"
+    Write-Host $line
+
+    try {
+        $directory = Split-Path -Parent $script:GoldRefreshLogPath
+        if (-not (Test-Path -LiteralPath $directory)) {
+            New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        }
+
+        Add-Content -LiteralPath $script:GoldRefreshLogPath -Value $line -Encoding UTF8
+    } catch {
+        # best-effort only
+    }
 }
 
 function Stop-GoldProcessMatches {
@@ -33,6 +55,16 @@ function Stop-GoldProcessMatches {
     }
 
     foreach ($match in @($matches)) {
+        if ($match.ProcessId -eq $script:CurrentProcessId) {
+            Write-GoldRefreshLog "Skipping $Label match for current process PID=$($match.ProcessId)." 'WARN'
+            continue
+        }
+
+        if ($script:CurrentParentProcessId -and $match.ProcessId -eq $script:CurrentParentProcessId) {
+            Write-GoldRefreshLog "Skipping $Label match for parent process PID=$($match.ProcessId)." 'WARN'
+            continue
+        }
+
         Write-GoldRefreshLog "Stopping $Label process $($match.Name) (PID=$($match.ProcessId))."
         Stop-Process -Id $match.ProcessId -Force -ErrorAction Stop
         $StoppedProcesses.Add(($Label + ':' + $match.ProcessId + ':' + $match.Name)) | Out-Null
@@ -76,8 +108,8 @@ try {
     $stoppedProcesses = [System.Collections.Generic.List[string]]::new()
 
     $script:goldRefreshStep = 'stopping_existing_processes'
-    Stop-GoldProcessMatches -Label 'watchdog' -NamePattern 'powershell.exe' -CommandLinePattern '*watchdog.ps1*' -StoppedProcesses $stoppedProcesses
     Stop-GoldProcessMatches -Label 'watchdog-launcher' -NamePattern 'cmd.exe' -CommandLinePattern '*start_watchdog.bat*' -StoppedProcesses $stoppedProcesses
+    Stop-GoldProcessMatches -Label 'watchdog' -NamePattern 'powershell.exe' -CommandLinePattern '*watchdog.ps1*' -StoppedProcesses $stoppedProcesses
     Stop-GoldProcessMatches -Label 'wilbur' -NamePattern 'node.exe' -CommandLinePattern '*index.js*' -StoppedProcesses $stoppedProcesses
     Stop-GoldProcessMatches -Label 'wilbur-launcher' -NamePattern 'cmd.exe' -CommandLinePattern '*start_dev_turn.bat*' -StoppedProcesses $stoppedProcesses
     Stop-GoldProcessMatches -Label 'unreal' -NamePattern 'ScaleWorld*' -CommandLinePattern '*start_scaleworld.ps1*' -StoppedProcesses $stoppedProcesses
