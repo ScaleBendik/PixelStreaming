@@ -193,6 +193,168 @@ function Resolve-SsmRegion {
     return (Invoke-RestMethod -Method Get -Uri 'http://169.254.169.254/latest/meta-data/placement/region' -Headers @{ 'X-aws-ec2-metadata-token' = $token }).Trim()
 }
 
+function Resolve-ImdsV2Token {
+    return (Invoke-RestMethod -Method Put -Uri 'http://169.254.169.254/latest/api/token' -Headers @{ 'X-aws-ec2-metadata-token-ttl-seconds' = '21600' }).Trim()
+}
+
+function Resolve-Ec2InstanceId {
+    param([string]$Token)
+
+    return (Invoke-RestMethod -Method Get -Uri 'http://169.254.169.254/latest/meta-data/instance-id' -Headers @{ 'X-aws-ec2-metadata-token' = $Token }).Trim()
+}
+
+function New-StartupRuntimeStatusContext {
+    param([string]$CurrentMode)
+
+    if (-not [string]::Equals($CurrentMode.Trim(), 'startup', [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $null
+    }
+
+    $publishScriptPath = Join-Path $PSScriptRoot 'publish_runtime_status_tags.ps1'
+    $heartbeatScriptPath = Join-Path $PSScriptRoot 'runtime-status-heartbeat.ps1'
+    if (-not (Test-Path -LiteralPath $publishScriptPath) -or -not (Test-Path -LiteralPath $heartbeatScriptPath)) {
+        return $null
+    }
+
+    try {
+        $awsCliPath = Get-AwsCliPath
+        $imdsToken = Resolve-ImdsV2Token
+        $region = Resolve-SsmRegion
+        $instanceId = Resolve-Ec2InstanceId -Token $imdsToken
+        if ([string]::IsNullOrWhiteSpace($instanceId)) {
+            return $null
+        }
+
+        $heartbeatToken = [Guid]::NewGuid().ToString('N')
+        $tempDirectory = if (-not [string]::IsNullOrWhiteSpace($env:TEMP)) { $env:TEMP } elseif (-not [string]::IsNullOrWhiteSpace($env:TMP)) { $env:TMP } else { 'C:\Windows\Temp' }
+
+        return [pscustomobject]@{
+            AwsCliPath = $awsCliPath
+            Region = $region
+            InstanceId = $instanceId
+            PublishScriptPath = $publishScriptPath
+            HeartbeatScriptPath = $heartbeatScriptPath
+            StateFilePath = Join-Path $tempDirectory ("scaleworld-boot-sync-status-$heartbeatToken.state")
+            StopFilePath = Join-Path $tempDirectory ("scaleworld-boot-sync-status-$heartbeatToken.stop")
+        }
+    } catch {
+        Write-RepoSyncLog "Unable to initialize startup runtime status publishing. $($_.Exception.Message)" 'WARN'
+        return $null
+    }
+}
+
+function Write-StartupRuntimeStatusState {
+    param(
+        [pscustomobject]$Context,
+        [string]$Status,
+        [string]$Source,
+        [string]$Reason,
+        [string]$Version,
+        [string]$StatusAtUtc
+    )
+
+    if ($null -eq $Context) {
+        return
+    }
+
+    @(
+        "status=$Status"
+        "source=$Source"
+        "reason=$Reason"
+        "version=$Version"
+        "status_at_utc=$StatusAtUtc"
+    ) | Set-Content -LiteralPath $Context.StateFilePath -Encoding ASCII
+}
+
+function Invoke-PublishRuntimeStatusScript {
+    param(
+        [pscustomobject]$Context,
+        [string]$Status,
+        [string]$Reason
+    )
+
+    if ($null -eq $Context) {
+        return
+    }
+
+    $statusAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    Write-StartupRuntimeStatusState -Context $Context -Status $Status -Source 'startup-script' -Reason $Reason -Version '' -StatusAtUtc $statusAtUtc
+
+    $publishResult = Invoke-AwsCliCapture -AwsCli 'powershell.exe' -Arguments @(
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        $Context.PublishScriptPath,
+        '-InstanceId',
+        $Context.InstanceId,
+        '-Region',
+        $Context.Region,
+        '-AwsCliPath',
+        $Context.AwsCliPath,
+        '-Status',
+        $Status,
+        '-Source',
+        'startup-script',
+        '-Reason',
+        $Reason,
+        '-Version',
+        '',
+        '-StatusAtUtc',
+        $statusAtUtc
+    )
+
+    if ($publishResult.ExitCode -ne 0) {
+        if ([string]::IsNullOrWhiteSpace($publishResult.Combined)) {
+            Write-RepoSyncLog "Failed to publish startup runtime status '$Status'." 'WARN'
+        } else {
+            Write-RepoSyncLog "Failed to publish startup runtime status '$Status'. $($publishResult.Combined)" 'WARN'
+        }
+    }
+}
+
+function Start-StartupRuntimeStatusHeartbeat {
+    param([pscustomobject]$Context)
+
+    if ($null -eq $Context) {
+        return
+    }
+
+    if (Test-Path -LiteralPath $Context.StopFilePath) {
+        Remove-Item -LiteralPath $Context.StopFilePath -Force -ErrorAction SilentlyContinue
+    }
+
+    Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        $Context.HeartbeatScriptPath,
+        '-InstanceId',
+        $Context.InstanceId,
+        '-Region',
+        $Context.Region,
+        '-AwsCliPath',
+        $Context.AwsCliPath,
+        '-StateFilePath',
+        $Context.StateFilePath,
+        '-StopFilePath',
+        $Context.StopFilePath,
+        '-IntervalSeconds',
+        '30'
+    ) -WindowStyle Hidden | Out-Null
+}
+
+function Stop-StartupRuntimeStatusHeartbeat {
+    param([pscustomobject]$Context)
+
+    if ($null -eq $Context) {
+        return
+    }
+
+    'stop' | Set-Content -LiteralPath $Context.StopFilePath -Encoding ASCII -Force
+}
+
 function Resolve-GitTargetRefValue {
     param(
         [string]$ExplicitRef,
@@ -259,6 +421,7 @@ $wilburDistPath = Join-Path $RepoRoot 'SignallingWebServer\dist\index.js'
 $frontendBundlePath = Join-Path $RepoRoot 'SignallingWebServer\www\player.html'
 $gitSyncModeNormalized = Normalize-GitSyncMode -Value $GitSyncMode
 $gitTargetRefNormalized = Resolve-GitTargetRefValue -ExplicitRef $GitTargetRef -TargetRefParam $GitTargetRefParam
+$startupRuntimeStatusContext = New-StartupRuntimeStatusContext -CurrentMode $Mode
 
 function Get-BuildStamp {
     param([string]$Path)
@@ -403,6 +566,11 @@ function Get-BuildImpactFromChangedFiles {
 
 Push-Location $RepoRoot
 try {
+    if ($startupRuntimeStatusContext) {
+        Invoke-PublishRuntimeStatusScript -Context $startupRuntimeStatusContext -Status 'updating_infra' -Reason 'git_sync_in_progress'
+        Start-StartupRuntimeStatusHeartbeat -Context $startupRuntimeStatusContext
+    }
+
     & $gitCli rev-parse --is-inside-work-tree *> $null
     if ($LASTEXITCODE -ne 0) {
         throw "PixelStreaming root '$RepoRoot' is not a git repository."
@@ -563,6 +731,16 @@ try {
     } else {
         Write-RepoSyncLog "Build artifacts already match HEAD $currentHead. Skipping build-all.bat."
     }
+} catch {
+    if ($startupRuntimeStatusContext) {
+        Invoke-PublishRuntimeStatusScript -Context $startupRuntimeStatusContext -Status 'runtime_fault' -Reason 'repo_sync_failed'
+    }
+
+    throw
 } finally {
+    if ($startupRuntimeStatusContext) {
+        Stop-StartupRuntimeStatusHeartbeat -Context $startupRuntimeStatusContext
+    }
+
     Pop-Location
 }
