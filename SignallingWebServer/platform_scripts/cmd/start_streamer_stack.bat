@@ -15,6 +15,8 @@ if not defined STREAMING_LANE_TAG_RETRY_DELAY_SECONDS set "STREAMING_LANE_TAG_RE
 call :resolve_streaming_lane_from_instance_tag
 if defined RESOLVED_STREAMING_LANE set "SCALEWORLD_STREAMING_LANE=%RESOLVED_STREAMING_LANE%"
 if not defined SCALEWORLD_STREAMING_LANE set "SCALEWORLD_STREAMING_LANE=nonprod"
+call :resolve_deployment_track_from_instance_tag
+if defined RESOLVED_DEPLOYMENT_TRACK set "SCALEWORLD_DEPLOYMENT_TRACK=%RESOLVED_DEPLOYMENT_TRACK%"
 if not defined SCALEWORLD_DEPLOYMENT_TRACK (
   if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
     set "SCALEWORLD_DEPLOYMENT_TRACK=prod"
@@ -222,6 +224,17 @@ echo WARNING: Failed to resolve ScaleWorldLane instance tag on attempt %STREAMIN
 echo WARNING: Retrying in %STREAMING_LANE_TAG_RETRY_DELAY_SECONDS% seconds before falling back to default lane.
 timeout /t %STREAMING_LANE_TAG_RETRY_DELAY_SECONDS% /nobreak >nul
 goto resolve_streaming_lane_retry
+
+exit /b 0
+
+:resolve_deployment_track_from_instance_tag
+set "RESOLVED_DEPLOYMENT_TRACK="
+set "RESOLVE_DEPLOYMENT_TRACK_SCRIPT=%SCRIPT_DIR%..\powershell\resolve_deployment_track_from_instance_tag.ps1"
+if not exist "%RESOLVE_DEPLOYMENT_TRACK_SCRIPT%" exit /b 0
+
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%RESOLVE_DEPLOYMENT_TRACK_SCRIPT%"`) do (
+  set "RESOLVED_DEPLOYMENT_TRACK=%%I"
+)
 
 exit /b 0
 

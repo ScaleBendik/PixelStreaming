@@ -110,7 +110,10 @@ Current note:
 - prod lane is now live for normal Session Manager traffic
 - prod API startup requires `kv-scaleworld-prod/connect-ticket-signing-key` to be populated with the real prod signing key and that value must match streamer-side SSM `/pixelstreaming/prod/connect-ticket/signing-key`
 - streamer startup is now lane-aware through `SCALEWORLD_STREAMING_LANE=nonprod|prod`
-- startup also supports a deployment-track override through `SCALEWORLD_DEPLOYMENT_TRACK=dev|stage|prod`
+- startup also supports a deployment-track override through:
+  - instance tag `ScaleWorldDeploymentTrack=dev|stage|prod`
+  - fallback env `SCALEWORLD_DEPLOYMENT_TRACK=dev|stage|prod`
+- if the instance tag resolves successfully, that value overrides stale inherited machine `SCALEWORLD_DEPLOYMENT_TRACK`
 - current bootstrap defaults are:
   - `nonprod` -> SSM `/pixelstreaming/connect-ticket/signing-key`, issuer `scaleworld-dev-connect-ticket`
   - `prod` -> SSM `/pixelstreaming/prod/connect-ticket/signing-key`, issuer `scaleworld-prod-connect-ticket`
@@ -130,9 +133,10 @@ Current note:
   - `SCALEWORLD_GIT_TARGET_REF=<tag-or-commit>` or `SCALEWORLD_GIT_TARGET_REF_PARAM=<ssm-parameter-name>` is required for `pinned`
   - recommended prod launch-template setting:
     - `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref`
-  - recommended stage-like nonprod launch-template setting:
-    - `SCALEWORLD_DEPLOYMENT_TRACK=stage`
-    - `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/nonprod/git-target-ref`
+  - recommended stage-like nonprod launch-template / instance tag setting:
+    - `ScaleWorldDeploymentTrack=stage`
+  - note:
+    - explicit machine env vars such as `SCALEWORLD_GIT_SYNC_MODE` or `SCALEWORLD_GIT_TARGET_REF_PARAM` still override the derived track defaults if they were manually set on the box
   - normal prod boot through `start_streamer_stack.bat` now applies pinned repo sync before the stack launch
   - if the AMI repo/build baseline is behind the promoted prod tag, first boot may spend several minutes in repo reset + `BuildScripts/build-all.bat` before Wilbur starts
 

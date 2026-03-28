@@ -206,10 +206,15 @@ Important:
    - `ScaleWorldLane=nonprod|prod`
    - temporary migration compatibility also accepts `ScaleWorldlane`
    - a resolved tag overrides stale inherited machine `SCALEWORLD_STREAMING_LANE`
-11. If tracked local repo changes are present, repo-sync recovery fails fast instead of overwriting them.
-12. On successful maintenance validation, the instance keeps Fleet command tags in place, requests stop, and relies on the API to clear those command tags after the stopped instance is observed for the matching job.
-13. The updater uses the prepared data drive (preferably `D:`) for download/scratch space when available, while the final active install remains on `C:\PixelStreaming\WindowsNoEditor`.
-14. The current recommended Windows boot method is Task Scheduler:
+11. Deployment-track resolution now also prefers the instance tag helper:
+   - `platform_scripts/powershell/resolve_deployment_track_from_instance_tag.ps1`
+   - `ScaleWorldDeploymentTrack=dev|stage|prod`
+   - temporary migration compatibility also accepts `ScaleWorldDeploymenttrack`
+   - a resolved tag overrides stale inherited machine `SCALEWORLD_DEPLOYMENT_TRACK`
+12. If tracked local repo changes are present, repo-sync recovery fails fast instead of overwriting them.
+13. On successful maintenance validation, the instance keeps Fleet command tags in place, requests stop, and relies on the API to clear those command tags after the stopped instance is observed for the matching job.
+14. The updater uses the prepared data drive (preferably `D:`) for download/scratch space when available, while the final active install remains on `C:\PixelStreaming\WindowsNoEditor`.
+15. The current recommended Windows boot method is Task Scheduler:
    - trigger: `At startup`
    - delay: `20 seconds`
    - user mode: `Run only when user is logged on`
