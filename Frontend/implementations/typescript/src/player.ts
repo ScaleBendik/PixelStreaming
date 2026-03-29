@@ -132,6 +132,27 @@ const applyQueryString = (params: URLSearchParams, queryString: string): void =>
     });
 };
 
+const getHashParams = (url: URL): URLSearchParams =>
+    new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.hash);
+
+const setHashParams = (url: URL, params: URLSearchParams): void => {
+    const serialized = params.toString();
+    url.hash = serialized ? serialized : '';
+};
+
+const hasReconnectContextParams = (params: URLSearchParams): boolean =>
+    params.has(RECONNECT_REGION_PARAM) ||
+    params.has(RECONNECT_INSTANCE_ID_PARAM) ||
+    params.has(RECONNECT_SESSION_ID_PARAM) ||
+    params.has(RECONNECT_SESSION_MANAGER_ENV_PARAM);
+
+const deleteReconnectContextParams = (params: URLSearchParams): void => {
+    params.delete(RECONNECT_REGION_PARAM);
+    params.delete(RECONNECT_INSTANCE_ID_PARAM);
+    params.delete(RECONNECT_SESSION_ID_PARAM);
+    params.delete(RECONNECT_SESSION_MANAGER_ENV_PARAM);
+};
+
 const persistPlayerQueryState = (storageKey: string): void => {
     const currentUrl = new URL(window.location.href);
     const queryString = toRestorablePlayerQueryString(currentUrl.searchParams);
@@ -350,11 +371,18 @@ document.body.onload = function() {
     Logger.InitLogging(LogLevel.Warning, true);
 
     const pageUrl = new URL(window.location.href);
+    const pageHashParams = getHashParams(pageUrl);
     const connectTicketStorageKey = getConnectTicketStorageKey();
     const reconnectContextStorageKey = getReconnectContextStorageKey();
     const playerQueryStateStorageKey = getPlayerQueryStateStorageKey();
     const connectTicketFromQuery =
         pageUrl.searchParams.get(CONNECT_TICKET_PARAM)?.trim() ?? '';
+    const reconnectContextFromHash = parseReconnectContext(
+        pageHashParams.get(RECONNECT_REGION_PARAM),
+        pageHashParams.get(RECONNECT_INSTANCE_ID_PARAM),
+        pageHashParams.get(RECONNECT_SESSION_ID_PARAM),
+        pageHashParams.get(RECONNECT_SESSION_MANAGER_ENV_PARAM)
+    );
     const reconnectContextFromQuery = parseReconnectContext(
         pageUrl.searchParams.get(RECONNECT_REGION_PARAM),
         pageUrl.searchParams.get(RECONNECT_INSTANCE_ID_PARAM),
@@ -362,11 +390,8 @@ document.body.onload = function() {
         pageUrl.searchParams.get(RECONNECT_SESSION_MANAGER_ENV_PARAM)
     );
 
-    const hasReconnectQueryParams =
-        pageUrl.searchParams.has(RECONNECT_REGION_PARAM) ||
-        pageUrl.searchParams.has(RECONNECT_INSTANCE_ID_PARAM) ||
-        pageUrl.searchParams.has(RECONNECT_SESSION_ID_PARAM) ||
-        pageUrl.searchParams.has(RECONNECT_SESSION_MANAGER_ENV_PARAM);
+    const hasReconnectHashParams = hasReconnectContextParams(pageHashParams);
+    const hasReconnectQueryParams = hasReconnectContextParams(pageUrl.searchParams);
     const hasConnectTicketQueryParam = pageUrl.searchParams.has(CONNECT_TICKET_PARAM);
     const restorablePlayerQueryFromUrl = toRestorablePlayerQueryString(
         pageUrl.searchParams
@@ -393,20 +418,20 @@ document.body.onload = function() {
         ? parseConnectTicketExpiryMs(connectTicket)
         : null;
     const reconnectContext =
+        reconnectContextFromHash ??
         reconnectContextFromQuery ??
         loadReconnectContextFromStorage(reconnectContextStorageKey);
     const storedPlayerQuery =
         readSessionStorage(playerQueryStateStorageKey)?.trim() ?? '';
 
-    if (hasConnectTicketQueryParam || hasReconnectQueryParams) {
+    if (hasConnectTicketQueryParam || hasReconnectQueryParams || hasReconnectHashParams) {
         pageUrl.searchParams.delete(CONNECT_TICKET_PARAM);
-        pageUrl.searchParams.delete(RECONNECT_REGION_PARAM);
-        pageUrl.searchParams.delete(RECONNECT_INSTANCE_ID_PARAM);
-        pageUrl.searchParams.delete(RECONNECT_SESSION_ID_PARAM);
-        pageUrl.searchParams.delete(RECONNECT_SESSION_MANAGER_ENV_PARAM);
+        deleteReconnectContextParams(pageUrl.searchParams);
+        deleteReconnectContextParams(pageHashParams);
         if (!restorablePlayerQueryFromUrl && storedPlayerQuery) {
             applyQueryString(pageUrl.searchParams, storedPlayerQuery);
         }
+        setHashParams(pageUrl, pageHashParams);
         window.history.replaceState(null, '', pageUrl.toString());
     }
 
