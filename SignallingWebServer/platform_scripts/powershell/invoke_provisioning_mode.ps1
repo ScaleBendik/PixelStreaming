@@ -149,7 +149,7 @@ function Start-ProvisioningHeartbeat {
         Remove-Item -LiteralPath $Context.StopFilePath -Force -ErrorAction SilentlyContinue
     }
 
-    Start-Process -FilePath 'powershell' -WindowStyle Hidden -ArgumentList @(
+    $heartbeatArguments = @(
         '-NoProfile',
         '-ExecutionPolicy', 'Bypass',
         '-File', $Context.ScriptPath,
@@ -159,7 +159,16 @@ function Start-ProvisioningHeartbeat {
         '-StateFilePath', $Context.StateFilePath,
         '-StopFilePath', $Context.StopFilePath,
         '-IntervalSeconds', '30'
-    ) | Out-Null
+    )
+    $heartbeatArgumentString = ($heartbeatArguments | ForEach-Object {
+        if ($_ -match '[\s"]') {
+            '"{0}"' -f (($_ -replace '(\\*)"', '$1$1\"'))
+        } else {
+            $_
+        }
+    }) -join ' '
+
+    Start-Process -FilePath 'powershell' -WindowStyle Hidden -ArgumentList $heartbeatArgumentString | Out-Null
 }
 
 function Stop-ProvisioningHeartbeat {
