@@ -388,7 +388,8 @@ function Stop-StartupRuntimeStatusHeartbeat {
 function Publish-RepoHeadTag {
     param(
         [pscustomobject]$Context,
-        [string]$CurrentHead
+        [string]$CurrentHead,
+        [string]$CurrentVersion
     )
 
     if ($null -eq $Context) {
@@ -413,7 +414,9 @@ function Publish-RepoHeadTag {
         '-AwsCliPath',
         $Context.AwsCliPath,
         '-CurrentRepoHead',
-        $CurrentHead
+        $CurrentHead,
+        '-CurrentVersion',
+        $CurrentVersion
     )
 
     if ($publishResult.ExitCode -ne 0) {
@@ -423,6 +426,29 @@ function Publish-RepoHeadTag {
             Write-RepoSyncLog "Failed to publish current repo head '$CurrentHead'. $($publishResult.Combined)" 'WARN'
         }
     }
+}
+
+function Resolve-PixelStreamingVersionTagValue {
+    param(
+        [string]$SyncMode,
+        [string]$TargetRef,
+        [string]$CurrentHead
+    )
+
+    if ([string]::Equals($SyncMode, 'pinned', [System.StringComparison]::OrdinalIgnoreCase) -and -not [string]::IsNullOrWhiteSpace($TargetRef)) {
+        return $TargetRef.Trim()
+    }
+
+    if ([string]::IsNullOrWhiteSpace($CurrentHead)) {
+        return ''
+    }
+
+    $normalizedHead = $CurrentHead.Trim()
+    if ($normalizedHead.Length -le 12) {
+        return $normalizedHead
+    }
+
+    return $normalizedHead.Substring(0, 12)
 }
 
 function Resolve-GitTargetRefValue {
@@ -803,7 +829,8 @@ try {
         Write-RepoSyncLog "Build artifacts already match HEAD $currentHead. Skipping build-all.bat."
     }
 
-    Publish-RepoHeadTag -Context $repoHeadTagContext -CurrentHead $currentHead
+    $currentVersionTagValue = Resolve-PixelStreamingVersionTagValue -SyncMode $gitSyncModeNormalized -TargetRef $gitTargetRefNormalized -CurrentHead $currentHead
+    Publish-RepoHeadTag -Context $repoHeadTagContext -CurrentHead $currentHead -CurrentVersion $currentVersionTagValue
 } catch {
     if ($startupRuntimeStatusContext) {
         Invoke-PublishRuntimeStatusScript -Context $startupRuntimeStatusContext -Status 'runtime_fault' -Reason 'repo_sync_failed'

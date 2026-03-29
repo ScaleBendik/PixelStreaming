@@ -6,6 +6,7 @@ param(
     [string]$Region,
     [Parameter(Mandatory = $true)]
     [string]$CurrentRepoHead,
+    [string]$CurrentVersion = '',
     [string]$AwsCliPath = $(if ($env:RUNTIME_STATUS_AWS_CLI_PATH) { $env:RUNTIME_STATUS_AWS_CLI_PATH } else { 'aws' })
 )
 
@@ -86,6 +87,14 @@ try {
         }
     )
 
+    $normalizedVersion = Normalize-TagValue $CurrentVersion
+    if (-not [string]::IsNullOrWhiteSpace($normalizedVersion)) {
+        $tagPayload += @{
+            Key = 'ScaleWorldPixelStreamingVersion'
+            Value = $normalizedVersion
+        }
+    }
+
     $tagPayloadPath = [System.IO.Path]::GetTempFileName()
     try {
         [System.IO.File]::WriteAllText(
@@ -113,7 +122,11 @@ try {
         Remove-Item -LiteralPath $tagPayloadPath -Force -ErrorAction SilentlyContinue
     }
 
-    Write-RepoHeadTagLog "Published repo head '$normalizedHead' for instance '$InstanceId'."
+    if (-not [string]::IsNullOrWhiteSpace($normalizedVersion)) {
+        Write-RepoHeadTagLog "Published repo head '$normalizedHead' and PixelStreaming version '$normalizedVersion' for instance '$InstanceId'."
+    } else {
+        Write-RepoHeadTagLog "Published repo head '$normalizedHead' for instance '$InstanceId'."
+    }
     exit 0
 }
 catch {
