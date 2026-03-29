@@ -50,7 +50,16 @@ function Invoke-AwsCliCapture {
     $stderrPath = [System.IO.Path]::GetTempFileName()
 
     try {
-        $process = Start-Process -FilePath $AwsCli -ArgumentList $Arguments -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $safeArguments = if ($null -eq $Arguments) { @() } else { $Arguments }
+        $quotedArgumentString = ($safeArguments | ForEach-Object {
+            if ($_ -match '[\s"]') {
+                '"{0}"' -f (($_ -replace '(\\*)"', '$1$1\"'))
+            } else {
+                $_
+            }
+        }) -join ' '
+
+        $process = Start-Process -FilePath $AwsCli -ArgumentList $quotedArgumentString -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
         $stdout = if (Test-Path -LiteralPath $stdoutPath) {
             (Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue | Out-String).Trim()
         } else {
@@ -354,7 +363,7 @@ function Start-StartupRuntimeStatusHeartbeat {
         Remove-Item -LiteralPath $Context.StopFilePath -Force -ErrorAction SilentlyContinue
     }
 
-    Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+    $heartbeatArguments = @(
         '-NoProfile',
         '-ExecutionPolicy',
         'Bypass',
@@ -372,7 +381,16 @@ function Start-StartupRuntimeStatusHeartbeat {
         $Context.StopFilePath,
         '-IntervalSeconds',
         '30'
-    ) -WindowStyle Hidden | Out-Null
+    )
+    $heartbeatArgumentString = ($heartbeatArguments | ForEach-Object {
+        if ($_ -match '[\s"]') {
+            '"{0}"' -f (($_ -replace '(\\*)"', '$1$1\"'))
+        } else {
+            $_
+        }
+    }) -join ' '
+
+    Start-Process -FilePath 'powershell.exe' -ArgumentList $heartbeatArgumentString -WindowStyle Hidden | Out-Null
 }
 
 function Stop-StartupRuntimeStatusHeartbeat {
