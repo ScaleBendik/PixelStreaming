@@ -12,10 +12,14 @@ set "STACK_START_WATCHDOG=true"
 set "STACK_START_UNREAL=true"
 if not defined STREAMING_LANE_TAG_RETRY_COUNT set "STREAMING_LANE_TAG_RETRY_COUNT=12"
 if not defined STREAMING_LANE_TAG_RETRY_DELAY_SECONDS set "STREAMING_LANE_TAG_RETRY_DELAY_SECONDS=5"
+if not defined DEPLOYMENT_TRACK_TAG_RETRY_COUNT set "DEPLOYMENT_TRACK_TAG_RETRY_COUNT=%STREAMING_LANE_TAG_RETRY_COUNT%"
+if not defined DEPLOYMENT_TRACK_TAG_RETRY_DELAY_SECONDS set "DEPLOYMENT_TRACK_TAG_RETRY_DELAY_SECONDS=%STREAMING_LANE_TAG_RETRY_DELAY_SECONDS%"
 call :resolve_streaming_lane_from_instance_tag
+if errorlevel 1 exit /b 1
 if defined RESOLVED_STREAMING_LANE set "SCALEWORLD_STREAMING_LANE=%RESOLVED_STREAMING_LANE%"
 if not defined SCALEWORLD_STREAMING_LANE set "SCALEWORLD_STREAMING_LANE=nonprod"
 call :resolve_deployment_track_from_instance_tag
+if errorlevel 1 exit /b 1
 if defined RESOLVED_DEPLOYMENT_TRACK set "SCALEWORLD_DEPLOYMENT_TRACK=%RESOLVED_DEPLOYMENT_TRACK%"
 if not defined SCALEWORLD_DEPLOYMENT_TRACK (
   if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
@@ -208,20 +212,35 @@ exit /b 0
 
 :resolve_streaming_lane_from_instance_tag
 set "RESOLVED_STREAMING_LANE="
+set "RESOLVE_STREAMING_LANE_EXIT=0"
 set /a STREAMING_LANE_TAG_ATTEMPT=0
 set "RESOLVE_STREAMING_LANE_SCRIPT=%SCRIPT_DIR%..\powershell\resolve_streaming_lane_from_instance_tag.ps1"
 
 :resolve_streaming_lane_retry
 set /a STREAMING_LANE_TAG_ATTEMPT+=1
+set "RESOLVED_STREAMING_LANE="
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%RESOLVE_STREAMING_LANE_SCRIPT%"`) do (
   set "RESOLVED_STREAMING_LANE=%%I"
 )
+set "RESOLVE_STREAMING_LANE_EXIT=%errorlevel%"
 
 if defined RESOLVED_STREAMING_LANE exit /b 0
-if %STREAMING_LANE_TAG_ATTEMPT% geq %STREAMING_LANE_TAG_RETRY_COUNT% exit /b 0
+if "%RESOLVE_STREAMING_LANE_EXIT%"=="0" (
+  if %STREAMING_LANE_TAG_ATTEMPT% geq %STREAMING_LANE_TAG_RETRY_COUNT% exit /b 0
+  echo WARNING: Failed to resolve ScaleWorldLane instance tag on attempt %STREAMING_LANE_TAG_ATTEMPT% of %STREAMING_LANE_TAG_RETRY_COUNT%.
+  echo WARNING: Retrying in %STREAMING_LANE_TAG_RETRY_DELAY_SECONDS% seconds before falling back to default lane.
+  timeout /t %STREAMING_LANE_TAG_RETRY_DELAY_SECONDS% /nobreak >nul
+  goto resolve_streaming_lane_retry
+)
 
-echo WARNING: Failed to resolve ScaleWorldLane instance tag on attempt %STREAMING_LANE_TAG_ATTEMPT% of %STREAMING_LANE_TAG_RETRY_COUNT%.
-echo WARNING: Retrying in %STREAMING_LANE_TAG_RETRY_DELAY_SECONDS% seconds before falling back to default lane.
+if %STREAMING_LANE_TAG_ATTEMPT% geq %STREAMING_LANE_TAG_RETRY_COUNT% (
+  echo ERROR: ScaleWorldLane instance tag resolution failed after %STREAMING_LANE_TAG_RETRY_COUNT% attempts.
+  echo ERROR: Refusing to continue with an inferred default lane after a real tag lookup failure.
+  exit /b 1
+)
+
+echo WARNING: ScaleWorldLane instance tag lookup failed on attempt %STREAMING_LANE_TAG_ATTEMPT% of %STREAMING_LANE_TAG_RETRY_COUNT%.
+echo WARNING: Retrying in %STREAMING_LANE_TAG_RETRY_DELAY_SECONDS% seconds before failing startup.
 timeout /t %STREAMING_LANE_TAG_RETRY_DELAY_SECONDS% /nobreak >nul
 goto resolve_streaming_lane_retry
 
@@ -229,14 +248,38 @@ exit /b 0
 
 :resolve_deployment_track_from_instance_tag
 set "RESOLVED_DEPLOYMENT_TRACK="
+set "RESOLVE_DEPLOYMENT_TRACK_EXIT=0"
+set /a DEPLOYMENT_TRACK_TAG_ATTEMPT=0
 set "RESOLVE_DEPLOYMENT_TRACK_SCRIPT=%SCRIPT_DIR%..\powershell\resolve_deployment_track_from_instance_tag.ps1"
 if not exist "%RESOLVE_DEPLOYMENT_TRACK_SCRIPT%" exit /b 0
 
+:resolve_deployment_track_retry
+set /a DEPLOYMENT_TRACK_TAG_ATTEMPT+=1
+set "RESOLVED_DEPLOYMENT_TRACK="
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%RESOLVE_DEPLOYMENT_TRACK_SCRIPT%"`) do (
   set "RESOLVED_DEPLOYMENT_TRACK=%%I"
 )
+set "RESOLVE_DEPLOYMENT_TRACK_EXIT=%errorlevel%"
 
-exit /b 0
+if defined RESOLVED_DEPLOYMENT_TRACK exit /b 0
+if "%RESOLVE_DEPLOYMENT_TRACK_EXIT%"=="0" (
+  if %DEPLOYMENT_TRACK_TAG_ATTEMPT% geq %DEPLOYMENT_TRACK_TAG_RETRY_COUNT% exit /b 0
+  echo WARNING: Failed to resolve ScaleWorldDeploymentTrack instance tag on attempt %DEPLOYMENT_TRACK_TAG_ATTEMPT% of %DEPLOYMENT_TRACK_TAG_RETRY_COUNT%.
+  echo WARNING: Retrying in %DEPLOYMENT_TRACK_TAG_RETRY_DELAY_SECONDS% seconds before falling back to default deployment track.
+  timeout /t %DEPLOYMENT_TRACK_TAG_RETRY_DELAY_SECONDS% /nobreak >nul
+  goto resolve_deployment_track_retry
+)
+
+if %DEPLOYMENT_TRACK_TAG_ATTEMPT% geq %DEPLOYMENT_TRACK_TAG_RETRY_COUNT% (
+  echo ERROR: ScaleWorldDeploymentTrack instance tag resolution failed after %DEPLOYMENT_TRACK_TAG_RETRY_COUNT% attempts.
+  echo ERROR: Refusing to continue with an inferred default deployment track after a real tag lookup failure.
+  exit /b 1
+)
+
+echo WARNING: ScaleWorldDeploymentTrack instance tag lookup failed on attempt %DEPLOYMENT_TRACK_TAG_ATTEMPT% of %DEPLOYMENT_TRACK_TAG_RETRY_COUNT%.
+echo WARNING: Retrying in %DEPLOYMENT_TRACK_TAG_RETRY_DELAY_SECONDS% seconds before failing startup.
+timeout /t %DEPLOYMENT_TRACK_TAG_RETRY_DELAY_SECONDS% /nobreak >nul
+goto resolve_deployment_track_retry
 
 :launch_unreal_if_needed
 if exist "%SCRIPT_DIR%start_unreal.bat" (
