@@ -31,6 +31,7 @@ Operational note:
 - example: `pixelstreaming-prod-20032026a`
 
 The suffix letter allows multiple same-day promotions without reusing a tag name.
+The letter suffix also makes it obvious when more than one promotion candidate was created on the same date.
 
 ## Operator Flow
 
