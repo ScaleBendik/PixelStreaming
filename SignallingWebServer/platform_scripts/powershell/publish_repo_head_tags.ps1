@@ -73,33 +73,17 @@ function Invoke-AwsCliCapture {
     }
 }
 
-try {
-    $normalizedHead = Normalize-TagValue $CurrentRepoHead
-    if ([string]::IsNullOrWhiteSpace($normalizedHead)) {
-        Write-RepoHeadTagLog 'No repo head was provided. Skipping repo head tag publish.' 'WARN'
-        exit 2
-    }
-
-    $tagPayload = @(
-        @{
-            Key = 'ScaleWorldRuntimeRepoHead'
-            Value = $normalizedHead
-        }
+function Publish-TagPayload {
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$TagPayload
     )
-
-    $normalizedVersion = Normalize-TagValue $CurrentVersion
-    if (-not [string]::IsNullOrWhiteSpace($normalizedVersion)) {
-        $tagPayload += @{
-            Key = 'ScaleWorldPixelStreamingVersion'
-            Value = $normalizedVersion
-        }
-    }
 
     $tagPayloadPath = [System.IO.Path]::GetTempFileName()
     try {
         [System.IO.File]::WriteAllText(
             $tagPayloadPath,
-            ($tagPayload | ConvertTo-Json -Compress -Depth 4),
+            ($TagPayload | ConvertTo-Json -Compress -Depth 4),
             (New-Object System.Text.UTF8Encoding($false))
         )
 
@@ -110,19 +94,53 @@ try {
             '--tags', ("file://{0}" -f $tagPayloadPath)
         )
 
-        $result = Invoke-AwsCliCapture -AwsCli $AwsCliPath -Arguments $tagArgs
-        if ($result.ExitCode -ne 0) {
-            if ([string]::IsNullOrWhiteSpace($result.Combined)) {
-                throw "AWS CLI exited with code $($result.ExitCode)."
-            }
-
-            throw $result.Combined
-        }
+        return Invoke-AwsCliCapture -AwsCli $AwsCliPath -Arguments $tagArgs
     } finally {
         Remove-Item -LiteralPath $tagPayloadPath -Force -ErrorAction SilentlyContinue
     }
+}
 
+try {
+    $normalizedHead = Normalize-TagValue $CurrentRepoHead
+    if ([string]::IsNullOrWhiteSpace($normalizedHead)) {
+        Write-RepoHeadTagLog 'No repo head was provided. Skipping repo head tag publish.' 'WARN'
+        exit 2
+    }
+
+    $headTagPayload = @(
+        @{
+            Key = 'ScaleWorldRuntimeRepoHead'
+            Value = $normalizedHead
+        }
+    )
+
+    $headResult = Publish-TagPayload -TagPayload $headTagPayload
+    if ($headResult.ExitCode -ne 0) {
+        if ([string]::IsNullOrWhiteSpace($headResult.Combined)) {
+            throw "AWS CLI exited with code $($headResult.ExitCode) while publishing ScaleWorldRuntimeRepoHead."
+        }
+
+        throw $headResult.Combined
+    }
+
+    $normalizedVersion = Normalize-TagValue $CurrentVersion
     if (-not [string]::IsNullOrWhiteSpace($normalizedVersion)) {
+        $versionResult = Publish-TagPayload -TagPayload @(
+            @{
+                Key = 'ScaleWorldPixelStreamingVersion'
+                Value = $normalizedVersion
+            }
+        )
+
+        if ($versionResult.ExitCode -ne 0) {
+            if ([string]::IsNullOrWhiteSpace($versionResult.Combined)) {
+                Write-RepoHeadTagLog "Published repo head '$normalizedHead', but failed to publish PixelStreaming version '$normalizedVersion' for instance '$InstanceId'. AWS CLI exited with code $($versionResult.ExitCode)." 'WARN'
+            } else {
+                Write-RepoHeadTagLog "Published repo head '$normalizedHead', but failed to publish PixelStreaming version '$normalizedVersion' for instance '$InstanceId'. $($versionResult.Combined)" 'WARN'
+            }
+            exit 0
+        }
+
         Write-RepoHeadTagLog "Published repo head '$normalizedHead' and PixelStreaming version '$normalizedVersion' for instance '$InstanceId'."
     } else {
         Write-RepoHeadTagLog "Published repo head '$normalizedHead' for instance '$InstanceId'."
