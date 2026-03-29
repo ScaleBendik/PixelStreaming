@@ -24,6 +24,7 @@ const CONNECT_TICKET_PARAM = 'ct';
 
 const RECONNECT_REGION_PARAM = 'sm_region';
 const RECONNECT_INSTANCE_ID_PARAM = 'sm_instance_id';
+const RECONNECT_SESSION_ID_PARAM = 'sm_session_id';
 const RECONNECT_SESSION_MANAGER_ENV_PARAM = 'sm_session_manager_env';
 const SESSION_MANAGER_BASE_URLS = {
     dev: 'https://scaleworld.scaleaq-dev.net',
@@ -33,12 +34,15 @@ const SESSION_MANAGER_BASE_URLS = {
 const SESSION_MANAGER_RECONNECT_PATH = '/servers/';
 const SESSION_MANAGER_RECONNECT_REGION_PARAM = 'reconnectRegion';
 const SESSION_MANAGER_RECONNECT_INSTANCE_ID_PARAM = 'reconnectInstanceId';
+const SESSION_MANAGER_RECONNECT_SESSION_ID_PARAM = 'reconnectSessionId';
+const SESSION_NETWORK_PATH_ENDPOINT = '/api/session-network-path';
 const EXPIRED_CONNECTION_GUIDANCE =
     'Connection expired. Return to your ScaleWorld session manager and click connect again to continue your session.';
 const RECONNECT_BOOTSTRAP_QUERY_PARAMS = new Set<string>([
     CONNECT_TICKET_PARAM,
     RECONNECT_REGION_PARAM,
     RECONNECT_INSTANCE_ID_PARAM,
+    RECONNECT_SESSION_ID_PARAM,
     RECONNECT_SESSION_MANAGER_ENV_PARAM
 ]);
 
@@ -47,7 +51,32 @@ type SessionManagerEnvironment = keyof typeof SESSION_MANAGER_BASE_URLS;
 type ReconnectContext = {
     region: string;
     instanceId: string;
+    sessionId: string | null;
     sessionManagerEnvironment: SessionManagerEnvironment | null;
+};
+
+type CandidateLike = {
+    id?: string;
+    candidateType?: string;
+    relayProtocol?: string;
+};
+
+type CandidatePairLike = {
+    localCandidateId?: string;
+    remoteCandidateId?: string;
+};
+
+type AggregatedStatsLike = {
+    getActiveCandidatePair(): CandidatePairLike | null;
+    localCandidates: CandidateLike[];
+    remoteCandidates: CandidateLike[];
+};
+
+type SessionNetworkPathReport = {
+    sessionId: string;
+    usesTurn: boolean;
+    candidateType?: string;
+    relayProtocol?: string;
 };
 
 const getConnectTicketStorageKey = (): string =>
@@ -132,10 +161,12 @@ const parseSessionManagerEnvironment = (
 const parseReconnectContext = (
     region: string | null,
     instanceId: string | null,
+    sessionId: string | null,
     sessionManagerEnvironment: string | null
 ): ReconnectContext | null => {
     const normalizedRegion = region?.trim() ?? '';
     const normalizedInstanceId = instanceId?.trim() ?? '';
+    const normalizedSessionId = sessionId?.trim() ?? '';
 
     if (!normalizedRegion || !normalizedInstanceId) {
         return null;
@@ -144,6 +175,7 @@ const parseReconnectContext = (
     return {
         region: normalizedRegion,
         instanceId: normalizedInstanceId,
+        sessionId: normalizedSessionId || null,
         sessionManagerEnvironment: parseSessionManagerEnvironment(
             sessionManagerEnvironment
         )
@@ -161,6 +193,7 @@ const loadReconnectContextFromStorage = (key: string): ReconnectContext | null =
         return parseReconnectContext(
             typeof parsed.region === 'string' ? parsed.region : null,
             typeof parsed.instanceId === 'string' ? parsed.instanceId : null,
+            typeof parsed.sessionId === 'string' ? parsed.sessionId : null,
             typeof parsed.sessionManagerEnvironment === 'string'
                 ? parsed.sessionManagerEnvironment
                 : null
@@ -188,10 +221,71 @@ const buildSessionManagerReconnectUrl = (context: ReconnectContext): string | nu
             SESSION_MANAGER_RECONNECT_INSTANCE_ID_PARAM,
             context.instanceId
         );
+        if (context.sessionId) {
+            reconnectUrl.searchParams.set(
+                SESSION_MANAGER_RECONNECT_SESSION_ID_PARAM,
+                context.sessionId
+            );
+        }
         return reconnectUrl.toString();
     } catch {
         return null;
     }
+};
+
+const normalizeCandidateType = (value: string | undefined): string | undefined => {
+    const normalized = value?.trim().toLowerCase() ?? '';
+    return normalized ? normalized : undefined;
+};
+
+const normalizeRelayProtocol = (value: string | undefined): string | undefined => {
+    const normalized = value?.trim().toLowerCase() ?? '';
+    if (normalized === 'udp' || normalized === 'tcp' || normalized === 'tls') {
+        return normalized;
+    }
+
+    return undefined;
+};
+
+const deriveSessionNetworkPathReport = (
+    sessionId: string,
+    aggregatedStats: AggregatedStatsLike
+): SessionNetworkPathReport | null => {
+    const activeCandidatePair = aggregatedStats.getActiveCandidatePair();
+    if (!activeCandidatePair) {
+        return null;
+    }
+
+    const localCandidate = aggregatedStats.localCandidates.find(
+        (candidate) => candidate.id === activeCandidatePair.localCandidateId
+    );
+    const remoteCandidate = aggregatedStats.remoteCandidates.find(
+        (candidate) => candidate.id === activeCandidatePair.remoteCandidateId
+    );
+    if (!localCandidate && !remoteCandidate) {
+        return null;
+    }
+
+    const localCandidateType = normalizeCandidateType(localCandidate?.candidateType);
+    const remoteCandidateType = normalizeCandidateType(remoteCandidate?.candidateType);
+    const usesTurn = localCandidateType === 'relay' || remoteCandidateType === 'relay';
+    const relayProtocol = normalizeRelayProtocol(
+        localCandidateType === 'relay'
+            ? localCandidate?.relayProtocol
+            : remoteCandidateType === 'relay'
+              ? remoteCandidate?.relayProtocol
+              : undefined
+    );
+    const candidateType = usesTurn
+        ? 'relay'
+        : localCandidateType ?? remoteCandidateType ?? 'unknown';
+
+    return {
+        sessionId,
+        usesTurn,
+        candidateType,
+        relayProtocol
+    };
 };
 
 const isConnectTicketDisconnectReason = (reason: string): boolean => {
@@ -264,12 +358,14 @@ document.body.onload = function() {
     const reconnectContextFromQuery = parseReconnectContext(
         pageUrl.searchParams.get(RECONNECT_REGION_PARAM),
         pageUrl.searchParams.get(RECONNECT_INSTANCE_ID_PARAM),
+        pageUrl.searchParams.get(RECONNECT_SESSION_ID_PARAM),
         pageUrl.searchParams.get(RECONNECT_SESSION_MANAGER_ENV_PARAM)
     );
 
     const hasReconnectQueryParams =
         pageUrl.searchParams.has(RECONNECT_REGION_PARAM) ||
         pageUrl.searchParams.has(RECONNECT_INSTANCE_ID_PARAM) ||
+        pageUrl.searchParams.has(RECONNECT_SESSION_ID_PARAM) ||
         pageUrl.searchParams.has(RECONNECT_SESSION_MANAGER_ENV_PARAM);
     const hasConnectTicketQueryParam = pageUrl.searchParams.has(CONNECT_TICKET_PARAM);
     const restorablePlayerQueryFromUrl = toRestorablePlayerQueryString(
@@ -306,6 +402,7 @@ document.body.onload = function() {
         pageUrl.searchParams.delete(CONNECT_TICKET_PARAM);
         pageUrl.searchParams.delete(RECONNECT_REGION_PARAM);
         pageUrl.searchParams.delete(RECONNECT_INSTANCE_ID_PARAM);
+        pageUrl.searchParams.delete(RECONNECT_SESSION_ID_PARAM);
         pageUrl.searchParams.delete(RECONNECT_SESSION_MANAGER_ENV_PARAM);
         if (!restorablePlayerQueryFromUrl && storedPlayerQuery) {
             applyQueryString(pageUrl.searchParams, storedPlayerQuery);
@@ -377,6 +474,60 @@ document.body.onload = function() {
     }
     if (shouldAutoConnect) {
         config.setFlagEnabled(Flags.AutoConnect, true);
+    }
+
+    const activeSessionId = reconnectContext?.sessionId?.trim() ?? '';
+    let lastConfirmedSessionNetworkPathSignature = '';
+    let pendingSessionNetworkPathSignature = '';
+    if (activeSessionId) {
+        stream.addEventListener('statsReceived', (event) => {
+            const aggregatedStats = (event as Event & {
+                data?: { aggregatedStats?: AggregatedStatsLike };
+            }).data?.aggregatedStats;
+            if (!aggregatedStats) {
+                return;
+            }
+
+            const report = deriveSessionNetworkPathReport(activeSessionId, aggregatedStats);
+            if (!report) {
+                return;
+            }
+
+            const signature = JSON.stringify(report);
+            if (
+                signature === lastConfirmedSessionNetworkPathSignature ||
+                signature === pendingSessionNetworkPathSignature
+            ) {
+                return;
+            }
+
+            pendingSessionNetworkPathSignature = signature;
+            void fetch(SESSION_NETWORK_PATH_ENDPOINT, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(report),
+                keepalive: true,
+                credentials: 'same-origin'
+            })
+                .then((response) => {
+                    if (pendingSessionNetworkPathSignature !== signature) {
+                        return;
+                    }
+
+                    if (response.ok) {
+                        lastConfirmedSessionNetworkPathSignature = signature;
+                    }
+                    pendingSessionNetworkPathSignature = '';
+                })
+                .catch(() => {
+                    if (pendingSessionNetworkPathSignature === signature) {
+                        pendingSessionNetworkPathSignature = '';
+                    }
+                    // Best-effort analytics telemetry only.
+                });
+        });
     }
 
     stream.addEventListener('webRtcDisconnected', (event) => {

@@ -32,6 +32,20 @@ export interface RuntimeStatusPublisherOptions {
     version?: string;
     logger?: (message: string) => void;
 }
+export interface SessionNetworkPathReport {
+    sessionId: string;
+    usesTurn: boolean;
+    candidateType?: string;
+    relayProtocol?: string;
+}
+export interface SessionNetworkPathReporter {
+    report(update: SessionNetworkPathReport): Promise<boolean>;
+}
+export interface SessionNetworkPathReporterOptions {
+    enabled?: boolean;
+    awsCliPath?: string;
+    logger?: (message: string) => void;
+}
 export interface SignallingRuntimeStatusOptions {
     logger?: (message: string) => void;
     source?: string;
@@ -60,6 +74,10 @@ const RUNTIME_STATUS_WAITING_FOR_STREAMER = 'waiting_for_streamer';
 const RUNTIME_STATUS_WARMING_UP_ASSETS = 'warming_up_assets';
 const RUNTIME_STATUS_STABILIZING_STREAM = 'stabilizing_stream';
 const RUNTIME_STATUS_READY = 'ready';
+const TAG_SESSION_NETWORK_PATH_SESSION_ID = 'ScaleWorldSessionNetworkPathSessionId';
+const TAG_SESSION_TURN_USED = 'ScaleWorldSessionTurnUsed';
+const TAG_SESSION_RELAY_PROTOCOL = 'ScaleWorldSessionRelayProtocol';
+const TAG_SESSION_CANDIDATE_TYPE = 'ScaleWorldSessionCandidateType';
 
 function parseBoolean(rawValue: unknown, fallback: boolean): boolean {
     if (typeof rawValue === 'boolean') return rawValue;
@@ -140,26 +158,10 @@ async function readImdsValue(pathSuffix: string, token: string): Promise<string>
     return response.text();
 }
 
-export function createRuntimeStatusPublisher(
-    options: RuntimeStatusPublisherOptions = {}
-): RuntimeStatusPublisher | null {
-    const log = options.logger ?? ((message: string) => Logger.info(message));
-    const enabled = parseBoolean(options.enabled ?? process.env.RUNTIME_STATUS_ENABLED ?? true, true);
-    if (!enabled) {
-        log('[runtime-status] Disabled.');
-        return null;
-    }
-
-    const awsCliPath = String(options.awsCliPath ?? process.env.RUNTIME_STATUS_AWS_CLI_PATH ?? 'aws');
-    const defaultSource = normalizeTagValue(
-        options.source ?? process.env.RUNTIME_STATUS_SOURCE ?? 'signalling-server'
-    );
-    const defaultVersion = normalizeTagValue(options.version ?? process.env.RUNTIME_STATUS_VERSION ?? '');
+function createInstanceIdentityResolver(): () => Promise<{ instanceId: string; region: string }> {
     let identityPromise: Promise<{ instanceId: string; region: string }> | null = null;
-    let desiredStatus: string | null = null;
-    let publishQueue: Promise<void> = Promise.resolve();
 
-    const resolveIdentity = async (): Promise<{ instanceId: string; region: string }> => {
+    return async () => {
         if (!identityPromise) {
             identityPromise = (async () => {
                 const token = await readImdsToken();
@@ -176,6 +178,54 @@ export function createRuntimeStatusPublisher(
 
         return identityPromise;
     };
+}
+
+async function writeInstanceTags(
+    awsCliPath: string,
+    instanceId: string,
+    region: string,
+    tags: Array<{ Key: string; Value: string }>
+): Promise<void> {
+    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sw-runtime-status-'));
+    const tagPayloadPath = path.join(tempDir, 'tags.json');
+    const tagPayloadUri = toAwsCliParamFileUri(tagPayloadPath);
+    const args = [
+        'ec2',
+        'create-tags',
+        '--region',
+        region,
+        '--resources',
+        instanceId,
+        '--tags',
+        tagPayloadUri
+    ];
+
+    try {
+        await fs.promises.writeFile(tagPayloadPath, JSON.stringify(tags), 'utf8');
+        await execFileAsync(awsCliPath, args, { windowsHide: true });
+    } finally {
+        await fs.promises.rm(tempDir, { recursive: true, force: true });
+    }
+}
+
+export function createRuntimeStatusPublisher(
+    options: RuntimeStatusPublisherOptions = {}
+): RuntimeStatusPublisher | null {
+    const log = options.logger ?? ((message: string) => Logger.info(message));
+    const enabled = parseBoolean(options.enabled ?? process.env.RUNTIME_STATUS_ENABLED ?? true, true);
+    if (!enabled) {
+        log('[runtime-status] Disabled.');
+        return null;
+    }
+
+    const awsCliPath = String(options.awsCliPath ?? process.env.RUNTIME_STATUS_AWS_CLI_PATH ?? 'aws');
+    const defaultSource = normalizeTagValue(
+        options.source ?? process.env.RUNTIME_STATUS_SOURCE ?? 'signalling-server'
+    );
+    const defaultVersion = normalizeTagValue(options.version ?? process.env.RUNTIME_STATUS_VERSION ?? '');
+    const resolveIdentity = createInstanceIdentityResolver();
+    let desiredStatus: string | null = null;
+    let publishQueue: Promise<void> = Promise.resolve();
 
     return {
         async publish(update: RuntimeStatusUpdate): Promise<boolean> {
@@ -223,25 +273,7 @@ export function createRuntimeStatusPublisher(
                     if (!heartbeatOnly && !preservesCurrentStatusTimestamp) {
                         tags.splice(1, 0, { Key: 'ScaleWorldRuntimeStatusAtUtc', Value: nowIso });
                     }
-                    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sw-runtime-status-'));
-                    const tagPayloadPath = path.join(tempDir, 'tags.json');
-                    const tagPayloadUri = toAwsCliParamFileUri(tagPayloadPath);
-                    const args = [
-                        'ec2',
-                        'create-tags',
-                        '--region',
-                        region,
-                        '--resources',
-                        instanceId,
-                        '--tags',
-                        tagPayloadUri
-                    ];
-                    try {
-                        await fs.promises.writeFile(tagPayloadPath, JSON.stringify(tags), 'utf8');
-                        await execFileAsync(awsCliPath, args, { windowsHide: true });
-                    } finally {
-                        await fs.promises.rm(tempDir, { recursive: true, force: true });
-                    }
+                    await writeInstanceTags(awsCliPath, instanceId, region, tags);
                     log(
                         `[runtime-status] Published status='${normalizedStatus}'${
                             heartbeatOnly
@@ -265,6 +297,51 @@ export function createRuntimeStatusPublisher(
             );
 
             return publishTask;
+        }
+    };
+}
+
+export function createSessionNetworkPathReporter(
+    options: SessionNetworkPathReporterOptions = {}
+): SessionNetworkPathReporter | null {
+    const log = options.logger ?? ((message: string) => Logger.info(message));
+    const enabled = parseBoolean(options.enabled ?? process.env.RUNTIME_STATUS_ENABLED ?? true, true);
+    if (!enabled) {
+        log('[session-network] Disabled.');
+        return null;
+    }
+
+    const awsCliPath = String(options.awsCliPath ?? process.env.RUNTIME_STATUS_AWS_CLI_PATH ?? 'aws');
+    const resolveIdentity = createInstanceIdentityResolver();
+
+    return {
+        async report(update: SessionNetworkPathReport): Promise<boolean> {
+            const sessionId = normalizeTagValue(update.sessionId);
+            if (!sessionId) {
+                return false;
+            }
+
+            try {
+                const { instanceId, region } = await resolveIdentity();
+                const tags: Array<{ Key: string; Value: string }> = [
+                    { Key: TAG_SESSION_NETWORK_PATH_SESSION_ID, Value: sessionId },
+                    { Key: TAG_SESSION_TURN_USED, Value: update.usesTurn ? 'true' : 'false' },
+                    {
+                        Key: TAG_SESSION_RELAY_PROTOCOL,
+                        Value: normalizeTagValue(update.relayProtocol)
+                    },
+                    {
+                        Key: TAG_SESSION_CANDIDATE_TYPE,
+                        Value: normalizeTagValue(update.candidateType)
+                    }
+                ];
+                await writeInstanceTags(awsCliPath, instanceId, region, tags);
+                return true;
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                log(`[session-network] Failed to report session network path: ${message}`);
+                return false;
+            }
         }
     };
 }

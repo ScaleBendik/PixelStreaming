@@ -16,7 +16,11 @@ import { Command, Option } from 'commander';
 import { initialize } from 'express-openapi';
 import { ConnectTicketAuthMode, createPlayerVerifyClient } from './ConnectTicketAuth';
 import { wireViewerIdleStop } from './viewer-idle-stop';
-import { createRuntimeStatusPublisher, wireSignallingRuntimeStatus } from './runtime-status';
+import {
+    createRuntimeStatusPublisher,
+    createSessionNetworkPathReporter,
+    wireSignallingRuntimeStatus
+} from './runtime-status';
 
 type PackageJsonMetadata = { description?: string; version?: string; name?: string };
 const pjson = require('../package.json') as PackageJsonMetadata;
@@ -581,10 +585,53 @@ const runtimeStatusPublisher = createRuntimeStatusPublisher({
     version: String(options.runtime_status_version || pjson.version || ''),
     logger: (message: string) => Logger.info(message)
 });
+const sessionNetworkPathReporter = createSessionNetworkPathReporter({
+    enabled: options.runtime_status,
+    awsCliPath: options.runtime_status_aws_cli_path,
+    logger: (message: string) => Logger.info(message)
+});
 
 const runtimeStatusController = wireSignallingRuntimeStatus(signallingServer, runtimeStatusPublisher, {
     logger: (message: string) => Logger.info(message),
     source: String(options.runtime_status_source || 'signalling-server')
+});
+
+app.post('/api/session-network-path', express.json({ limit: '8kb' }), async (request, response) => {
+    const body = request.body as
+        | {
+              sessionId?: unknown;
+              usesTurn?: unknown;
+              candidateType?: unknown;
+              relayProtocol?: unknown;
+          }
+        | undefined;
+    const sessionId = typeof body?.sessionId === 'string' ? body.sessionId.trim() : '';
+    const usesTurn = typeof body?.usesTurn === 'boolean' ? body.usesTurn : null;
+    const candidateType = typeof body?.candidateType === 'string' ? body.candidateType.trim() : '';
+    const relayProtocol = typeof body?.relayProtocol === 'string' ? body.relayProtocol.trim() : '';
+
+    if (!sessionId || usesTurn === null) {
+        response.status(400).json({ error: 'sessionId and usesTurn are required.' });
+        return;
+    }
+
+    if (!sessionNetworkPathReporter) {
+        response.sendStatus(204);
+        return;
+    }
+
+    const reported = await sessionNetworkPathReporter.report({
+        sessionId,
+        usesTurn,
+        candidateType,
+        relayProtocol
+    });
+    if (!reported) {
+        response.status(503).json({ error: 'Failed to record session network path.' });
+        return;
+    }
+
+    response.sendStatus(204);
 });
 
 wireViewerIdleStop(signallingServer, {
