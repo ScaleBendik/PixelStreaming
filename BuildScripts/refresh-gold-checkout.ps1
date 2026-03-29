@@ -93,6 +93,39 @@ function Wait-ForWilbur {
     return $false
 }
 
+function Wait-ForWilburReadiness {
+    param(
+        [int]$TimeoutSeconds,
+        [string]$HostName = '127.0.0.1',
+        [int]$Port = 8888
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $client = $null
+        try {
+            $client = New-Object System.Net.Sockets.TcpClient
+            $async = $client.BeginConnect($HostName, $Port, $null, $null)
+            if ($async.AsyncWaitHandle.WaitOne(1000)) {
+                $client.EndConnect($async)
+                $client.Close()
+                Write-GoldRefreshLog "Confirmed Wilbur readiness on ${HostName}:${Port}."
+                return $true
+            }
+        } catch {
+            # keep waiting
+        } finally {
+            if ($client) {
+                $client.Close()
+            }
+        }
+
+        Start-Sleep -Milliseconds 500
+    }
+
+    return $false
+}
+
 function Get-OptionalTextFileValue {
     param([string]$Path)
 
@@ -207,7 +240,8 @@ try {
 
     if ($startupMethod -eq 'scheduled-task') {
         $script:goldRefreshStep = 'waiting_for_wilbur_after_scheduled_task'
-        $stackDetected = Wait-ForWilbur -TimeoutSeconds $WaitForWilburTimeoutSeconds
+        $stackDetected = (Wait-ForWilbur -TimeoutSeconds $WaitForWilburTimeoutSeconds) -and
+            (Wait-ForWilburReadiness -TimeoutSeconds $WaitForWilburTimeoutSeconds)
     }
 
     if (-not $stackDetected) {
@@ -216,17 +250,18 @@ try {
         Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', ('"{0}"' -f $stackLauncher) -WorkingDirectory (Split-Path -Parent $stackLauncher) -WindowStyle Hidden | Out-Null
         $startupMethod = if ($startupMethod.Length -gt 0) { $startupMethod + ' -> direct' } else { 'direct' }
         $script:goldRefreshStep = 'waiting_for_wilbur_after_direct_restart'
-        $stackDetected = Wait-ForWilbur -TimeoutSeconds $WaitForWilburTimeoutSeconds
+        $stackDetected = (Wait-ForWilbur -TimeoutSeconds $WaitForWilburTimeoutSeconds) -and
+            (Wait-ForWilburReadiness -TimeoutSeconds $WaitForWilburTimeoutSeconds)
     }
 
     if (-not $stackDetected) {
-        throw "Gold stack restart did not detect Wilbur within $WaitForWilburTimeoutSeconds seconds."
+        throw "Gold stack restart did not reach Wilbur readiness within $WaitForWilburTimeoutSeconds seconds."
     }
 
     $stoppedSummary = if ($stoppedProcesses.Count -gt 0) { $stoppedProcesses -join ', ' } else { '(none)' }
     Write-Output ('Stopped processes: ' + $stoppedSummary)
     Write-Output ('Startup method: ' + $startupMethod)
-    Write-Output 'Gold repo refresh completed and Wilbur was detected.'
+    Write-Output 'Gold repo refresh completed and Wilbur readiness was confirmed.'
 }
 catch {
     $step = if ([string]::IsNullOrWhiteSpace($script:goldRefreshStep)) { 'unknown' } else { $script:goldRefreshStep }

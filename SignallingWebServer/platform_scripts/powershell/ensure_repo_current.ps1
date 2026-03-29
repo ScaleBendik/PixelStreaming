@@ -300,9 +300,10 @@ function Invoke-PublishRuntimeStatusScript {
     }
 
     $statusAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-    Write-StartupRuntimeStatusState -Context $Context -Status $Status -Source 'startup-script' -Reason $Reason -Version '' -StatusAtUtc $statusAtUtc
+    $runtimeStatusVersion = ''
+    Write-StartupRuntimeStatusState -Context $Context -Status $Status -Source 'startup-script' -Reason $Reason -Version $runtimeStatusVersion -StatusAtUtc $statusAtUtc
 
-    $publishResult = Invoke-AwsCliCapture -AwsCli 'powershell.exe' -Arguments @(
+    $publishArguments = @(
         '-NoProfile',
         '-ExecutionPolicy',
         'Bypass',
@@ -319,12 +320,19 @@ function Invoke-PublishRuntimeStatusScript {
         '-Source',
         'startup-script',
         '-Reason',
-        $Reason,
-        '-Version',
-        '',
+        $Reason
+    )
+    if (-not [string]::IsNullOrWhiteSpace($runtimeStatusVersion)) {
+        $publishArguments += @(
+            '-Version',
+            $runtimeStatusVersion
+        )
+    }
+    $publishArguments += @(
         '-StatusAtUtc',
         $statusAtUtc
     )
+    $publishResult = Invoke-AwsCliCapture -AwsCli 'powershell.exe' -Arguments $publishArguments
 
     if ($publishResult.ExitCode -ne 0) {
         if ([string]::IsNullOrWhiteSpace($publishResult.Combined)) {
