@@ -154,7 +154,13 @@ TURN server cert materials were previously managed via SSM as well (`/turn/*` pa
 Streamer/TURN instance role must currently support:
 
 - SSM parameter retrieval with decryption in `eu-north-1`
-- `ec2:CreateTags` for the approved `ScaleWorldRuntime*` tag keys on self
+- `ec2:CreateTags` for the approved runtime/session tag keys on self:
+  - `ScaleWorldRuntime*`
+  - `ScaleWorldPixelStreamingVersion`
+  - `ScaleWorldSessionNetworkPathSessionId`
+  - `ScaleWorldSessionTurnUsed`
+  - `ScaleWorldSessionRelayProtocol`
+  - `ScaleWorldSessionCandidateType`
 
 Gold/promotion operator context must also support:
 
@@ -377,7 +383,7 @@ Archive contract and naming rules are documented in:
 - Streamer runtime secrets are loaded from SSM at launch.
 - Active dev/stage connect-ticket signing key rotation was validated on 2026-03-19.
 - TURN is separated from streamer host.
-- Runtime tag write scope should remain limited to `ScaleWorldRuntime*`.
+- Runtime tag write scope should remain limited to the approved runtime/session keys above; avoid broad `ec2:CreateTags` grants beyond those keys.
 
 ### Current Security Gaps
 
