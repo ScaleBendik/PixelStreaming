@@ -38,7 +38,7 @@ import {
 } from '../UI/UIConfigurationTypes';
 
 export class ConfigUI {
-    private static readonly defaultExpandedSections = new Set<string>([SettingsSections.WebRTC]);
+    private static readonly defaultExpandedSections = new Set<string>([SettingsSections.WebRTC, 'Commands']);
 
     private customFlags = new Map<FlagsIdsExtended, SettingFlag<FlagsIdsExtended>>();
 
