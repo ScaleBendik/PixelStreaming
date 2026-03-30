@@ -18,6 +18,12 @@ Current prod model:
    - `/pixelstreaming/prod/git-target-ref`
 5. prod instances in `pinned` mode resolve that parameter at startup
 
+Current promotion path details:
+
+1. `Promote Gold checkout to stage` writes `/pixelstreaming/nonprod/git-target-ref`
+2. `Promote stage ref to prod` copies that validated stage ref into `/pixelstreaming/prod/git-target-ref`
+3. the stage-to-prod action is currently orchestrated by the API through SSM on the running Gold instance, not directly on prod serving instances
+
 Operational note:
 - the actual gold-instance promotion script now writes to `Docs/prod-promotions.local.md`
 - that local ledger is intentionally untracked so prod promotions do not block future pulls on the gold instance
@@ -74,6 +80,15 @@ The same script also supports the stage/candidate path when called with:
 The operator context on the workstation or gold instance must be able to:
 - push tags to the PixelStreaming remote
 - `ssm:PutParameter` on `/pixelstreaming/prod/git-target-ref`
+
+Current EC2 role split:
+
+- Gold should have:
+  - `ssm:GetParameter`
+  - `ssm:PutParameter`
+- normal stage/prod serving instances should keep:
+  - `ssm:GetParameter`
+  - no `ssm:PutParameter`
 
 If you run from a workstation instead of EC2:
 - pass `-Region eu-north-1` explicitly unless `AWS_REGION` / `AWS_DEFAULT_REGION` is already set

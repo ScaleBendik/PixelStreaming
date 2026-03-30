@@ -1,6 +1,6 @@
 ﻿# ScaleWorld Cloud Infrastructure (Source of Truth)
 
-Last updated: 2026-03-21
+Last updated: 2026-03-30
 Owner: ScaleWorld Platform
 
 ## Purpose
@@ -162,10 +162,39 @@ Streamer/TURN instance role must currently support:
   - `ScaleWorldSessionRelayProtocol`
   - `ScaleWorldSessionCandidateType`
 
+Normal serving stage/prod instance role should keep:
+
+- `ssm:GetParameter` on:
+  - `/pixelstreaming/nonprod/git-target-ref`
+  - `/pixelstreaming/prod/git-target-ref`
+
 Gold/promotion operator context must also support:
 
+- `ssm:GetParameter` on `/pixelstreaming/nonprod/git-target-ref`
+- `ssm:GetParameter` on `/pixelstreaming/prod/git-target-ref`
 - `ssm:PutParameter` on `/pixelstreaming/nonprod/git-target-ref`
 - `ssm:PutParameter` on `/pixelstreaming/prod/git-target-ref`
+
+Current hardening note:
+
+- Gold should use a dedicated EC2 role / instance profile for release-ref writes
+- normal stage/prod serving instances should not retain `ssm:PutParameter` on the promotion refs
+
+### Security Groups
+
+Current intended split:
+
+- prod streamer SG:
+  - ALB and TURN/media ingress only
+  - no inbound `3389`
+- Gold/nonprod debug SG:
+  - same runtime ingress
+  - optional break-glass/admin `3389` while nonprod still requires it
+
+Operational note:
+
+- keep RDP out of prod
+- prefer SSM/Fleet-based operations over RDP for serving instances
 
 ## Pixel Streaming Runtime Configuration
 
