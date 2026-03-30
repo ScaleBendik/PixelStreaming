@@ -176,9 +176,13 @@ try {
         throw 'Failed to inspect Gold repo dirtiness before refresh.'
     }
 
-    git fetch $RemoteName --prune *> $null
+    $fetchOutput = ((git fetch $RemoteName --prune 2>&1) | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to fetch '$RemoteName' before Gold refresh."
+        if ([string]::IsNullOrWhiteSpace($fetchOutput)) {
+            throw "Failed to fetch '$RemoteName' before Gold refresh."
+        }
+
+        throw "Failed to fetch '$RemoteName' before Gold refresh. $fetchOutput"
     }
 
     $upstreamBranch = ((git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null) | Out-String).Trim()
