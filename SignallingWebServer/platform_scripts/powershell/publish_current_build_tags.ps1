@@ -109,7 +109,7 @@ try {
     try {
         [System.IO.File]::WriteAllText(
             $tagPayloadPath,
-            ($tagPayload | ConvertTo-Json -Compress -Depth 4),
+            (ConvertTo-Json -InputObject @($tagPayload) -Compress -Depth 4),
             (New-Object System.Text.UTF8Encoding($false))
         )
 

@@ -83,7 +83,7 @@ function Publish-TagPayload {
     try {
         [System.IO.File]::WriteAllText(
             $tagPayloadPath,
-            ($TagPayload | ConvertTo-Json -Compress -Depth 4),
+            (ConvertTo-Json -InputObject @($TagPayload) -Compress -Depth 4),
             (New-Object System.Text.UTF8Encoding($false))
         )
 
