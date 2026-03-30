@@ -682,7 +682,7 @@ function Get-BuildImpactFromChangedFiles {
 Push-Location $RepoRoot
 try {
     if ($startupRuntimeStatusContext) {
-        Invoke-PublishRuntimeStatusScript -Context $startupRuntimeStatusContext -Status 'updating_infra' -Reason 'git_sync_in_progress'
+        Invoke-PublishRuntimeStatusScript -Context $startupRuntimeStatusContext -Status 'booting' -Reason 'git_sync_check'
         Start-StartupRuntimeStatusHeartbeat -Context $startupRuntimeStatusContext
     }
 
@@ -696,6 +696,7 @@ try {
         throw 'Failed to resolve local git commit for PixelStreaming repo.'
     }
 
+    $requiresInfraUpdateStatus = $false
     $buildReasons = [System.Collections.Generic.List[string]]::new()
     $buildScope = 'none'
     $updateBuildStampWithoutBuild = $false
@@ -716,6 +717,7 @@ try {
                 $upstreamHead = Resolve-CommitFromRef -GitCli $gitCli -Ref '@{u}'
 
                 if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
+                    $requiresInfraUpdateStatus = $true
                     Write-RepoSyncLog "Discarding tracked local PixelStreaming repo changes before $Mode mode."
                     & $gitCli reset --hard $upstreamHead
                     if ($LASTEXITCODE -ne 0) {
@@ -726,6 +728,7 @@ try {
                 }
 
                 if ($currentHead -ne $upstreamHead) {
+                    $requiresInfraUpdateStatus = $true
                     Write-RepoSyncLog "Remote PixelStreaming changes detected on $upstreamBranch. Resetting local checkout to upstream before continuing."
                     & $gitCli reset --hard $upstreamHead
                     if ($LASTEXITCODE -ne 0) {
@@ -738,6 +741,7 @@ try {
             } else {
                 Write-RepoSyncLog 'No upstream branch configured for PixelStreaming repo. Skipping repo pull and validating local build freshness only.' 'WARN'
                 if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
+                    $requiresInfraUpdateStatus = $true
                     Write-RepoSyncLog "Discarding tracked local PixelStreaming repo changes without upstream before $Mode mode."
                     & $gitCli reset --hard $currentHead
                     if ($LASTEXITCODE -ne 0) {
@@ -761,6 +765,7 @@ try {
             $targetHead = Resolve-CommitFromRef -GitCli $gitCli -Ref $gitTargetRefNormalized
 
             if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
+                $requiresInfraUpdateStatus = $true
                 Write-RepoSyncLog "Discarding tracked local PixelStreaming repo changes before pinned reset to '$gitTargetRefNormalized'."
                 & $gitCli reset --hard $targetHead
                 if ($LASTEXITCODE -ne 0) {
@@ -771,6 +776,7 @@ try {
             }
 
             if ($currentHead -ne $targetHead) {
+                $requiresInfraUpdateStatus = $true
                 Write-RepoSyncLog "Resetting local checkout to pinned ref '$gitTargetRefNormalized' ($targetHead)."
                 & $gitCli reset --hard $targetHead
                 if ($LASTEXITCODE -ne 0) {
@@ -828,6 +834,14 @@ try {
                 }
             }
         }
+    }
+
+    if ($buildScope -ne 'none' -or $updateBuildStampWithoutBuild) {
+        $requiresInfraUpdateStatus = $true
+    }
+
+    if ($startupRuntimeStatusContext -and $requiresInfraUpdateStatus) {
+        Invoke-PublishRuntimeStatusScript -Context $startupRuntimeStatusContext -Status 'updating_infra' -Reason 'git_sync_in_progress'
     }
 
     if ($buildScope -ne 'none') {
