@@ -290,12 +290,17 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         clearIdleStatusHeartbeat();
     };
     const ensureFirstViewerWindow = (): void => {
-        clearFirstViewerTimer();
         if (!maintenanceStateInitialized || isMaintenanceActive()) {
+            clearFirstViewerTimer();
             return;
         }
 
         if (hasSeenViewer || server.playerRegistry.count() > 0 || firstViewerGraceMs <= 0) {
+            clearFirstViewerTimer();
+            return;
+        }
+
+        if (firstViewerTimer) {
             return;
         }
 
