@@ -263,6 +263,13 @@ export function wireInstanceAgent(
 
         currentDesiredState = writeInstanceAgentDesiredStateSnapshot(desiredStatePath, nextState, log);
         if (changed) {
+            queueEvent('desired_state_updated', {
+                warmHoldEnabled: nextState.warmHoldEnabled,
+                drainEnabled: nextState.drainEnabled,
+                shutdownRequested: nextState.shutdownRequested,
+                policyVersion: nextState.policyVersion,
+                message: nextState.message
+            });
             log(
                 `[instance-agent] Desired state updated from ${source}: warmHold=${currentDesiredState.warmHoldEnabled}, drain=${currentDesiredState.drainEnabled}, shutdown=${currentDesiredState.shutdownRequested}, policy=${currentDesiredState.policyVersion}.`
             );

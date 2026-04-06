@@ -76,10 +76,22 @@ if not defined PLAYER_KEEPALIVE_INTERVAL_MS set "PLAYER_KEEPALIVE_INTERVAL_MS=30
 if not defined PLAYER_KEEPALIVE_MAX_MISSED_PONGS set "PLAYER_KEEPALIVE_MAX_MISSED_PONGS=2"
 if not defined VIEWER_IDLE_STOP set "VIEWER_IDLE_STOP=true"
 if not defined VIEWER_IDLE_GRACE_MS set "VIEWER_IDLE_GRACE_MS=900000"
-if not defined VIEWER_IDLE_FIRST_VIEWER_GRACE_MS set "VIEWER_IDLE_FIRST_VIEWER_GRACE_MS=3600000"
+if not defined VIEWER_IDLE_FIRST_VIEWER_GRACE_MS set "VIEWER_IDLE_FIRST_VIEWER_GRACE_MS=1800000"
 if not defined VIEWER_IDLE_FIRST_VIEWER_DELAY_MS set "VIEWER_IDLE_FIRST_VIEWER_DELAY_MS=0"
 if not defined VIEWER_IDLE_STOP_RETRY_MS set "VIEWER_IDLE_STOP_RETRY_MS=60000"
 if not defined VIEWER_IDLE_STOP_DRY_RUN set "VIEWER_IDLE_STOP_DRY_RUN=false"
+if not defined INSTANCE_AGENT set "INSTANCE_AGENT=false"
+if not defined INSTANCE_AGENT_API_BASE_URL set "INSTANCE_AGENT_API_BASE_URL="
+if not defined INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET="
+if not defined INSTANCE_AGENT_INSTANCE_ID set "INSTANCE_AGENT_INSTANCE_ID="
+if not defined INSTANCE_AGENT_REGION set "INSTANCE_AGENT_REGION="
+if not defined INSTANCE_AGENT_LANE set "INSTANCE_AGENT_LANE=%SCALEWORLD_STREAMING_LANE%"
+if not defined INSTANCE_AGENT_ROUTE_KEY set "INSTANCE_AGENT_ROUTE_KEY="
+if not defined INSTANCE_AGENT_SCOPE_VALUE set "INSTANCE_AGENT_SCOPE_VALUE="
+if not defined INSTANCE_AGENT_VERSION set "INSTANCE_AGENT_VERSION="
+if not defined INSTANCE_AGENT_RUNTIME_VERSION set "INSTANCE_AGENT_RUNTIME_VERSION="
+if not defined INSTANCE_AGENT_HEARTBEAT_MS set "INSTANCE_AGENT_HEARTBEAT_MS="
+if not defined INSTANCE_AGENT_DESIRED_STATE_PATH set "INSTANCE_AGENT_DESIRED_STATE_PATH=C:\PixelStreaming\state\instance-agent-desired-state.json"
 
 set "INSTANCE_ID="
 set "STARTUP_HEARTBEAT_STATE_FILE="
@@ -220,7 +232,19 @@ call start.bat -- ^
   --viewer_idle_stop_dry_run="%VIEWER_IDLE_STOP_DRY_RUN%" ^
   --runtime_status="%RUNTIME_STATUS_ENABLED%" ^
   --runtime_status_aws_cli_path="%AWS_EXE%" ^
-  --runtime_status_source="signalling-server"
+  --runtime_status_source="signalling-server" ^
+  --instance_agent="%INSTANCE_AGENT%" ^
+  --instance_agent_api_base_url="%INSTANCE_AGENT_API_BASE_URL%" ^
+  --instance_agent_bootstrap_shared_secret="%INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET%" ^
+  --instance_agent_instance_id="%INSTANCE_AGENT_INSTANCE_ID%" ^
+  --instance_agent_region="%INSTANCE_AGENT_REGION%" ^
+  --instance_agent_lane="%INSTANCE_AGENT_LANE%" ^
+  --instance_agent_route_key="%INSTANCE_AGENT_ROUTE_KEY%" ^
+  --instance_agent_scope_value="%INSTANCE_AGENT_SCOPE_VALUE%" ^
+  --instance_agent_version="%INSTANCE_AGENT_VERSION%" ^
+  --instance_agent_runtime_version="%INSTANCE_AGENT_RUNTIME_VERSION%" ^
+  --instance_agent_heartbeat_ms="%INSTANCE_AGENT_HEARTBEAT_MS%" ^
+  --instance_agent_desired_state_path="%INSTANCE_AGENT_DESIRED_STATE_PATH%"
 
 exit /b %errorlevel%
 
@@ -241,6 +265,18 @@ call start.bat -- ^
   --runtime_status="%RUNTIME_STATUS_ENABLED%" ^
   --runtime_status_aws_cli_path="%AWS_EXE%" ^
   --runtime_status_source="signalling-server" ^
+  --instance_agent="%INSTANCE_AGENT%" ^
+  --instance_agent_api_base_url="%INSTANCE_AGENT_API_BASE_URL%" ^
+  --instance_agent_bootstrap_shared_secret="%INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET%" ^
+  --instance_agent_instance_id="%INSTANCE_AGENT_INSTANCE_ID%" ^
+  --instance_agent_region="%INSTANCE_AGENT_REGION%" ^
+  --instance_agent_lane="%INSTANCE_AGENT_LANE%" ^
+  --instance_agent_route_key="%INSTANCE_AGENT_ROUTE_KEY%" ^
+  --instance_agent_scope_value="%INSTANCE_AGENT_SCOPE_VALUE%" ^
+  --instance_agent_version="%INSTANCE_AGENT_VERSION%" ^
+  --instance_agent_runtime_version="%INSTANCE_AGENT_RUNTIME_VERSION%" ^
+  --instance_agent_heartbeat_ms="%INSTANCE_AGENT_HEARTBEAT_MS%" ^
+  --instance_agent_desired_state_path="%INSTANCE_AGENT_DESIRED_STATE_PATH%" ^
   --reverse-proxy ^
   --reverse-proxy-num-proxies="%REVERSE_PROXY_NUM_PROXIES%"
 
