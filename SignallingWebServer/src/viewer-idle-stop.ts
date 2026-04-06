@@ -3,15 +3,21 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
 import { RuntimeStatusPublisher, SignallingRuntimeStatusController } from './runtime-status';
+import {
+    normalizeInstanceAgentDesiredStateSnapshot,
+    readInstanceAgentDesiredStateSnapshot,
+    type InstanceAgentDesiredStateSnapshot
+} from './instance-agent-state';
 
 const execFileAsync = promisify(execFile);
 
 const DEFAULT_IDLE_GRACE_MS = 15 * 60_000;
-const DEFAULT_FIRST_VIEWER_GRACE_MS = 60 * 60_000;
+const DEFAULT_FIRST_VIEWER_GRACE_MS = 30 * 60_000;
 const DEFAULT_FIRST_VIEWER_DELAY_MS = 0;
 const DEFAULT_STOP_RETRY_MS = 60_000;
 const DEFAULT_IDLE_STATUS_HEARTBEAT_MS = 60_000;
 const DEFAULT_MAINTENANCE_REFRESH_MS = 60_000;
+const DEFAULT_DESIRED_STATE_REFRESH_MS = 30_000;
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
 const IMDS_METADATA_BASE_URL = 'http://169.254.169.254/latest/meta-data';
 const DEFAULT_MAINTENANCE_TAG_KEY = 'ScaleWorldMaintenanceMode';
@@ -25,6 +31,8 @@ export interface ViewerIdleOptions {
     idleStatusHeartbeatMs?: number;
     maintenanceRefreshMs?: number;
     maintenanceTagKey?: string;
+    desiredStatePath?: string;
+    desiredStateRefreshMs?: number;
     awsCliPath?: string;
     dryRun?: boolean;
     logger?: (message: string) => void;
@@ -222,12 +230,21 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         'VIEWER_IDLE_MAINTENANCE_REFRESH_MS',
         log
     );
+    const desiredStateRefreshMs = parseNonNegativeInteger(
+        options.desiredStateRefreshMs ?? process.env.VIEWER_IDLE_DESIRED_STATE_REFRESH_MS,
+        DEFAULT_DESIRED_STATE_REFRESH_MS,
+        'VIEWER_IDLE_DESIRED_STATE_REFRESH_MS',
+        log
+    );
     const dryRun = parseBoolean(options.dryRun ?? process.env.VIEWER_IDLE_STOP_DRY_RUN ?? false, false);
     const awsCliPath = String(options.awsCliPath ?? process.env.VIEWER_IDLE_AWS_CLI_PATH ?? 'aws');
     const maintenanceTagKey = String(
         options.maintenanceTagKey ??
             process.env.VIEWER_IDLE_MAINTENANCE_TAG_KEY ??
             DEFAULT_MAINTENANCE_TAG_KEY
+    ).trim();
+    const desiredStatePath = String(
+        options.desiredStatePath ?? process.env.VIEWER_IDLE_DESIRED_STATE_PATH ?? ''
     ).trim();
     const runtimeStatusPublisher = options.runtimeStatusPublisher ?? null;
     const runtimeStatusController = options.runtimeStatusController ?? null;
@@ -241,6 +258,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     let maintenanceStateInitialized = false;
     let maintenanceRefreshInFlight = false;
     let lastMaintenanceReadFailure: string | null = null;
+    let desiredStateRefreshTimer: NodeJS.Timeout | null = null;
+    let currentDesiredState: InstanceAgentDesiredStateSnapshot =
+        desiredStatePath.length > 0
+            ? readInstanceAgentDesiredStateSnapshot(desiredStatePath, log)
+            : normalizeInstanceAgentDesiredStateSnapshot(undefined);
 
     const publishStatus = (
         status: string,
@@ -274,6 +296,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         clearInterval(idleStatusHeartbeatTimer);
         idleStatusHeartbeatTimer = null;
     };
+    const clearDesiredStateRefreshTimer = (): void => {
+        if (!desiredStateRefreshTimer) return;
+        clearInterval(desiredStateRefreshTimer);
+        desiredStateRefreshTimer = null;
+    };
     const startIdleStatusHeartbeat = (reason: string): void => {
         clearIdleStatusHeartbeat();
         if (idleStatusHeartbeatMs <= 0 || !runtimeStatusPublisher) {
@@ -284,24 +311,41 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }, idleStatusHeartbeatMs);
     };
     const isMaintenanceActive = (): boolean => (currentMaintenanceMode?.trim().length ?? 0) > 0;
+    const isWarmHoldActive = (): boolean =>
+        currentDesiredState.warmHoldEnabled &&
+        !currentDesiredState.drainEnabled &&
+        !currentDesiredState.shutdownRequested &&
+        !hasSeenViewer;
     const clearAllIdleStopTimers = (): void => {
         clearZeroTimer();
         clearFirstViewerTimer();
         clearIdleStatusHeartbeat();
     };
     const ensureFirstViewerWindow = (): void => {
-        clearFirstViewerTimer();
-        if (!maintenanceStateInitialized || isMaintenanceActive()) {
+        if (!maintenanceStateInitialized || isMaintenanceActive() || isWarmHoldActive()) {
+            clearFirstViewerTimer();
             return;
         }
 
         if (hasSeenViewer || server.playerRegistry.count() > 0 || firstViewerGraceMs <= 0) {
+            clearFirstViewerTimer();
+            return;
+        }
+
+        if (firstViewerTimer) {
             return;
         }
 
         firstViewerTimer = setTimeout(() => {
             firstViewerTimer = null;
-            if (hasSeenViewer || server.playerRegistry.count() > 0 || isMaintenanceActive()) return;
+            if (
+                hasSeenViewer ||
+                server.playerRegistry.count() > 0 ||
+                isMaintenanceActive() ||
+                isWarmHoldActive()
+            ) {
+                return;
+            }
             void requestStop('no-viewer-ever-connected');
         }, firstViewerDelayMs + firstViewerGraceMs);
 
@@ -344,9 +388,46 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             maintenanceRefreshInFlight = false;
         }
     };
+    const refreshDesiredState = (): void => {
+        if (desiredStatePath.length === 0) {
+            return;
+        }
+
+        const nextDesiredState = readInstanceAgentDesiredStateSnapshot(desiredStatePath, log);
+        const changed =
+            nextDesiredState.warmHoldEnabled !== currentDesiredState.warmHoldEnabled ||
+            nextDesiredState.drainEnabled !== currentDesiredState.drainEnabled ||
+            nextDesiredState.shutdownRequested !== currentDesiredState.shutdownRequested ||
+            nextDesiredState.policyVersion !== currentDesiredState.policyVersion ||
+            nextDesiredState.message !== currentDesiredState.message;
+        currentDesiredState = nextDesiredState;
+
+        if (!changed) {
+            return;
+        }
+
+        log(
+            `[idle-stop] Desired state updated: warmHold=${currentDesiredState.warmHoldEnabled}, drain=${currentDesiredState.drainEnabled}, shutdown=${currentDesiredState.shutdownRequested}, policy=${currentDesiredState.policyVersion}.`
+        );
+
+        if (isWarmHoldActive()) {
+            clearAllIdleStopTimers();
+            return;
+        }
+
+        ensureFirstViewerWindow();
+        if (currentDesiredState.shutdownRequested && server.playerRegistry.count() === 0) {
+            void requestStop('agent_shutdown_requested');
+        }
+    };
 
     const scheduleStop = (reason: string, delayMs: number): void => {
         if (!maintenanceStateInitialized || isMaintenanceActive()) {
+            return;
+        }
+
+        if (!hasSeenViewer && isWarmHoldActive()) {
+            clearAllIdleStopTimers();
             return;
         }
 
@@ -438,5 +519,13 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     } else {
         maintenanceStateInitialized = true;
         ensureFirstViewerWindow();
+    }
+
+    if (desiredStatePath.length > 0 && desiredStateRefreshMs > 0) {
+        refreshDesiredState();
+        clearDesiredStateRefreshTimer();
+        desiredStateRefreshTimer = setInterval(() => {
+            refreshDesiredState();
+        }, desiredStateRefreshMs);
     }
 }

@@ -16,6 +16,7 @@ import { Command, Option } from 'commander';
 import { initialize } from 'express-openapi';
 import { ConnectTicketAuthMode, createPlayerVerifyClient } from './ConnectTicketAuth';
 import { wireViewerIdleStop } from './viewer-idle-stop';
+import { wireInstanceAgent } from './instance-agent';
 import {
     createRuntimeStatusPublisher,
     createSessionNetworkPathReporter,
@@ -29,6 +30,7 @@ const ENV_PLACEHOLDER_REGEX = /\$\{ENV:([A-Z0-9_]+)\}/g;
 
 const REDACTED_LOG_FIELDS = new Set([
     'auth_signing_key',
+    'instance_agent_bootstrap_shared_secret',
     'peer_options',
     'peer_options_player',
     'peer_options_streamer'
@@ -333,7 +335,7 @@ program
     .option(
         '--viewer_idle_first_viewer_grace_ms <number>',
         'Maximum wait for first viewer connection before instance stop.',
-        config_file.viewer_idle_first_viewer_grace_ms || '3600000'
+        config_file.viewer_idle_first_viewer_grace_ms || '1800000'
     )
     .option(
         '--viewer_idle_first_viewer_delay_ms <number>',
@@ -374,6 +376,66 @@ program
         '--runtime_status_version <value>',
         'Version label written with runtime status tags.',
         config_file.runtime_status_version || ''
+    )
+    .option(
+        '--instance_agent <value>',
+        'Enables passive instance-agent heartbeat and runtime event publishing. true/false',
+        config_file.instance_agent ?? 'false'
+    )
+    .option(
+        '--instance_agent_api_base_url <value>',
+        'Base URL for the ScaleWorld agent API (for example https://api.example.test).',
+        config_file.instance_agent_api_base_url || ''
+    )
+    .option(
+        '--instance_agent_bootstrap_shared_secret <value>',
+        'Optional shared secret sent during agent bootstrap.',
+        config_file.instance_agent_bootstrap_shared_secret || ''
+    )
+    .option(
+        '--instance_agent_instance_id <value>',
+        'Optional explicit instance id for local or non-IMDS testing.',
+        config_file.instance_agent_instance_id || ''
+    )
+    .option(
+        '--instance_agent_region <value>',
+        'Optional explicit AWS region for local or non-IMDS testing.',
+        config_file.instance_agent_region || ''
+    )
+    .option(
+        '--instance_agent_lane <value>',
+        'Optional lane hint reported during agent bootstrap.',
+        config_file.instance_agent_lane || ''
+    )
+    .option(
+        '--instance_agent_route_key <value>',
+        'Optional route key hint reported during agent bootstrap.',
+        config_file.instance_agent_route_key || ''
+    )
+    .option(
+        '--instance_agent_scope_value <value>',
+        'Optional access scope hint reported during agent bootstrap.',
+        config_file.instance_agent_scope_value || ''
+    )
+    .option(
+        '--instance_agent_version <value>',
+        'Optional agent version label reported to the API.',
+        config_file.instance_agent_version || ''
+    )
+    .option(
+        '--instance_agent_runtime_version <value>',
+        'Optional runtime version label reported to the API.',
+        config_file.instance_agent_runtime_version || ''
+    )
+    .option(
+        '--instance_agent_heartbeat_ms <number>',
+        'Overrides the agent heartbeat interval in milliseconds.',
+        config_file.instance_agent_heartbeat_ms || ''
+    )
+    .option(
+        '--instance_agent_desired_state_path <path>',
+        'Local file path where desired-state snapshots from the API are written.',
+        config_file.instance_agent_desired_state_path || ''
     )
     .option(
         '--log_config',
@@ -578,11 +640,31 @@ if (options.serve) {
 }
 
 const signallingServer = new SignallingServer(serverOpts);
+const instanceAgentClient = wireInstanceAgent(signallingServer, {
+    enabled: options.instance_agent,
+    apiBaseUrl: String(options.instance_agent_api_base_url || ''),
+    bootstrapSharedSecret: String(options.instance_agent_bootstrap_shared_secret || ''),
+    instanceId: String(options.instance_agent_instance_id || ''),
+    region: String(options.instance_agent_region || ''),
+    lane: String(options.instance_agent_lane || ''),
+    routeKey: String(options.instance_agent_route_key || ''),
+    scopeValue: String(options.instance_agent_scope_value || ''),
+    agentVersion: String(options.instance_agent_version || pjson.version || ''),
+    runtimeVersion: String(
+        options.instance_agent_runtime_version || options.runtime_status_version || pjson.version || ''
+    ),
+    heartbeatMs: options.instance_agent_heartbeat_ms,
+    desiredStatePath: String(options.instance_agent_desired_state_path || ''),
+    logger: (message: string) => Logger.info(message)
+});
 const runtimeStatusPublisher = createRuntimeStatusPublisher({
     enabled: options.runtime_status,
     awsCliPath: options.runtime_status_aws_cli_path,
     source: String(options.runtime_status_source || 'signalling-server'),
     version: String(options.runtime_status_version || pjson.version || ''),
+    observer: (update) => {
+        instanceAgentClient?.recordRuntimeStatus(update);
+    },
     logger: (message: string) => Logger.info(message)
 });
 const sessionNetworkPathReporter = createSessionNetworkPathReporter({
@@ -615,6 +697,12 @@ app.post('/api/session-network-path', express.json({ limit: '8kb' }), async (req
         return;
     }
 
+    instanceAgentClient?.recordSessionNetworkPath({
+        sessionId,
+        usesTurn,
+        candidateType,
+        relayProtocol
+    });
     if (!sessionNetworkPathReporter) {
         response.sendStatus(204);
         return;
@@ -640,6 +728,10 @@ wireViewerIdleStop(signallingServer, {
     firstViewerGraceMs: options.viewer_idle_first_viewer_grace_ms,
     firstViewerDelayMs: options.viewer_idle_first_viewer_delay_ms,
     stopRetryMs: options.viewer_idle_stop_retry_ms,
+    desiredStatePath:
+        String(options.instance_agent_desired_state_path || '').trim().length > 0
+            ? String(options.instance_agent_desired_state_path || '')
+            : undefined,
     awsCliPath: options.viewer_idle_aws_cli_path,
     dryRun: options.viewer_idle_stop_dry_run,
     logger: (message: string) => Logger.info(message),

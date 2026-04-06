@@ -31,6 +31,7 @@ export interface RuntimeStatusPublisherOptions {
     source?: string;
     version?: string;
     logger?: (message: string) => void;
+    observer?: (update: RuntimeStatusUpdate) => void;
 }
 export interface SessionNetworkPathReport {
     sessionId: string;
@@ -223,6 +224,7 @@ export function createRuntimeStatusPublisher(
         options.source ?? process.env.RUNTIME_STATUS_SOURCE ?? 'signalling-server'
     );
     const defaultVersion = normalizeTagValue(options.version ?? process.env.RUNTIME_STATUS_VERSION ?? '');
+    const observer = options.observer;
     const resolveIdentity = createInstanceIdentityResolver();
     let desiredStatus: string | null = null;
     let publishQueue: Promise<void> = Promise.resolve();
@@ -255,6 +257,25 @@ export function createRuntimeStatusPublisher(
                 }
 
                 try {
+                    if (observer) {
+                        try {
+                            observer({
+                                ...update,
+                                status: normalizedStatus,
+                                source: normalizeTagValue(update.source ?? defaultSource),
+                                version: normalizeTagValue(update.version ?? defaultVersion)
+                            });
+                        } catch (observerError) {
+                            const observerMessage =
+                                observerError instanceof Error
+                                    ? observerError.message
+                                    : String(observerError);
+                            log(
+                                `[runtime-status] Observer failed for status '${normalizedStatus}': ${observerMessage}`
+                            );
+                        }
+                    }
+
                     const { instanceId, region } = await resolveIdentity();
                     const nowIso = new Date().toISOString();
                     const tags: Array<{ Key: string; Value: string }> = [
