@@ -80,7 +80,6 @@ if not defined VIEWER_IDLE_FIRST_VIEWER_GRACE_MS set "VIEWER_IDLE_FIRST_VIEWER_G
 if not defined VIEWER_IDLE_FIRST_VIEWER_DELAY_MS set "VIEWER_IDLE_FIRST_VIEWER_DELAY_MS=0"
 if not defined VIEWER_IDLE_STOP_RETRY_MS set "VIEWER_IDLE_STOP_RETRY_MS=60000"
 if not defined VIEWER_IDLE_STOP_DRY_RUN set "VIEWER_IDLE_STOP_DRY_RUN=false"
-if not defined INSTANCE_AGENT set "INSTANCE_AGENT=false"
 if not defined INSTANCE_AGENT_API_BASE_URL set "INSTANCE_AGENT_API_BASE_URL="
 if not defined INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET="
 if not defined INSTANCE_AGENT_INSTANCE_ID set "INSTANCE_AGENT_INSTANCE_ID="
@@ -195,6 +194,7 @@ if /i "%CONNECT_TICKET_AUTH_MODE%"=="off" (
 )
 
 :after_instance_id
+call :apply_instance_agent_defaults
 call :reset_startup_heartbeat
 call :set_runtime_status "booting" "startup-script" "startup_sequence"
 call :start_startup_heartbeat
@@ -281,6 +281,33 @@ call start.bat -- ^
   --reverse-proxy-num-proxies="%REVERSE_PROXY_NUM_PROXIES%"
 
 exit /b %errorlevel%
+
+:apply_instance_agent_defaults
+if not defined INSTANCE_AGENT (
+  if defined INSTANCE_ID (
+    set "INSTANCE_AGENT=true"
+  ) else (
+    set "INSTANCE_AGENT=false"
+  )
+)
+
+if /i not "%INSTANCE_AGENT%"=="false" (
+  if not defined INSTANCE_AGENT_API_BASE_URL (
+    if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
+      set "INSTANCE_AGENT_API_BASE_URL=https://scaleworld.scaleaq.com"
+    ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
+      set "INSTANCE_AGENT_API_BASE_URL=https://scaleworld.scaleaq-stage.net"
+    ) else (
+      set "INSTANCE_AGENT_API_BASE_URL=https://scaleworld.scaleaq-dev.net"
+    )
+  )
+)
+
+if defined INSTANCE_ID (
+  if not defined INSTANCE_AGENT_INSTANCE_ID set "INSTANCE_AGENT_INSTANCE_ID=%INSTANCE_ID%"
+)
+if not defined INSTANCE_AGENT_REGION set "INSTANCE_AGENT_REGION=%REGION%"
+exit /b 0
 
 :resolve_streaming_lane_from_instance_tag
 set "RESOLVED_STREAMING_LANE="
