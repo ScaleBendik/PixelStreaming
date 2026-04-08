@@ -348,6 +348,11 @@ program
         config_file.viewer_idle_stop_retry_ms || '60000'
     )
     .option(
+        '--viewer_idle_reset_grace_ms <number>',
+        'Warm-reset window after the last viewer disconnects before the instance is reusable again.',
+        config_file.viewer_idle_reset_grace_ms || '15000'
+    )
+    .option(
         '--viewer_idle_aws_cli_path <path>',
         'AWS CLI executable used for stop-instances (default: aws).',
         config_file.viewer_idle_aws_cli_path || 'aws'
@@ -728,6 +733,7 @@ wireViewerIdleStop(signallingServer, {
     firstViewerGraceMs: options.viewer_idle_first_viewer_grace_ms,
     firstViewerDelayMs: options.viewer_idle_first_viewer_delay_ms,
     stopRetryMs: options.viewer_idle_stop_retry_ms,
+    resetGraceMs: options.viewer_idle_reset_grace_ms,
     desiredStatePath:
         String(options.instance_agent_desired_state_path || '').trim().length > 0
             ? String(options.instance_agent_desired_state_path || '')

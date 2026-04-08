@@ -151,6 +151,48 @@ function normalizeEventMetadata(value: Record<string, unknown>): Record<string, 
     return normalized;
 }
 
+function truncateDiagnosticText(value: string, maxLength = 240): string {
+    const normalized = value.replace(/\s+/g, ' ').trim();
+    if (normalized.length <= maxLength) {
+        return normalized;
+    }
+
+    return `${normalized.slice(0, maxLength - 3)}...`;
+}
+
+async function describeErrorResponse(response: Response, action: string): Promise<string> {
+    const responseUrl = normalizeOptionalText(response.url) ?? 'unknown URL';
+    const contentType = normalizeOptionalText(response.headers.get('content-type')) ?? '';
+    const responseText = await response.text();
+
+    let detail: string | undefined;
+    if (contentType.toLowerCase().includes('application/json')) {
+        try {
+            const parsed = JSON.parse(responseText) as { message?: unknown };
+            detail = normalizeOptionalText(
+                typeof parsed.message === 'string' ? parsed.message : responseText
+            );
+        } catch {
+            detail = normalizeOptionalText(responseText);
+        }
+    } else {
+        detail = normalizeOptionalText(responseText);
+    }
+
+    const isHtmlResponse =
+        contentType.toLowerCase().includes('text/html') ||
+        /^<!doctype html\b/i.test(responseText.trim()) ||
+        /^<html\b/i.test(responseText.trim());
+
+    const likelyWrongBaseUrl = response.status === 404 || response.status === 405 || isHtmlResponse;
+
+    const hint = likelyWrongBaseUrl
+        ? ' Check INSTANCE_AGENT_API_BASE_URL; it may point to the web app, a wrong host, or a tunnel/proxy that is not routing to the API.'
+        : '';
+
+    return `${action} failed with status ${response.status} at ${responseUrl}.${detail ? ` ${truncateDiagnosticText(detail)}` : ''}${hint}`;
+}
+
 async function readImdsToken(): Promise<string> {
     const response = await fetch(IMDS_TOKEN_URL, {
         method: 'PUT',
@@ -232,6 +274,7 @@ export function wireInstanceAgent(
     let token: string | null = null;
     let runtimeSnapshot: InstanceAgentRuntimeSnapshot = {};
     let pendingEvents: PendingInstanceAgentEvent[] = [];
+    let resetInProgress = false;
 
     const queueEvent = (eventType: string, metadata: Record<string, unknown>, sessionId?: string): void => {
         pendingEvents.push({
@@ -385,7 +428,7 @@ export function wireInstanceAgent(
             });
 
             if (!response.ok) {
-                throw new Error(`Bootstrap failed with status ${response.status}.`);
+                throw new Error(await describeErrorResponse(response, 'Bootstrap'));
             }
 
             const payload = await parseJsonResponse<InstanceAgentBootstrapResponse>(response);
@@ -424,7 +467,7 @@ export function wireInstanceAgent(
             streamerHealthy: runtimeSnapshot.status === 'ready'
         });
         if (!response.ok) {
-            throw new Error(`Heartbeat failed with status ${response.status}.`);
+            throw new Error(await describeErrorResponse(response, 'Heartbeat'));
         }
 
         const payload = await parseJsonResponse<InstanceAgentHeartbeatResponse>(response);
@@ -447,7 +490,7 @@ export function wireInstanceAgent(
             events: eventsToSend
         });
         if (!response.ok) {
-            throw new Error(`Event upload failed with status ${response.status}.`);
+            throw new Error(await describeErrorResponse(response, 'Event upload'));
         }
 
         const payload = await parseJsonResponse<InstanceAgentEventBatchResponse>(response);
@@ -518,14 +561,45 @@ export function wireInstanceAgent(
                 return;
             }
 
+            if (nextStatus === 'resetting' && !resetInProgress) {
+                resetInProgress = true;
+                queueEvent('reset_started', {
+                    status: nextStatus,
+                    reason: nextReason,
+                    source: update.source,
+                    version: update.version
+                });
+            } else if (resetInProgress && nextStatus === 'ready') {
+                resetInProgress = false;
+                queueEvent('reset_completed', {
+                    status: nextStatus,
+                    reason: nextReason,
+                    source: update.source,
+                    version: update.version
+                });
+            } else if (
+                resetInProgress &&
+                (nextStatus === 'stopping' || nextStatus === 'idle_shutdown_pending')
+            ) {
+                resetInProgress = false;
+                queueEvent('reset_cancelled', {
+                    status: nextStatus,
+                    reason: nextReason,
+                    source: update.source,
+                    version: update.version
+                });
+            }
+
             queueEvent(
                 nextStatus === 'ready'
                     ? 'runtime_ready'
-                    : nextStatus === 'idle_shutdown_pending'
-                      ? 'idle_shutdown_pending'
-                      : nextStatus === 'stopping'
-                        ? 'stopping'
-                        : 'runtime_status_changed',
+                    : nextStatus === 'resetting'
+                      ? 'resetting'
+                      : nextStatus === 'idle_shutdown_pending'
+                        ? 'idle_shutdown_pending'
+                        : nextStatus === 'stopping'
+                          ? 'stopping'
+                          : 'runtime_status_changed',
                 {
                     status: nextStatus,
                     reason: nextReason,

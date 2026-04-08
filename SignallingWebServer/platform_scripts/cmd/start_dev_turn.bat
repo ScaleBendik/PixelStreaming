@@ -294,11 +294,11 @@ if not defined INSTANCE_AGENT (
 if /i not "%INSTANCE_AGENT%"=="false" (
   if not defined INSTANCE_AGENT_API_BASE_URL (
     if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
-      set "INSTANCE_AGENT_API_BASE_URL=https://scaleworld.scaleaq.com"
+      set "INSTANCE_AGENT_API_BASE_URL=https://scaleworld.api.scaleaq.net"
     ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
-      set "INSTANCE_AGENT_API_BASE_URL=https://scaleworld.scaleaq-stage.net"
+      set "INSTANCE_AGENT_API_BASE_URL=https://scaleworld.api.scaleaq-stage.net"
     ) else (
-      set "INSTANCE_AGENT_API_BASE_URL=https://scaleworld.scaleaq-dev.net"
+      set "INSTANCE_AGENT_API_BASE_URL=https://scaleworld.api.scaleaq-dev.net"
     )
   )
 )

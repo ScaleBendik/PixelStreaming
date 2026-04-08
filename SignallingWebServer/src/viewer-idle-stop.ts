@@ -16,6 +16,7 @@ const DEFAULT_FIRST_VIEWER_GRACE_MS = 30 * 60_000;
 const DEFAULT_FIRST_VIEWER_DELAY_MS = 0;
 const DEFAULT_STOP_RETRY_MS = 60_000;
 const DEFAULT_IDLE_STATUS_HEARTBEAT_MS = 60_000;
+const DEFAULT_RESET_GRACE_MS = 15_000;
 const DEFAULT_MAINTENANCE_REFRESH_MS = 60_000;
 const DEFAULT_DESIRED_STATE_REFRESH_MS = 30_000;
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
@@ -29,6 +30,7 @@ export interface ViewerIdleOptions {
     firstViewerDelayMs?: number;
     stopRetryMs?: number;
     idleStatusHeartbeatMs?: number;
+    resetGraceMs?: number;
     maintenanceRefreshMs?: number;
     maintenanceTagKey?: string;
     desiredStatePath?: string;
@@ -224,6 +226,12 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         'VIEWER_IDLE_STATUS_HEARTBEAT_MS',
         log
     );
+    const resetGraceMs = parseNonNegativeInteger(
+        options.resetGraceMs ?? process.env.VIEWER_IDLE_RESET_GRACE_MS,
+        DEFAULT_RESET_GRACE_MS,
+        'VIEWER_IDLE_RESET_GRACE_MS',
+        log
+    );
     const maintenanceRefreshMs = parseNonNegativeInteger(
         options.maintenanceRefreshMs ?? process.env.VIEWER_IDLE_MAINTENANCE_REFRESH_MS,
         DEFAULT_MAINTENANCE_REFRESH_MS,
@@ -252,6 +260,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     let zeroViewersTimer: NodeJS.Timeout | null = null;
     let firstViewerTimer: NodeJS.Timeout | null = null;
     let idleStatusHeartbeatTimer: NodeJS.Timeout | null = null;
+    let resetTimer: NodeJS.Timeout | null = null;
     let stopInFlight = false;
     let hasSeenViewer = server.playerRegistry.count() > 0;
     let currentMaintenanceMode: string | null = null;
@@ -296,6 +305,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         clearInterval(idleStatusHeartbeatTimer);
         idleStatusHeartbeatTimer = null;
     };
+    const clearResetTimer = (): void => {
+        if (!resetTimer) return;
+        clearTimeout(resetTimer);
+        resetTimer = null;
+    };
     const clearDesiredStateRefreshTimer = (): void => {
         if (!desiredStateRefreshTimer) return;
         clearInterval(desiredStateRefreshTimer);
@@ -316,10 +330,16 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         !currentDesiredState.drainEnabled &&
         !currentDesiredState.shutdownRequested &&
         !hasSeenViewer;
+    const shouldResetIntoWarmReady = (): boolean =>
+        currentDesiredState.warmHoldEnabled &&
+        !currentDesiredState.drainEnabled &&
+        !currentDesiredState.shutdownRequested &&
+        hasSeenViewer;
     const clearAllIdleStopTimers = (): void => {
         clearZeroTimer();
         clearFirstViewerTimer();
         clearIdleStatusHeartbeat();
+        clearResetTimer();
     };
     const ensureFirstViewerWindow = (): void => {
         if (!maintenanceStateInitialized || isMaintenanceActive() || isWarmHoldActive()) {
@@ -371,10 +391,18 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     clearAllIdleStopTimers();
                 } else {
                     log('[idle-stop] Maintenance mode cleared. Re-evaluating idle-stop timers.');
-                    ensureFirstViewerWindow();
+                    if (server.playerRegistry.count() === 0 && shouldResetIntoWarmReady()) {
+                        startResetWindow();
+                    } else {
+                        ensureFirstViewerWindow();
+                    }
                 }
             } else if (!currentMaintenanceMode) {
-                ensureFirstViewerWindow();
+                if (server.playerRegistry.count() === 0 && shouldResetIntoWarmReady()) {
+                    startResetWindow();
+                } else {
+                    ensureFirstViewerWindow();
+                }
             }
 
             lastMaintenanceReadFailure = null;
@@ -412,6 +440,31 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         if (isWarmHoldActive()) {
             clearAllIdleStopTimers();
+            return;
+        }
+
+        if (resetTimer && !shouldResetIntoWarmReady()) {
+            clearResetTimer();
+            if (!maintenanceStateInitialized || isMaintenanceActive() || server.playerRegistry.count() > 0) {
+                return;
+            }
+
+            if (currentDesiredState.shutdownRequested) {
+                void requestStop('agent_shutdown_requested');
+                return;
+            }
+
+            scheduleStop('grace-after-last-viewer', 0);
+            return;
+        }
+
+        if (
+            server.playerRegistry.count() === 0 &&
+            maintenanceStateInitialized &&
+            !isMaintenanceActive() &&
+            shouldResetIntoWarmReady()
+        ) {
+            startResetWindow();
             return;
         }
 
@@ -457,9 +510,61 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         scheduleStop('retry-after-failure', stopRetryMs);
     };
 
+    const restoreAfterReset = (): void => {
+        clearResetTimer();
+        if (server.playerRegistry.count() > 0 || !maintenanceStateInitialized || isMaintenanceActive()) {
+            runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+            return;
+        }
+
+        if (currentDesiredState.shutdownRequested) {
+            void requestStop('agent_shutdown_requested');
+            return;
+        }
+
+        if (!shouldResetIntoWarmReady()) {
+            scheduleStop('grace-after-last-viewer', 0);
+            return;
+        }
+
+        runtimeStatusController?.restoreDerivedStatus();
+    };
+
+    const startResetWindow = (): void => {
+        if (!maintenanceStateInitialized || isMaintenanceActive() || server.playerRegistry.count() > 0) {
+            return;
+        }
+
+        clearZeroTimer();
+        clearFirstViewerTimer();
+        clearIdleStatusHeartbeat();
+
+        if (!shouldResetIntoWarmReady()) {
+            return;
+        }
+
+        publishStatus('resetting', 'post_session_cleanup');
+        if (resetGraceMs <= 0) {
+            restoreAfterReset();
+            return;
+        }
+
+        if (resetTimer) {
+            return;
+        }
+
+        resetTimer = setTimeout(() => {
+            resetTimer = null;
+            restoreAfterReset();
+        }, resetGraceMs);
+
+        log(`[idle-stop] Entered warm reset window for ${resetGraceMs} ms after session end.`);
+    };
+
     const requestStop = async (reason: string): Promise<void> => {
         if (stopInFlight) return;
         clearIdleStatusHeartbeat();
+        clearResetTimer();
         if (!maintenanceStateInitialized || isMaintenanceActive()) {
             return;
         }
@@ -490,6 +595,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         clearZeroTimer();
         clearFirstViewerTimer();
         clearIdleStatusHeartbeat();
+        clearResetTimer();
         runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
         log(`[idle-stop] Viewer connected (count=${server.playerRegistry.count()}).`);
     };
@@ -504,7 +610,16 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         log(
             `[idle-stop] Viewer disconnected (count=${effectiveCount}, rawCount=${rawCount}, removedEntryStillPresent=${removedEntryStillPresent}).`
         );
-        if (effectiveCount === 0) scheduleStop('grace-after-last-viewer', graceMs);
+        if (effectiveCount !== 0) {
+            return;
+        }
+
+        if (maintenanceStateInitialized && !isMaintenanceActive() && shouldResetIntoWarmReady()) {
+            startResetWindow();
+            return;
+        }
+
+        scheduleStop('grace-after-last-viewer', graceMs);
     };
 
     server.playerRegistry.on('added', onViewerAdded);
