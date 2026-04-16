@@ -81,6 +81,13 @@ if not defined VIEWER_IDLE_FIRST_VIEWER_DELAY_MS set "VIEWER_IDLE_FIRST_VIEWER_D
 if not defined VIEWER_IDLE_STOP_RETRY_MS set "VIEWER_IDLE_STOP_RETRY_MS=60000"
 if not defined VIEWER_IDLE_STOP_DRY_RUN set "VIEWER_IDLE_STOP_DRY_RUN=false"
 if not defined INSTANCE_AGENT_API_BASE_URL set "INSTANCE_AGENT_API_BASE_URL="
+if not defined INSTANCE_AGENT_API_BASE_URL_PARAM (
+  if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
+    set "INSTANCE_AGENT_API_BASE_URL_PARAM=/pixelstreaming/prod/instance-agent-api-base-url"
+  ) else if /i "%SCALEWORLD_STREAMING_LANE%"=="nonprod" (
+    set "INSTANCE_AGENT_API_BASE_URL_PARAM=/pixelstreaming/nonprod/instance-agent-api-base-url"
+  )
+)
 if not defined INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET="
 if not defined INSTANCE_AGENT_INSTANCE_ID set "INSTANCE_AGENT_INSTANCE_ID="
 if not defined INSTANCE_AGENT_REGION set "INSTANCE_AGENT_REGION="
@@ -292,6 +299,17 @@ if not defined INSTANCE_AGENT (
 )
 
 if /i not "%INSTANCE_AGENT%"=="false" (
+  if not defined INSTANCE_AGENT_API_BASE_URL (
+    if defined INSTANCE_AGENT_API_BASE_URL_PARAM (
+      for /f "usebackq delims=" %%I in (`%AWS_CALL% ssm get-parameter --name "%INSTANCE_AGENT_API_BASE_URL_PARAM%" --region "%REGION%" --query Parameter.Value --output text 2^>nul`) do (
+        set "INSTANCE_AGENT_API_BASE_URL=%%I"
+      )
+      if /i "%INSTANCE_AGENT_API_BASE_URL%"=="None" set "INSTANCE_AGENT_API_BASE_URL="
+      if defined INSTANCE_AGENT_API_BASE_URL (
+        echo Loaded instance-agent API base URL from SSM parameter "%INSTANCE_AGENT_API_BASE_URL_PARAM%".
+      )
+    )
+  )
   if not defined INSTANCE_AGENT_API_BASE_URL (
     if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
       set "INSTANCE_AGENT_API_BASE_URL=https://scaleworld.api.scaleaq.net"

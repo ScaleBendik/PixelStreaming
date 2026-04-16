@@ -121,6 +121,14 @@ Current note:
 - current bootstrap defaults are:
   - `nonprod` -> SSM `/pixelstreaming/connect-ticket/signing-key`, issuer `scaleworld-dev-connect-ticket`
   - `prod` -> SSM `/pixelstreaming/prod/connect-ticket/signing-key`, issuer `scaleworld-prod-connect-ticket`
+- lane-wide instance-agent API targeting now supports:
+  - `INSTANCE_AGENT_API_BASE_URL=<absolute-http(s)-url>` for an explicit per-instance override
+  - `INSTANCE_AGENT_API_BASE_URL_PARAM=/pixelstreaming/nonprod/instance-agent-api-base-url` for normal nonprod lane override
+  - `INSTANCE_AGENT_API_BASE_URL_PARAM=/pixelstreaming/prod/instance-agent-api-base-url` for prod lane override
+  - if no explicit override or lane parameter is present, startup still falls back to deployment-track defaults:
+    - `dev` -> `https://scaleworld.api.scaleaq-dev.net`
+    - `stage` -> `https://scaleworld.api.scaleaq-stage.net`
+    - `prod` -> `https://scaleworld.api.scaleaq.net`
 - TURN credentials still default to the current shared SSM paths for all lanes
 - cloud startup now enables Wilbur reverse-proxy mode by default
   - `ENABLE_REVERSE_PROXY=true`
@@ -143,7 +151,7 @@ Current note:
   - recommended stage-like nonprod launch-template / provisioning tag setting:
     - `ScaleWorldDeploymentTrack=stage`
   - note:
-    - explicit machine env vars such as `SCALEWORLD_GIT_SYNC_MODE` or `SCALEWORLD_GIT_TARGET_REF_PARAM` still override the derived track defaults if they were manually set on the box
+    - explicit machine env vars such as `SCALEWORLD_GIT_SYNC_MODE`, `SCALEWORLD_GIT_TARGET_REF_PARAM`, `INSTANCE_AGENT_API_BASE_URL`, or `INSTANCE_AGENT_API_BASE_URL_PARAM` still override the derived defaults if they were manually set on the box
   - normal prod boot through `start_streamer_stack.bat` now applies pinned repo sync before the stack launch
   - if the AMI repo/build baseline is behind the promoted prod tag, first boot may spend several minutes in repo reset + `BuildScripts/build-all.bat` before Wilbur starts
 
@@ -167,13 +175,21 @@ Normal serving stage/prod instance role should keep:
 - `ssm:GetParameter` on:
   - `/pixelstreaming/nonprod/git-target-ref`
   - `/pixelstreaming/prod/git-target-ref`
+  - `/pixelstreaming/nonprod/instance-agent-api-base-url`
+  - `/pixelstreaming/prod/instance-agent-api-base-url`
 
 Gold/promotion operator context must also support:
 
 - `ssm:GetParameter` on `/pixelstreaming/nonprod/git-target-ref`
 - `ssm:GetParameter` on `/pixelstreaming/prod/git-target-ref`
+- `ssm:GetParameter` on `/pixelstreaming/nonprod/instance-agent-api-base-url`
+- `ssm:GetParameter` on `/pixelstreaming/prod/instance-agent-api-base-url`
 - `ssm:PutParameter` on `/pixelstreaming/nonprod/git-target-ref`
 - `ssm:PutParameter` on `/pixelstreaming/prod/git-target-ref`
+- `ssm:PutParameter` on `/pixelstreaming/nonprod/instance-agent-api-base-url`
+- `ssm:PutParameter` on `/pixelstreaming/prod/instance-agent-api-base-url`
+- `ssm:DeleteParameter` on `/pixelstreaming/nonprod/instance-agent-api-base-url`
+- `ssm:DeleteParameter` on `/pixelstreaming/prod/instance-agent-api-base-url`
 
 Current hardening note:
 
