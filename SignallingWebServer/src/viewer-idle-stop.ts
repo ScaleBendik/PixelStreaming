@@ -259,7 +259,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
     let zeroViewersTimer: NodeJS.Timeout | null = null;
     let firstViewerTimer: NodeJS.Timeout | null = null;
-    let idleStatusHeartbeatTimer: NodeJS.Timeout | null = null;
+    let transientStatusHeartbeatTimer: NodeJS.Timeout | null = null;
     let reconnectGraceTimer: NodeJS.Timeout | null = null;
     let resetTimer: NodeJS.Timeout | null = null;
     let stopInFlight = false;
@@ -301,10 +301,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             firstViewerTimer = null;
         }
     };
-    const clearIdleStatusHeartbeat = (): void => {
-        if (!idleStatusHeartbeatTimer) return;
-        clearInterval(idleStatusHeartbeatTimer);
-        idleStatusHeartbeatTimer = null;
+    const clearTransientStatusHeartbeat = (): void => {
+        if (!transientStatusHeartbeatTimer) return;
+        clearInterval(transientStatusHeartbeatTimer);
+        transientStatusHeartbeatTimer = null;
     };
     const clearReconnectGraceTimer = (): void => {
         if (!reconnectGraceTimer) return;
@@ -321,13 +321,13 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         clearInterval(desiredStateRefreshTimer);
         desiredStateRefreshTimer = null;
     };
-    const startIdleStatusHeartbeat = (reason: string): void => {
-        clearIdleStatusHeartbeat();
+    const startTransientStatusHeartbeat = (status: string, reason: string): void => {
+        clearTransientStatusHeartbeat();
         if (idleStatusHeartbeatMs <= 0 || !runtimeStatusPublisher) {
             return;
         }
-        idleStatusHeartbeatTimer = setInterval(() => {
-            publishStatus('idle_shutdown_pending', reason, { heartbeatOnly: true });
+        transientStatusHeartbeatTimer = setInterval(() => {
+            publishStatus(status, reason, { heartbeatOnly: true });
         }, idleStatusHeartbeatMs);
     };
     const isMaintenanceActive = (): boolean => (currentMaintenanceMode?.trim().length ?? 0) > 0;
@@ -340,7 +340,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     const clearAllIdleStopTimers = (): void => {
         clearZeroTimer();
         clearFirstViewerTimer();
-        clearIdleStatusHeartbeat();
+        clearTransientStatusHeartbeat();
         clearReconnectGraceTimer();
         clearResetTimer();
     };
@@ -517,7 +517,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         clearZeroTimer();
         const mappedPendingReason = mapPendingReason(reason);
         publishStatus('idle_shutdown_pending', mappedPendingReason);
-        startIdleStatusHeartbeat(mappedPendingReason);
+        startTransientStatusHeartbeat('idle_shutdown_pending', mappedPendingReason);
         zeroViewersTimer = setTimeout(() => {
             void requestStop(reason);
         }, delayMs);
@@ -533,13 +533,14 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         clearZeroTimer();
         clearFirstViewerTimer();
-        clearIdleStatusHeartbeat();
+        clearTransientStatusHeartbeat();
 
         if (!shouldResetIntoWarmReady()) {
             return;
         }
 
-        runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+        publishStatus('reconnect_grace', 'waiting_for_viewer_reconnect');
+        startTransientStatusHeartbeat('reconnect_grace', 'waiting_for_viewer_reconnect');
 
         if (delayMs <= 0) {
             startResetWindow();
@@ -627,7 +628,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         clearReconnectGraceTimer();
         clearZeroTimer();
         clearFirstViewerTimer();
-        clearIdleStatusHeartbeat();
+        clearTransientStatusHeartbeat();
 
         if (!shouldResetIntoWarmReady()) {
             return;
@@ -653,7 +654,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
     const requestStop = async (reason: string): Promise<void> => {
         if (stopInFlight) return;
-        clearIdleStatusHeartbeat();
+        clearTransientStatusHeartbeat();
         clearReconnectGraceTimer();
         clearResetTimer();
         if (!maintenanceStateInitialized || isMaintenanceActive()) {
@@ -685,7 +686,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         hasSeenViewer = true;
         clearZeroTimer();
         clearFirstViewerTimer();
-        clearIdleStatusHeartbeat();
+        clearTransientStatusHeartbeat();
         clearReconnectGraceTimer();
         clearResetTimer();
         runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
