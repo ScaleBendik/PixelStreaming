@@ -9,15 +9,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:CurrentProcessId = $PID
-$script:CurrentParentProcessId = $null
 $script:RecycleLogPath = Join-Path $RepoRoot 'SignallingWebServer\state\stack-recycle.log'
-
-try {
-    $currentProcess = Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $PID) -ErrorAction Stop
-    $script:CurrentParentProcessId = [int]$currentProcess.ParentProcessId
-} catch {
-    $script:CurrentParentProcessId = $null
-}
 
 function Write-RecycleLog {
     param(
@@ -57,10 +49,6 @@ function Stop-RecycleProcessMatches {
 
     foreach ($match in @($matches)) {
         if ($match.ProcessId -eq $script:CurrentProcessId) {
-            continue
-        }
-
-        if ($script:CurrentParentProcessId -and $match.ProcessId -eq $script:CurrentParentProcessId) {
             continue
         }
 
