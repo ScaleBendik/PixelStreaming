@@ -1,5 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
+import { randomUUID } from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { promisify } from 'util';
 import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
 import { RuntimeStatusPublisher, SignallingRuntimeStatusController } from './runtime-status';
@@ -8,6 +11,11 @@ import {
     readInstanceAgentDesiredStateSnapshot,
     type InstanceAgentDesiredStateSnapshot
 } from './instance-agent-state';
+import {
+    clearInstanceAgentRecycleMarkerSnapshot,
+    resolveInstanceAgentRecycleMarkerPath,
+    writeInstanceAgentRecycleMarkerSnapshot
+} from './instance-agent-recycle-state';
 
 const execFileAsync = promisify(execFile);
 
@@ -19,6 +27,8 @@ const DEFAULT_IDLE_STATUS_HEARTBEAT_MS = 60_000;
 const DEFAULT_RESET_GRACE_MS = 15_000;
 const DEFAULT_MAINTENANCE_REFRESH_MS = 60_000;
 const DEFAULT_DESIRED_STATE_REFRESH_MS = 30_000;
+const DEFAULT_RECYCLE_TERMINATE_DELAY_MS = 2_000;
+const DEFAULT_RECYCLE_READY_TIMEOUT_SECONDS = 120;
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
 const IMDS_METADATA_BASE_URL = 'http://169.254.169.254/latest/meta-data';
 const DEFAULT_MAINTENANCE_TAG_KEY = 'ScaleWorldMaintenanceMode';
@@ -256,6 +266,19 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     ).trim();
     const runtimeStatusPublisher = options.runtimeStatusPublisher ?? null;
     const runtimeStatusController = options.runtimeStatusController ?? null;
+    const recycleMarkerPath = resolveInstanceAgentRecycleMarkerPath(desiredStatePath);
+    const recycleHelperScriptPath = path.resolve(
+        __dirname,
+        '..',
+        'platform_scripts',
+        'powershell',
+        'invoke_stack_recycle.ps1'
+    );
+    const recycleRepoRoot = path.resolve(__dirname, '..');
+    const powershellPath =
+        process.platform === 'win32' && process.env.WINDIR
+            ? path.join(process.env.WINDIR, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+            : 'powershell';
 
     let zeroViewersTimer: NodeJS.Timeout | null = null;
     let firstViewerTimer: NodeJS.Timeout | null = null;
@@ -620,6 +643,85 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         runtimeStatusController?.restoreDerivedStatus();
     };
 
+    const requestStackRecycle = (): void => {
+        if (!maintenanceStateInitialized || isMaintenanceActive() || server.playerRegistry.count() > 0) {
+            runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+            return;
+        }
+
+        if (!shouldResetIntoWarmReady()) {
+            if (canHoldWarmReadyWithoutShutdown()) {
+                runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+                return;
+            }
+
+            if (currentDesiredState.shutdownRequested) {
+                void requestStop('agent_shutdown_requested');
+                return;
+            }
+
+            scheduleStop('grace-after-last-viewer', 0);
+            return;
+        }
+
+        try {
+            if (!fs.existsSync(recycleHelperScriptPath)) {
+                throw new Error(`Recycle helper script '${recycleHelperScriptPath}' was not found.`);
+            }
+            const recycleMarker = writeInstanceAgentRecycleMarkerSnapshot(
+                recycleMarkerPath,
+                {
+                    requestedAtUtc: new Date().toISOString(),
+                    reason: 'post_session_cleanup',
+                    recycleId: randomUUID(),
+                    sourcePid: process.pid
+                },
+                log
+            );
+            const recycleProcess = spawn(
+                powershellPath,
+                [
+                    '-NoProfile',
+                    '-ExecutionPolicy',
+                    'Bypass',
+                    '-File',
+                    recycleHelperScriptPath,
+                    '-RepoRoot',
+                    recycleRepoRoot,
+                    '-RecycleMarkerPath',
+                    recycleMarkerPath,
+                    '-WaitBeforeTerminateMilliseconds',
+                    String(DEFAULT_RECYCLE_TERMINATE_DELAY_MS),
+                    '-WaitForWilburTimeoutSeconds',
+                    String(DEFAULT_RECYCLE_READY_TIMEOUT_SECONDS)
+                ],
+                {
+                    detached: true,
+                    stdio: 'ignore',
+                    windowsHide: true
+                }
+            );
+            recycleProcess.on('error', (error) => {
+                clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
+                log(
+                    `[idle-stop] Recycle helper process failed to start: ${error.message}. Falling back to logical warm restore.`
+                );
+                restoreAfterReset();
+            });
+            recycleProcess.unref();
+            log(
+                `[idle-stop] Requested full stack recycle (${recycleMarker.recycleId ?? 'unknown'}) via '${recycleHelperScriptPath}'.`
+            );
+        } catch (error) {
+            clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
+            const message = error instanceof Error ? error.message : String(error);
+            log(
+                `[idle-stop] Failed to request full stack recycle: ${message}. Falling back to logical warm restore.`
+            );
+            restoreAfterReset();
+        }
+    };
+
     const startResetWindow = (): void => {
         if (!maintenanceStateInitialized || isMaintenanceActive() || server.playerRegistry.count() > 0) {
             return;
@@ -636,7 +738,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         publishStatus('resetting', 'post_session_cleanup');
         if (resetGraceMs <= 0) {
-            restoreAfterReset();
+            requestStackRecycle();
             return;
         }
 
@@ -646,10 +748,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         resetTimer = setTimeout(() => {
             resetTimer = null;
-            restoreAfterReset();
+            requestStackRecycle();
         }, resetGraceMs);
 
-        log(`[idle-stop] Entered warm reset window for ${resetGraceMs} ms after session end.`);
+        log(`[idle-stop] Entered warm reset window for ${resetGraceMs} ms before full stack recycle.`);
     };
 
     const requestStop = async (reason: string): Promise<void> => {

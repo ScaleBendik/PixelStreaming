@@ -7,6 +7,12 @@ import {
     type InstanceAgentDesiredStateSnapshot,
     writeInstanceAgentDesiredStateSnapshot
 } from './instance-agent-state';
+import {
+    clearInstanceAgentRecycleMarkerSnapshot,
+    readInstanceAgentRecycleMarkerSnapshot,
+    resolveInstanceAgentRecycleMarkerPath,
+    type InstanceAgentRecycleMarkerSnapshot
+} from './instance-agent-recycle-state';
 
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
 const IMDS_METADATA_BASE_URL = 'http://169.254.169.254/latest/meta-data';
@@ -260,12 +266,15 @@ export function wireInstanceAgent(
     const desiredStatePath =
         normalizeOptionalText(options.desiredStatePath ?? process.env.INSTANCE_AGENT_DESIRED_STATE_PATH) ??
         DEFAULT_DESIRED_STATE_PATH;
+    const recycleMarkerPath = resolveInstanceAgentRecycleMarkerPath(desiredStatePath);
     const explicitHeartbeatMs = parseNonNegativeInteger(
         options.heartbeatMs ?? process.env.INSTANCE_AGENT_HEARTBEAT_MS,
         0
     );
 
     let currentDesiredState = writeInstanceAgentDesiredStateSnapshot(desiredStatePath, {}, log);
+    let pendingRecycleCompletion: InstanceAgentRecycleMarkerSnapshot | null =
+        readInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
     let bootstrapIdentityPromise: Promise<BootstrapIdentity> | null = null;
     let bootstrapPromise: Promise<void> | null = null;
     let tickInFlight = false;
@@ -275,6 +284,12 @@ export function wireInstanceAgent(
     let runtimeSnapshot: InstanceAgentRuntimeSnapshot = {};
     let pendingEvents: PendingInstanceAgentEvent[] = [];
     let resetInProgress = false;
+
+    if (pendingRecycleCompletion) {
+        log(
+            `[instance-agent] Pending recycle marker detected (${pendingRecycleCompletion.recycleId ?? 'unknown'}). Waiting for ready state before emitting reset completion.`
+        );
+    }
 
     const queueEvent = (eventType: string, metadata: Record<string, unknown>, sessionId?: string): void => {
         pendingEvents.push({
@@ -569,24 +584,40 @@ export function wireInstanceAgent(
                     source: update.source,
                     version: update.version
                 });
-            } else if (resetInProgress && nextStatus === 'ready') {
+            } else if ((resetInProgress || pendingRecycleCompletion) && nextStatus === 'ready') {
+                const recycleMarker = pendingRecycleCompletion;
                 resetInProgress = false;
+                pendingRecycleCompletion = null;
+                if (recycleMarker) {
+                    clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
+                }
                 queueEvent('reset_completed', {
                     status: nextStatus,
                     reason: nextReason,
                     source: update.source,
-                    version: update.version
+                    version: update.version,
+                    recycleId: recycleMarker?.recycleId,
+                    recycleReason: recycleMarker?.reason,
+                    recycleRequestedAtUtc: recycleMarker?.requestedAtUtc
                 });
             } else if (
-                resetInProgress &&
+                (resetInProgress || pendingRecycleCompletion) &&
                 (nextStatus === 'stopping' || nextStatus === 'idle_shutdown_pending')
             ) {
                 resetInProgress = false;
+                const recycleMarker = pendingRecycleCompletion;
+                pendingRecycleCompletion = null;
+                if (recycleMarker) {
+                    clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
+                }
                 queueEvent('reset_cancelled', {
                     status: nextStatus,
                     reason: nextReason,
                     source: update.source,
-                    version: update.version
+                    version: update.version,
+                    recycleId: recycleMarker?.recycleId,
+                    recycleReason: recycleMarker?.reason,
+                    recycleRequestedAtUtc: recycleMarker?.requestedAtUtc
                 });
             }
 
