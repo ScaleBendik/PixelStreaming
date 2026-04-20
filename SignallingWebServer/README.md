@@ -153,7 +153,7 @@ Operational notes:
 1. This requires AWS CLI and instance-profile IAM permission for `ec2:StopInstances` on self.
 2. Use `viewer_idle_stop_dry_run=true` first to validate logs before enabling real stop.
 3. If you already stop instances from Session Manager policy/watchdog, coordinate timers to avoid policy fights.
-4. `start_dev_turn.bat` sets sane defaults, including a 5-minute default first-viewer grace window, but you can override them with environment variables before launch:
+4. `start_dev_turn.bat` sets sane defaults, including a 5-minute default last-viewer grace window and a 5-minute default first-viewer grace window, but you can override them with environment variables before launch:
    - `VIEWER_IDLE_STOP`
    - `VIEWER_IDLE_GRACE_MS`
    - `VIEWER_IDLE_FIRST_VIEWER_GRACE_MS`

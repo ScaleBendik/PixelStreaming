@@ -330,7 +330,7 @@ program
     .option(
         '--viewer_idle_grace_ms <number>',
         'Grace period after last viewer disconnect before instance stop.',
-        config_file.viewer_idle_grace_ms || '900000'
+        config_file.viewer_idle_grace_ms || '300000'
     )
     .option(
         '--viewer_idle_first_viewer_grace_ms <number>',

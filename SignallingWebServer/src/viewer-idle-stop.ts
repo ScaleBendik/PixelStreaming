@@ -11,7 +11,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-const DEFAULT_IDLE_GRACE_MS = 15 * 60_000;
+const DEFAULT_IDLE_GRACE_MS = 5 * 60_000;
 const DEFAULT_FIRST_VIEWER_GRACE_MS = 5 * 60_000;
 const DEFAULT_FIRST_VIEWER_DELAY_MS = 0;
 const DEFAULT_STOP_RETRY_MS = 60_000;
