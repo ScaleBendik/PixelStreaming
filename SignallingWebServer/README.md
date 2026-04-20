@@ -143,7 +143,7 @@ Behavior:
 
 1. If `viewer_idle_stop=true`, Wilbur listens to internal player registry add/remove events.
 2. When viewer count drops to `0`, it schedules a stop after `viewer_idle_grace_ms`.
-3. If no viewer ever connects, it schedules a stop after `viewer_idle_first_viewer_delay_ms + viewer_idle_first_viewer_grace_ms`.
+3. If no viewer ever connects, it schedules a stop after `viewer_idle_first_viewer_delay_ms + viewer_idle_first_viewer_grace_ms`. This is now intended as a short abandoned-start reclaim window, not a long reservation hold.
 4. While `ScaleWorldMaintenanceMode` is present, Wilbur suppresses idle-stop timers entirely. This keeps provisioning/update maintenance instances alive even if they are expected to have zero viewers.
 5. Once maintenance clears, the first-viewer timer starts from that point instead of from initial process boot.
 6. Stop is executed via `aws ec2 stop-instances` against the current instance discovered from IMDSv2 metadata.
@@ -153,7 +153,7 @@ Operational notes:
 1. This requires AWS CLI and instance-profile IAM permission for `ec2:StopInstances` on self.
 2. Use `viewer_idle_stop_dry_run=true` first to validate logs before enabling real stop.
 3. If you already stop instances from Session Manager policy/watchdog, coordinate timers to avoid policy fights.
-4. `start_dev_turn.bat` sets sane defaults, but you can override them with environment variables before launch:
+4. `start_dev_turn.bat` sets sane defaults, including a 5-minute default first-viewer grace window, but you can override them with environment variables before launch:
    - `VIEWER_IDLE_STOP`
    - `VIEWER_IDLE_GRACE_MS`
    - `VIEWER_IDLE_FIRST_VIEWER_GRACE_MS`

@@ -334,8 +334,8 @@ program
     )
     .option(
         '--viewer_idle_first_viewer_grace_ms <number>',
-        'Maximum wait for first viewer connection before instance stop.',
-        config_file.viewer_idle_first_viewer_grace_ms || '1800000'
+        'Maximum wait for first viewer connection before reclaiming an unused started instance.',
+        config_file.viewer_idle_first_viewer_grace_ms || '300000'
     )
     .option(
         '--viewer_idle_first_viewer_delay_ms <number>',
