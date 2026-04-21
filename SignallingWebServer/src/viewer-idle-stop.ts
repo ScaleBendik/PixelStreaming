@@ -298,6 +298,14 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             : normalizeInstanceAgentDesiredStateSnapshot(undefined);
     let pendingImmediateRecycleToken: string | null = null;
 
+    if (server.playerRegistry.count() === 0 && currentDesiredState.recycleRequestedToken) {
+        pendingImmediateRecycleToken = currentDesiredState.recycleRequestedToken;
+        hasSeenViewer = true;
+        log(
+            `[idle-stop] Recycle request token ${currentDesiredState.recycleRequestedToken} was loaded on startup. Forcing post-session recycle before reuse.`
+        );
+    }
+
     const publishStatus = (
         status: string,
         reason: string,
