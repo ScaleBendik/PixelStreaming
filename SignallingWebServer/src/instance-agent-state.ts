@@ -7,6 +7,7 @@ export interface InstanceAgentDesiredStateSnapshot {
     warmHoldEnabled: boolean;
     drainEnabled: boolean;
     shutdownRequested: boolean;
+    recycleRequestedToken?: string;
     policyVersion: string;
     message?: string;
     updatedAtUtc?: string;
@@ -49,6 +50,7 @@ export function normalizeInstanceAgentDesiredStateSnapshot(
         warmHoldEnabled: toBoolean(value?.warmHoldEnabled),
         drainEnabled: toBoolean(value?.drainEnabled),
         shutdownRequested: toBoolean(value?.shutdownRequested),
+        recycleRequestedToken: normalizeOptionalText(value?.recycleRequestedToken),
         policyVersion: normalizeOptionalText(value?.policyVersion) ?? 'default',
         message: normalizeOptionalText(value?.message),
         updatedAtUtc: normalizeOptionalText(value?.updatedAtUtc),

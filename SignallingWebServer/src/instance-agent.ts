@@ -17,7 +17,7 @@ import {
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
 const IMDS_METADATA_BASE_URL = 'http://169.254.169.254/latest/meta-data';
 const IMDS_DYNAMIC_BASE_URL = 'http://169.254.169.254/latest/dynamic/instance-identity';
-const DEFAULT_HEARTBEAT_MS = 30_000;
+const DEFAULT_HEARTBEAT_MS = 10_000;
 const DEFAULT_DESIRED_STATE_PATH = path.resolve(
     __dirname,
     '..',
@@ -316,6 +316,7 @@ export function wireInstanceAgent(
             nextState.warmHoldEnabled !== currentDesiredState.warmHoldEnabled ||
             nextState.drainEnabled !== currentDesiredState.drainEnabled ||
             nextState.shutdownRequested !== currentDesiredState.shutdownRequested ||
+            nextState.recycleRequestedToken !== currentDesiredState.recycleRequestedToken ||
             nextState.policyVersion !== currentDesiredState.policyVersion ||
             nextState.message !== currentDesiredState.message;
 
@@ -325,11 +326,12 @@ export function wireInstanceAgent(
                 warmHoldEnabled: nextState.warmHoldEnabled,
                 drainEnabled: nextState.drainEnabled,
                 shutdownRequested: nextState.shutdownRequested,
+                recycleRequestedToken: nextState.recycleRequestedToken,
                 policyVersion: nextState.policyVersion,
                 message: nextState.message
             });
             log(
-                `[instance-agent] Desired state updated from ${source}: warmHold=${currentDesiredState.warmHoldEnabled}, drain=${currentDesiredState.drainEnabled}, shutdown=${currentDesiredState.shutdownRequested}, policy=${currentDesiredState.policyVersion}.`
+                `[instance-agent] Desired state updated from ${source}: warmHold=${currentDesiredState.warmHoldEnabled}, drain=${currentDesiredState.drainEnabled}, shutdown=${currentDesiredState.shutdownRequested}, recycleRequested=${currentDesiredState.recycleRequestedToken ? 'true' : 'false'}, policy=${currentDesiredState.policyVersion}.`
             );
         }
     };

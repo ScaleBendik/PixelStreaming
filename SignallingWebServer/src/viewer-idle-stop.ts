@@ -26,7 +26,7 @@ const DEFAULT_STOP_RETRY_MS = 60_000;
 const DEFAULT_IDLE_STATUS_HEARTBEAT_MS = 60_000;
 const DEFAULT_RESET_GRACE_MS = 15_000;
 const DEFAULT_MAINTENANCE_REFRESH_MS = 60_000;
-const DEFAULT_DESIRED_STATE_REFRESH_MS = 30_000;
+const DEFAULT_DESIRED_STATE_REFRESH_MS = 5_000;
 const DEFAULT_RECYCLE_TERMINATE_DELAY_MS = 2_000;
 const DEFAULT_RECYCLE_READY_TIMEOUT_SECONDS = 120;
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
@@ -296,6 +296,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         desiredStatePath.length > 0
             ? readInstanceAgentDesiredStateSnapshot(desiredStatePath, log)
             : normalizeInstanceAgentDesiredStateSnapshot(undefined);
+    let pendingImmediateRecycleToken: string | null = null;
 
     const publishStatus = (
         status: string,
@@ -358,6 +359,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         currentDesiredState.warmHoldEnabled &&
         !currentDesiredState.drainEnabled &&
         !currentDesiredState.shutdownRequested;
+    const hasPendingImmediateRecycle = (): boolean =>
+        pendingImmediateRecycleToken !== null &&
+        pendingImmediateRecycleToken === currentDesiredState.recycleRequestedToken;
     const isWarmHoldActive = (): boolean => canHoldWarmReadyWithoutShutdown() && !hasSeenViewer;
     const shouldResetIntoWarmReady = (): boolean => canHoldWarmReadyWithoutShutdown() && hasSeenViewer;
     const clearAllIdleStopTimers = (): void => {
@@ -448,10 +452,13 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         const nextDesiredState = readInstanceAgentDesiredStateSnapshot(desiredStatePath, log);
+        const recycleRequestedTokenChanged =
+            nextDesiredState.recycleRequestedToken !== currentDesiredState.recycleRequestedToken;
         const changed =
             nextDesiredState.warmHoldEnabled !== currentDesiredState.warmHoldEnabled ||
             nextDesiredState.drainEnabled !== currentDesiredState.drainEnabled ||
             nextDesiredState.shutdownRequested !== currentDesiredState.shutdownRequested ||
+            recycleRequestedTokenChanged ||
             nextDesiredState.policyVersion !== currentDesiredState.policyVersion ||
             nextDesiredState.message !== currentDesiredState.message;
         currentDesiredState = nextDesiredState;
@@ -460,8 +467,15 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
+        if (recycleRequestedTokenChanged && currentDesiredState.recycleRequestedToken) {
+            pendingImmediateRecycleToken = currentDesiredState.recycleRequestedToken;
+            log(
+                `[idle-stop] Immediate recycle requested by desired state token ${currentDesiredState.recycleRequestedToken}.`
+            );
+        }
+
         log(
-            `[idle-stop] Desired state updated: warmHold=${currentDesiredState.warmHoldEnabled}, drain=${currentDesiredState.drainEnabled}, shutdown=${currentDesiredState.shutdownRequested}, policy=${currentDesiredState.policyVersion}.`
+            `[idle-stop] Desired state updated: warmHold=${currentDesiredState.warmHoldEnabled}, drain=${currentDesiredState.drainEnabled}, shutdown=${currentDesiredState.shutdownRequested}, recycleRequested=${currentDesiredState.recycleRequestedToken ? 'true' : 'false'}, policy=${currentDesiredState.policyVersion}.`
         );
 
         if (isWarmHoldActive()) {
@@ -507,6 +521,17 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             scheduleStop('grace-after-last-viewer', 0);
+            return;
+        }
+
+        if (
+            hasPendingImmediateRecycle() &&
+            server.playerRegistry.count() === 0 &&
+            maintenanceStateInitialized &&
+            !isMaintenanceActive() &&
+            shouldResetIntoWarmReady()
+        ) {
+            startResetWindow(true);
             return;
         }
 
@@ -559,6 +584,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         clearTransientStatusHeartbeat();
 
         if (!shouldResetIntoWarmReady()) {
+            return;
+        }
+
+        if (hasPendingImmediateRecycle()) {
+            startResetWindow(true);
             return;
         }
 
@@ -665,6 +695,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         try {
+            pendingImmediateRecycleToken = null;
             if (!fs.existsSync(recycleHelperScriptPath)) {
                 throw new Error(`Recycle helper script '${recycleHelperScriptPath}' was not found.`);
             }
@@ -722,7 +753,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
     };
 
-    const startResetWindow = (): void => {
+    const startResetWindow = (skipGrace: boolean = false): void => {
         if (!maintenanceStateInitialized || isMaintenanceActive() || server.playerRegistry.count() > 0) {
             return;
         }
@@ -736,8 +767,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
+        pendingImmediateRecycleToken = null;
         publishStatus('resetting', 'post_session_cleanup');
-        if (resetGraceMs <= 0) {
+        if (skipGrace || resetGraceMs <= 0) {
             requestStackRecycle();
             return;
         }
@@ -751,7 +783,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             requestStackRecycle();
         }, resetGraceMs);
 
-        log(`[idle-stop] Entered warm reset window for ${resetGraceMs} ms before full stack recycle.`);
+        log(
+            skipGrace
+                ? '[idle-stop] Entered immediate warm reset path with no reconnect grace.'
+                : `[idle-stop] Entered warm reset window for ${resetGraceMs} ms before full stack recycle.`
+        );
     };
 
     const requestStop = async (reason: string): Promise<void> => {
@@ -810,6 +846,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         if (maintenanceStateInitialized && !isMaintenanceActive() && shouldResetIntoWarmReady()) {
+            if (hasPendingImmediateRecycle()) {
+                startResetWindow(true);
+                return;
+            }
+
             scheduleResetAfterLastViewer(graceMs);
             return;
         }
