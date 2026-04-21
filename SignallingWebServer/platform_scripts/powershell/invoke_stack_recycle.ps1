@@ -9,7 +9,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:CurrentProcessId = $PID
-$script:RecycleLogPath = Join-Path $RepoRoot 'SignallingWebServer\state\stack-recycle.log'
+$script:RecycleLogPath = Join-Path $RepoRoot 'state\stack-recycle.log'
 
 function Write-RecycleLog {
     param(
@@ -112,7 +112,7 @@ function Wait-ForWilburReadiness {
     return $false
 }
 
-$stackLauncher = Join-Path $RepoRoot 'SignallingWebServer\platform_scripts\cmd\start_streamer_stack.bat'
+$stackLauncher = Join-Path $RepoRoot 'platform_scripts\cmd\start_streamer_stack.bat'
 $unrealProcessPattern = if ([string]::IsNullOrWhiteSpace($env:SCALEWORLD_EXECUTABLE_NAME)) {
     'ScaleWorld*'
 } else {
@@ -120,6 +120,10 @@ $unrealProcessPattern = if ([string]::IsNullOrWhiteSpace($env:SCALEWORLD_EXECUTA
 }
 
 try {
+    Write-RecycleLog "Resolved recycle repo root to '$RepoRoot'."
+    Write-RecycleLog "Recycle log path is '$script:RecycleLogPath'."
+    Write-RecycleLog "Resolved stack launcher to '$stackLauncher'."
+
     if (-not (Test-Path -LiteralPath $stackLauncher)) {
         throw "Stack launcher '$stackLauncher' was not found."
     }

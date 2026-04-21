@@ -580,6 +580,9 @@ export function wireInstanceAgent(
 
             if (nextStatus === 'resetting' && !resetInProgress) {
                 resetInProgress = true;
+                log(
+                    `[instance-agent] Reset started while runtime entered '${nextStatus}'${nextReason ? ` (reason=${nextReason})` : ''}.`
+                );
                 queueEvent('reset_started', {
                     status: nextStatus,
                     reason: nextReason,
@@ -592,6 +595,13 @@ export function wireInstanceAgent(
                 pendingRecycleCompletion = null;
                 if (recycleMarker) {
                     clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
+                    log(
+                        `[instance-agent] Recycle marker ${recycleMarker.recycleId ?? 'unknown'} completed after runtime became ready. Clearing marker and emitting reset_completed.`
+                    );
+                } else {
+                    log(
+                        '[instance-agent] Reset completed after runtime became ready. Emitting reset_completed.'
+                    );
                 }
                 queueEvent('reset_completed', {
                     status: nextStatus,
@@ -611,6 +621,13 @@ export function wireInstanceAgent(
                 pendingRecycleCompletion = null;
                 if (recycleMarker) {
                     clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
+                    log(
+                        `[instance-agent] Cancelling pending recycle marker ${recycleMarker.recycleId ?? 'unknown'} because runtime entered '${nextStatus}'.`
+                    );
+                } else {
+                    log(
+                        `[instance-agent] Reset was cancelled because runtime entered '${nextStatus}'. Emitting reset_cancelled.`
+                    );
                 }
                 queueEvent('reset_cancelled', {
                     status: nextStatus,
