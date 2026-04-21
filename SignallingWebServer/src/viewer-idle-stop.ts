@@ -297,6 +297,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             ? readInstanceAgentDesiredStateSnapshot(desiredStatePath, log)
             : normalizeInstanceAgentDesiredStateSnapshot(undefined);
     let pendingImmediateRecycleToken: string | null = null;
+    let resetInFlight = false;
 
     if (server.playerRegistry.count() === 0 && currentDesiredState.recycleRequestedToken) {
         pendingImmediateRecycleToken = currentDesiredState.recycleRequestedToken;
@@ -429,14 +430,14 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     clearAllIdleStopTimers();
                 } else {
                     log('[idle-stop] Maintenance mode cleared. Re-evaluating idle-stop timers.');
-                    if (server.playerRegistry.count() === 0 && shouldResetIntoWarmReady()) {
+                    if (!resetInFlight && server.playerRegistry.count() === 0 && shouldResetIntoWarmReady()) {
                         scheduleResetAfterLastViewer(graceMs);
                     } else {
                         ensureFirstViewerWindow();
                     }
                 }
             } else if (!currentMaintenanceMode) {
-                if (server.playerRegistry.count() === 0 && shouldResetIntoWarmReady()) {
+                if (!resetInFlight && server.playerRegistry.count() === 0 && shouldResetIntoWarmReady()) {
                     scheduleResetAfterLastViewer(graceMs);
                 } else {
                     ensureFirstViewerWindow();
@@ -549,7 +550,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             !isMaintenanceActive() &&
             shouldResetIntoWarmReady()
         ) {
-            scheduleResetAfterLastViewer(graceMs);
+            if (!resetInFlight) {
+                scheduleResetAfterLastViewer(graceMs);
+            }
             return;
         }
 
@@ -584,6 +587,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
     const scheduleResetAfterLastViewer = (delayMs: number): void => {
         if (!maintenanceStateInitialized || isMaintenanceActive()) {
+            return;
+        }
+
+        if (resetInFlight) {
             return;
         }
 
@@ -660,6 +667,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     };
 
     const restoreAfterReset = (): void => {
+        resetInFlight = false;
         clearReconnectGraceTimer();
         clearResetTimer();
         if (server.playerRegistry.count() > 0 || !maintenanceStateInitialized || isMaintenanceActive()) {
@@ -775,6 +783,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
+        resetInFlight = true;
         pendingImmediateRecycleToken = null;
         publishStatus('resetting', 'post_session_cleanup');
         if (skipGrace || resetGraceMs <= 0) {
@@ -800,6 +809,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
     const requestStop = async (reason: string): Promise<void> => {
         if (stopInFlight) return;
+        resetInFlight = false;
         clearTransientStatusHeartbeat();
         clearReconnectGraceTimer();
         clearResetTimer();
@@ -830,6 +840,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
     const onViewerAdded = (): void => {
         hasSeenViewer = true;
+        resetInFlight = false;
         clearZeroTimer();
         clearFirstViewerTimer();
         clearTransientStatusHeartbeat();
