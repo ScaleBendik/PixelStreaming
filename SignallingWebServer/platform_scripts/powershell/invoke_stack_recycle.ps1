@@ -35,24 +35,51 @@ function Write-RecycleLog {
     }
 }
 
+function Get-RecycleProcessMatches {
+    param(
+        [string]$NamePattern,
+        [string[]]$CommandLinePatterns
+    )
+
+    $resolvedCommandLinePatterns = @(
+        $CommandLinePatterns | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_)
+        }
+    )
+
+    return @(
+        Get-CimInstance Win32_Process | Where-Object {
+            if ($_.ProcessId -eq $script:CurrentProcessId) {
+                return $false
+            }
+
+            if (($NamePattern.Length -gt 0) -and ([string]$_.Name -like $NamePattern)) {
+                return $true
+            }
+
+            $commandLine = [string]$_.CommandLine
+            foreach ($pattern in $resolvedCommandLinePatterns) {
+                if ($commandLine -like $pattern) {
+                    return $true
+                }
+            }
+
+            return $false
+        }
+    )
+}
+
 function Stop-RecycleProcessMatches {
     param(
         [string]$Label,
         [string]$NamePattern,
-        [string]$CommandLinePattern,
+        [string[]]$CommandLinePatterns,
         [System.Collections.Generic.List[string]]$StoppedProcesses
     )
 
-    $matches = Get-CimInstance Win32_Process | Where-Object {
-        (($NamePattern.Length -gt 0) -and $_.Name -like $NamePattern) -or
-        (($CommandLinePattern.Length -gt 0) -and ([string]$_.CommandLine) -like $CommandLinePattern)
-    }
+    $matches = Get-RecycleProcessMatches -NamePattern $NamePattern -CommandLinePatterns $CommandLinePatterns
 
     foreach ($match in @($matches)) {
-        if ($match.ProcessId -eq $script:CurrentProcessId) {
-            continue
-        }
-
         Write-RecycleLog "Stopping $Label process $($match.Name) (PID=$($match.ProcessId))."
         Stop-Process -Id $match.ProcessId -Force -ErrorAction Stop
         $StoppedProcesses.Add(($Label + ':' + $match.ProcessId + ':' + $match.Name)) | Out-Null
@@ -167,7 +194,45 @@ function Wait-ForWilburReadiness {
     return $false
 }
 
+function Wait-ForProcessAbsence {
+    param(
+        [string]$Label,
+        [string]$NamePattern,
+        [string[]]$CommandLinePatterns,
+        [int]$TimeoutSeconds
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $matches = Get-RecycleProcessMatches -NamePattern $NamePattern -CommandLinePatterns $CommandLinePatterns
+        if ($matches.Count -eq 0) {
+            Write-RecycleLog "Confirmed $Label shutdown before restart."
+            return $true
+        }
+
+        Start-Sleep -Milliseconds 500
+    }
+
+    $remaining = Get-RecycleProcessMatches -NamePattern $NamePattern -CommandLinePatterns $CommandLinePatterns
+    if ($remaining.Count -gt 0) {
+        $summary = ($remaining | ForEach-Object { "{0}:{1}" -f $_.ProcessId, $_.Name }) -join ', '
+        Write-RecycleLog "$Label processes still running after shutdown wait: $summary" 'WARN'
+    }
+
+    return $remaining.Count -eq 0
+}
+
 $stackLauncher = Join-Path $RepoRoot 'platform_scripts\cmd\start_streamer_stack.bat'
+$unrealExecutableName = if (-not [string]::IsNullOrWhiteSpace($env:SCALEWORLD_EXECUTABLE_NAME)) {
+    [System.IO.Path]::GetFileName($env:SCALEWORLD_EXECUTABLE_NAME)
+} else {
+    'ScaleWorld.exe'
+}
+$unrealInstallRoot = if (-not [string]::IsNullOrWhiteSpace($env:SCALEWORLD_INSTALL_ROOT)) {
+    $env:SCALEWORLD_INSTALL_ROOT
+} else {
+    'C:\PixelStreaming\WindowsNoEditor'
+}
 $unrealProcessPattern = if (-not [string]::IsNullOrWhiteSpace($env:SCALEWORLD_RUNTIME_PROCESS_PATTERN)) {
     $env:SCALEWORLD_RUNTIME_PROCESS_PATTERN
 } elseif (-not [string]::IsNullOrWhiteSpace($env:SCALEWORLD_EXECUTABLE_NAME)) {
@@ -175,11 +240,16 @@ $unrealProcessPattern = if (-not [string]::IsNullOrWhiteSpace($env:SCALEWORLD_RU
 } else {
     'ScaleWorld*'
 }
+$unrealCommandLinePatterns = @(
+    ('*' + $unrealExecutableName + '*'),
+    ('*' + $unrealInstallRoot + '*')
+)
 
 try {
     Write-RecycleLog "Resolved recycle repo root to '$RepoRoot'."
     Write-RecycleLog "Recycle log path is '$script:RecycleLogPath'."
     Write-RecycleLog "Resolved stack launcher to '$stackLauncher'."
+    Write-RecycleLog "Resolved Unreal matcher name='$unrealProcessPattern' commandLinePatterns='$($unrealCommandLinePatterns -join ';')'."
 
     if (-not (Test-Path -LiteralPath $stackLauncher)) {
         throw "Stack launcher '$stackLauncher' was not found."
@@ -196,16 +266,22 @@ try {
 
     $sourcePidToStop = Resolve-RecycleSourcePid -ExplicitSourcePid $SourcePid -MarkerPath $RecycleMarkerPath
     $stoppedProcesses = [System.Collections.Generic.List[string]]::new()
-    Stop-RecycleProcessMatches -Label 'watchdog' -NamePattern 'powershell.exe' -CommandLinePattern '*watchdog.ps1*' -StoppedProcesses $stoppedProcesses
-    Stop-RecycleProcessMatches -Label 'watchdog-launcher' -NamePattern 'cmd.exe' -CommandLinePattern '*start_watchdog.bat*' -StoppedProcesses $stoppedProcesses
+    Stop-RecycleProcessMatches -Label 'watchdog' -NamePattern 'powershell.exe' -CommandLinePatterns @('*watchdog.ps1*') -StoppedProcesses $stoppedProcesses
+    Stop-RecycleProcessMatches -Label 'watchdog-launcher' -NamePattern 'cmd.exe' -CommandLinePatterns @('*start_watchdog.bat*') -StoppedProcesses $stoppedProcesses
     Stop-RecycleSourceProcess -ProcessId $sourcePidToStop -StoppedProcesses $stoppedProcesses
-    Stop-RecycleProcessMatches -Label 'wilbur' -NamePattern 'node.exe' -CommandLinePattern '*index.js*' -StoppedProcesses $stoppedProcesses
-    Stop-RecycleProcessMatches -Label 'wilbur-launcher' -NamePattern 'cmd.exe' -CommandLinePattern '*start_dev_turn.bat*' -StoppedProcesses $stoppedProcesses
-    Stop-RecycleProcessMatches -Label 'unreal' -NamePattern $unrealProcessPattern -CommandLinePattern '*start_scaleworld.ps1*' -StoppedProcesses $stoppedProcesses
-    Stop-RecycleProcessMatches -Label 'unreal-wrapper' -NamePattern 'powershell.exe' -CommandLinePattern '*start_scaleworld.ps1*' -StoppedProcesses $stoppedProcesses
-    Stop-RecycleProcessMatches -Label 'unreal-launcher' -NamePattern 'cmd.exe' -CommandLinePattern '*start_unreal.bat*' -StoppedProcesses $stoppedProcesses
+    Stop-RecycleProcessMatches -Label 'wilbur' -NamePattern 'node.exe' -CommandLinePatterns @('*index.js*') -StoppedProcesses $stoppedProcesses
+    Stop-RecycleProcessMatches -Label 'wilbur-launcher' -NamePattern 'cmd.exe' -CommandLinePatterns @('*start_dev_turn.bat*') -StoppedProcesses $stoppedProcesses
+    Stop-RecycleProcessMatches -Label 'unreal' -NamePattern $unrealProcessPattern -CommandLinePatterns ($unrealCommandLinePatterns + @('*start_scaleworld.ps1*')) -StoppedProcesses $stoppedProcesses
+    Stop-RecycleProcessMatches -Label 'unreal-wrapper' -NamePattern 'powershell.exe' -CommandLinePatterns @('*start_scaleworld.ps1*') -StoppedProcesses $stoppedProcesses
+    Stop-RecycleProcessMatches -Label 'unreal-launcher' -NamePattern 'cmd.exe' -CommandLinePatterns @('*start_unreal.bat*') -StoppedProcesses $stoppedProcesses
 
-    Start-Sleep -Seconds 1
+    if (-not (Wait-ForProcessAbsence -Label 'wilbur' -NamePattern 'node.exe' -CommandLinePatterns @('*index.js*') -TimeoutSeconds 15)) {
+        throw 'Wilbur did not fully stop before stack recycle restart.'
+    }
+
+    if (-not (Wait-ForProcessAbsence -Label 'unreal' -NamePattern $unrealProcessPattern -CommandLinePatterns $unrealCommandLinePatterns -TimeoutSeconds 20)) {
+        throw 'Unreal did not fully stop before stack recycle restart.'
+    }
 
     Write-RecycleLog 'Restarting streamer stack directly via start_streamer_stack.bat --recovery.'
     Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', ('"{0}" --recovery' -f $stackLauncher) -WorkingDirectory (Split-Path -Parent $stackLauncher) -WindowStyle Hidden | Out-Null
