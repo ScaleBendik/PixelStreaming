@@ -13,6 +13,14 @@ import {
     resolveInstanceAgentRecycleMarkerPath,
     type InstanceAgentRecycleMarkerSnapshot
 } from './instance-agent-recycle-state';
+import {
+    clearInstanceAgentCommandJournalSnapshot,
+    readInstanceAgentCommandJournalSnapshot,
+    resolveInstanceAgentCommandJournalPath,
+    writeInstanceAgentCommandJournalSnapshot,
+    type InstanceAgentCommandExecutionStatus,
+    type InstanceAgentCommandJournalSnapshot
+} from './instance-agent-command-state';
 
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
 const IMDS_METADATA_BASE_URL = 'http://169.254.169.254/latest/meta-data';
@@ -47,6 +55,12 @@ interface InstanceAgentEventBatchResponse {
     acceptedCount: number;
     desiredState: Partial<InstanceAgentDesiredStateSnapshot>;
     commands?: InstanceAgentCommandResponse[];
+}
+
+interface InstanceAgentCommandStatusResponse {
+    accepted: boolean;
+    commandStatus: string;
+    recordedAtUtc: string;
 }
 
 interface InstanceAgentCommandResponse {
@@ -101,6 +115,12 @@ export interface InstanceAgentCommandListenerContext {
     source: string;
 }
 
+export interface InstanceAgentCommandTransitionResult {
+    accepted: boolean;
+    commandStatus: string;
+    recordedAtUtc: string;
+}
+
 export type InstanceAgentDesiredStateListener = (
     desiredState: InstanceAgentDesiredStateSnapshot,
     context: InstanceAgentDesiredStateListenerContext
@@ -115,8 +135,30 @@ export interface InstanceAgentClient {
     recordRuntimeStatus(update: RuntimeStatusUpdate): void;
     recordSessionNetworkPath(update: SessionNetworkPathReport): void;
     getDesiredState(): InstanceAgentDesiredStateSnapshot;
+    getActiveCommand(): InstanceAgentCommandJournalSnapshot | null;
     addDesiredStateListener(listener: InstanceAgentDesiredStateListener): () => void;
     addCommandListener(listener: InstanceAgentCommandListener): () => void;
+    acknowledgeCommand(
+        command: InstanceAgentCommand,
+        options?: { occurredAtUtc?: string }
+    ): Promise<InstanceAgentCommandTransitionResult>;
+    startCommand(
+        command: InstanceAgentCommand,
+        options?: { occurredAtUtc?: string }
+    ): Promise<InstanceAgentCommandTransitionResult>;
+    completeCommand(
+        command: Pick<InstanceAgentCommand, 'instanceCommandId' | 'instanceId' | 'region'>,
+        options?: { occurredAtUtc?: string; resultJson?: string }
+    ): Promise<InstanceAgentCommandTransitionResult>;
+    failCommand(
+        command: Pick<InstanceAgentCommand, 'instanceCommandId' | 'instanceId' | 'region'>,
+        options: {
+            failureCode: string;
+            failureMessage?: string;
+            terminalStatus?: string;
+            occurredAtUtc?: string;
+        }
+    ): Promise<InstanceAgentCommandTransitionResult>;
     requestFastPolling(reason: string, options?: { durationMs?: number; intervalMs?: number }): void;
 }
 
@@ -242,6 +284,29 @@ function truncateDiagnosticText(value: string, maxLength = 240): string {
     return `${normalized.slice(0, maxLength - 3)}...`;
 }
 
+function isTerminalCommandStatus(value: string | null | undefined): boolean {
+    const normalized = normalizeOptionalText(value)?.toLowerCase();
+    return (
+        normalized === 'completed' ||
+        normalized === 'failed' ||
+        normalized === 'timedout' ||
+        normalized === 'timed_out' ||
+        normalized === 'timeout' ||
+        normalized === 'cancelled' ||
+        normalized === 'canceled'
+    );
+}
+
+function isRecycleToWarmCommand(
+    command:
+        | Pick<InstanceAgentCommand, 'commandType'>
+        | Pick<InstanceAgentCommandJournalSnapshot, 'commandType'>
+        | null
+        | undefined
+): boolean {
+    return normalizeOptionalText(command?.commandType)?.toLowerCase() === 'recycletowarm';
+}
+
 async function describeErrorResponse(response: Response, action: string): Promise<string> {
     const responseUrl = normalizeOptionalText(response.url) ?? 'unknown URL';
     const contentType = normalizeOptionalText(response.headers.get('content-type')) ?? '';
@@ -343,6 +408,7 @@ export function wireInstanceAgent(
         normalizeOptionalText(options.desiredStatePath ?? process.env.INSTANCE_AGENT_DESIRED_STATE_PATH) ??
         DEFAULT_DESIRED_STATE_PATH;
     const recycleMarkerPath = resolveInstanceAgentRecycleMarkerPath(desiredStatePath);
+    const commandJournalPath = resolveInstanceAgentCommandJournalPath(desiredStatePath);
     const explicitHeartbeatMs = parseNonNegativeInteger(
         options.heartbeatMs ?? process.env.INSTANCE_AGENT_HEARTBEAT_MS,
         0
@@ -351,6 +417,7 @@ export function wireInstanceAgent(
     let currentDesiredState = writeInstanceAgentDesiredStateSnapshot(desiredStatePath, {}, log);
     let pendingRecycleCompletion: InstanceAgentRecycleMarkerSnapshot | null =
         readInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
+    let activeCommand = readInstanceAgentCommandJournalSnapshot(commandJournalPath, log);
     let bootstrapIdentityPromise: Promise<BootstrapIdentity> | null = null;
     let bootstrapPromise: Promise<void> | null = null;
     let tickInFlight = false;
@@ -366,11 +433,16 @@ export function wireInstanceAgent(
     let resetInProgress = false;
     const desiredStateListeners = new Set<InstanceAgentDesiredStateListener>();
     const commandListeners = new Set<InstanceAgentCommandListener>();
-    const deliveredCommandIds: string[] = [];
 
     if (pendingRecycleCompletion) {
         log(
             `[instance-agent] Pending recycle marker detected (${pendingRecycleCompletion.recycleId ?? 'unknown'}). Waiting for ready state before emitting reset completion.`
+        );
+    }
+
+    if (activeCommand) {
+        log(
+            `[instance-agent] Recovered active command ${activeCommand.instanceCommandId} (${activeCommand.commandType}, status=${activeCommand.status}, attempt=${activeCommand.attemptNumber}).`
         );
     }
 
@@ -385,6 +457,49 @@ export function wireInstanceAgent(
         if (pendingEvents.length > MAX_PENDING_EVENTS) {
             pendingEvents = pendingEvents.slice(pendingEvents.length - MAX_PENDING_EVENTS);
         }
+    };
+
+    const persistActiveCommand = (
+        command: InstanceAgentCommand,
+        status: InstanceAgentCommandExecutionStatus,
+        occurredAtUtc: string
+    ): InstanceAgentCommandJournalSnapshot | null => {
+        const normalizedOccurredAtUtc = normalizeOptionalText(occurredAtUtc) ?? new Date().toISOString();
+        const previousCommand = activeCommand;
+        const isSameCommand = previousCommand?.instanceCommandId === command.instanceCommandId;
+        const attemptNumber = isSameCommand
+            ? (previousCommand?.attemptNumber ?? 1)
+            : (previousCommand?.attemptNumber ?? 0) + 1;
+
+        activeCommand = writeInstanceAgentCommandJournalSnapshot(
+            commandJournalPath,
+            {
+                instanceCommandId: command.instanceCommandId,
+                instanceId: command.instanceId,
+                region: command.region,
+                sessionRequestId: command.sessionRequestId,
+                commandType: command.commandType,
+                idempotencyKey: command.idempotencyKey,
+                requestedAtUtc: command.requestedAtUtc,
+                timeoutAtUtc: command.timeoutAtUtc,
+                payloadJson: command.payloadJson,
+                status,
+                attemptNumber: Math.max(1, attemptNumber),
+                ackedAtUtc:
+                    status === 'acked'
+                        ? normalizedOccurredAtUtc
+                        : (previousCommand?.ackedAtUtc ?? normalizedOccurredAtUtc),
+                startedAtUtc: status === 'running' ? normalizedOccurredAtUtc : previousCommand?.startedAtUtc
+            },
+            log
+        );
+
+        return activeCommand;
+    };
+
+    const clearActiveCommand = (): void => {
+        activeCommand = null;
+        clearInstanceAgentCommandJournalSnapshot(commandJournalPath, log);
     };
 
     const applyDesiredState = (
@@ -440,15 +555,6 @@ export function wireInstanceAgent(
             const command = normalizeCommand(rawCommand);
             if (!command) {
                 continue;
-            }
-
-            if (deliveredCommandIds.includes(command.instanceCommandId)) {
-                continue;
-            }
-
-            deliveredCommandIds.push(command.instanceCommandId);
-            if (deliveredCommandIds.length > 128) {
-                deliveredCommandIds.splice(0, deliveredCommandIds.length - 128);
             }
 
             queueEvent('instance_command_received', {
@@ -610,6 +716,165 @@ export function wireInstanceAgent(
         });
     };
 
+    const postCommandTransition = async <TRequest>(
+        relativePath: string,
+        body: TRequest,
+        action: string
+    ): Promise<InstanceAgentCommandTransitionResult> => {
+        await ensureBootstrap();
+        const response = await authorizedFetch(relativePath, 'POST', body);
+        if (!response.ok) {
+            throw new Error(await describeErrorResponse(response, action));
+        }
+
+        const payload = await parseJsonResponse<InstanceAgentCommandStatusResponse>(response);
+        return {
+            accepted: payload.accepted === true,
+            commandStatus: normalizeOptionalText(payload.commandStatus) ?? 'Unknown',
+            recordedAtUtc: normalizeOptionalText(payload.recordedAtUtc) ?? new Date().toISOString()
+        };
+    };
+
+    const acknowledgeCommand = async (
+        command: InstanceAgentCommand,
+        options: { occurredAtUtc?: string } = {}
+    ): Promise<InstanceAgentCommandTransitionResult> => {
+        const occurredAtUtc = normalizeOptionalText(options.occurredAtUtc) ?? new Date().toISOString();
+        const result = await postCommandTransition(
+            '/agent/commands/ack',
+            {
+                instanceId: command.instanceId,
+                region: command.region,
+                instanceCommandId: command.instanceCommandId,
+                occurredAtUtc
+            },
+            'Command acknowledgement'
+        );
+
+        if (result.accepted) {
+            persistActiveCommand(command, 'acked', result.recordedAtUtc);
+            queueEvent('instance_command_acknowledged', {
+                instanceCommandId: command.instanceCommandId,
+                commandType: command.commandType,
+                commandStatus: result.commandStatus,
+                attemptNumber: activeCommand?.attemptNumber
+            });
+            log(
+                `[instance-agent] Command acknowledged: id=${command.instanceCommandId}, type=${command.commandType}, status=${result.commandStatus}.`
+            );
+        }
+
+        return result;
+    };
+
+    const startCommand = async (
+        command: InstanceAgentCommand,
+        options: { occurredAtUtc?: string } = {}
+    ): Promise<InstanceAgentCommandTransitionResult> => {
+        const occurredAtUtc = normalizeOptionalText(options.occurredAtUtc) ?? new Date().toISOString();
+        const result = await postCommandTransition(
+            '/agent/commands/start',
+            {
+                instanceId: command.instanceId,
+                region: command.region,
+                instanceCommandId: command.instanceCommandId,
+                occurredAtUtc
+            },
+            'Command start'
+        );
+
+        if (result.accepted) {
+            persistActiveCommand(command, 'running', result.recordedAtUtc);
+            queueEvent('instance_command_started', {
+                instanceCommandId: command.instanceCommandId,
+                commandType: command.commandType,
+                commandStatus: result.commandStatus,
+                attemptNumber: activeCommand?.attemptNumber
+            });
+            log(
+                `[instance-agent] Command started: id=${command.instanceCommandId}, type=${command.commandType}, status=${result.commandStatus}.`
+            );
+        }
+
+        return result;
+    };
+
+    const completeCommand = async (
+        command: Pick<InstanceAgentCommand, 'instanceCommandId' | 'instanceId' | 'region'>,
+        options: { occurredAtUtc?: string; resultJson?: string } = {}
+    ): Promise<InstanceAgentCommandTransitionResult> => {
+        const occurredAtUtc = normalizeOptionalText(options.occurredAtUtc) ?? new Date().toISOString();
+        const result = await postCommandTransition(
+            '/agent/commands/complete',
+            {
+                instanceId: command.instanceId,
+                region: command.region,
+                instanceCommandId: command.instanceCommandId,
+                occurredAtUtc,
+                resultJson: options.resultJson
+            },
+            'Command completion'
+        );
+
+        if (result.accepted || isTerminalCommandStatus(result.commandStatus)) {
+            queueEvent('instance_command_completed', {
+                instanceCommandId: command.instanceCommandId,
+                commandStatus: result.commandStatus
+            });
+            clearActiveCommand();
+            log(
+                `[instance-agent] Command completed: id=${command.instanceCommandId}, status=${result.commandStatus}.`
+            );
+        }
+
+        return result;
+    };
+
+    const failCommand = async (
+        command: Pick<InstanceAgentCommand, 'instanceCommandId' | 'instanceId' | 'region'>,
+        options: {
+            failureCode: string;
+            failureMessage?: string;
+            terminalStatus?: string;
+            occurredAtUtc?: string;
+        }
+    ): Promise<InstanceAgentCommandTransitionResult> => {
+        const failureCode = normalizeOptionalText(options.failureCode);
+        if (!failureCode) {
+            throw new Error('failureCode is required to fail an instance command.');
+        }
+
+        const occurredAtUtc = normalizeOptionalText(options.occurredAtUtc) ?? new Date().toISOString();
+        const result = await postCommandTransition(
+            '/agent/commands/fail',
+            {
+                instanceId: command.instanceId,
+                region: command.region,
+                instanceCommandId: command.instanceCommandId,
+                occurredAtUtc,
+                failureCode,
+                failureMessage: options.failureMessage,
+                terminalStatus: options.terminalStatus
+            },
+            'Command failure'
+        );
+
+        if (result.accepted || isTerminalCommandStatus(result.commandStatus)) {
+            queueEvent('instance_command_failed', {
+                instanceCommandId: command.instanceCommandId,
+                commandStatus: result.commandStatus,
+                failureCode,
+                failureMessage: normalizeOptionalText(options.failureMessage)
+            });
+            clearActiveCommand();
+            log(
+                `[instance-agent] Command failed: id=${command.instanceCommandId}, status=${result.commandStatus}, failureCode=${failureCode}.`
+            );
+        }
+
+        return result;
+    };
+
     const ensureBootstrap = async (): Promise<void> => {
         if (token) {
             return;
@@ -719,6 +984,38 @@ export function wireInstanceAgent(
         applyCommands(payload.commands, 'events');
     };
 
+    const tryFinalizeRecoveredActiveCommand = async (): Promise<void> => {
+        if (
+            !activeCommand ||
+            !isRecycleToWarmCommand(activeCommand) ||
+            server.playerRegistry.count() > 0 ||
+            resetInProgress ||
+            pendingRecycleCompletion
+        ) {
+            return;
+        }
+
+        if ((runtimeSnapshot.status?.trim().toLowerCase() ?? '') !== 'ready') {
+            return;
+        }
+
+        try {
+            await completeCommand(activeCommand, {
+                resultJson: JSON.stringify({
+                    status: runtimeSnapshot.status,
+                    reason: runtimeSnapshot.reason,
+                    source: 'ready_recovery',
+                    version: runtimeSnapshot.version
+                })
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            log(
+                `[instance-agent] Failed to finalize recovered recycle command ${activeCommand.instanceCommandId}: ${message}`
+            );
+        }
+    };
+
     const runTick = async (): Promise<void> => {
         if (tickInFlight) {
             return;
@@ -730,6 +1027,7 @@ export function wireInstanceAgent(
             await flushEvents();
             await sendHeartbeat();
             await flushEvents();
+            await tryFinalizeRecoveredActiveCommand();
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             log(`[instance-agent] Tick failed: ${message}`);
@@ -818,6 +1116,25 @@ export function wireInstanceAgent(
                     recycleReason: recycleMarker?.reason,
                     recycleRequestedAtUtc: recycleMarker?.requestedAtUtc
                 });
+                if (activeCommand && isRecycleToWarmCommand(activeCommand)) {
+                    const commandToComplete = activeCommand;
+                    void completeCommand(commandToComplete, {
+                        resultJson: JSON.stringify({
+                            status: nextStatus,
+                            reason: nextReason,
+                            source: update.source,
+                            version: update.version,
+                            recycleId: recycleMarker?.recycleId,
+                            recycleReason: recycleMarker?.reason,
+                            recycleRequestedAtUtc: recycleMarker?.requestedAtUtc
+                        })
+                    }).catch((error) => {
+                        const message = error instanceof Error ? error.message : String(error);
+                        log(
+                            `[instance-agent] Failed to report recycle command completion for ${commandToComplete.instanceCommandId}: ${message}`
+                        );
+                    });
+                }
             } else if (
                 (resetInProgress || pendingRecycleCompletion) &&
                 (nextStatus === 'stopping' || nextStatus === 'idle_shutdown_pending')
@@ -844,6 +1161,19 @@ export function wireInstanceAgent(
                     recycleReason: recycleMarker?.reason,
                     recycleRequestedAtUtc: recycleMarker?.requestedAtUtc
                 });
+                if (activeCommand && isRecycleToWarmCommand(activeCommand)) {
+                    const commandToFail = activeCommand;
+                    void failCommand(commandToFail, {
+                        failureCode: 'reset_cancelled',
+                        failureMessage: `Runtime entered '${nextStatus}' before recycle completion.`,
+                        occurredAtUtc: new Date().toISOString()
+                    }).catch((error) => {
+                        const message = error instanceof Error ? error.message : String(error);
+                        log(
+                            `[instance-agent] Failed to report recycle command cancellation for ${commandToFail.instanceCommandId}: ${message}`
+                        );
+                    });
+                }
             }
 
             queueEvent(
@@ -878,6 +1208,9 @@ export function wireInstanceAgent(
         getDesiredState() {
             return currentDesiredState;
         },
+        getActiveCommand() {
+            return activeCommand;
+        },
         addDesiredStateListener(listener: InstanceAgentDesiredStateListener) {
             desiredStateListeners.add(listener);
             try {
@@ -895,6 +1228,29 @@ export function wireInstanceAgent(
             return () => {
                 commandListeners.delete(listener);
             };
+        },
+        acknowledgeCommand(command: InstanceAgentCommand, options?: { occurredAtUtc?: string }) {
+            return acknowledgeCommand(command, options);
+        },
+        startCommand(command: InstanceAgentCommand, options?: { occurredAtUtc?: string }) {
+            return startCommand(command, options);
+        },
+        completeCommand(
+            command: Pick<InstanceAgentCommand, 'instanceCommandId' | 'instanceId' | 'region'>,
+            options?: { occurredAtUtc?: string; resultJson?: string }
+        ) {
+            return completeCommand(command, options);
+        },
+        failCommand(
+            command: Pick<InstanceAgentCommand, 'instanceCommandId' | 'instanceId' | 'region'>,
+            options: {
+                failureCode: string;
+                failureMessage?: string;
+                terminalStatus?: string;
+                occurredAtUtc?: string;
+            }
+        ) {
+            return failCommand(command, options);
         },
         requestFastPolling(reason: string, options?: { durationMs?: number; intervalMs?: number }) {
             requestFastPolling(reason, options);

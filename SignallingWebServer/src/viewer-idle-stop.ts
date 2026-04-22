@@ -5,7 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
 import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
-import type { InstanceAgentClient } from './instance-agent';
+import type { InstanceAgentClient, InstanceAgentCommand } from './instance-agent';
 import { RuntimeStatusPublisher, SignallingRuntimeStatusController } from './runtime-status';
 import {
     normalizeInstanceAgentDesiredStateSnapshot,
@@ -55,7 +55,14 @@ export interface ViewerIdleOptions {
     runtimeStatusController?: SignallingRuntimeStatusController | null;
     instanceAgentClient?: Pick<
         InstanceAgentClient,
-        'getDesiredState' | 'addDesiredStateListener' | 'requestFastPolling'
+        | 'getDesiredState'
+        | 'getActiveCommand'
+        | 'addDesiredStateListener'
+        | 'addCommandListener'
+        | 'acknowledgeCommand'
+        | 'startCommand'
+        | 'failCommand'
+        | 'requestFastPolling'
     > | null;
 }
 
@@ -305,6 +312,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         : desiredStatePath.length > 0
           ? readInstanceAgentDesiredStateSnapshot(desiredStatePath, log)
           : normalizeInstanceAgentDesiredStateSnapshot(undefined);
+    let activeCommand = options.instanceAgentClient?.getActiveCommand() ?? null;
     let pendingImmediateRecycleToken: string | null = null;
     let resetInFlight = false;
     let recycleLaunchRequested = false;
@@ -314,6 +322,13 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         hasSeenViewer = true;
         log(
             `[idle-stop] Recycle request token ${currentDesiredState.recycleRequestedToken} was loaded on startup. Forcing post-session recycle before reuse.`
+        );
+    }
+
+    if (activeCommand) {
+        hasSeenViewer = true;
+        log(
+            `[idle-stop] Recovered active instance command ${activeCommand.instanceCommandId} (${activeCommand.commandType}, status=${activeCommand.status}).`
         );
     }
 
@@ -379,6 +394,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }, idleStatusHeartbeatMs);
     };
     const isMaintenanceActive = (): boolean => (currentMaintenanceMode?.trim().length ?? 0) > 0;
+    const isRecycleToWarmCommand = (
+        command: { commandType?: string | null; instanceCommandId?: string | null } | null | undefined
+    ): boolean => (command?.commandType?.trim().toLowerCase() ?? '') === 'recycletowarm';
+    const getActiveRecycleCommand = () => (isRecycleToWarmCommand(activeCommand) ? activeCommand : null);
     const hasRecycleLaunchMarker = (): boolean =>
         recycleMarkerPath.length > 0 && fs.existsSync(recycleMarkerPath);
     const hasRecycleLaunchInProgress = (): boolean => recycleLaunchRequested || hasRecycleLaunchMarker();
@@ -390,7 +409,25 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         pendingImmediateRecycleToken !== null &&
         pendingImmediateRecycleToken === currentDesiredState.recycleRequestedToken;
     const isWarmHoldActive = (): boolean => canHoldWarmReadyWithoutShutdown() && !hasSeenViewer;
-    const shouldResetIntoWarmReady = (): boolean => canHoldWarmReadyWithoutShutdown() && hasSeenViewer;
+    const shouldResetIntoWarmReady = (): boolean =>
+        getActiveRecycleCommand() !== null || (canHoldWarmReadyWithoutShutdown() && hasSeenViewer);
+    const refreshActiveCommand = (): void => {
+        activeCommand = options.instanceAgentClient?.getActiveCommand() ?? null;
+    };
+    const tryResumeActiveRecycleCommand = (): void => {
+        if (
+            !getActiveRecycleCommand() ||
+            resetInFlight ||
+            hasRecycleLaunchInProgress() ||
+            server.playerRegistry.count() > 0 ||
+            !maintenanceStateInitialized ||
+            isMaintenanceActive()
+        ) {
+            return;
+        }
+
+        startResetWindow(true);
+    };
     const clearAllIdleStopTimers = (): void => {
         clearZeroTimer();
         clearFirstViewerTimer();
@@ -452,7 +489,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                         if (hasRecycleLaunchInProgress()) {
                             return;
                         }
-                        scheduleResetAfterLastViewer(graceMs);
+                        if (getActiveRecycleCommand()) {
+                            tryResumeActiveRecycleCommand();
+                        } else {
+                            scheduleResetAfterLastViewer(graceMs);
+                        }
                     } else {
                         ensureFirstViewerWindow();
                     }
@@ -462,7 +503,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     if (hasRecycleLaunchInProgress()) {
                         return;
                     }
-                    scheduleResetAfterLastViewer(graceMs);
+                    if (getActiveRecycleCommand()) {
+                        tryResumeActiveRecycleCommand();
+                    } else {
+                        scheduleResetAfterLastViewer(graceMs);
+                    }
                 } else {
                     ensureFirstViewerWindow();
                 }
@@ -577,7 +622,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             shouldResetIntoWarmReady()
         ) {
             if (!resetInFlight && !hasRecycleLaunchInProgress()) {
-                scheduleResetAfterLastViewer(graceMs);
+                if (getActiveRecycleCommand()) {
+                    tryResumeActiveRecycleCommand();
+                } else {
+                    scheduleResetAfterLastViewer(graceMs);
+                }
             }
             return;
         }
@@ -637,6 +686,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         if (hasPendingImmediateRecycle()) {
+            startResetWindow(true);
+            return;
+        }
+
+        if (getActiveRecycleCommand()) {
             startResetWindow(true);
             return;
         }
@@ -725,7 +779,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         runtimeStatusController?.restoreDerivedStatus();
     };
 
-    const requestStackRecycle = (): void => {
+    const requestStackRecycle = async (): Promise<void> => {
         if (recycleLaunchRequested) {
             return;
         }
@@ -751,6 +805,21 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         try {
+            const commandToStart = getActiveRecycleCommand();
+            if (commandToStart && options.instanceAgentClient) {
+                try {
+                    await options.instanceAgentClient.startCommand(commandToStart, {
+                        occurredAtUtc: new Date().toISOString()
+                    });
+                    refreshActiveCommand();
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    log(
+                        `[idle-stop] Failed to mark recycle command ${commandToStart.instanceCommandId} as started: ${message}`
+                    );
+                }
+            }
+
             if (!fs.existsSync(recycleHelperScriptPath)) {
                 throw new Error(`Recycle helper script '${recycleHelperScriptPath}' was not found.`);
             }
@@ -821,6 +890,25 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             clearRecycleExitFallbackTimer();
             clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
             const message = error instanceof Error ? error.message : String(error);
+            const commandToFail = getActiveRecycleCommand();
+            if (options.instanceAgentClient && commandToFail) {
+                void options.instanceAgentClient
+                    .failCommand(commandToFail, {
+                        failureCode: 'recycle_launch_failed',
+                        failureMessage: message,
+                        occurredAtUtc: new Date().toISOString()
+                    })
+                    .catch((reportError) => {
+                        const reportMessage =
+                            reportError instanceof Error ? reportError.message : String(reportError);
+                        log(
+                            `[idle-stop] Failed to report recycle command failure for ${commandToFail.instanceCommandId}: ${reportMessage}`
+                        );
+                    })
+                    .finally(() => {
+                        refreshActiveCommand();
+                    });
+            }
             log(
                 `[idle-stop] Failed to request full stack recycle: ${message}. Falling back to logical warm restore.`
             );
@@ -844,8 +932,8 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         resetInFlight = true;
         publishStatus('resetting', 'post_session_cleanup');
-        if (skipGrace || resetGraceMs <= 0) {
-            requestStackRecycle();
+        if (skipGrace || getActiveRecycleCommand() || resetGraceMs <= 0) {
+            void requestStackRecycle();
             return;
         }
 
@@ -855,7 +943,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         resetTimer = setTimeout(() => {
             resetTimer = null;
-            requestStackRecycle();
+            void requestStackRecycle();
         }, resetGraceMs);
 
         log(
@@ -930,6 +1018,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             options.instanceAgentClient?.requestFastPolling('viewer_disconnected_reconnect_grace', {
                 durationMs: Math.min(Math.max(graceMs, 20_000), DEFAULT_DISCONNECT_FAST_POLLING_WINDOW_MS)
             });
+            if (getActiveRecycleCommand()) {
+                startResetWindow(true);
+                return;
+            }
             if (hasPendingImmediateRecycle()) {
                 startResetWindow(true);
                 return;
@@ -950,6 +1042,75 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         options.instanceAgentClient.addDesiredStateListener((nextDesiredState, context) => {
             applyDesiredStateSnapshot(nextDesiredState, `agent:${context.source}`);
         });
+        options.instanceAgentClient.addCommandListener((command: InstanceAgentCommand) => {
+            void (async () => {
+                if (activeCommand && activeCommand.instanceCommandId === command.instanceCommandId) {
+                    return;
+                }
+
+                if (!isRecycleToWarmCommand(command)) {
+                    log(
+                        `[idle-stop] Unsupported instance command ${command.instanceCommandId} (${command.commandType}). Reporting failure.`
+                    );
+                    try {
+                        await options.instanceAgentClient?.failCommand(command, {
+                            failureCode: 'unsupported_command',
+                            failureMessage: `Unsupported command type '${command.commandType}'.`,
+                            terminalStatus: 'Failed',
+                            occurredAtUtc: new Date().toISOString()
+                        });
+                    } catch (error) {
+                        const message = error instanceof Error ? error.message : String(error);
+                        log(
+                            `[idle-stop] Failed to report unsupported command ${command.instanceCommandId}: ${message}`
+                        );
+                    } finally {
+                        refreshActiveCommand();
+                    }
+                    return;
+                }
+
+                if (activeCommand && activeCommand.instanceCommandId !== command.instanceCommandId) {
+                    log(
+                        `[idle-stop] Rejecting recycle command ${command.instanceCommandId} because command ${activeCommand.instanceCommandId} is already active.`
+                    );
+                    try {
+                        await options.instanceAgentClient?.failCommand(command, {
+                            failureCode: 'command_conflict',
+                            failureMessage: `Instance command '${activeCommand.instanceCommandId}' is already active on this host.`,
+                            terminalStatus: 'Cancelled',
+                            occurredAtUtc: new Date().toISOString()
+                        });
+                    } catch (error) {
+                        const message = error instanceof Error ? error.message : String(error);
+                        log(
+                            `[idle-stop] Failed to report conflicting command ${command.instanceCommandId}: ${message}`
+                        );
+                    }
+                    return;
+                }
+
+                try {
+                    await options.instanceAgentClient?.acknowledgeCommand(command, {
+                        occurredAtUtc: new Date().toISOString()
+                    });
+                    refreshActiveCommand();
+                    hasSeenViewer = true;
+                    if (server.playerRegistry.count() === 0) {
+                        tryResumeActiveRecycleCommand();
+                    } else {
+                        log(
+                            `[idle-stop] Recycle command ${command.instanceCommandId} acknowledged while viewers are still connected. Waiting for disconnect before recycle.`
+                        );
+                    }
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    log(
+                        `[idle-stop] Failed to acknowledge recycle command ${command.instanceCommandId}: ${message}`
+                    );
+                }
+            })();
+        });
     }
 
     if (maintenanceRefreshMs > 0 && maintenanceTagKey.length > 0) {
@@ -960,6 +1121,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     } else {
         maintenanceStateInitialized = true;
         ensureFirstViewerWindow();
+        tryResumeActiveRecycleCommand();
     }
 
     if (desiredStatePath.length > 0 && desiredStateRefreshMs > 0) {
@@ -969,4 +1131,6 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             refreshDesiredState();
         }, desiredStateRefreshMs);
     }
+
+    tryResumeActiveRecycleCommand();
 }
