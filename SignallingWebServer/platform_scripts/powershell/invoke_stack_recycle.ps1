@@ -2,6 +2,7 @@
 param(
     [string]$RepoRoot = $(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
     [string]$RecycleMarkerPath = '',
+    [int]$SourcePid = 0,
     [int]$WaitBeforeTerminateMilliseconds = 2000,
     [int]$WaitForWilburTimeoutSeconds = 120
 )
@@ -56,6 +57,60 @@ function Stop-RecycleProcessMatches {
         Stop-Process -Id $match.ProcessId -Force -ErrorAction Stop
         $StoppedProcesses.Add(($Label + ':' + $match.ProcessId + ':' + $match.Name)) | Out-Null
     }
+}
+
+function Resolve-RecycleSourcePid {
+    param(
+        [int]$ExplicitSourcePid,
+        [string]$MarkerPath
+    )
+
+    if ($ExplicitSourcePid -gt 0) {
+        Write-RecycleLog "Using explicit recycle source PID $ExplicitSourcePid."
+        return $ExplicitSourcePid
+    }
+
+    if ([string]::IsNullOrWhiteSpace($MarkerPath) -or -not (Test-Path -LiteralPath $MarkerPath)) {
+        return 0
+    }
+
+    try {
+        $marker = Get-Content -LiteralPath $MarkerPath -Raw | ConvertFrom-Json
+        $markerSourcePid = 0
+        if ($null -ne $marker -and $null -ne $marker.sourcePid) {
+            $markerSourcePid = [int]$marker.sourcePid
+        }
+
+        if ($markerSourcePid -gt 0) {
+            Write-RecycleLog "Resolved recycle source PID $markerSourcePid from marker '$MarkerPath'."
+            return $markerSourcePid
+        }
+    } catch {
+        Write-RecycleLog "Failed to resolve recycle source PID from marker '$MarkerPath': $($_.Exception.Message)" 'WARN'
+    }
+
+    return 0
+}
+
+function Stop-RecycleSourceProcess {
+    param(
+        [int]$ProcessId,
+        [System.Collections.Generic.List[string]]$StoppedProcesses
+    )
+
+    if ($ProcessId -le 0 -or $ProcessId -eq $script:CurrentProcessId) {
+        return
+    }
+
+    $match = Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $ProcessId) | Select-Object -First 1
+    if (-not $match) {
+        Write-RecycleLog "Recycle source PID $ProcessId was not found."
+        return
+    }
+
+    Write-RecycleLog "Stopping recycle source process $($match.Name) (PID=$ProcessId)."
+    Stop-Process -Id $ProcessId -Force -ErrorAction Stop
+    $StoppedProcesses.Add(('source:' + $ProcessId + ':' + $match.Name)) | Out-Null
 }
 
 function Wait-ForWilbur {
@@ -137,7 +192,9 @@ try {
         Start-Sleep -Milliseconds $WaitBeforeTerminateMilliseconds
     }
 
+    $sourcePidToStop = Resolve-RecycleSourcePid -ExplicitSourcePid $SourcePid -MarkerPath $RecycleMarkerPath
     $stoppedProcesses = [System.Collections.Generic.List[string]]::new()
+    Stop-RecycleSourceProcess -ProcessId $sourcePidToStop -StoppedProcesses $stoppedProcesses
     Stop-RecycleProcessMatches -Label 'wilbur' -NamePattern 'node.exe' -CommandLinePattern '*index.js*' -StoppedProcesses $stoppedProcesses
     Stop-RecycleProcessMatches -Label 'wilbur-launcher' -NamePattern 'cmd.exe' -CommandLinePattern '*start_dev_turn.bat*' -StoppedProcesses $stoppedProcesses
     Stop-RecycleProcessMatches -Label 'unreal' -NamePattern $unrealProcessPattern -CommandLinePattern '*start_scaleworld.ps1*' -StoppedProcesses $stoppedProcesses

@@ -28,6 +28,7 @@ const DEFAULT_RESET_GRACE_MS = 15_000;
 const DEFAULT_MAINTENANCE_REFRESH_MS = 60_000;
 const DEFAULT_DESIRED_STATE_REFRESH_MS = 5_000;
 const DEFAULT_RECYCLE_TERMINATE_DELAY_MS = 2_000;
+const DEFAULT_RECYCLE_SELF_EXIT_DELAY_MS = 5_000;
 const DEFAULT_RECYCLE_READY_TIMEOUT_SECONDS = 120;
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
 const IMDS_METADATA_BASE_URL = 'http://169.254.169.254/latest/meta-data';
@@ -285,6 +286,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     let transientStatusHeartbeatTimer: NodeJS.Timeout | null = null;
     let reconnectGraceTimer: NodeJS.Timeout | null = null;
     let resetTimer: NodeJS.Timeout | null = null;
+    let recycleExitFallbackTimer: NodeJS.Timeout | null = null;
     let stopInFlight = false;
     let hasSeenViewer = server.playerRegistry.count() > 0;
     let currentMaintenanceMode: string | null = null;
@@ -298,6 +300,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             : normalizeInstanceAgentDesiredStateSnapshot(undefined);
     let pendingImmediateRecycleToken: string | null = null;
     let resetInFlight = false;
+    let recycleLaunchRequested = false;
 
     if (server.playerRegistry.count() === 0 && currentDesiredState.recycleRequestedToken) {
         pendingImmediateRecycleToken = currentDesiredState.recycleRequestedToken;
@@ -354,6 +357,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         clearInterval(desiredStateRefreshTimer);
         desiredStateRefreshTimer = null;
     };
+    const clearRecycleExitFallbackTimer = (): void => {
+        if (!recycleExitFallbackTimer) return;
+        clearTimeout(recycleExitFallbackTimer);
+        recycleExitFallbackTimer = null;
+    };
     const startTransientStatusHeartbeat = (status: string, reason: string): void => {
         clearTransientStatusHeartbeat();
         if (idleStatusHeartbeatMs <= 0 || !runtimeStatusPublisher) {
@@ -364,6 +372,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }, idleStatusHeartbeatMs);
     };
     const isMaintenanceActive = (): boolean => (currentMaintenanceMode?.trim().length ?? 0) > 0;
+    const hasRecycleLaunchMarker = (): boolean =>
+        recycleMarkerPath.length > 0 && fs.existsSync(recycleMarkerPath);
+    const hasRecycleLaunchInProgress = (): boolean => recycleLaunchRequested || hasRecycleLaunchMarker();
     const canHoldWarmReadyWithoutShutdown = (): boolean =>
         currentDesiredState.warmHoldEnabled &&
         !currentDesiredState.drainEnabled &&
@@ -431,6 +442,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 } else {
                     log('[idle-stop] Maintenance mode cleared. Re-evaluating idle-stop timers.');
                     if (!resetInFlight && server.playerRegistry.count() === 0 && shouldResetIntoWarmReady()) {
+                        if (hasRecycleLaunchInProgress()) {
+                            return;
+                        }
                         scheduleResetAfterLastViewer(graceMs);
                     } else {
                         ensureFirstViewerWindow();
@@ -438,6 +452,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 }
             } else if (!currentMaintenanceMode) {
                 if (!resetInFlight && server.playerRegistry.count() === 0 && shouldResetIntoWarmReady()) {
+                    if (hasRecycleLaunchInProgress()) {
+                        return;
+                    }
                     scheduleResetAfterLastViewer(graceMs);
                 } else {
                     ensureFirstViewerWindow();
@@ -476,11 +493,15 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
-        if (recycleRequestedTokenChanged && currentDesiredState.recycleRequestedToken) {
-            pendingImmediateRecycleToken = currentDesiredState.recycleRequestedToken;
-            log(
-                `[idle-stop] Immediate recycle requested by desired state token ${currentDesiredState.recycleRequestedToken}.`
-            );
+        if (recycleRequestedTokenChanged) {
+            if (currentDesiredState.recycleRequestedToken) {
+                pendingImmediateRecycleToken = currentDesiredState.recycleRequestedToken;
+                log(
+                    `[idle-stop] Immediate recycle requested by desired state token ${currentDesiredState.recycleRequestedToken}.`
+                );
+            } else {
+                pendingImmediateRecycleToken = null;
+            }
         }
 
         log(
@@ -550,7 +571,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             !isMaintenanceActive() &&
             shouldResetIntoWarmReady()
         ) {
-            if (!resetInFlight) {
+            if (!resetInFlight && !hasRecycleLaunchInProgress()) {
                 scheduleResetAfterLastViewer(graceMs);
             }
             return;
@@ -590,7 +611,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
-        if (resetInFlight) {
+        if (resetInFlight || hasRecycleLaunchInProgress()) {
             return;
         }
 
@@ -668,6 +689,8 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
     const restoreAfterReset = (): void => {
         resetInFlight = false;
+        recycleLaunchRequested = false;
+        clearRecycleExitFallbackTimer();
         clearReconnectGraceTimer();
         clearResetTimer();
         if (server.playerRegistry.count() > 0 || !maintenanceStateInitialized || isMaintenanceActive()) {
@@ -690,6 +713,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     };
 
     const requestStackRecycle = (): void => {
+        if (recycleLaunchRequested) {
+            return;
+        }
+
         if (!maintenanceStateInitialized || isMaintenanceActive() || server.playerRegistry.count() > 0) {
             runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
             return;
@@ -711,7 +738,6 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         try {
-            pendingImmediateRecycleToken = null;
             if (!fs.existsSync(recycleHelperScriptPath)) {
                 throw new Error(`Recycle helper script '${recycleHelperScriptPath}' was not found.`);
             }
@@ -737,6 +763,8 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     recycleRepoRoot,
                     '-RecycleMarkerPath',
                     recycleMarkerPath,
+                    '-SourcePid',
+                    String(process.pid),
                     '-WaitBeforeTerminateMilliseconds',
                     String(DEFAULT_RECYCLE_TERMINATE_DELAY_MS),
                     '-WaitForWilburTimeoutSeconds',
@@ -749,6 +777,8 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 }
             );
             recycleProcess.on('error', (error) => {
+                recycleLaunchRequested = false;
+                clearRecycleExitFallbackTimer();
                 clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
                 log(
                     `[idle-stop] Recycle helper process failed to start: ${error.message}. Falling back to logical warm restore.`
@@ -756,10 +786,26 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 restoreAfterReset();
             });
             recycleProcess.unref();
+            pendingImmediateRecycleToken = null;
+            recycleLaunchRequested = true;
+            clearRecycleExitFallbackTimer();
+            recycleExitFallbackTimer = setTimeout(() => {
+                recycleExitFallbackTimer = null;
+                if (!hasRecycleLaunchInProgress()) {
+                    return;
+                }
+
+                log(
+                    '[idle-stop] Recycle helper fallback: current Wilbur process is still alive after helper launch. Exiting so recycle can complete.'
+                );
+                process.exit(0);
+            }, DEFAULT_RECYCLE_SELF_EXIT_DELAY_MS);
             log(
                 `[idle-stop] Requested full stack recycle (${recycleMarker.recycleId ?? 'unknown'}) via '${recycleHelperScriptPath}'.`
             );
         } catch (error) {
+            recycleLaunchRequested = false;
+            clearRecycleExitFallbackTimer();
             clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
             const message = error instanceof Error ? error.message : String(error);
             log(
@@ -784,7 +830,6 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         resetInFlight = true;
-        pendingImmediateRecycleToken = null;
         publishStatus('resetting', 'post_session_cleanup');
         if (skipGrace || resetGraceMs <= 0) {
             requestStackRecycle();
@@ -810,6 +855,8 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     const requestStop = async (reason: string): Promise<void> => {
         if (stopInFlight) return;
         resetInFlight = false;
+        recycleLaunchRequested = false;
+        clearRecycleExitFallbackTimer();
         clearTransientStatusHeartbeat();
         clearReconnectGraceTimer();
         clearResetTimer();
@@ -841,6 +888,8 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     const onViewerAdded = (): void => {
         hasSeenViewer = true;
         resetInFlight = false;
+        recycleLaunchRequested = false;
+        clearRecycleExitFallbackTimer();
         clearZeroTimer();
         clearFirstViewerTimer();
         clearTransientStatusHeartbeat();
