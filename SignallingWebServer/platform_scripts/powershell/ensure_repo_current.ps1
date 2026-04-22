@@ -525,6 +525,54 @@ function Resolve-CommitFromRef {
     return $resolved
 }
 
+function Try-ResolveCommitFromRef {
+    param(
+        [string]$GitCli,
+        [string]$Ref
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Ref)) {
+        return $null
+    }
+
+    $resolved = ((& $GitCli rev-parse --verify --quiet "$Ref^{commit}" 2>$null) | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($resolved)) {
+        return $null
+    }
+
+    return $resolved
+}
+
+function Resolve-PinnedCommitFromRef {
+    param(
+        [string]$GitCli,
+        [string]$Ref
+    )
+
+    $trimmedRef = $Ref.Trim()
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    $candidates.Add($trimmedRef)
+
+    if (-not $trimmedRef.StartsWith('refs/', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $candidates.Add("refs/tags/$trimmedRef")
+        $candidates.Add("refs/remotes/origin/$trimmedRef")
+        $candidates.Add("origin/$trimmedRef")
+    }
+
+    foreach ($candidate in $candidates | Select-Object -Unique) {
+        $resolved = Try-ResolveCommitFromRef -GitCli $GitCli -Ref $candidate
+        if (-not [string]::IsNullOrWhiteSpace($resolved)) {
+            if (-not [string]::Equals($candidate, $trimmedRef, [System.StringComparison]::Ordinal)) {
+                Write-RepoSyncLog "Resolved pinned ref '$trimmedRef' via '$candidate'."
+            }
+
+            return $resolved
+        }
+    }
+
+    throw "Pinned git target ref '$trimmedRef' could not be resolved after fetch. Confirm the branch or tag exists on the remote and that the configured ref name is exact."
+}
+
 $gitCli = Get-GitCliPath
 $buildScript = Join-Path $RepoRoot 'build-all.bat'
 if (-not (Test-Path -LiteralPath $buildScript)) {
@@ -762,7 +810,7 @@ try {
                 throw 'git fetch --prune --tags failed.'
             }
 
-            $targetHead = Resolve-CommitFromRef -GitCli $gitCli -Ref $gitTargetRefNormalized
+            $targetHead = Resolve-PinnedCommitFromRef -GitCli $gitCli -Ref $gitTargetRefNormalized
 
             if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
                 $requiresInfraUpdateStatus = $true

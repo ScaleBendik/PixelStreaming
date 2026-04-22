@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
 import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
+import type { InstanceAgentClient } from './instance-agent';
 import { RuntimeStatusPublisher, SignallingRuntimeStatusController } from './runtime-status';
 import {
     normalizeInstanceAgentDesiredStateSnapshot,
@@ -30,6 +31,7 @@ const DEFAULT_DESIRED_STATE_REFRESH_MS = 5_000;
 const DEFAULT_RECYCLE_TERMINATE_DELAY_MS = 2_000;
 const DEFAULT_RECYCLE_SELF_EXIT_DELAY_MS = 5_000;
 const DEFAULT_RECYCLE_READY_TIMEOUT_SECONDS = 120;
+const DEFAULT_DISCONNECT_FAST_POLLING_WINDOW_MS = 120_000;
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
 const IMDS_METADATA_BASE_URL = 'http://169.254.169.254/latest/meta-data';
 const DEFAULT_MAINTENANCE_TAG_KEY = 'ScaleWorldMaintenanceMode';
@@ -51,6 +53,10 @@ export interface ViewerIdleOptions {
     logger?: (message: string) => void;
     runtimeStatusPublisher?: RuntimeStatusPublisher | null;
     runtimeStatusController?: SignallingRuntimeStatusController | null;
+    instanceAgentClient?: Pick<
+        InstanceAgentClient,
+        'getDesiredState' | 'addDesiredStateListener' | 'requestFastPolling'
+    > | null;
 }
 
 async function readCurrentInstanceIdentity(): Promise<{ instanceId: string; region: string }> {
@@ -294,10 +300,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     let maintenanceRefreshInFlight = false;
     let lastMaintenanceReadFailure: string | null = null;
     let desiredStateRefreshTimer: NodeJS.Timeout | null = null;
-    let currentDesiredState: InstanceAgentDesiredStateSnapshot =
-        desiredStatePath.length > 0
-            ? readInstanceAgentDesiredStateSnapshot(desiredStatePath, log)
-            : normalizeInstanceAgentDesiredStateSnapshot(undefined);
+    let currentDesiredState: InstanceAgentDesiredStateSnapshot = options.instanceAgentClient
+        ? options.instanceAgentClient.getDesiredState()
+        : desiredStatePath.length > 0
+          ? readInstanceAgentDesiredStateSnapshot(desiredStatePath, log)
+          : normalizeInstanceAgentDesiredStateSnapshot(undefined);
     let pendingImmediateRecycleToken: string | null = null;
     let resetInFlight = false;
     let recycleLaunchRequested = false;
@@ -472,12 +479,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             maintenanceRefreshInFlight = false;
         }
     };
-    const refreshDesiredState = (): void => {
-        if (desiredStatePath.length === 0) {
-            return;
-        }
-
-        const nextDesiredState = readInstanceAgentDesiredStateSnapshot(desiredStatePath, log);
+    const applyDesiredStateSnapshot = (
+        nextDesiredState: InstanceAgentDesiredStateSnapshot,
+        source: string
+    ): void => {
         const recycleRequestedTokenChanged =
             nextDesiredState.recycleRequestedToken !== currentDesiredState.recycleRequestedToken;
         const changed =
@@ -505,7 +510,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         log(
-            `[idle-stop] Desired state updated: warmHold=${currentDesiredState.warmHoldEnabled}, drain=${currentDesiredState.drainEnabled}, shutdown=${currentDesiredState.shutdownRequested}, recycleRequested=${currentDesiredState.recycleRequestedToken ? 'true' : 'false'}, policy=${currentDesiredState.policyVersion}.`
+            `[idle-stop] Desired state updated from ${source}: warmHold=${currentDesiredState.warmHoldEnabled}, drain=${currentDesiredState.drainEnabled}, shutdown=${currentDesiredState.shutdownRequested}, recycleRequested=${currentDesiredState.recycleRequestedToken ? 'true' : 'false'}, policy=${currentDesiredState.policyVersion}.`
         );
 
         if (isWarmHoldActive()) {
@@ -581,6 +586,14 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         if (currentDesiredState.shutdownRequested && server.playerRegistry.count() === 0) {
             void requestStop('agent_shutdown_requested');
         }
+    };
+
+    const refreshDesiredState = (): void => {
+        if (desiredStatePath.length === 0) {
+            return;
+        }
+
+        applyDesiredStateSnapshot(readInstanceAgentDesiredStateSnapshot(desiredStatePath, log), 'file');
     };
 
     const scheduleStop = (reason: string, delayMs: number): void => {
@@ -914,6 +927,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         if (maintenanceStateInitialized && !isMaintenanceActive() && shouldResetIntoWarmReady()) {
+            options.instanceAgentClient?.requestFastPolling('viewer_disconnected_reconnect_grace', {
+                durationMs: Math.min(Math.max(graceMs, 20_000), DEFAULT_DISCONNECT_FAST_POLLING_WINDOW_MS)
+            });
             if (hasPendingImmediateRecycle()) {
                 startResetWindow(true);
                 return;
@@ -929,6 +945,12 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     server.playerRegistry.on('added', onViewerAdded);
     server.playerRegistry.on('removed', onViewerRemoved);
     log('[idle-stop] Wired to player registry events.');
+
+    if (options.instanceAgentClient) {
+        options.instanceAgentClient.addDesiredStateListener((nextDesiredState, context) => {
+            applyDesiredStateSnapshot(nextDesiredState, `agent:${context.source}`);
+        });
+    }
 
     if (maintenanceRefreshMs > 0 && maintenanceTagKey.length > 0) {
         void refreshMaintenanceMode();

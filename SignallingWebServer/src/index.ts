@@ -742,7 +742,8 @@ wireViewerIdleStop(signallingServer, {
     dryRun: options.viewer_idle_stop_dry_run,
     logger: (message: string) => Logger.info(message),
     runtimeStatusPublisher,
-    runtimeStatusController
+    runtimeStatusController,
+    instanceAgentClient
 });
 
 if (options.stdin) {

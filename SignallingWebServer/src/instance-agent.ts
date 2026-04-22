@@ -18,6 +18,8 @@ const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
 const IMDS_METADATA_BASE_URL = 'http://169.254.169.254/latest/meta-data';
 const IMDS_DYNAMIC_BASE_URL = 'http://169.254.169.254/latest/dynamic/instance-identity';
 const DEFAULT_HEARTBEAT_MS = 10_000;
+const DEFAULT_FAST_POLLING_INTERVAL_MS = 2_000;
+const DEFAULT_FAST_POLLING_WINDOW_MS = 20_000;
 const DEFAULT_DESIRED_STATE_PATH = path.resolve(
     __dirname,
     '..',
@@ -64,10 +66,21 @@ interface InstanceAgentRuntimeSnapshot {
     version?: string;
 }
 
+export interface InstanceAgentDesiredStateListenerContext {
+    source: string;
+}
+
+export type InstanceAgentDesiredStateListener = (
+    desiredState: InstanceAgentDesiredStateSnapshot,
+    context: InstanceAgentDesiredStateListenerContext
+) => void;
+
 export interface InstanceAgentClient {
     recordRuntimeStatus(update: RuntimeStatusUpdate): void;
     recordSessionNetworkPath(update: SessionNetworkPathReport): void;
     getDesiredState(): InstanceAgentDesiredStateSnapshot;
+    addDesiredStateListener(listener: InstanceAgentDesiredStateListener): () => void;
+    requestFastPolling(reason: string, options?: { durationMs?: number; intervalMs?: number }): void;
 }
 
 export interface InstanceAgentClientOptions {
@@ -279,11 +292,16 @@ export function wireInstanceAgent(
     let bootstrapPromise: Promise<void> | null = null;
     let tickInFlight = false;
     let heartbeatTimer: NodeJS.Timeout | null = null;
-    let heartbeatMs = explicitHeartbeatMs > 0 ? explicitHeartbeatMs : DEFAULT_HEARTBEAT_MS;
+    let configuredHeartbeatMs = explicitHeartbeatMs > 0 ? explicitHeartbeatMs : DEFAULT_HEARTBEAT_MS;
+    let heartbeatMs = configuredHeartbeatMs;
+    let fastPollingIntervalMs = DEFAULT_FAST_POLLING_INTERVAL_MS;
+    let fastPollingUntil = 0;
+    let fastPollingRestoreTimer: NodeJS.Timeout | null = null;
     let token: string | null = null;
     let runtimeSnapshot: InstanceAgentRuntimeSnapshot = {};
     let pendingEvents: PendingInstanceAgentEvent[] = [];
     let resetInProgress = false;
+    const desiredStateListeners = new Set<InstanceAgentDesiredStateListener>();
 
     if (pendingRecycleCompletion) {
         log(
@@ -333,11 +351,58 @@ export function wireInstanceAgent(
             log(
                 `[instance-agent] Desired state updated from ${source}: warmHold=${currentDesiredState.warmHoldEnabled}, drain=${currentDesiredState.drainEnabled}, shutdown=${currentDesiredState.shutdownRequested}, recycleRequested=${currentDesiredState.recycleRequestedToken ? 'true' : 'false'}, policy=${currentDesiredState.policyVersion}.`
             );
+
+            for (const listener of desiredStateListeners) {
+                try {
+                    listener(currentDesiredState, { source });
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    log(`[instance-agent] Desired-state listener failed: ${message}`);
+                }
+            }
         }
     };
 
+    const getEffectiveHeartbeatMs = (): number => {
+        if (Date.now() < fastPollingUntil) {
+            return Math.max(1_000, Math.min(configuredHeartbeatMs, fastPollingIntervalMs));
+        }
+
+        return configuredHeartbeatMs;
+    };
+
+    const clearFastPollingRestoreTimer = (): void => {
+        if (!fastPollingRestoreTimer) {
+            return;
+        }
+
+        clearTimeout(fastPollingRestoreTimer);
+        fastPollingRestoreTimer = null;
+    };
+
+    const scheduleFastPollingRestore = (): void => {
+        clearFastPollingRestoreTimer();
+        if (fastPollingUntil <= Date.now()) {
+            fastPollingUntil = 0;
+            if (heartbeatTimer && heartbeatMs !== configuredHeartbeatMs) {
+                scheduleHeartbeat(configuredHeartbeatMs);
+            }
+            return;
+        }
+
+        fastPollingRestoreTimer = setTimeout(
+            () => {
+                fastPollingRestoreTimer = null;
+                fastPollingUntil = 0;
+                scheduleHeartbeat(configuredHeartbeatMs);
+            },
+            Math.max(250, fastPollingUntil - Date.now())
+        );
+    };
+
     const scheduleHeartbeat = (nextHeartbeatMs: number): void => {
-        const normalizedHeartbeatMs = Math.max(5_000, nextHeartbeatMs);
+        configuredHeartbeatMs = Math.max(1_000, nextHeartbeatMs);
+        const normalizedHeartbeatMs = getEffectiveHeartbeatMs();
         if (heartbeatTimer && heartbeatMs === normalizedHeartbeatMs) {
             return;
         }
@@ -350,6 +415,32 @@ export function wireInstanceAgent(
         heartbeatTimer = setInterval(() => {
             void runTick();
         }, heartbeatMs);
+    };
+
+    const requestFastPolling = (
+        reason: string,
+        options: { durationMs?: number; intervalMs?: number } = {}
+    ): void => {
+        const normalizedReason = normalizeOptionalText(reason) ?? 'unspecified';
+        const durationMs = Math.max(1_000, options.durationMs ?? DEFAULT_FAST_POLLING_WINDOW_MS);
+        const intervalMs = Math.max(1_000, options.intervalMs ?? DEFAULT_FAST_POLLING_INTERVAL_MS);
+        const nextFastPollingUntil = Date.now() + durationMs;
+        const nextIntervalMs = Math.min(fastPollingIntervalMs, intervalMs);
+        const fastPollingChanged =
+            nextFastPollingUntil > fastPollingUntil || nextIntervalMs !== fastPollingIntervalMs;
+
+        fastPollingUntil = Math.max(fastPollingUntil, nextFastPollingUntil);
+        fastPollingIntervalMs = nextIntervalMs;
+        scheduleFastPollingRestore();
+
+        if (fastPollingChanged || heartbeatMs > getEffectiveHeartbeatMs()) {
+            log(
+                `[instance-agent] Fast polling enabled for ${durationMs} ms at ${getEffectiveHeartbeatMs()} ms interval (reason=${normalizedReason}).`
+            );
+            scheduleHeartbeat(configuredHeartbeatMs);
+        }
+
+        void runTick();
     };
 
     const resolveBootstrapIdentity = async (): Promise<BootstrapIdentity> => {
@@ -544,6 +635,7 @@ export function wireInstanceAgent(
             playerId,
             viewerCount: server.playerRegistry.count()
         });
+        requestFastPolling('viewer_connected');
     });
     server.playerRegistry.on('removed', (playerId?: string) => {
         const rawCount = server.playerRegistry.count();
@@ -553,6 +645,7 @@ export function wireInstanceAgent(
             playerId,
             viewerCount: Math.max(0, rawCount - (removedEntryStillPresent ? 1 : 0))
         });
+        requestFastPolling('viewer_disconnected');
     });
 
     scheduleHeartbeat(heartbeatMs);
@@ -671,6 +764,21 @@ export function wireInstanceAgent(
         },
         getDesiredState() {
             return currentDesiredState;
+        },
+        addDesiredStateListener(listener: InstanceAgentDesiredStateListener) {
+            desiredStateListeners.add(listener);
+            try {
+                listener(currentDesiredState, { source: 'current' });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                log(`[instance-agent] Desired-state listener failed: ${message}`);
+            }
+            return () => {
+                desiredStateListeners.delete(listener);
+            };
+        },
+        requestFastPolling(reason: string, options?: { durationMs?: number; intervalMs?: number }) {
+            requestFastPolling(reason, options);
         }
     };
 }
