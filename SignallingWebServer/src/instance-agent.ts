@@ -33,17 +33,32 @@ interface InstanceAgentBootstrapResponse {
     tokenExpiresAtUtc: string;
     heartbeatIntervalSeconds: number;
     desiredState: Partial<InstanceAgentDesiredStateSnapshot>;
+    commands?: InstanceAgentCommandResponse[];
 }
 
 interface InstanceAgentHeartbeatResponse {
     tokenExpiresAtUtc: string;
     heartbeatIntervalSeconds: number;
     desiredState: Partial<InstanceAgentDesiredStateSnapshot>;
+    commands?: InstanceAgentCommandResponse[];
 }
 
 interface InstanceAgentEventBatchResponse {
     acceptedCount: number;
     desiredState: Partial<InstanceAgentDesiredStateSnapshot>;
+    commands?: InstanceAgentCommandResponse[];
+}
+
+interface InstanceAgentCommandResponse {
+    instanceCommandId: string;
+    instanceId: string;
+    region: string;
+    sessionRequestId?: string;
+    commandType: string;
+    idempotencyKey: string;
+    requestedAtUtc: string;
+    timeoutAtUtc?: string;
+    payloadJson?: string;
 }
 
 interface BootstrapIdentity {
@@ -70,9 +85,30 @@ export interface InstanceAgentDesiredStateListenerContext {
     source: string;
 }
 
+export interface InstanceAgentCommand {
+    instanceCommandId: string;
+    instanceId: string;
+    region: string;
+    sessionRequestId?: string;
+    commandType: string;
+    idempotencyKey: string;
+    requestedAtUtc: string;
+    timeoutAtUtc?: string;
+    payloadJson?: string;
+}
+
+export interface InstanceAgentCommandListenerContext {
+    source: string;
+}
+
 export type InstanceAgentDesiredStateListener = (
     desiredState: InstanceAgentDesiredStateSnapshot,
     context: InstanceAgentDesiredStateListenerContext
+) => void;
+
+export type InstanceAgentCommandListener = (
+    command: InstanceAgentCommand,
+    context: InstanceAgentCommandListenerContext
 ) => void;
 
 export interface InstanceAgentClient {
@@ -80,6 +116,7 @@ export interface InstanceAgentClient {
     recordSessionNetworkPath(update: SessionNetworkPathReport): void;
     getDesiredState(): InstanceAgentDesiredStateSnapshot;
     addDesiredStateListener(listener: InstanceAgentDesiredStateListener): () => void;
+    addCommandListener(listener: InstanceAgentCommandListener): () => void;
     requestFastPolling(reason: string, options?: { durationMs?: number; intervalMs?: number }): void;
 }
 
@@ -168,6 +205,32 @@ function normalizeEventMetadata(value: Record<string, unknown>): Record<string, 
     }
 
     return normalized;
+}
+
+function normalizeCommand(
+    value: InstanceAgentCommandResponse | null | undefined
+): InstanceAgentCommand | null {
+    const instanceCommandId = normalizeOptionalText(value?.instanceCommandId);
+    const instanceId = normalizeOptionalText(value?.instanceId);
+    const region = normalizeOptionalText(value?.region);
+    const commandType = normalizeOptionalText(value?.commandType);
+    const idempotencyKey = normalizeOptionalText(value?.idempotencyKey);
+    const requestedAtUtc = normalizeOptionalText(value?.requestedAtUtc);
+    if (!instanceCommandId || !instanceId || !region || !commandType || !idempotencyKey || !requestedAtUtc) {
+        return null;
+    }
+
+    return {
+        instanceCommandId,
+        instanceId,
+        region,
+        sessionRequestId: normalizeOptionalText(value?.sessionRequestId),
+        commandType,
+        idempotencyKey,
+        requestedAtUtc,
+        timeoutAtUtc: normalizeOptionalText(value?.timeoutAtUtc),
+        payloadJson: normalizeOptionalText(value?.payloadJson)
+    };
 }
 
 function truncateDiagnosticText(value: string, maxLength = 240): string {
@@ -302,6 +365,8 @@ export function wireInstanceAgent(
     let pendingEvents: PendingInstanceAgentEvent[] = [];
     let resetInProgress = false;
     const desiredStateListeners = new Set<InstanceAgentDesiredStateListener>();
+    const commandListeners = new Set<InstanceAgentCommandListener>();
+    const deliveredCommandIds: string[] = [];
 
     if (pendingRecycleCompletion) {
         log(
@@ -358,6 +423,51 @@ export function wireInstanceAgent(
                 } catch (error) {
                     const message = error instanceof Error ? error.message : String(error);
                     log(`[instance-agent] Desired-state listener failed: ${message}`);
+                }
+            }
+        }
+    };
+
+    const applyCommands = (
+        values: InstanceAgentCommandResponse[] | null | undefined,
+        source: string
+    ): void => {
+        if (!Array.isArray(values) || values.length === 0) {
+            return;
+        }
+
+        for (const rawCommand of values) {
+            const command = normalizeCommand(rawCommand);
+            if (!command) {
+                continue;
+            }
+
+            if (deliveredCommandIds.includes(command.instanceCommandId)) {
+                continue;
+            }
+
+            deliveredCommandIds.push(command.instanceCommandId);
+            if (deliveredCommandIds.length > 128) {
+                deliveredCommandIds.splice(0, deliveredCommandIds.length - 128);
+            }
+
+            queueEvent('instance_command_received', {
+                instanceCommandId: command.instanceCommandId,
+                commandType: command.commandType,
+                idempotencyKey: command.idempotencyKey,
+                sessionRequestId: command.sessionRequestId,
+                timeoutAtUtc: command.timeoutAtUtc
+            });
+            log(
+                `[instance-agent] Command received from ${source}: id=${command.instanceCommandId}, type=${command.commandType}, key=${command.idempotencyKey}.`
+            );
+
+            for (const listener of commandListeners) {
+                try {
+                    listener(command, { source });
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    log(`[instance-agent] Command listener failed: ${message}`);
                 }
             }
         }
@@ -542,6 +652,7 @@ export function wireInstanceAgent(
             const payload = await parseJsonResponse<InstanceAgentBootstrapResponse>(response);
             token = payload.agentToken;
             applyDesiredState(payload.desiredState, 'bootstrap');
+            applyCommands(payload.commands, 'bootstrap');
             if (explicitHeartbeatMs <= 0 && payload.heartbeatIntervalSeconds > 0) {
                 scheduleHeartbeat(payload.heartbeatIntervalSeconds * 1000);
             }
@@ -580,6 +691,7 @@ export function wireInstanceAgent(
 
         const payload = await parseJsonResponse<InstanceAgentHeartbeatResponse>(response);
         applyDesiredState(payload.desiredState, 'heartbeat');
+        applyCommands(payload.commands, 'heartbeat');
         if (explicitHeartbeatMs <= 0 && payload.heartbeatIntervalSeconds > 0) {
             scheduleHeartbeat(payload.heartbeatIntervalSeconds * 1000);
         }
@@ -604,6 +716,7 @@ export function wireInstanceAgent(
         const payload = await parseJsonResponse<InstanceAgentEventBatchResponse>(response);
         pendingEvents = pendingEvents.slice(Math.max(0, payload.acceptedCount));
         applyDesiredState(payload.desiredState, 'events');
+        applyCommands(payload.commands, 'events');
     };
 
     const runTick = async (): Promise<void> => {
@@ -775,6 +888,12 @@ export function wireInstanceAgent(
             }
             return () => {
                 desiredStateListeners.delete(listener);
+            };
+        },
+        addCommandListener(listener: InstanceAgentCommandListener) {
+            commandListeners.add(listener);
+            return () => {
+                commandListeners.delete(listener);
             };
         },
         requestFastPolling(reason: string, options?: { durationMs?: number; intervalMs?: number }) {
