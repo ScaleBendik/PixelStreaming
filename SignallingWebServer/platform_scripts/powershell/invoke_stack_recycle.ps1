@@ -168,10 +168,12 @@ function Wait-ForWilburReadiness {
 }
 
 $stackLauncher = Join-Path $RepoRoot 'platform_scripts\cmd\start_streamer_stack.bat'
-$unrealProcessPattern = if ([string]::IsNullOrWhiteSpace($env:SCALEWORLD_EXECUTABLE_NAME)) {
-    'ScaleWorld*'
-} else {
+$unrealProcessPattern = if (-not [string]::IsNullOrWhiteSpace($env:SCALEWORLD_RUNTIME_PROCESS_PATTERN)) {
+    $env:SCALEWORLD_RUNTIME_PROCESS_PATTERN
+} elseif (-not [string]::IsNullOrWhiteSpace($env:SCALEWORLD_EXECUTABLE_NAME)) {
     [System.IO.Path]::GetFileNameWithoutExtension($env:SCALEWORLD_EXECUTABLE_NAME) + '*'
+} else {
+    'ScaleWorld*'
 }
 
 try {
@@ -194,10 +196,13 @@ try {
 
     $sourcePidToStop = Resolve-RecycleSourcePid -ExplicitSourcePid $SourcePid -MarkerPath $RecycleMarkerPath
     $stoppedProcesses = [System.Collections.Generic.List[string]]::new()
+    Stop-RecycleProcessMatches -Label 'watchdog' -NamePattern 'powershell.exe' -CommandLinePattern '*watchdog.ps1*' -StoppedProcesses $stoppedProcesses
+    Stop-RecycleProcessMatches -Label 'watchdog-launcher' -NamePattern 'cmd.exe' -CommandLinePattern '*start_watchdog.bat*' -StoppedProcesses $stoppedProcesses
     Stop-RecycleSourceProcess -ProcessId $sourcePidToStop -StoppedProcesses $stoppedProcesses
     Stop-RecycleProcessMatches -Label 'wilbur' -NamePattern 'node.exe' -CommandLinePattern '*index.js*' -StoppedProcesses $stoppedProcesses
     Stop-RecycleProcessMatches -Label 'wilbur-launcher' -NamePattern 'cmd.exe' -CommandLinePattern '*start_dev_turn.bat*' -StoppedProcesses $stoppedProcesses
     Stop-RecycleProcessMatches -Label 'unreal' -NamePattern $unrealProcessPattern -CommandLinePattern '*start_scaleworld.ps1*' -StoppedProcesses $stoppedProcesses
+    Stop-RecycleProcessMatches -Label 'unreal-wrapper' -NamePattern 'powershell.exe' -CommandLinePattern '*start_scaleworld.ps1*' -StoppedProcesses $stoppedProcesses
     Stop-RecycleProcessMatches -Label 'unreal-launcher' -NamePattern 'cmd.exe' -CommandLinePattern '*start_unreal.bat*' -StoppedProcesses $stoppedProcesses
 
     Start-Sleep -Seconds 1
