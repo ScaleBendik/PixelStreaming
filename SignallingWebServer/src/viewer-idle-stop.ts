@@ -294,6 +294,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         process.platform === 'win32' && process.env.WINDIR
             ? path.join(process.env.WINDIR, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
             : 'powershell';
+    const recoveredRecycleMarkerAtStartup = recycleMarkerPath.length > 0 && fs.existsSync(recycleMarkerPath);
 
     let zeroViewersTimer: NodeJS.Timeout | null = null;
     let firstViewerTimer: NodeJS.Timeout | null = null;
@@ -320,14 +321,14 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
     if (server.playerRegistry.count() === 0 && currentDesiredState.recycleRequestedToken) {
         pendingImmediateRecycleToken = currentDesiredState.recycleRequestedToken;
-        hasSeenViewer = true;
         log(
-            `[idle-stop] Recycle request token ${currentDesiredState.recycleRequestedToken} was loaded on startup. Forcing post-session recycle before reuse.`
+            recoveredRecycleMarkerAtStartup
+                ? `[idle-stop] Recycle request token ${currentDesiredState.recycleRequestedToken} was loaded on startup while a recycle marker is still present. Waiting for recycle completion before reusing the instance.`
+                : `[idle-stop] Recycle request token ${currentDesiredState.recycleRequestedToken} was loaded on startup. Keeping recycle intent armed until the runtime can honor it.`
         );
     }
 
     if (activeCommand) {
-        hasSeenViewer = true;
         log(
             `[idle-stop] Recovered active instance command ${activeCommand.instanceCommandId} (${activeCommand.commandType}, status=${activeCommand.status}).`
         );
@@ -413,9 +414,17 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     const hasPendingImmediateRecycle = (): boolean =>
         pendingImmediateRecycleToken !== null &&
         pendingImmediateRecycleToken === currentDesiredState.recycleRequestedToken;
-    const isWarmHoldActive = (): boolean => canHoldWarmReadyWithoutShutdown() && !hasSeenViewer;
+    const hasImmediateRecycleRequest = (): boolean =>
+        hasPendingImmediateRecycle() && !hasRecycleLaunchInProgress();
+    const isWarmHoldActive = (): boolean =>
+        canHoldWarmReadyWithoutShutdown() &&
+        !hasSeenViewer &&
+        getActiveRecycleCommand() === null &&
+        !hasImmediateRecycleRequest();
     const shouldResetIntoWarmReady = (): boolean =>
-        getActiveRecycleCommand() !== null || (canHoldWarmReadyWithoutShutdown() && hasSeenViewer);
+        getActiveRecycleCommand() !== null ||
+        hasImmediateRecycleRequest() ||
+        (canHoldWarmReadyWithoutShutdown() && hasSeenViewer);
     const refreshActiveCommand = (): void => {
         activeCommand = options.instanceAgentClient?.getActiveCommand() ?? null;
     };
@@ -564,10 +573,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         if (recycleRequestedTokenChanged) {
             if (currentDesiredState.recycleRequestedToken) {
                 pendingImmediateRecycleToken = currentDesiredState.recycleRequestedToken;
-                if (server.playerRegistry.count() === 0 && !hasSeenViewer) {
-                    hasSeenViewer = true;
+                if (hasRecycleLaunchInProgress()) {
                     log(
-                        `[idle-stop] Recycle request token ${currentDesiredState.recycleRequestedToken} arrived with no active viewers. Forcing post-session recycle before reuse.`
+                        `[idle-stop] Recycle request token ${currentDesiredState.recycleRequestedToken} matches an in-progress recycle. Waiting for recycle completion before reuse.`
                     );
                 } else {
                     log(
@@ -1189,9 +1197,6 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                         occurredAtUtc: new Date().toISOString()
                     });
                     refreshActiveCommand();
-                    if (isRecycleToWarmCommand(command)) {
-                        hasSeenViewer = true;
-                    }
                     if (server.playerRegistry.count() === 0) {
                         if (isShutdownCommand(command)) {
                             void requestStop('command_shutdown_requested');
