@@ -293,7 +293,7 @@ if exist "%SCRIPT_DIR%start_unreal.bat" (
     echo ERROR: Unreal runtime detection script not found at "%TEST_UNREAL_RUNTIME_SCRIPT%".
     exit /b 1
   )
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%TEST_UNREAL_RUNTIME_SCRIPT%" -IncludeLaunchers -LauncherGraceSeconds 60
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%TEST_UNREAL_RUNTIME_SCRIPT%" -IncludeLaunchers -LauncherGraceSeconds %SCALEWORLD_RUNTIME_PROCESS_WAIT_SECONDS%
   if errorlevel 1 (
     timeout /t %STACK_UNREAL_START_DELAY_SECONDS% /nobreak >nul
     echo Starting Unreal runtime...

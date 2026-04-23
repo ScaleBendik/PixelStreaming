@@ -55,6 +55,11 @@ Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'set "STACK_LAUNCH_EXIT=0"' `
     -Message 'Stack launcher must track component startup failures instead of exiting before watchdog scheduling.'
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected '-LauncherGraceSeconds %SCALEWORLD_RUNTIME_PROCESS_WAIT_SECONDS%' `
+    -Message 'Launcher freshness detection must use the same window as the strict Unreal runtime wait.'
+
 
 Assert-ContainsText `
     -Content $stackLauncher `
