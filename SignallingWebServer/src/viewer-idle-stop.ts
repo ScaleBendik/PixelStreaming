@@ -61,6 +61,7 @@ export interface ViewerIdleOptions {
         | 'addCommandListener'
         | 'acknowledgeCommand'
         | 'startCommand'
+        | 'completeCommand'
         | 'failCommand'
         | 'requestFastPolling'
     > | null;
@@ -397,7 +398,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     const isRecycleToWarmCommand = (
         command: { commandType?: string | null; instanceCommandId?: string | null } | null | undefined
     ): boolean => (command?.commandType?.trim().toLowerCase() ?? '') === 'recycletowarm';
+    const isShutdownCommand = (
+        command: { commandType?: string | null; instanceCommandId?: string | null } | null | undefined
+    ): boolean => (command?.commandType?.trim().toLowerCase() ?? '') === 'shutdown';
     const getActiveRecycleCommand = () => (isRecycleToWarmCommand(activeCommand) ? activeCommand : null);
+    const getActiveShutdownCommand = () => (isShutdownCommand(activeCommand) ? activeCommand : null);
     const hasRecycleLaunchMarker = (): boolean =>
         recycleMarkerPath.length > 0 && fs.existsSync(recycleMarkerPath);
     const hasRecycleLaunchInProgress = (): boolean => recycleLaunchRequested || hasRecycleLaunchMarker();
@@ -427,6 +432,19 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         startResetWindow(true);
+    };
+    const tryResumeActiveShutdownCommand = (): void => {
+        if (
+            !getActiveShutdownCommand() ||
+            stopInFlight ||
+            server.playerRegistry.count() > 0 ||
+            !maintenanceStateInitialized ||
+            isMaintenanceActive()
+        ) {
+            return;
+        }
+
+        void requestStop('command_shutdown_requested');
     };
     const clearAllIdleStopTimers = (): void => {
         clearZeroTimer();
@@ -605,6 +623,16 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         if (
+            getActiveShutdownCommand() &&
+            server.playerRegistry.count() === 0 &&
+            maintenanceStateInitialized &&
+            !isMaintenanceActive()
+        ) {
+            tryResumeActiveShutdownCommand();
+            return;
+        }
+
+        if (
             hasPendingImmediateRecycle() &&
             server.playerRegistry.count() === 0 &&
             maintenanceStateInitialized &&
@@ -632,7 +660,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         ensureFirstViewerWindow();
-        if (currentDesiredState.shutdownRequested && server.playerRegistry.count() === 0) {
+        if (
+            (currentDesiredState.shutdownRequested || getActiveShutdownCommand()) &&
+            server.playerRegistry.count() === 0
+        ) {
             void requestStop('agent_shutdown_requested');
         }
     };
@@ -973,12 +1004,63 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         stopInFlight = true;
         try {
+            const commandToStart = getActiveShutdownCommand();
+            if (commandToStart && options.instanceAgentClient) {
+                try {
+                    await options.instanceAgentClient.startCommand(commandToStart, {
+                        occurredAtUtc: new Date().toISOString()
+                    });
+                    refreshActiveCommand();
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    log(
+                        `[idle-stop] Failed to mark shutdown command ${commandToStart.instanceCommandId} as started: ${message}`
+                    );
+                }
+            }
+
             publishStatus('stopping', mapStopReason(reason));
             log(`[idle-stop] Triggering stop (reason=${reason}).`);
             await stopCurrentInstance(awsCliPath, dryRun, log);
+            const commandToComplete = getActiveShutdownCommand();
+            if (commandToComplete && options.instanceAgentClient) {
+                try {
+                    await options.instanceAgentClient.completeCommand(commandToComplete, {
+                        occurredAtUtc: new Date().toISOString(),
+                        resultJson: JSON.stringify({
+                            reason
+                        })
+                    });
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    log(
+                        `[idle-stop] Failed to complete shutdown command ${commandToComplete.instanceCommandId}: ${message}`
+                    );
+                } finally {
+                    refreshActiveCommand();
+                }
+            }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             log(`[idle-stop] Stop request failed: ${message}`);
+            const commandToFail = getActiveShutdownCommand();
+            if (commandToFail && options.instanceAgentClient) {
+                try {
+                    await options.instanceAgentClient.failCommand(commandToFail, {
+                        failureCode: 'shutdown_request_failed',
+                        failureMessage: message,
+                        occurredAtUtc: new Date().toISOString()
+                    });
+                } catch (reportError) {
+                    const reportMessage =
+                        reportError instanceof Error ? reportError.message : String(reportError);
+                    log(
+                        `[idle-stop] Failed to report shutdown command failure for ${commandToFail.instanceCommandId}: ${reportMessage}`
+                    );
+                } finally {
+                    refreshActiveCommand();
+                }
+            }
             publishStatus('idle_shutdown_pending', 'stop_request_failed');
             scheduleRetryIfStillIdle();
         } finally {
@@ -1031,6 +1113,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
+        if (maintenanceStateInitialized && !isMaintenanceActive() && getActiveShutdownCommand()) {
+            void requestStop('command_shutdown_requested');
+            return;
+        }
+
         scheduleStop('grace-after-last-viewer', graceMs);
     };
 
@@ -1048,7 +1135,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     return;
                 }
 
-                if (!isRecycleToWarmCommand(command)) {
+                if (!isRecycleToWarmCommand(command) && !isShutdownCommand(command)) {
                     log(
                         `[idle-stop] Unsupported instance command ${command.instanceCommandId} (${command.commandType}). Reporting failure.`
                     );
@@ -1095,18 +1182,27 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                         occurredAtUtc: new Date().toISOString()
                     });
                     refreshActiveCommand();
-                    hasSeenViewer = true;
+                    if (isRecycleToWarmCommand(command)) {
+                        hasSeenViewer = true;
+                    }
                     if (server.playerRegistry.count() === 0) {
+                        if (isShutdownCommand(command)) {
+                            void requestStop('command_shutdown_requested');
+                            return;
+                        }
+
                         tryResumeActiveRecycleCommand();
                     } else {
                         log(
-                            `[idle-stop] Recycle command ${command.instanceCommandId} acknowledged while viewers are still connected. Waiting for disconnect before recycle.`
+                            isShutdownCommand(command)
+                                ? `[idle-stop] Shutdown command ${command.instanceCommandId} acknowledged while viewers are still connected. Waiting for disconnect before stop.`
+                                : `[idle-stop] Recycle command ${command.instanceCommandId} acknowledged while viewers are still connected. Waiting for disconnect before recycle.`
                         );
                     }
                 } catch (error) {
                     const message = error instanceof Error ? error.message : String(error);
                     log(
-                        `[idle-stop] Failed to acknowledge recycle command ${command.instanceCommandId}: ${message}`
+                        `${isShutdownCommand(command) ? '[idle-stop] Failed to acknowledge shutdown command' : '[idle-stop] Failed to acknowledge recycle command'} ${command.instanceCommandId}: ${message}`
                     );
                 }
             })();
@@ -1122,6 +1218,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         maintenanceStateInitialized = true;
         ensureFirstViewerWindow();
         tryResumeActiveRecycleCommand();
+        tryResumeActiveShutdownCommand();
     }
 
     if (desiredStatePath.length > 0 && desiredStateRefreshMs > 0) {
@@ -1133,4 +1230,5 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     }
 
     tryResumeActiveRecycleCommand();
+    tryResumeActiveShutdownCommand();
 }
