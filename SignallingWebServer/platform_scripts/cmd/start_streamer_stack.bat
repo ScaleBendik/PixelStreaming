@@ -148,9 +148,8 @@ if defined WATCHDOG_WILBUR_COMMANDLINE_PATTERN set "WILBUR_COMMANDLINE_PATTERN=%
 set "WILBUR_LAUNCHER_PATTERN=start_dev_turn.bat"
 set "UNREAL_PROCESS_NAME=ScaleWorld.exe"
 if defined SCALEWORLD_EXECUTABLE_NAME set "UNREAL_PROCESS_NAME=%SCALEWORLD_EXECUTABLE_NAME%"
-for %%I in ("%UNREAL_PROCESS_NAME%") do set "UNREAL_PROCESS_BASENAME=%%~nI"
-set "UNREAL_PROCESS_NAME_PATTERN=%UNREAL_PROCESS_BASENAME%*"
 set "UNREAL_LAUNCHER_PATTERN=start_unreal.bat"
+set "TEST_UNREAL_RUNTIME_SCRIPT=%SCRIPT_DIR%..\powershell\test_scaleworld_runtime_present.ps1"
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$wilbur = Get-CimInstance Win32_Process | Where-Object { ($_.Name -ieq '%WILBUR_PROCESS_NAME%' -and $_.CommandLine -like '*%WILBUR_COMMANDLINE_PATTERN%*') -or ($_.Name -ieq 'cmd.exe' -and $_.CommandLine -like '*%WILBUR_LAUNCHER_PATTERN%*') } | Select-Object -First 1; if ($wilbur) { exit 0 } else { exit 1 }"
 if errorlevel 1 (
@@ -175,7 +174,6 @@ if /i "%STACK_START_UNREAL%"=="true" if /i not "%STACK_LAUNCH_UNREAL_BEFORE_WILB
   call :launch_unreal_if_needed
   if errorlevel 1 exit /b 1
 )
-
 if /i "%STACK_START_WATCHDOG%"=="true" (
   if exist "%SCRIPT_DIR%start_watchdog.bat" (
     powershell -NoProfile -ExecutionPolicy Bypass -Command "$currentPid = $PID; $watchdog = Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $currentPid -and (($_.Name -ieq 'powershell.exe' -and $_.CommandLine -like '*watchdog.ps1*') -or ($_.Name -ieq 'cmd.exe' -and $_.CommandLine -like '*start_watchdog.bat*')) } | Select-Object -First 1; if ($watchdog) { exit 0 } else { exit 1 }"
@@ -283,7 +281,11 @@ goto resolve_deployment_track_retry
 
 :launch_unreal_if_needed
 if exist "%SCRIPT_DIR%start_unreal.bat" (
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "$currentPid = $PID; $unreal = Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $currentPid -and (($_.Name -like '%UNREAL_PROCESS_NAME_PATTERN%') -or ($_.Name -ieq 'cmd.exe' -and $_.CommandLine -like '*%UNREAL_LAUNCHER_PATTERN%*') -or ($_.Name -ieq 'powershell.exe' -and $_.CommandLine -like '*start_scaleworld.ps1*')) } | Select-Object -First 1; if ($unreal) { exit 0 } else { exit 1 }"
+  if not exist "%TEST_UNREAL_RUNTIME_SCRIPT%" (
+    echo ERROR: Unreal runtime detection script not found at "%TEST_UNREAL_RUNTIME_SCRIPT%".
+    exit /b 1
+  )
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%TEST_UNREAL_RUNTIME_SCRIPT%" -IncludeLaunchers
   if errorlevel 1 (
     timeout /t %STACK_UNREAL_START_DELAY_SECONDS% /nobreak >nul
     echo Starting Unreal runtime...
@@ -299,14 +301,7 @@ if exist "%SCRIPT_DIR%start_unreal.bat" (
   echo WARNING: start_unreal.bat not found in "%SCRIPT_DIR%". Unreal launch skipped.
 )
 exit /b 0
-
 :wait_for_wilbur_ready
 echo Waiting for Wilbur readiness on %STACK_WILBUR_READY_HOST%:%STACK_WILBUR_READY_PORT%...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$hostName = '%STACK_WILBUR_READY_HOST%'; $port = %STACK_WILBUR_READY_PORT%; $deadline = (Get-Date).AddSeconds(%STACK_WILBUR_READY_TIMEOUT_SECONDS%); while ((Get-Date) -lt $deadline) { $client = $null; try { $client = New-Object System.Net.Sockets.TcpClient; $async = $client.BeginConnect($hostName, $port, $null, $null); if ($async.AsyncWaitHandle.WaitOne(1000)) { $client.EndConnect($async); $client.Close(); exit 0 } } catch { } finally { if ($client) { $client.Close() } } Start-Sleep -Milliseconds 500 } exit 1"
 exit /b %errorlevel%
-
-
-
-
-
-

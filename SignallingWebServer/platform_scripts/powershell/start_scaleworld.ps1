@@ -17,11 +17,19 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$helperScriptPath = Join-Path $PSScriptRoot 'scaleworld_process_helpers.ps1'
+if (-not (Test-Path -LiteralPath $helperScriptPath)) {
+    throw "ScaleWorld process helper '$helperScriptPath' was not found."
+}
+. $helperScriptPath
+
 $installRoot = Resolve-Path -Path $InstallRoot -ErrorAction Stop
 $processPath = Join-Path $installRoot $ExecutableName
 if (-not (Test-Path -LiteralPath $processPath)) {
     throw "ScaleWorld executable not found at '$processPath'."
 }
+
+$runtimeMatcher = Get-ScaleWorldRuntimeProcessMatcher -InstallRoot $installRoot.Path -ExecutableName $ExecutableName -RuntimeProcessPattern $RuntimeProcessPattern
 
 $arguments = @(
     "-PixelStreamingEncoderCodec=$EncoderCodec",
@@ -45,18 +53,21 @@ if ($AdditionalArgs) {
 
 $process = Start-Process -FilePath $processPath -ArgumentList $arguments -WorkingDirectory $installRoot -PassThru
 Write-Output ("Running: {0} {1}" -f $processPath, ($arguments -join ' '))
-Write-Output ("Started ScaleWorld wrapper process with PID {0}" -f $process.Id)
+Write-Output ("Started ScaleWorld launcher process with PID {0}" -f $process.Id)
+Write-Output ("Monitoring ScaleWorld runtime matcher installRoot='{0}' namePatterns='{1}'" -f $runtimeMatcher.InstallRoot, ($runtimeMatcher.NamePatterns -join ';'))
 
 $wrapperExited = $false
 $deadline = (Get-Date).AddSeconds($RuntimeProcessWaitSeconds)
 $matchedRuntimeProcess = $null
 while ((Get-Date) -lt $deadline) {
+    $launchedProcess = Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $process.Id) | Select-Object -First 1
+    if ($launchedProcess -and (Test-ScaleWorldRuntimeProcessMatch -Process $launchedProcess -Matcher $runtimeMatcher)) {
+        $matchedRuntimeProcess = $launchedProcess
+        break
+    }
+
     $wrapperAlive = Get-Process -Id $process.Id -ErrorAction SilentlyContinue
-    $runtimeProcesses = @(
-        Get-CimInstance Win32_Process | Where-Object {
-            $_.ProcessId -ne $process.Id -and [string]$_.Name -like $RuntimeProcessPattern
-        }
-    )
+    $runtimeProcesses = @(Get-ScaleWorldRuntimeProcesses -ExcludeProcessIds @($process.Id) -Matcher $runtimeMatcher)
 
     if ($runtimeProcesses.Count -gt 0) {
         $matchedRuntimeProcess = $runtimeProcesses | Select-Object -First 1
@@ -73,5 +84,5 @@ while ((Get-Date) -lt $deadline) {
 if ($matchedRuntimeProcess) {
     Write-Output ("Detected ScaleWorld runtime process {0} (PID {1})" -f $matchedRuntimeProcess.Name, $matchedRuntimeProcess.ProcessId)
 } elseif ($wrapperExited) {
-    throw "ScaleWorld wrapper exited before a runtime process matching '$RuntimeProcessPattern' appeared."
+    throw "ScaleWorld launcher exited before a runtime process matching '$($runtimeMatcher.NamePatterns -join ';')' appeared."
 }
