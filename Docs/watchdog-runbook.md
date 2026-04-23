@@ -1,6 +1,6 @@
 # Runtime Watchdog
 
-Last updated: 2026-03-09
+Last updated: 2026-04-23
 
 ## Purpose
 
@@ -97,7 +97,7 @@ C:\PixelStreaming\PixelStreaming\SignallingWebServer\platform_scripts\cmd\start_
 
 Default behavior from `start_watchdog.bat`:
 
-- Unreal process: `ScaleWorld`
+- Unreal process: `ScaleWorld-Win64-*`
 - Wilbur command-line pattern: `index.js`
 - terminate matched processes before restart: `true`
 - restart command: `start_streamer_stack.bat --recovery`
@@ -196,10 +196,11 @@ Operational note:
 4. Keep legacy crash tooling only until watchdog restart flow is verified end-to-end in dev.
 5. Recovery should restart the whole stack through `start_streamer_stack.bat --recovery`, not only one process.
 6. `start_dev_turn.bat` reloads TURN credentials and the connect-ticket signing key on restart, so recovery should continue to flow through that script.
-7. Hung Unreal detection depends on Wilbur writing a fresh local health file from real streamer ping traffic.
-8. When both processes are still present, the watchdog now requires the old Unreal CPU-stall signal as corroboration before it restarts the stack. This keeps the long-serving production heuristic in place while avoiding duplicate launches and reducing false positives from transient signalling issues.
-9. The first missing-process grace now applies only to initial watchdog boot, not to subsequent recoveries. Subsequent recoveries rely on the normal post-restart grace window instead.
-10. The current empirically stable defaults are:
+7. Recovery-mode stack launches keep watchdog supervision enabled; if Wilbur or Unreal startup fails, the launcher schedules the watchdog before returning failure.
+8. Hung Unreal detection depends on Wilbur writing a fresh local health file from real streamer ping traffic.
+9. When both processes are still present, the watchdog now requires the old Unreal CPU-stall signal as corroboration before it restarts the stack. This keeps the long-serving production heuristic in place while avoiding duplicate launches and reducing false positives from transient signalling issues.
+10. The first missing-process grace now applies only to initial watchdog boot, not to subsequent recoveries. Subsequent recoveries rely on the normal post-restart grace window instead.
+11. The current empirically stable defaults are:
    - Task Scheduler startup delay: `20s`
    - Task Scheduler retry on failure: every `60s`, up to `30` attempts
    - watchdog process startup grace: `15s`

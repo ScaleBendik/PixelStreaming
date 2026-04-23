@@ -292,6 +292,7 @@ Current lane selection:
 Recovery flow:
 
 - watchdog restart command points to `start_streamer_stack.bat --recovery`
+- recovery-mode stack launches keep watchdog supervision enabled even if Wilbur or Unreal startup fails
 - Wilbur startup reloads TURN credentials and connect-ticket signing key from SSM
 
 ### Runtime Status Ownership (Implemented)

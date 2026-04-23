@@ -3,7 +3,7 @@ param(
     [string]$InstallRoot = $(if ($env:SCALEWORLD_INSTALL_ROOT) { $env:SCALEWORLD_INSTALL_ROOT } else { 'C:\PixelStreaming\WindowsNoEditor' }),
     [string]$ExecutableName = $(if ($env:SCALEWORLD_EXECUTABLE_NAME) { $env:SCALEWORLD_EXECUTABLE_NAME } else { 'ScaleWorld.exe' }),
     [string]$RuntimeProcessPattern = $(if ($env:SCALEWORLD_RUNTIME_PROCESS_PATTERN) { $env:SCALEWORLD_RUNTIME_PROCESS_PATTERN } else { '' }),
-    [int]$RuntimeProcessWaitSeconds = $(if ($env:SCALEWORLD_RUNTIME_PROCESS_WAIT_SECONDS) { [int]$env:SCALEWORLD_RUNTIME_PROCESS_WAIT_SECONDS } else { 20 }),
+    [int]$RuntimeProcessWaitSeconds = $(if ($env:SCALEWORLD_RUNTIME_PROCESS_WAIT_SECONDS) { [int]$env:SCALEWORLD_RUNTIME_PROCESS_WAIT_SECONDS } else { 120 }),
     [string]$PixelStreamingIp = $(if ($env:SCALEWORLD_PIXEL_STREAMING_IP) { $env:SCALEWORLD_PIXEL_STREAMING_IP } else { 'localhost' }),
     [int]$PixelStreamingPort = $(if ($env:SCALEWORLD_PIXEL_STREAMING_PORT) { [int]$env:SCALEWORLD_PIXEL_STREAMING_PORT } else { 8888 }),
     [string]$EncoderCodec = $(if ($env:SCALEWORLD_ENCODER_CODEC) { $env:SCALEWORLD_ENCODER_CODEC } else { 'vp9' }),
@@ -97,6 +97,15 @@ $launcherState = if ($launcherProcess) {
     'launcher process exited before a runtime appeared'
 } else {
     'launcher process state could not be determined'
+}
+
+if ($launcherProcess) {
+    try {
+        Stop-Process -Id $process.Id -Force -ErrorAction Stop
+        Write-Output ("Stopped ScaleWorld launcher process PID {0} after runtime startup timeout." -f $process.Id)
+    } catch {
+        Write-Warning ("Failed to stop ScaleWorld launcher process PID {0} after startup timeout: {1}" -f $process.Id, $_.Exception.Message)
+    }
 }
 
 throw "ScaleWorld runtime process matching '$($runtimeMatcher.NamePatterns -join ';')' did not appear within $RuntimeProcessWaitSeconds seconds; $launcherState."

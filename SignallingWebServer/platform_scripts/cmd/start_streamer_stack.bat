@@ -60,7 +60,6 @@ if not defined SCALEWORLD_DATA_DISK_NUMBER set "SCALEWORLD_DATA_DISK_NUMBER=1"
 
 if /i "%~1"=="--recovery" (
   set "STACK_MODE=recovery"
-  set "STACK_START_WATCHDOG=false"
   shift
 )
 
@@ -73,6 +72,7 @@ if /i "%~1"=="--validation" (
 
 if not defined STACK_WATCHDOG_START_DELAY_SECONDS set "STACK_WATCHDOG_START_DELAY_SECONDS=3"
 if not defined STACK_UNREAL_START_DELAY_SECONDS set "STACK_UNREAL_START_DELAY_SECONDS=1"
+if not defined SCALEWORLD_RUNTIME_PROCESS_WAIT_SECONDS set "SCALEWORLD_RUNTIME_PROCESS_WAIT_SECONDS=120"
 if not defined STACK_WILBUR_READY_HOST set "STACK_WILBUR_READY_HOST=127.0.0.1"
 if not defined STACK_WILBUR_READY_PORT (
   if defined SCALEWORLD_PIXEL_STREAMING_PORT (
@@ -87,6 +87,7 @@ if not defined WATCHDOG_RESTART_COMMAND set "WATCHDOG_RESTART_COMMAND=""%SCRIPT_
 if not defined WATCHDOG_TERMINATE_MATCHED_PROCESSES set "WATCHDOG_TERMINATE_MATCHED_PROCESSES=true"
 
 if /i "%STACK_MODE%"=="recovery" set "STACK_RUN_UNREAL_UPDATE_CHECK=false"
+set "STACK_LAUNCH_EXIT=0"
 
 if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_BOOT_GIT_SYNC%"=="true" (
   call :sync_repo_before_stack
@@ -161,18 +162,20 @@ if errorlevel 1 (
 
 if /i "%STACK_START_UNREAL%"=="true" if /i "%STACK_LAUNCH_UNREAL_BEFORE_WILBUR%"=="true" (
   call :launch_unreal_if_needed
-  if errorlevel 1 exit /b 1
+  if errorlevel 1 set "STACK_LAUNCH_EXIT=1"
 )
 
-if /i "%STACK_START_UNREAL%"=="true" if /i not "%STACK_LAUNCH_UNREAL_BEFORE_WILBUR%"=="true" (
+if /i "%STACK_START_UNREAL%"=="true" if /i not "%STACK_LAUNCH_UNREAL_BEFORE_WILBUR%"=="true" if "!STACK_LAUNCH_EXIT!"=="0" (
   call :wait_for_wilbur_ready
   if errorlevel 1 (
     echo ERROR: Wilbur did not become ready on %STACK_WILBUR_READY_HOST%:%STACK_WILBUR_READY_PORT% within %STACK_WILBUR_READY_TIMEOUT_SECONDS% seconds.
-    exit /b 1
+    set "STACK_LAUNCH_EXIT=1"
   )
 
-  call :launch_unreal_if_needed
-  if errorlevel 1 exit /b 1
+  if "!STACK_LAUNCH_EXIT!"=="0" (
+    call :launch_unreal_if_needed
+    if errorlevel 1 set "STACK_LAUNCH_EXIT=1"
+  )
 )
 if /i "%STACK_START_WATCHDOG%"=="true" (
   if exist "%SCRIPT_DIR%start_watchdog.bat" (
@@ -186,6 +189,11 @@ if /i "%STACK_START_WATCHDOG%"=="true" (
   ) else (
     echo WARNING: start_watchdog.bat not found in "%SCRIPT_DIR%". Watchdog launch skipped.
   )
+)
+
+if not "%STACK_LAUNCH_EXIT%"=="0" (
+  echo ERROR: Stack launch completed with component startup failures. Watchdog was scheduled when enabled for recovery.
+  exit /b %STACK_LAUNCH_EXIT%
 )
 
 echo Stack launch completed.
