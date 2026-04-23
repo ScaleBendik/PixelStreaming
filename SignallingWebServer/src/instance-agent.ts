@@ -297,6 +297,21 @@ function isTerminalCommandStatus(value: string | null | undefined): boolean {
     );
 }
 
+function normalizeOpenCommandExecutionStatus(
+    value: string | null | undefined
+): InstanceAgentCommandExecutionStatus | null {
+    const normalized = normalizeOptionalText(value)?.toLowerCase();
+    if (normalized === 'acked') {
+        return 'acked';
+    }
+
+    if (normalized === 'running') {
+        return 'running';
+    }
+
+    return null;
+}
+
 function isRecycleToWarmCommand(
     command:
         | Pick<InstanceAgentCommand, 'commandType'>
@@ -762,6 +777,14 @@ export function wireInstanceAgent(
             log(
                 `[instance-agent] Command acknowledged: id=${command.instanceCommandId}, type=${command.commandType}, status=${result.commandStatus}.`
             );
+        } else {
+            const recoveredStatus = normalizeOpenCommandExecutionStatus(result.commandStatus);
+            if (recoveredStatus) {
+                persistActiveCommand(command, recoveredStatus, result.recordedAtUtc);
+                log(
+                    `[instance-agent] Recovered open command state during acknowledgement: id=${command.instanceCommandId}, type=${command.commandType}, status=${result.commandStatus}.`
+                );
+            }
         }
 
         return result;
@@ -793,6 +816,11 @@ export function wireInstanceAgent(
             });
             log(
                 `[instance-agent] Command started: id=${command.instanceCommandId}, type=${command.commandType}, status=${result.commandStatus}.`
+            );
+        } else if (normalizeOpenCommandExecutionStatus(result.commandStatus) === 'running') {
+            persistActiveCommand(command, 'running', result.recordedAtUtc);
+            log(
+                `[instance-agent] Recovered running command state during start: id=${command.instanceCommandId}, type=${command.commandType}, status=${result.commandStatus}.`
             );
         }
 
