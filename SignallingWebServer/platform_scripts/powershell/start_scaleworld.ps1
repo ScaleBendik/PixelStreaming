@@ -23,13 +23,22 @@ if (-not (Test-Path -LiteralPath $helperScriptPath)) {
 }
 . $helperScriptPath
 
-$installRoot = Resolve-Path -Path $InstallRoot -ErrorAction Stop
-$processPath = Join-Path $installRoot $ExecutableName
+$installRootEntry = Resolve-Path -LiteralPath $InstallRoot -ErrorAction Stop | Select-Object -First 1
+$installRootPath = if ($installRootEntry -is [System.Management.Automation.PathInfo]) {
+    $installRootEntry.ProviderPath
+} else {
+    [string]$installRootEntry
+}
+if ([string]::IsNullOrWhiteSpace($installRootPath)) {
+    throw "ScaleWorld install root '$InstallRoot' could not be resolved to a filesystem path."
+}
+
+$processPath = Join-Path $installRootPath $ExecutableName
 if (-not (Test-Path -LiteralPath $processPath)) {
     throw "ScaleWorld executable not found at '$processPath'."
 }
 
-$runtimeMatcher = Get-ScaleWorldRuntimeProcessMatcher -InstallRoot $installRoot.Path -ExecutableName $ExecutableName -RuntimeProcessPattern $RuntimeProcessPattern
+$runtimeMatcher = Get-ScaleWorldRuntimeProcessMatcher -InstallRoot $installRootPath -ExecutableName $ExecutableName -RuntimeProcessPattern $RuntimeProcessPattern
 
 $arguments = @(
     "-PixelStreamingEncoderCodec=$EncoderCodec",
@@ -51,7 +60,7 @@ if ($AdditionalArgs) {
     $arguments += $AdditionalArgs
 }
 
-$process = Start-Process -FilePath $processPath -ArgumentList $arguments -WorkingDirectory $installRoot.Path -PassThru
+$process = Start-Process -FilePath $processPath -ArgumentList $arguments -WorkingDirectory $installRootPath -PassThru
 Write-Output ("Running: {0} {1}" -f $processPath, ($arguments -join ' '))
 Write-Output ("Started ScaleWorld launcher process with PID {0}" -f $process.Id)
 Write-Output ("Monitoring ScaleWorld runtime matcher installRoot='{0}' namePatterns='{1}'" -f $runtimeMatcher.InstallRoot, ($runtimeMatcher.NamePatterns -join ';'))

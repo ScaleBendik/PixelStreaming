@@ -29,10 +29,16 @@ if ($IncludeLaunchers.IsPresent) {
     $launcherCutoffUtc = [DateTimeOffset]::UtcNow.AddSeconds(-[Math]::Abs($LauncherGraceSeconds))
     $launchers = @(
         Get-CimInstance Win32_Process | Where-Object {
-            $_.ProcessId -ne $PID -and
-            $_.ProcessId -ne $ExcludeProcessId -and
-            [System.Management.ManagementDateTimeConverter]::ToDateTime($_.CreationDate).ToUniversalTime() -ge $launcherCutoffUtc.UtcDateTime -and
-            (
+            if ($_.ProcessId -eq $PID -or $_.ProcessId -eq $ExcludeProcessId) {
+                return $false
+            }
+
+            $createdAtUtc = Get-ScaleWorldProcessCreationUtcDateTime -Process $_
+            if ($null -eq $createdAtUtc -or $createdAtUtc -lt $launcherCutoffUtc.UtcDateTime) {
+                return $false
+            }
+
+            return (
                 ($_.Name -ieq 'cmd.exe' -and ([string]$_.CommandLine) -like '*start_unreal.bat*') -or
                 ($_.Name -ieq 'powershell.exe' -and ([string]$_.CommandLine) -like '*start_scaleworld.ps1*')
             )

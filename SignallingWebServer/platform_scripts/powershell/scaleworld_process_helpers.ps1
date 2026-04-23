@@ -13,6 +13,24 @@ function Add-ScaleWorldUniqueString {
     }
 }
 
+function Get-ScaleWorldProcessCreationUtcDateTime {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Process
+    )
+
+    $creationDate = [string]$Process.CreationDate
+    if ([string]::IsNullOrWhiteSpace($creationDate)) {
+        return $null
+    }
+
+    try {
+        return [System.Management.ManagementDateTimeConverter]::ToDateTime($creationDate).ToUniversalTime()
+    } catch {
+        return $null
+    }
+}
+
 function Normalize-ScaleWorldLikePattern {
     param([string]$Pattern)
 
