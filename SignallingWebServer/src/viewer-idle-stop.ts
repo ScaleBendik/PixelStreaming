@@ -564,9 +564,16 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         if (recycleRequestedTokenChanged) {
             if (currentDesiredState.recycleRequestedToken) {
                 pendingImmediateRecycleToken = currentDesiredState.recycleRequestedToken;
-                log(
-                    `[idle-stop] Immediate recycle requested by desired state token ${currentDesiredState.recycleRequestedToken}.`
-                );
+                if (server.playerRegistry.count() === 0 && !hasSeenViewer) {
+                    hasSeenViewer = true;
+                    log(
+                        `[idle-stop] Recycle request token ${currentDesiredState.recycleRequestedToken} arrived with no active viewers. Forcing post-session recycle before reuse.`
+                    );
+                } else {
+                    log(
+                        `[idle-stop] Immediate recycle requested by desired state token ${currentDesiredState.recycleRequestedToken}.`
+                    );
+                }
             } else {
                 pendingImmediateRecycleToken = null;
             }
