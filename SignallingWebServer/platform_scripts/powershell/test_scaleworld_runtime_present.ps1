@@ -20,7 +20,8 @@ if ($ExcludeProcessId -gt 0) {
     $excludeProcessIds.Add($ExcludeProcessId) | Out-Null
 }
 
-$matches = @(Get-ScaleWorldRuntimeProcesses -ExcludeProcessIds $excludeProcessIds.ToArray())
+$runtimeMatcher = Get-ScaleWorldRuntimeProcessMatcher -IncludeLauncherExecutable $false
+$matches = @(Get-ScaleWorldRuntimeProcesses -ExcludeProcessIds $excludeProcessIds.ToArray() -Matcher $runtimeMatcher)
 if ($matches.Count -gt 0) {
     exit 0
 }

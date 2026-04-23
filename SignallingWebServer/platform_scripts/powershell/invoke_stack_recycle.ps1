@@ -289,6 +289,28 @@ function Wait-ForUnrealAbsence {
     return $remaining.Count -eq 0
 }
 
+function Wait-ForUnrealPresence {
+    param(
+        [object]$Matcher,
+        [int]$TimeoutSeconds
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $matches = Get-RecycleUnrealProcessMatches -Matcher $Matcher
+        if ($matches.Count -gt 0) {
+            $summary = ($matches | ForEach-Object { Format-RecycleProcessSummary -Process $_ }) -join ', '
+            Write-RecycleLog "Detected Unreal runtime after restart: $summary."
+            return $true
+        }
+
+        Start-Sleep -Milliseconds 500
+    }
+
+    Write-RecycleLog "Unreal runtime did not appear within $TimeoutSeconds seconds after restart." 'WARN'
+    return $false
+}
+
 $stackLauncher = Join-Path $RepoRoot 'platform_scripts\cmd\start_streamer_stack.bat'
 $unrealExecutableName = if (-not [string]::IsNullOrWhiteSpace($env:SCALEWORLD_EXECUTABLE_NAME)) {
     [System.IO.Path]::GetFileName($env:SCALEWORLD_EXECUTABLE_NAME)
@@ -302,18 +324,18 @@ $unrealInstallRoot = if (-not [string]::IsNullOrWhiteSpace($env:SCALEWORLD_INSTA
 }
 $unrealRuntimeProcessPattern = if (-not [string]::IsNullOrWhiteSpace($env:SCALEWORLD_RUNTIME_PROCESS_PATTERN)) {
     $env:SCALEWORLD_RUNTIME_PROCESS_PATTERN
-} elseif (-not [string]::IsNullOrWhiteSpace($env:SCALEWORLD_EXECUTABLE_NAME)) {
-    [System.IO.Path]::GetFileNameWithoutExtension($env:SCALEWORLD_EXECUTABLE_NAME) + '*'
 } else {
-    'ScaleWorld*'
+    ''
 }
-$scaleWorldRuntimeMatcher = Get-ScaleWorldRuntimeProcessMatcher -InstallRoot $unrealInstallRoot -ExecutableName $unrealExecutableName -RuntimeProcessPattern $unrealRuntimeProcessPattern
+$scaleWorldRuntimeMatcher = Get-ScaleWorldRuntimeProcessMatcher -InstallRoot $unrealInstallRoot -ExecutableName $unrealExecutableName -RuntimeProcessPattern $unrealRuntimeProcessPattern -IncludeLauncherExecutable $true
+$scaleWorldStartupMatcher = Get-ScaleWorldRuntimeProcessMatcher -InstallRoot $unrealInstallRoot -ExecutableName $unrealExecutableName -RuntimeProcessPattern $unrealRuntimeProcessPattern -IncludeLauncherExecutable $false
 
 try {
     Write-RecycleLog "Resolved recycle repo root to '$RepoRoot'."
     Write-RecycleLog "Recycle log path is '$script:RecycleLogPath'."
     Write-RecycleLog "Resolved stack launcher to '$stackLauncher'."
     Write-RecycleLog "Resolved Unreal matcher installRoot='$($scaleWorldRuntimeMatcher.InstallRoot)' namePatterns='$($scaleWorldRuntimeMatcher.NamePatterns -join ';')' commandLinePatterns='$($scaleWorldRuntimeMatcher.CommandLinePatterns -join ';')'."
+    Write-RecycleLog "Resolved Unreal startup matcher installRoot='$($scaleWorldStartupMatcher.InstallRoot)' namePatterns='$($scaleWorldStartupMatcher.NamePatterns -join ';')' commandLinePatterns='$($scaleWorldStartupMatcher.CommandLinePatterns -join ';')'."
 
     if (-not (Test-Path -LiteralPath $stackLauncher)) {
         throw "Stack launcher '$stackLauncher' was not found."
@@ -352,10 +374,11 @@ try {
 
     $stackDetected =
         (Wait-ForWilbur -TimeoutSeconds $WaitForWilburTimeoutSeconds) -and
-        (Wait-ForWilburReadiness -TimeoutSeconds $WaitForWilburTimeoutSeconds)
+        (Wait-ForWilburReadiness -TimeoutSeconds $WaitForWilburTimeoutSeconds) -and
+        (Wait-ForUnrealPresence -Matcher $scaleWorldStartupMatcher -TimeoutSeconds $WaitForWilburTimeoutSeconds)
 
     if (-not $stackDetected) {
-        throw "Stack recycle did not reach Wilbur readiness within $WaitForWilburTimeoutSeconds seconds."
+        throw "Stack recycle did not reach Wilbur readiness and Unreal runtime presence within $WaitForWilburTimeoutSeconds seconds."
     }
 
     $stoppedSummary = if ($stoppedProcesses.Count -gt 0) { $stoppedProcesses -join ', ' } else { '(none)' }

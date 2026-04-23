@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$UnrealProcessName = $(if ($env:WATCHDOG_UNREAL_PROCESS_NAME) { $env:WATCHDOG_UNREAL_PROCESS_NAME } else { 'ScaleWorld*' }),
+    [string]$UnrealProcessName = $(if ($env:WATCHDOG_UNREAL_PROCESS_NAME) { $env:WATCHDOG_UNREAL_PROCESS_NAME } elseif ($env:SCALEWORLD_RUNTIME_PROCESS_PATTERN) { $env:SCALEWORLD_RUNTIME_PROCESS_PATTERN } else { 'ScaleWorld-Win64-*' }),
     [string]$UnrealCommandLinePattern = $env:WATCHDOG_UNREAL_COMMANDLINE_PATTERN,
     [string]$WilburProcessName = $(if ($env:WATCHDOG_WILBUR_PROCESS_NAME) { $env:WATCHDOG_WILBUR_PROCESS_NAME } else { 'node.exe' }),
     [string]$WilburCommandLinePattern = $(if ($env:WATCHDOG_WILBUR_COMMANDLINE_PATTERN) { $env:WATCHDOG_WILBUR_COMMANDLINE_PATTERN } else { 'index.js' }),

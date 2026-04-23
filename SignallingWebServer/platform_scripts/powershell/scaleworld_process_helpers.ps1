@@ -50,7 +50,8 @@ function Get-ScaleWorldRuntimeProcessMatcher {
     param(
         [string]$InstallRoot = $(if ($env:SCALEWORLD_INSTALL_ROOT) { $env:SCALEWORLD_INSTALL_ROOT } else { 'C:\PixelStreaming\WindowsNoEditor' }),
         [string]$ExecutableName = $(if ($env:SCALEWORLD_EXECUTABLE_NAME) { $env:SCALEWORLD_EXECUTABLE_NAME } else { 'ScaleWorld.exe' }),
-        [string]$RuntimeProcessPattern = $(if ($env:SCALEWORLD_RUNTIME_PROCESS_PATTERN) { $env:SCALEWORLD_RUNTIME_PROCESS_PATTERN } else { 'ScaleWorld*' })
+        [string]$RuntimeProcessPattern = $(if ($env:SCALEWORLD_RUNTIME_PROCESS_PATTERN) { $env:SCALEWORLD_RUNTIME_PROCESS_PATTERN } else { '' }),
+        [bool]$IncludeLauncherExecutable = $true
     )
 
     $resolvedInstallRoot = if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
@@ -79,11 +80,17 @@ function Get-ScaleWorldRuntimeProcessMatcher {
 
     $namePatterns = [System.Collections.Generic.List[string]]::new()
     Add-ScaleWorldUniqueString -Values $namePatterns -Value (Normalize-ScaleWorldLikePattern -Pattern $RuntimeProcessPattern)
-    Add-ScaleWorldUniqueString -Values $namePatterns -Value (Normalize-ScaleWorldLikePattern -Pattern $resolvedBaseName)
+    if ($IncludeLauncherExecutable) {
+        Add-ScaleWorldUniqueString -Values $namePatterns -Value (Normalize-ScaleWorldLikePattern -Pattern $resolvedBaseName)
+    }
+    Add-ScaleWorldUniqueString -Values $namePatterns -Value (Normalize-ScaleWorldLikePattern -Pattern ($resolvedBaseName + '-Win64-*'))
     Add-ScaleWorldUniqueString -Values $namePatterns -Value (Normalize-ScaleWorldLikePattern -Pattern ($resolvedBaseName + '-Win64-Shipping'))
 
     $commandLinePatterns = [System.Collections.Generic.List[string]]::new()
-    Add-ScaleWorldUniqueString -Values $commandLinePatterns -Value ('*' + $resolvedExecutableName + '*')
+    if ($IncludeLauncherExecutable) {
+        Add-ScaleWorldUniqueString -Values $commandLinePatterns -Value ('*' + $resolvedExecutableName + '*')
+    }
+    Add-ScaleWorldUniqueString -Values $commandLinePatterns -Value ('*' + $resolvedBaseName + '-Win64-*')
     Add-ScaleWorldUniqueString -Values $commandLinePatterns -Value ('*' + $resolvedBaseName + '-Win64-Shipping*')
 
     return [pscustomobject]@{

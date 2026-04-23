@@ -2,7 +2,7 @@
 param(
     [string]$InstallRoot = $(if ($env:SCALEWORLD_INSTALL_ROOT) { $env:SCALEWORLD_INSTALL_ROOT } else { 'C:\PixelStreaming\WindowsNoEditor' }),
     [string]$ExecutableName = $(if ($env:SCALEWORLD_EXECUTABLE_NAME) { $env:SCALEWORLD_EXECUTABLE_NAME } else { 'ScaleWorld.exe' }),
-    [string]$RuntimeProcessPattern = $(if ($env:SCALEWORLD_RUNTIME_PROCESS_PATTERN) { $env:SCALEWORLD_RUNTIME_PROCESS_PATTERN } else { 'ScaleWorld*' }),
+    [string]$RuntimeProcessPattern = $(if ($env:SCALEWORLD_RUNTIME_PROCESS_PATTERN) { $env:SCALEWORLD_RUNTIME_PROCESS_PATTERN } else { '' }),
     [int]$RuntimeProcessWaitSeconds = $(if ($env:SCALEWORLD_RUNTIME_PROCESS_WAIT_SECONDS) { [int]$env:SCALEWORLD_RUNTIME_PROCESS_WAIT_SECONDS } else { 20 }),
     [string]$PixelStreamingIp = $(if ($env:SCALEWORLD_PIXEL_STREAMING_IP) { $env:SCALEWORLD_PIXEL_STREAMING_IP } else { 'localhost' }),
     [int]$PixelStreamingPort = $(if ($env:SCALEWORLD_PIXEL_STREAMING_PORT) { [int]$env:SCALEWORLD_PIXEL_STREAMING_PORT } else { 8888 }),
@@ -38,7 +38,7 @@ if (-not (Test-Path -LiteralPath $processPath)) {
     throw "ScaleWorld executable not found at '$processPath'."
 }
 
-$runtimeMatcher = Get-ScaleWorldRuntimeProcessMatcher -InstallRoot $installRootPath -ExecutableName $ExecutableName -RuntimeProcessPattern $RuntimeProcessPattern
+$runtimeMatcher = Get-ScaleWorldRuntimeProcessMatcher -InstallRoot $installRootPath -ExecutableName $ExecutableName -RuntimeProcessPattern $RuntimeProcessPattern -IncludeLauncherExecutable $false
 
 $arguments = @(
     "-PixelStreamingEncoderCodec=$EncoderCodec",
@@ -69,11 +69,6 @@ $wrapperExited = $false
 $deadline = (Get-Date).AddSeconds($RuntimeProcessWaitSeconds)
 $matchedRuntimeProcess = $null
 while ((Get-Date) -lt $deadline) {
-    $launchedProcess = Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $process.Id) | Select-Object -First 1
-    if ($launchedProcess -and (Test-ScaleWorldRuntimeProcessMatch -Process $launchedProcess -Matcher $runtimeMatcher)) {
-        $matchedRuntimeProcess = $launchedProcess
-        break
-    }
 
     $wrapperAlive = Get-Process -Id $process.Id -ErrorAction SilentlyContinue
     $runtimeProcesses = @(Get-ScaleWorldRuntimeProcesses -ExcludeProcessIds @($process.Id) -Matcher $runtimeMatcher)
