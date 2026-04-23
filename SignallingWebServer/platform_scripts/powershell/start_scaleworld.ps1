@@ -51,7 +51,7 @@ if ($AdditionalArgs) {
     $arguments += $AdditionalArgs
 }
 
-$process = Start-Process -FilePath $processPath -ArgumentList $arguments -WorkingDirectory $installRoot -PassThru
+$process = Start-Process -FilePath $processPath -ArgumentList $arguments -WorkingDirectory $installRoot.Path -PassThru
 Write-Output ("Running: {0} {1}" -f $processPath, ($arguments -join ' '))
 Write-Output ("Started ScaleWorld launcher process with PID {0}" -f $process.Id)
 Write-Output ("Monitoring ScaleWorld runtime matcher installRoot='{0}' namePatterns='{1}'" -f $runtimeMatcher.InstallRoot, ($runtimeMatcher.NamePatterns -join ';'))
@@ -83,6 +83,16 @@ while ((Get-Date) -lt $deadline) {
 
 if ($matchedRuntimeProcess) {
     Write-Output ("Detected ScaleWorld runtime process {0} (PID {1})" -f $matchedRuntimeProcess.Name, $matchedRuntimeProcess.ProcessId)
-} elseif ($wrapperExited) {
-    throw "ScaleWorld launcher exited before a runtime process matching '$($runtimeMatcher.NamePatterns -join ';')' appeared."
+    exit 0
 }
+
+$launcherProcess = Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $process.Id) | Select-Object -First 1
+$launcherState = if ($launcherProcess) {
+    "launcher process '{0}' (PID {1}) is still alive; executable='{2}'" -f $launcherProcess.Name, $launcherProcess.ProcessId, ([string]$launcherProcess.ExecutablePath)
+} elseif ($wrapperExited) {
+    'launcher process exited before a runtime appeared'
+} else {
+    'launcher process state could not be determined'
+}
+
+throw "ScaleWorld runtime process matching '$($runtimeMatcher.NamePatterns -join ';')' did not appear within $RuntimeProcessWaitSeconds seconds; $launcherState."

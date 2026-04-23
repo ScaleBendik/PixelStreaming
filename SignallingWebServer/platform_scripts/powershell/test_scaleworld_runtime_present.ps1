@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [int]$ExcludeProcessId = 0,
-    [switch]$IncludeLaunchers
+    [switch]$IncludeLaunchers,
+    [int]$LauncherGraceSeconds = 60
 )
 
 Set-StrictMode -Version Latest
@@ -25,10 +26,12 @@ if ($matches.Count -gt 0) {
 }
 
 if ($IncludeLaunchers.IsPresent) {
+    $launcherCutoffUtc = [DateTimeOffset]::UtcNow.AddSeconds(-[Math]::Abs($LauncherGraceSeconds))
     $launchers = @(
         Get-CimInstance Win32_Process | Where-Object {
             $_.ProcessId -ne $PID -and
             $_.ProcessId -ne $ExcludeProcessId -and
+            [System.Management.ManagementDateTimeConverter]::ToDateTime($_.CreationDate).ToUniversalTime() -ge $launcherCutoffUtc.UtcDateTime -and
             (
                 ($_.Name -ieq 'cmd.exe' -and ([string]$_.CommandLine) -like '*start_unreal.bat*') -or
                 ($_.Name -ieq 'powershell.exe' -and ([string]$_.CommandLine) -like '*start_scaleworld.ps1*')
