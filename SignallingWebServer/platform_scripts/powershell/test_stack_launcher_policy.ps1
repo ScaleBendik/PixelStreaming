@@ -158,4 +158,19 @@ Assert-ContainsText `
     -Expected 'Ignoring recovered recycle request token' `
     -Message 'Viewer idle stop must ignore stale recovered recycle tokens after startup refreshes.'
 
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected 'shouldSuppressNoViewerIdleAutomation' `
+    -Message 'Viewer idle stop must have an explicit guard for warm-held no-viewer idle automation.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected 'without first-viewer/no-viewer stop or recycle' `
+    -Message 'Warm-held instances must not stop or recycle only because no viewer is present.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected 'warm hold will wait for an explicit teardown command before recycling' `
+    -Message 'Warm-held reconnect grace must wait for explicit teardown instead of self-recycling.'
+
 Write-Output 'Stack launcher policy tests passed.'

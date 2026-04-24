@@ -427,15 +427,14 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         pendingImmediateRecycleToken === currentDesiredState.recycleRequestedToken;
     const hasImmediateRecycleRequest = (): boolean =>
         hasPendingImmediateRecycle() && !hasRecycleLaunchInProgress();
-    const isWarmHoldActive = (): boolean =>
+    const hasExplicitRecycleIntent = (): boolean =>
+        getActiveRecycleCommand() !== null || hasImmediateRecycleRequest();
+    const shouldSuppressNoViewerIdleAutomation = (): boolean =>
         canHoldWarmReadyWithoutShutdown() &&
-        !hasSeenViewer &&
-        getActiveRecycleCommand() === null &&
-        !hasImmediateRecycleRequest();
-    const shouldResetIntoWarmReady = (): boolean =>
-        getActiveRecycleCommand() !== null ||
-        hasImmediateRecycleRequest() ||
-        (canHoldWarmReadyWithoutShutdown() && hasSeenViewer);
+        getActiveShutdownCommand() === null &&
+        !hasExplicitRecycleIntent();
+    const isWarmHoldActive = (): boolean => shouldSuppressNoViewerIdleAutomation() && !hasSeenViewer;
+    const shouldResetIntoWarmReady = (): boolean => hasExplicitRecycleIntent();
     const refreshActiveCommand = (): void => {
         activeCommand = options.instanceAgentClient?.getActiveCommand() ?? null;
     };
@@ -474,7 +473,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         clearResetTimer();
     };
     const ensureFirstViewerWindow = (): void => {
-        if (!maintenanceStateInitialized || isMaintenanceActive() || isWarmHoldActive()) {
+        if (!maintenanceStateInitialized || isMaintenanceActive() || shouldSuppressNoViewerIdleAutomation()) {
             clearFirstViewerTimer();
             return;
         }
@@ -615,6 +614,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
+        if (reconnectGraceTimer && shouldSuppressNoViewerIdleAutomation()) {
+            return;
+        }
+
         if (reconnectGraceTimer && !shouldResetIntoWarmReady()) {
             clearReconnectGraceTimer();
             if (!maintenanceStateInitialized || isMaintenanceActive() || server.playerRegistry.count() > 0) {
@@ -632,6 +635,12 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             scheduleStop('grace-after-last-viewer', 0);
+            return;
+        }
+
+        if (resetTimer && shouldSuppressNoViewerIdleAutomation()) {
+            clearResetTimer();
+            runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
             return;
         }
 
@@ -715,8 +724,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         clearReconnectGraceTimer();
-        if (!hasSeenViewer && isWarmHoldActive()) {
+        if (shouldSuppressNoViewerIdleAutomation()) {
             clearAllIdleStopTimers();
+            runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
             return;
         }
 
@@ -802,6 +812,67 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }, delayMs);
 
         log(`[idle-stop] Viewer reconnect window active for ${delayMs} ms before warm recycle.`);
+    };
+
+    const scheduleWarmHoldReconnectGrace = (delayMs: number): void => {
+        if (!maintenanceStateInitialized || isMaintenanceActive()) {
+            return;
+        }
+
+        if (!shouldSuppressNoViewerIdleAutomation()) {
+            return;
+        }
+
+        clearZeroTimer();
+        clearFirstViewerTimer();
+        clearTransientStatusHeartbeat();
+
+        publishStatus('reconnect_grace', 'waiting_for_viewer_reconnect');
+        startTransientStatusHeartbeat('reconnect_grace', 'waiting_for_viewer_reconnect');
+
+        if (delayMs <= 0 || reconnectGraceTimer) {
+            return;
+        }
+
+        reconnectGraceTimer = setTimeout(() => {
+            reconnectGraceTimer = null;
+
+            if (!maintenanceStateInitialized || isMaintenanceActive()) {
+                return;
+            }
+
+            if (server.playerRegistry.count() > 0) {
+                runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+                return;
+            }
+
+            if (getActiveRecycleCommand() || hasPendingImmediateRecycle()) {
+                startResetWindow(true);
+                return;
+            }
+
+            if (getActiveShutdownCommand() || currentDesiredState.shutdownRequested) {
+                void requestStop('agent_shutdown_requested');
+                return;
+            }
+
+            if (shouldSuppressNoViewerIdleAutomation()) {
+                publishStatus('reconnect_grace', 'waiting_for_control_plane_teardown', {
+                    preserveStatusAtUtc: true
+                });
+                startTransientStatusHeartbeat('reconnect_grace', 'waiting_for_control_plane_teardown');
+                log(
+                    '[idle-stop] Reconnect grace expired without an explicit teardown command. Holding warm instance without first-viewer/no-viewer stop or recycle.'
+                );
+                return;
+            }
+
+            scheduleStop('grace-after-last-viewer', 0);
+        }, delayMs);
+
+        log(
+            `[idle-stop] Viewer reconnect window active for ${delayMs} ms; warm hold will wait for an explicit teardown command before recycling.`
+        );
     };
 
     const scheduleRetryIfStillIdle = (): void => {
@@ -1037,6 +1108,18 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
+        if (shouldSuppressNoViewerIdleAutomation()) {
+            log(
+                `[idle-stop] Stop request '${reason}' ignored because the instance is warm-held without an explicit teardown command.`
+            );
+            if (hasSeenViewer) {
+                scheduleWarmHoldReconnectGrace(graceMs);
+            } else {
+                runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+            }
+            return;
+        }
+
         stopInFlight = true;
         try {
             const commandToStart = getActiveShutdownCommand();
@@ -1150,6 +1233,14 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         if (maintenanceStateInitialized && !isMaintenanceActive() && getActiveShutdownCommand()) {
             void requestStop('command_shutdown_requested');
+            return;
+        }
+
+        if (maintenanceStateInitialized && !isMaintenanceActive() && shouldSuppressNoViewerIdleAutomation()) {
+            options.instanceAgentClient?.requestFastPolling('viewer_disconnected_reconnect_grace', {
+                durationMs: Math.min(Math.max(graceMs, 20_000), DEFAULT_DISCONNECT_FAST_POLLING_WINDOW_MS)
+            });
+            scheduleWarmHoldReconnectGrace(graceMs);
             return;
         }
 
