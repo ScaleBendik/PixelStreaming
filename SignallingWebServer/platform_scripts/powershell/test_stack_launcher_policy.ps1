@@ -143,4 +143,19 @@ Assert-ContainsText `
     -Expected '$matches = @(Get-RecycleUnrealProcessMatches' `
     -Message 'Stack recycle Unreal checks must keep scalar results array-shaped under StrictMode.'
 
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected 'recoveredRecycleTokenAtStartup' `
+    -Message 'Viewer idle stop must remember recycle tokens recovered with a recycle marker.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected 'Treating it as already launched and waiting for instance-agent completion' `
+    -Message 'Viewer idle stop must not re-arm a token from an already launched recycle.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected 'Ignoring recovered recycle request token' `
+    -Message 'Viewer idle stop must ignore stale recovered recycle tokens after startup refreshes.'
+
 Write-Output 'Stack launcher policy tests passed.'

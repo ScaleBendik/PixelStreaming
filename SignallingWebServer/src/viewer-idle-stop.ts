@@ -318,18 +318,25 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         : desiredStatePath.length > 0
           ? readInstanceAgentDesiredStateSnapshot(desiredStatePath, log)
           : normalizeInstanceAgentDesiredStateSnapshot(undefined);
+    const recoveredRecycleTokenAtStartup = recoveredRecycleMarkerAtStartup
+        ? currentDesiredState.recycleRequestedToken
+        : null;
     let activeCommand = options.instanceAgentClient?.getActiveCommand() ?? null;
     let pendingImmediateRecycleToken: string | null = null;
     let resetInFlight = false;
     let recycleLaunchRequested = false;
 
     if (server.playerRegistry.count() === 0 && currentDesiredState.recycleRequestedToken) {
-        pendingImmediateRecycleToken = currentDesiredState.recycleRequestedToken;
-        log(
-            recoveredRecycleMarkerAtStartup
-                ? `[idle-stop] Recycle request token ${currentDesiredState.recycleRequestedToken} was loaded on startup while a recycle marker is still present. Waiting for recycle completion before reusing the instance.`
-                : `[idle-stop] Recycle request token ${currentDesiredState.recycleRequestedToken} was loaded on startup. Keeping recycle intent armed until the runtime can honor it.`
-        );
+        if (currentDesiredState.recycleRequestedToken === recoveredRecycleTokenAtStartup) {
+            log(
+                `[idle-stop] Recycle request token ${currentDesiredState.recycleRequestedToken} was loaded on startup while a recycle marker is still present. Treating it as already launched and waiting for instance-agent completion.`
+            );
+        } else {
+            pendingImmediateRecycleToken = currentDesiredState.recycleRequestedToken;
+            log(
+                `[idle-stop] Recycle request token ${currentDesiredState.recycleRequestedToken} was loaded on startup. Keeping recycle intent armed until the runtime can honor it.`
+            );
+        }
     }
 
     if (activeCommand) {
@@ -576,15 +583,22 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         if (recycleRequestedTokenChanged) {
             if (currentDesiredState.recycleRequestedToken) {
-                pendingImmediateRecycleToken = currentDesiredState.recycleRequestedToken;
-                if (hasRecycleLaunchInProgress()) {
+                if (currentDesiredState.recycleRequestedToken === recoveredRecycleTokenAtStartup) {
+                    pendingImmediateRecycleToken = null;
                     log(
-                        `[idle-stop] Recycle request token ${currentDesiredState.recycleRequestedToken} matches an in-progress recycle. Waiting for recycle completion before reuse.`
+                        `[idle-stop] Ignoring recovered recycle request token ${currentDesiredState.recycleRequestedToken} because this process started after that recycle was already launched.`
                     );
                 } else {
-                    log(
-                        `[idle-stop] Immediate recycle requested by desired state token ${currentDesiredState.recycleRequestedToken}.`
-                    );
+                    pendingImmediateRecycleToken = currentDesiredState.recycleRequestedToken;
+                    if (hasRecycleLaunchInProgress()) {
+                        log(
+                            `[idle-stop] Recycle request token ${currentDesiredState.recycleRequestedToken} matches an in-progress recycle. Waiting for recycle completion before reuse.`
+                        );
+                    } else {
+                        log(
+                            `[idle-stop] Immediate recycle requested by desired state token ${currentDesiredState.recycleRequestedToken}.`
+                        );
+                    }
                 }
             } else {
                 pendingImmediateRecycleToken = null;
