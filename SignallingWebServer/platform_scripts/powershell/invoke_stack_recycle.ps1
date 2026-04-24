@@ -106,8 +106,17 @@ function Stop-RecycleProcessObjects {
 
     foreach ($match in @($Matches)) {
         Write-RecycleLog "Stopping $Label process $(Format-RecycleProcessSummary -Process $match)."
-        Stop-Process -Id $match.ProcessId -Force -ErrorAction Stop
-        $StoppedProcesses.Add(($Label + ':' + $match.ProcessId + ':' + $match.Name)) | Out-Null
+        try {
+            Stop-Process -Id $match.ProcessId -Force -ErrorAction Stop
+            $StoppedProcesses.Add(($Label + ':' + $match.ProcessId + ':' + $match.Name)) | Out-Null
+        } catch {
+            $remaining = Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $match.ProcessId) -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($remaining) {
+                throw
+            }
+
+            Write-RecycleLog "$Label process $($match.Name) (PID=$($match.ProcessId)) exited before it could be stopped." 'WARN'
+        }
     }
 }
 
@@ -177,8 +186,17 @@ function Stop-RecycleSourceProcess {
     }
 
     Write-RecycleLog "Stopping recycle source process $($match.Name) (PID=$ProcessId)."
-    Stop-Process -Id $ProcessId -Force -ErrorAction Stop
-    $StoppedProcesses.Add(('source:' + $ProcessId + ':' + $match.Name)) | Out-Null
+    try {
+        Stop-Process -Id $ProcessId -Force -ErrorAction Stop
+        $StoppedProcesses.Add(('source:' + $ProcessId + ':' + $match.Name)) | Out-Null
+    } catch {
+        $remaining = Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $ProcessId) -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($remaining) {
+            throw
+        }
+
+        Write-RecycleLog "Recycle source process $($match.Name) (PID=$ProcessId) exited before it could be stopped." 'WARN'
+    }
 }
 
 function Wait-ForWilbur {

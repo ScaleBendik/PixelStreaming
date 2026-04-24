@@ -37,12 +37,14 @@ function Assert-DoesNotContainText {
 $cmdRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\cmd')
 $stackLauncherPath = Join-Path $cmdRoot 'start_streamer_stack.bat'
 $stackRecycleLauncherPath = Join-Path $cmdRoot 'start_stack_recycle.bat'
+$stackRecycleScriptPath = Join-Path $PSScriptRoot 'invoke_stack_recycle.ps1'
 $unrealLauncherPath = Join-Path $PSScriptRoot 'start_scaleworld.ps1'
 $watchdogPath = Join-Path $PSScriptRoot 'watchdog.ps1'
 $viewerIdleStopPath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\src\viewer-idle-stop.ts')
 
 $stackLauncher = [System.IO.File]::ReadAllText($stackLauncherPath)
 $stackRecycleLauncher = [System.IO.File]::ReadAllText($stackRecycleLauncherPath)
+$stackRecycleScript = [System.IO.File]::ReadAllText($stackRecycleScriptPath)
 $unrealLauncher = [System.IO.File]::ReadAllText($unrealLauncherPath)
 $watchdog = [System.IO.File]::ReadAllText($watchdogPath)
 $viewerIdleStop = [System.IO.File]::ReadAllText($viewerIdleStopPath)
@@ -120,5 +122,15 @@ Assert-ContainsText `
     -Content $viewerIdleStop `
     -Expected 'start_stack_recycle.bat' `
     -Message 'Viewer idle stop must launch the Windows recycle launcher instead of relying on a Node-owned helper process.'
+
+Assert-ContainsText `
+    -Content $stackRecycleScript `
+    -Expected 'exited before it could be stopped' `
+    -Message 'Stack recycle must tolerate process-exit races while terminating launcher processes.'
+
+Assert-ContainsText `
+    -Content $stackRecycleScript `
+    -Expected 'if ($remaining)' `
+    -Message 'Stack recycle must still fail when a process remains after Stop-Process fails.'
 
 Write-Output 'Stack launcher policy tests passed.'
