@@ -3,7 +3,7 @@ param(
     [string]$RepoRoot = $(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
     [string]$RecycleMarkerPath = '',
     [int]$SourcePid = 0,
-    [int]$WaitBeforeTerminateMilliseconds = 2000,
+    [int]$WaitBeforeTerminateMilliseconds = 1000,
     [int]$WaitForWilburTimeoutSeconds = 120
 )
 
