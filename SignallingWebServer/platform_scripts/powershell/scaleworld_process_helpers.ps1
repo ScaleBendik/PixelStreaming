@@ -19,7 +19,24 @@ function Get-ScaleWorldProcessCreationUtcDateTime {
         [object]$Process
     )
 
-    $creationDate = [string]$Process.CreationDate
+    if ($null -eq $Process) {
+        return $null
+    }
+
+    $creationDateProperty = $Process.PSObject.Properties['CreationDate']
+    if ($null -eq $creationDateProperty) {
+        return $null
+    }
+
+    $creationDateValue = $creationDateProperty.Value
+    if ($creationDateValue -is [DateTime]) {
+        return $creationDateValue.ToUniversalTime()
+    }
+    if ($creationDateValue -is [DateTimeOffset]) {
+        return $creationDateValue.UtcDateTime
+    }
+
+    $creationDate = [string]$creationDateValue
     if ([string]::IsNullOrWhiteSpace($creationDate)) {
         return $null
     }

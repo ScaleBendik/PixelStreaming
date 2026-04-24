@@ -55,5 +55,14 @@ $shippingProcess = New-FakeProcess -Name 'ScaleWorld-Win64-Shipping.exe' -Comman
 Assert-ScaleWorldFalse (Test-ScaleWorldRuntimeProcessMatch -Process $launcherProcess -Matcher $strictMatcher) 'Strict matcher must not treat the root ScaleWorld.exe launcher as a live Unreal runtime.'
 Assert-ScaleWorldTrue (Test-ScaleWorldRuntimeProcessMatch -Process $shippingProcess -Matcher $strictMatcher) 'Strict matcher should detect the packaged Win64 Unreal runtime process.'
 Assert-ScaleWorldTrue (Test-ScaleWorldRuntimeProcessMatch -Process $launcherProcess -Matcher $broadMatcher) 'Broad matcher should still include the launcher so recycle can terminate it.'
+$missingCreationDateProcess = [pscustomobject]@{
+    Name = 'cmd.exe'
+}
+Assert-ScaleWorldTrue ($null -eq (Get-ScaleWorldProcessCreationUtcDateTime -Process $missingCreationDateProcess)) 'Creation date helper must tolerate process-like objects without CreationDate.'
+
+$dateTimeCreationDateProcess = [pscustomobject]@{
+    CreationDate = [DateTime]::SpecifyKind([DateTime]'2026-04-24T06:45:00Z', [DateTimeKind]::Utc)
+}
+Assert-ScaleWorldTrue ($null -ne (Get-ScaleWorldProcessCreationUtcDateTime -Process $dateTimeCreationDateProcess)) 'Creation date helper must tolerate DateTime CreationDate values.'
 
 Write-Output 'ScaleWorld process helper tests passed.'

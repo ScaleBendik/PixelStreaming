@@ -372,7 +372,24 @@ function Get-ProcessSnapshot {
 function Get-ProcessCreationUtcDateTime {
     param([object]$Process)
 
-    $creationDate = [string]$Process.CreationDate
+    if ($null -eq $Process) {
+        return $null
+    }
+
+    $creationDateProperty = $Process.PSObject.Properties['CreationDate']
+    if ($null -eq $creationDateProperty) {
+        return $null
+    }
+
+    $creationDateValue = $creationDateProperty.Value
+    if ($creationDateValue -is [DateTime]) {
+        return $creationDateValue.ToUniversalTime()
+    }
+    if ($creationDateValue -is [DateTimeOffset]) {
+        return $creationDateValue.UtcDateTime
+    }
+
+    $creationDate = [string]$creationDateValue
     if ([string]::IsNullOrWhiteSpace($creationDate)) {
         return $null
     }
@@ -454,7 +471,8 @@ function Get-FreshLauncherMatchesForRule {
             continue
         }
 
-        foreach ($match in @(Find-MatchingProcesses -Snapshot $Snapshot -Rule $launcherRule)) {
+        $launcherMatches = Find-MatchingProcesses -Snapshot $Snapshot -Rule $launcherRule
+        foreach ($match in $launcherMatches) {
             $createdAtUtc = Get-ProcessCreationUtcDateTime -Process $match
             if ($null -eq $createdAtUtc -or $createdAtUtc -lt $cutoffUtc) {
                 continue

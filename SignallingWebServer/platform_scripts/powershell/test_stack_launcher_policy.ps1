@@ -87,6 +87,15 @@ Assert-ContainsText `
     -Content $watchdog `
     -Expected 'Get-FreshLauncherMatchesForRule' `
     -Message 'Watchdog must treat fresh component launchers as startup in progress.'
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected "PSObject.Properties['CreationDate']" `
+    -Message 'Watchdog must tolerate process-like objects without CreationDate under StrictMode.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected 'foreach ($match in $launcherMatches)' `
+    -Message 'Watchdog must not wrap empty launcher match arrays as process matches.'
 
 Assert-ContainsText `
     -Content $watchdog `
