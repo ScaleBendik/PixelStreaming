@@ -91,7 +91,12 @@ set "STACK_LAUNCH_EXIT=0"
 
 if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_BOOT_GIT_SYNC%"=="true" (
   call :sync_repo_before_stack
-  if errorlevel 1 exit /b 1
+  set "STACK_SYNC_EXIT=!errorlevel!"
+  if "!STACK_SYNC_EXIT!"=="42" (
+    echo Repo sync launched a fresh stack from the updated checkout. Exiting this pre-update launcher.
+    exit /b 0
+  )
+  if not "!STACK_SYNC_EXIT!"=="0" exit /b !STACK_SYNC_EXIT!
 )
 
 if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_UPDATE_MODE%"=="true" (
@@ -209,9 +214,11 @@ if not exist "%REPO_SYNC_SCRIPT%" (
 
 echo Applying git sync mode "%SCALEWORLD_GIT_SYNC_MODE%" before normal startup...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%REPO_SYNC_SCRIPT%" -RepoRoot "%PIXELSTREAMING_ROOT%" -Mode "startup"
-if errorlevel 1 (
+set "REPO_SYNC_EXIT=%errorlevel%"
+if "%REPO_SYNC_EXIT%"=="42" exit /b 42
+if not "%REPO_SYNC_EXIT%"=="0" (
   echo ERROR: Boot-time repo sync failed.
-  exit /b 1
+  exit /b %REPO_SYNC_EXIT%
 )
 
 exit /b 0

@@ -220,4 +220,29 @@ Assert-ContainsText `
     -Expected "repo_update_in_progress" `
     -Message 'Repo sync must publish an updating status when checkout/reset work is actually being applied.'
 
+Assert-ContainsText `
+    -Content $repoSync `
+    -Expected "Start-PostRepoSyncStackRelaunch" `
+    -Message 'Repo sync must relaunch the mutable stack launcher after applying a new checkout.'
+
+Assert-ContainsText `
+    -Content $repoSync `
+    -Expected "STACK_ENABLE_BOOT_GIT_SYNC=false" `
+    -Message 'Post-sync stack relaunch must disable boot git sync to avoid relaunch loops.'
+
+Assert-ContainsText `
+    -Content $repoSync `
+    -Expected "exit 42" `
+    -Message 'Repo sync must use a distinct relaunch exit code for the parent batch.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected '"!STACK_SYNC_EXIT!"=="42"' `
+    -Message 'Stack launcher must treat post-sync relaunch as successful handoff.'
+
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected '"%REPO_SYNC_EXIT%"=="42"' `
+    -Message 'Repo sync subroutine must preserve the post-sync relaunch handoff exit code.'
 Write-Output 'Stack launcher policy tests passed.'

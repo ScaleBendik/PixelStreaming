@@ -406,6 +406,38 @@ function Publish-RepoUpdateRuntimeStatus {
     Invoke-PublishRuntimeStatusScript -Context $Context -Status 'updating_infra' -Reason 'repo_update_in_progress'
     $Published.Value = $true
 }
+
+function Start-PostRepoSyncStackRelaunch {
+    param(
+        [string]$RepoRootPath,
+        [string]$InitialHead,
+        [string]$CurrentHead,
+        [string]$CurrentMode
+    )
+
+    if ($CurrentMode -ne 'startup') {
+        return $false
+    }
+
+    if ($env:SCALEWORLD_DISABLE_POST_SYNC_STACK_RELAUNCH -ieq 'true' -or
+        $env:STACK_RELAUNCHED_AFTER_BOOT_SYNC -ieq 'true' -or
+        [string]::IsNullOrWhiteSpace($InitialHead) -or
+        [string]::IsNullOrWhiteSpace($CurrentHead) -or
+        [string]::Equals($InitialHead, $CurrentHead, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $false
+    }
+
+    $stackLauncherPath = Join-Path $RepoRootPath 'SignallingWebServer\platform_scripts\cmd\start_streamer_stack.bat'
+    if (-not (Test-Path -LiteralPath $stackLauncherPath)) {
+        Write-RepoSyncLog "Updated checkout requires stack relaunch, but stack launcher was not found at '$stackLauncherPath'." 'WARN'
+        return $false
+    }
+
+    $command = 'set "STACK_ENABLE_BOOT_GIT_SYNC=false" && set "STACK_RELAUNCHED_AFTER_BOOT_SYNC=true" && call "{0}"' -f $stackLauncherPath
+    Write-RepoSyncLog "Repo HEAD changed from $InitialHead to $CurrentHead. Launching fresh stack from updated checkout."
+    Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $command) -WindowStyle Minimized | Out-Null
+    return $true
+}
 function Stop-StartupRuntimeStatusHeartbeat {
     param([pscustomobject]$Context)
 
@@ -774,6 +806,7 @@ try {
     }
 
     $currentHead = ((& $gitCli rev-parse HEAD) | Out-String).Trim()
+    $initialHead = $currentHead
     if ([string]::IsNullOrWhiteSpace($currentHead)) {
         throw 'Failed to resolve local git commit for PixelStreaming repo.'
     }
@@ -946,7 +979,7 @@ try {
         $requiresInfraUpdateStatus = $true
     }
 
-    if ($startupRuntimeStatusContext -and $requiresInfraUpdateStatus) {
+    if ($startupRuntimeStatusContext -and $buildScope -ne 'none') {
         Invoke-PublishRuntimeStatusScript -Context $startupRuntimeStatusContext -Status 'updating_infra' -Reason 'repo_build_in_progress'
     }
 
@@ -969,6 +1002,10 @@ try {
 
     $currentVersionTagValue = Resolve-PixelStreamingVersionTagValue -SyncMode $gitSyncModeNormalized -TargetRef $gitTargetRefNormalized -CurrentHead $currentHead
     Publish-RepoHeadTag -Context $repoHeadTagContext -CurrentHead $currentHead -CurrentVersion $currentVersionTagValue
+
+    if (Start-PostRepoSyncStackRelaunch -RepoRootPath $RepoRoot -InitialHead $initialHead -CurrentHead $currentHead -CurrentMode $Mode) {
+        exit 42
+    }
 } catch {
     if ($startupRuntimeStatusContext) {
         Invoke-PublishRuntimeStatusScript -Context $startupRuntimeStatusContext -Status 'runtime_fault' -Reason 'repo_sync_failed'
