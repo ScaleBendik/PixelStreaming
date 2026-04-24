@@ -214,5 +214,10 @@ Assert-ContainsText `
 Assert-ContainsText `
     -Content $repoSync `
     -Expected "repo_build_in_progress" `
-    -Message 'Repo sync must only publish updating_infra for actual build work.'
+    -Message 'Repo sync must publish a build-specific updating status for actual build work.'
+Assert-ContainsText `
+    -Content $repoSync `
+    -Expected "repo_update_in_progress" `
+    -Message 'Repo sync must publish an updating status when checkout/reset work is actually being applied.'
+
 Write-Output 'Stack launcher policy tests passed.'

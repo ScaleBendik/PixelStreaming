@@ -393,6 +393,19 @@ function Start-StartupRuntimeStatusHeartbeat {
     Start-Process -FilePath 'powershell.exe' -ArgumentList $heartbeatArgumentString -WindowStyle Hidden | Out-Null
 }
 
+function Publish-RepoUpdateRuntimeStatus {
+    param(
+        [pscustomobject]$Context,
+        [ref]$Published
+    )
+
+    if ($null -eq $Context -or $Published.Value) {
+        return
+    }
+
+    Invoke-PublishRuntimeStatusScript -Context $Context -Status 'updating_infra' -Reason 'repo_update_in_progress'
+    $Published.Value = $true
+}
 function Stop-StartupRuntimeStatusHeartbeat {
     param([pscustomobject]$Context)
 
@@ -766,6 +779,7 @@ try {
     }
 
     $requiresInfraUpdateStatus = $false
+    $publishedRepoUpdateStatus = $false
     $buildReasons = [System.Collections.Generic.List[string]]::new()
     $buildScope = 'none'
     $updateBuildStampWithoutBuild = $false
@@ -788,6 +802,8 @@ try {
                 if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
                     $requiresInfraUpdateStatus = $true
                     Write-RepoSyncLog "Discarding tracked local PixelStreaming repo changes before $Mode mode."
+                    Publish-RepoUpdateRuntimeStatus -Context $startupRuntimeStatusContext -Published ([ref]$publishedRepoUpdateStatus)
+
                     & $gitCli reset --hard $upstreamHead
                     if ($LASTEXITCODE -ne 0) {
                         throw "git reset --hard $upstreamHead failed."
@@ -799,6 +815,8 @@ try {
                 if ($currentHead -ne $upstreamHead) {
                     $requiresInfraUpdateStatus = $true
                     Write-RepoSyncLog "Remote PixelStreaming changes detected on $upstreamBranch. Resetting local checkout to upstream before continuing."
+                    Publish-RepoUpdateRuntimeStatus -Context $startupRuntimeStatusContext -Published ([ref]$publishedRepoUpdateStatus)
+
                     & $gitCli reset --hard $upstreamHead
                     if ($LASTEXITCODE -ne 0) {
                         throw "git reset --hard $upstreamHead failed."
@@ -812,6 +830,8 @@ try {
                 if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
                     $requiresInfraUpdateStatus = $true
                     Write-RepoSyncLog "Discarding tracked local PixelStreaming repo changes without upstream before $Mode mode."
+                    Publish-RepoUpdateRuntimeStatus -Context $startupRuntimeStatusContext -Published ([ref]$publishedRepoUpdateStatus)
+
                     & $gitCli reset --hard $currentHead
                     if ($LASTEXITCODE -ne 0) {
                         throw "git reset --hard $currentHead failed."
@@ -849,6 +869,8 @@ try {
             if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
                 $requiresInfraUpdateStatus = $true
                 Write-RepoSyncLog "Discarding tracked local PixelStreaming repo changes before pinned reset to '$gitTargetRefNormalized'."
+                Publish-RepoUpdateRuntimeStatus -Context $startupRuntimeStatusContext -Published ([ref]$publishedRepoUpdateStatus)
+
                 & $gitCli reset --hard $targetHead
                 if ($LASTEXITCODE -ne 0) {
                     throw "git reset --hard $targetHead failed."
@@ -860,6 +882,8 @@ try {
             if ($currentHead -ne $targetHead) {
                 $requiresInfraUpdateStatus = $true
                 Write-RepoSyncLog "Resetting local checkout to pinned ref '$gitTargetRefNormalized' ($targetHead)."
+                Publish-RepoUpdateRuntimeStatus -Context $startupRuntimeStatusContext -Published ([ref]$publishedRepoUpdateStatus)
+
                 & $gitCli reset --hard $targetHead
                 if ($LASTEXITCODE -ne 0) {
                     throw "git reset --hard $targetHead failed."
