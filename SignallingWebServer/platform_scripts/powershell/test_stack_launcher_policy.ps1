@@ -176,6 +176,15 @@ Assert-ContainsText `
     -Message 'Warm-held reconnect grace must wait for explicit teardown instead of self-recycling.'
 
 Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected 'const readActiveCommand = () =>' `
+    -Message 'Viewer idle stop must refresh active command state from the instance agent before acting on recycle intent.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected 'activeCommand = options.instanceAgentClient.getActiveCommand();' `
+    -Message 'Viewer idle stop must not keep stale recovered commands after the instance agent clears its command journal.'
+Assert-ContainsText `
     -Content $instanceAgent `
     -Expected 'recoveredActiveCommandId' `
     -Message 'Instance agent must distinguish commands recovered from the command journal from newly received commands.'

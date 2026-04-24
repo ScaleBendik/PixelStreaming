@@ -413,8 +413,20 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     const isShutdownCommand = (
         command: { commandType?: string | null; instanceCommandId?: string | null } | null | undefined
     ): boolean => (command?.commandType?.trim().toLowerCase() ?? '') === 'shutdown';
-    const getActiveRecycleCommand = () => (isRecycleToWarmCommand(activeCommand) ? activeCommand : null);
-    const getActiveShutdownCommand = () => (isShutdownCommand(activeCommand) ? activeCommand : null);
+    const readActiveCommand = () => {
+        if (options.instanceAgentClient) {
+            activeCommand = options.instanceAgentClient.getActiveCommand();
+        }
+        return activeCommand;
+    };
+    const getActiveRecycleCommand = () => {
+        const currentActiveCommand = readActiveCommand();
+        return isRecycleToWarmCommand(currentActiveCommand) ? currentActiveCommand : null;
+    };
+    const getActiveShutdownCommand = () => {
+        const currentActiveCommand = readActiveCommand();
+        return isShutdownCommand(currentActiveCommand) ? currentActiveCommand : null;
+    };
     const hasRecycleLaunchMarker = (): boolean =>
         recycleMarkerPath.length > 0 && fs.existsSync(recycleMarkerPath);
     const hasRecycleLaunchInProgress = (): boolean => recycleLaunchRequested || hasRecycleLaunchMarker();
@@ -436,7 +448,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     const isWarmHoldActive = (): boolean => shouldSuppressNoViewerIdleAutomation() && !hasSeenViewer;
     const shouldResetIntoWarmReady = (): boolean => hasExplicitRecycleIntent();
     const refreshActiveCommand = (): void => {
-        activeCommand = options.instanceAgentClient?.getActiveCommand() ?? null;
+        readActiveCommand();
     };
     const tryResumeActiveRecycleCommand = (): void => {
         if (
