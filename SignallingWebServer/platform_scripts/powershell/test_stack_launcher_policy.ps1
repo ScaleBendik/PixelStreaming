@@ -42,6 +42,7 @@ $unrealLauncherPath = Join-Path $PSScriptRoot 'start_scaleworld.ps1'
 $watchdogPath = Join-Path $PSScriptRoot 'watchdog.ps1'
 $viewerIdleStopPath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\src\viewer-idle-stop.ts')
 $instanceAgentPath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\src\instance-agent.ts')
+$repoSyncPath = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
 
 $stackLauncher = [System.IO.File]::ReadAllText($stackLauncherPath)
 $stackRecycleLauncher = [System.IO.File]::ReadAllText($stackRecycleLauncherPath)
@@ -50,6 +51,7 @@ $unrealLauncher = [System.IO.File]::ReadAllText($unrealLauncherPath)
 $watchdog = [System.IO.File]::ReadAllText($watchdogPath)
 $viewerIdleStop = [System.IO.File]::ReadAllText($viewerIdleStopPath)
 $instanceAgent = [System.IO.File]::ReadAllText($instanceAgentPath)
+$repoSync = [System.IO.File]::ReadAllText($repoSyncPath)
 
 Assert-DoesNotContainText `
     -Content $stackLauncher `
@@ -198,4 +200,14 @@ Assert-ContainsText `
     -Content $instanceAgent `
     -Expected "activeCommand.status !== 'running'" `
     -Message 'Recovered command finalization must only complete commands that were already running before restart.'
+
+Assert-ContainsText `
+    -Content $repoSync `
+    -Expected "Skipping git fetch" `
+    -Message 'Pinned startup repo sync must skip fetch when local checkout and build artifacts already match the pinned ref.'
+
+Assert-ContainsText `
+    -Content $repoSync `
+    -Expected "repo_build_in_progress" `
+    -Message 'Repo sync must only publish updating_infra for actual build work.'
 Write-Output 'Stack launcher policy tests passed.'

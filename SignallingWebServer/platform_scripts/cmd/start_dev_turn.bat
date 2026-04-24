@@ -410,7 +410,7 @@ if not exist "%REPO_SYNC_SCRIPT%" (
 )
 
 echo Checking PixelStreaming repo using git sync mode "%SCALEWORLD_GIT_SYNC_MODE%".
-call :set_runtime_status "updating_infra" "startup-script" "git_sync_in_progress"
+call :set_runtime_status "booting" "startup-script" "git_sync_check"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%REPO_SYNC_SCRIPT%" -RepoRoot "%REPO_ROOT%" -Mode "startup"
 if errorlevel 1 (
   echo ERROR: Repo sync helper failed.

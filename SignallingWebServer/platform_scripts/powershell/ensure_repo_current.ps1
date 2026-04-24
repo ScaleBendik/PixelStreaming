@@ -543,11 +543,8 @@ function Try-ResolveCommitFromRef {
     return $resolved
 }
 
-function Resolve-PinnedCommitFromRef {
-    param(
-        [string]$GitCli,
-        [string]$Ref
-    )
+function Get-PinnedRefCandidates {
+    param([string]$Ref)
 
     $trimmedRef = $Ref.Trim()
     $candidates = [System.Collections.Generic.List[string]]::new()
@@ -559,15 +556,39 @@ function Resolve-PinnedCommitFromRef {
         $candidates.Add("origin/$trimmedRef")
     }
 
-    foreach ($candidate in $candidates | Select-Object -Unique) {
+    return @($candidates | Select-Object -Unique)
+}
+
+function Try-ResolvePinnedCommitFromRef {
+    param(
+        [string]$GitCli,
+        [string]$Ref
+    )
+
+    foreach ($candidate in Get-PinnedRefCandidates -Ref $Ref) {
         $resolved = Try-ResolveCommitFromRef -GitCli $GitCli -Ref $candidate
         if (-not [string]::IsNullOrWhiteSpace($resolved)) {
-            if (-not [string]::Equals($candidate, $trimmedRef, [System.StringComparison]::Ordinal)) {
-                Write-RepoSyncLog "Resolved pinned ref '$trimmedRef' via '$candidate'."
+            if (-not [string]::Equals($candidate, $Ref.Trim(), [System.StringComparison]::Ordinal)) {
+                Write-RepoSyncLog "Resolved pinned ref '$($Ref.Trim())' via '$candidate'."
             }
 
             return $resolved
         }
+    }
+
+    return $null
+}
+
+function Resolve-PinnedCommitFromRef {
+    param(
+        [string]$GitCli,
+        [string]$Ref
+    )
+
+    $trimmedRef = $Ref.Trim()
+    $resolved = Try-ResolvePinnedCommitFromRef -GitCli $GitCli -Ref $trimmedRef
+    if (-not [string]::IsNullOrWhiteSpace($resolved)) {
+        return $resolved
     }
 
     throw "Pinned git target ref '$trimmedRef' could not be resolved after fetch. Confirm the branch or tag exists on the remote and that the configured ref name is exact."
@@ -804,13 +825,26 @@ try {
                 throw 'Pinned git sync mode requires SCALEWORLD_GIT_TARGET_REF or SCALEWORLD_GIT_TARGET_REF_PARAM.'
             }
 
-            Write-RepoSyncLog "Fetching PixelStreaming repo before resolving pinned ref '$gitTargetRefNormalized'."
-            & $gitCli fetch --prune --tags
-            if ($LASTEXITCODE -ne 0) {
-                throw 'git fetch --prune --tags failed.'
-            }
+            $targetHead = Try-ResolvePinnedCommitFromRef -GitCli $gitCli -Ref $gitTargetRefNormalized
+            $buildStampBeforeFetch = Get-BuildStamp -Path $buildStampPath
+            $buildArtifactsFreshBeforeFetch =
+                -not [string]::IsNullOrWhiteSpace($targetHead) `
+                -and [string]::Equals($currentHead, $targetHead, [System.StringComparison]::OrdinalIgnoreCase) `
+                -and [string]::Equals($buildStampBeforeFetch, $currentHead, [System.StringComparison]::OrdinalIgnoreCase) `
+                -and (Test-Path -LiteralPath $frontendBundlePath) `
+                -and (Test-Path -LiteralPath $wilburDistPath)
 
-            $targetHead = Resolve-PinnedCommitFromRef -GitCli $gitCli -Ref $gitTargetRefNormalized
+            if ([string]::IsNullOrWhiteSpace($targetHead) -or -not [string]::IsNullOrWhiteSpace($trackedChanges) -or -not $buildArtifactsFreshBeforeFetch) {
+                Write-RepoSyncLog "Fetching PixelStreaming repo before resolving pinned ref '$gitTargetRefNormalized'."
+                & $gitCli fetch --prune --tags
+                if ($LASTEXITCODE -ne 0) {
+                    throw 'git fetch --prune --tags failed.'
+                }
+
+                $targetHead = Resolve-PinnedCommitFromRef -GitCli $gitCli -Ref $gitTargetRefNormalized
+            } else {
+                Write-RepoSyncLog "Pinned ref '$gitTargetRefNormalized' already matches HEAD $currentHead with fresh build artifacts. Skipping git fetch."
+            }
 
             if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
                 $requiresInfraUpdateStatus = $true
@@ -884,12 +918,12 @@ try {
         }
     }
 
-    if ($buildScope -ne 'none' -or $updateBuildStampWithoutBuild) {
+    if ($buildScope -ne 'none') {
         $requiresInfraUpdateStatus = $true
     }
 
     if ($startupRuntimeStatusContext -and $requiresInfraUpdateStatus) {
-        Invoke-PublishRuntimeStatusScript -Context $startupRuntimeStatusContext -Status 'updating_infra' -Reason 'git_sync_in_progress'
+        Invoke-PublishRuntimeStatusScript -Context $startupRuntimeStatusContext -Status 'updating_infra' -Reason 'repo_build_in_progress'
     }
 
     if ($buildScope -ne 'none') {
