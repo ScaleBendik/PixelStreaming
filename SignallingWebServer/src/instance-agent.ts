@@ -433,6 +433,7 @@ export function wireInstanceAgent(
     let pendingRecycleCompletion: InstanceAgentRecycleMarkerSnapshot | null =
         readInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
     let activeCommand = readInstanceAgentCommandJournalSnapshot(commandJournalPath, log);
+    let recoveredActiveCommandId = activeCommand?.instanceCommandId ?? null;
     let bootstrapIdentityPromise: Promise<BootstrapIdentity> | null = null;
     let bootstrapPromise: Promise<void> | null = null;
     let tickInFlight = false;
@@ -514,6 +515,7 @@ export function wireInstanceAgent(
 
     const clearActiveCommand = (): void => {
         activeCommand = null;
+        recoveredActiveCommandId = null;
         clearInstanceAgentCommandJournalSnapshot(commandJournalPath, log);
     };
 
@@ -1016,6 +1018,8 @@ export function wireInstanceAgent(
         if (
             !activeCommand ||
             !isRecycleToWarmCommand(activeCommand) ||
+            activeCommand.instanceCommandId !== recoveredActiveCommandId ||
+            activeCommand.status !== 'running' ||
             server.playerRegistry.count() > 0 ||
             resetInProgress ||
             pendingRecycleCompletion

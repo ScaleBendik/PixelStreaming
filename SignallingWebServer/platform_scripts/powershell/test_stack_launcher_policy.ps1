@@ -41,6 +41,7 @@ $stackRecycleScriptPath = Join-Path $PSScriptRoot 'invoke_stack_recycle.ps1'
 $unrealLauncherPath = Join-Path $PSScriptRoot 'start_scaleworld.ps1'
 $watchdogPath = Join-Path $PSScriptRoot 'watchdog.ps1'
 $viewerIdleStopPath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\src\viewer-idle-stop.ts')
+$instanceAgentPath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\src\instance-agent.ts')
 
 $stackLauncher = [System.IO.File]::ReadAllText($stackLauncherPath)
 $stackRecycleLauncher = [System.IO.File]::ReadAllText($stackRecycleLauncherPath)
@@ -48,6 +49,7 @@ $stackRecycleScript = [System.IO.File]::ReadAllText($stackRecycleScriptPath)
 $unrealLauncher = [System.IO.File]::ReadAllText($unrealLauncherPath)
 $watchdog = [System.IO.File]::ReadAllText($watchdogPath)
 $viewerIdleStop = [System.IO.File]::ReadAllText($viewerIdleStopPath)
+$instanceAgent = [System.IO.File]::ReadAllText($instanceAgentPath)
 
 Assert-DoesNotContainText `
     -Content $stackLauncher `
@@ -173,4 +175,18 @@ Assert-ContainsText `
     -Expected 'warm hold will wait for an explicit teardown command before recycling' `
     -Message 'Warm-held reconnect grace must wait for explicit teardown instead of self-recycling.'
 
+Assert-ContainsText `
+    -Content $instanceAgent `
+    -Expected 'recoveredActiveCommandId' `
+    -Message 'Instance agent must distinguish commands recovered from the command journal from newly received commands.'
+
+Assert-ContainsText `
+    -Content $instanceAgent `
+    -Expected "activeCommand.instanceCommandId !== recoveredActiveCommandId" `
+    -Message 'Recovered command finalization must not complete a newly received recycle command against a stale ready snapshot.'
+
+Assert-ContainsText `
+    -Content $instanceAgent `
+    -Expected "activeCommand.status !== 'running'" `
+    -Message 'Recovered command finalization must only complete commands that were already running before restart.'
 Write-Output 'Stack launcher policy tests passed.'
