@@ -514,6 +514,42 @@ function Resolve-PixelStreamingVersionTagValue {
     return $normalizedHead.Substring(0, 12)
 }
 
+function Resolve-ServiceSafeGitRemoteUrl {
+    param([string]$OriginUrl)
+
+    if (-not [string]::IsNullOrWhiteSpace($env:SCALEWORLD_GIT_REMOTE_URL)) {
+        return $env:SCALEWORLD_GIT_REMOTE_URL.Trim()
+    }
+
+    if ([string]::IsNullOrWhiteSpace($OriginUrl)) {
+        return ''
+    }
+
+    $trimmedUrl = $OriginUrl.Trim()
+    $githubAliasPrefix = 'git@github-pixelstreaming:'
+    if ($trimmedUrl.StartsWith($githubAliasPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return 'https://github.com/' + $trimmedUrl.Substring($githubAliasPrefix.Length)
+    }
+
+    return ''
+}
+
+function Ensure-ServiceSafeGitOriginRemote {
+    param([string]$GitCli)
+
+    $originUrl = ((& $GitCli remote get-url origin 2>$null) | Out-String).Trim()
+    $safeOriginUrl = Resolve-ServiceSafeGitRemoteUrl -OriginUrl $originUrl
+    if ([string]::IsNullOrWhiteSpace($safeOriginUrl) -or
+        [string]::Equals($originUrl, $safeOriginUrl, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return
+    }
+
+    Write-RepoSyncLog "Updating PixelStreaming origin fetch URL for service startup from '$originUrl' to '$safeOriginUrl'."
+    & $GitCli remote set-url origin $safeOriginUrl
+    if ($LASTEXITCODE -ne 0) {
+        throw "git remote set-url origin '$safeOriginUrl' failed."
+    }
+}
 function Resolve-GitTargetRefValue {
     param(
         [string]$ExplicitRef,
@@ -804,6 +840,8 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "PixelStreaming root '$RepoRoot' is not a git repository."
     }
+
+    Ensure-ServiceSafeGitOriginRemote -GitCli $gitCli
 
     $currentHead = ((& $gitCli rev-parse HEAD) | Out-String).Trim()
     $initialHead = $currentHead

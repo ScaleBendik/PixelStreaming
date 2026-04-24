@@ -213,6 +213,15 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $repoSync `
+    -Expected "git@github-pixelstreaming:" `
+    -Message 'Repo sync must recognize the legacy SSH host alias that is unavailable to service-account startup.'
+
+Assert-ContainsText `
+    -Content $repoSync `
+    -Expected "remote set-url origin" `
+    -Message 'Repo sync must normalize unusable service-account git remotes before fetching.'
+Assert-ContainsText `
+    -Content $repoSync `
     -Expected "repo_build_in_progress" `
     -Message 'Repo sync must publish a build-specific updating status for actual build work.'
 Assert-ContainsText `
