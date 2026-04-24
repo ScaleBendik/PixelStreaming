@@ -65,6 +65,11 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $stackLauncher `
+    -Expected 'if not defined STACK_LAUNCH_UNREAL_BEFORE_WILBUR set "STACK_LAUNCH_UNREAL_BEFORE_WILBUR=true"' `
+    -Message 'Stack launcher should start Unreal before waiting for Wilbur by default while preserving the env override.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
     -Expected 'set "STACK_LAUNCH_EXIT=0"' `
     -Message 'Stack launcher must track component startup failures instead of exiting before watchdog scheduling.'
 Assert-ContainsText `
