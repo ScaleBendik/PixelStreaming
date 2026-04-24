@@ -37,9 +37,11 @@ function Assert-DoesNotContainText {
 $cmdRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\cmd')
 $stackLauncherPath = Join-Path $cmdRoot 'start_streamer_stack.bat'
 $unrealLauncherPath = Join-Path $PSScriptRoot 'start_scaleworld.ps1'
+$watchdogPath = Join-Path $PSScriptRoot 'watchdog.ps1'
 
 $stackLauncher = [System.IO.File]::ReadAllText($stackLauncherPath)
 $unrealLauncher = [System.IO.File]::ReadAllText($unrealLauncherPath)
+$watchdog = [System.IO.File]::ReadAllText($watchdogPath)
 
 Assert-DoesNotContainText `
     -Content $stackLauncher `
@@ -75,5 +77,20 @@ Assert-ContainsText `
     -Content $unrealLauncher `
     -Expected 'Stopped ScaleWorld launcher process PID' `
     -Message 'Failed strict Unreal launches must clean up the launcher process.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected 'LauncherGraceSeconds' `
+    -Message 'Watchdog must expose a launcher grace window before declaring the runtime missing.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected 'Get-FreshLauncherMatchesForRule' `
+    -Message 'Watchdog must treat fresh component launchers as startup in progress.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected 'Waiting for in-progress launcher before declaring a missing process' `
+    -Message 'Watchdog must log launcher waits instead of reporting the stack healthy.'
 
 Write-Output 'Stack launcher policy tests passed.'
