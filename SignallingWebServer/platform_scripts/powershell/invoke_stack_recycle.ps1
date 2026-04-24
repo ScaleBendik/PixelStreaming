@@ -82,7 +82,7 @@ function Stop-RecycleProcessMatches {
         [System.Collections.Generic.List[string]]$StoppedProcesses
     )
 
-    $matches = Get-RecycleProcessMatches -NamePattern $NamePattern -CommandLinePatterns $CommandLinePatterns
+    $matches = @(Get-RecycleProcessMatches -NamePattern $NamePattern -CommandLinePatterns $CommandLinePatterns)
     Stop-RecycleProcessObjects -Label $Label -Matches $matches -StoppedProcesses $StoppedProcesses
 }
 
@@ -132,7 +132,7 @@ function Stop-RecycleUnrealProcesses {
         [System.Collections.Generic.List[string]]$StoppedProcesses
     )
 
-    $matches = Get-RecycleUnrealProcessMatches -Matcher $Matcher
+    $matches = @(Get-RecycleUnrealProcessMatches -Matcher $Matcher)
     Stop-RecycleProcessObjects -Label 'unreal' -Matches $matches -StoppedProcesses $StoppedProcesses
 }
 
@@ -263,7 +263,7 @@ function Wait-ForProcessAbsence {
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
-        $matches = Get-RecycleProcessMatches -NamePattern $NamePattern -CommandLinePatterns $CommandLinePatterns
+        $matches = @(Get-RecycleProcessMatches -NamePattern $NamePattern -CommandLinePatterns $CommandLinePatterns)
         if ($matches.Count -eq 0) {
             Write-RecycleLog "Confirmed $Label shutdown before restart."
             return $true
@@ -272,7 +272,7 @@ function Wait-ForProcessAbsence {
         Start-Sleep -Milliseconds 500
     }
 
-    $remaining = Get-RecycleProcessMatches -NamePattern $NamePattern -CommandLinePatterns $CommandLinePatterns
+    $remaining = @(Get-RecycleProcessMatches -NamePattern $NamePattern -CommandLinePatterns $CommandLinePatterns)
     if ($remaining.Count -gt 0) {
         $summary = ($remaining | ForEach-Object { Format-RecycleProcessSummary -Process $_ }) -join ', '
         Write-RecycleLog "$Label processes still running after shutdown wait: $summary" 'WARN'
@@ -289,7 +289,7 @@ function Wait-ForUnrealAbsence {
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
-        $matches = Get-RecycleUnrealProcessMatches -Matcher $Matcher
+        $matches = @(Get-RecycleUnrealProcessMatches -Matcher $Matcher)
         if ($matches.Count -eq 0) {
             Write-RecycleLog 'Confirmed unreal shutdown before restart.'
             return $true
@@ -298,7 +298,7 @@ function Wait-ForUnrealAbsence {
         Start-Sleep -Milliseconds 500
     }
 
-    $remaining = Get-RecycleUnrealProcessMatches -Matcher $Matcher
+    $remaining = @(Get-RecycleUnrealProcessMatches -Matcher $Matcher)
     if ($remaining.Count -gt 0) {
         $summary = ($remaining | ForEach-Object { Format-RecycleProcessSummary -Process $_ }) -join ', '
         Write-RecycleLog "unreal processes still running after shutdown wait: $summary" 'WARN'
@@ -315,7 +315,7 @@ function Wait-ForUnrealPresence {
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
-        $matches = Get-RecycleUnrealProcessMatches -Matcher $Matcher
+        $matches = @(Get-RecycleUnrealProcessMatches -Matcher $Matcher)
         if ($matches.Count -gt 0) {
             $summary = ($matches | ForEach-Object { Format-RecycleProcessSummary -Process $_ }) -join ', '
             Write-RecycleLog "Detected Unreal runtime after restart: $summary."

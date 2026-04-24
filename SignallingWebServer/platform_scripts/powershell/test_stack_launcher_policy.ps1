@@ -133,4 +133,14 @@ Assert-ContainsText `
     -Expected 'if ($remaining)' `
     -Message 'Stack recycle must still fail when a process remains after Stop-Process fails.'
 
+Assert-ContainsText `
+    -Content $stackRecycleScript `
+    -Expected '$matches = @(Get-RecycleProcessMatches' `
+    -Message 'Stack recycle process absence checks must keep scalar results array-shaped under StrictMode.'
+
+Assert-ContainsText `
+    -Content $stackRecycleScript `
+    -Expected '$matches = @(Get-RecycleUnrealProcessMatches' `
+    -Message 'Stack recycle Unreal checks must keep scalar results array-shaped under StrictMode.'
+
 Write-Output 'Stack launcher policy tests passed.'
