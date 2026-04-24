@@ -450,6 +450,32 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     const refreshActiveCommand = (): void => {
         readActiveCommand();
     };
+    const tryStartLaunchedRecycleCommand = async (reason: string): Promise<void> => {
+        const commandToStart = getActiveRecycleCommand();
+        if (
+            !commandToStart ||
+            commandToStart.status === 'running' ||
+            !options.instanceAgentClient ||
+            !hasRecycleLaunchInProgress()
+        ) {
+            return;
+        }
+
+        try {
+            await options.instanceAgentClient.startCommand(commandToStart, {
+                occurredAtUtc: new Date().toISOString()
+            });
+            refreshActiveCommand();
+            log(
+                `[idle-stop] Marked recycle command ${commandToStart.instanceCommandId} as started after recycle launch (${reason}).`
+            );
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            log(
+                `[idle-stop] Failed to mark launched recycle command ${commandToStart.instanceCommandId} as started: ${message}`
+            );
+        }
+    };
     const tryResumeActiveRecycleCommand = (): void => {
         if (
             !getActiveRecycleCommand() ||
@@ -1323,6 +1349,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     if (server.playerRegistry.count() === 0) {
                         if (isShutdownCommand(command)) {
                             void requestStop('command_shutdown_requested');
+                            return;
+                        }
+
+                        if (hasRecycleLaunchInProgress()) {
+                            await tryStartLaunchedRecycleCommand('command_ack_after_recycle_launch');
                             return;
                         }
 

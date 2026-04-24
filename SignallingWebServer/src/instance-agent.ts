@@ -1014,6 +1014,28 @@ export function wireInstanceAgent(
         applyCommands(payload.commands, 'events');
     };
 
+    const tryStartRecoveredRecycleCommand = async (): Promise<void> => {
+        if (
+            !activeCommand ||
+            !isRecycleToWarmCommand(activeCommand) ||
+            activeCommand.status !== 'acked' ||
+            !pendingRecycleCompletion
+        ) {
+            return;
+        }
+
+        try {
+            const occurredAtUtc =
+                normalizeOptionalText(pendingRecycleCompletion.requestedAtUtc) ?? new Date().toISOString();
+            await startCommand(activeCommand, { occurredAtUtc });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            log(
+                `[instance-agent] Failed to mark recovered recycle command ${activeCommand.instanceCommandId} as started: ${message}`
+            );
+        }
+    };
+
     const tryFinalizeRecoveredActiveCommand = async (): Promise<void> => {
         if (
             !activeCommand ||
@@ -1059,6 +1081,7 @@ export function wireInstanceAgent(
             await flushEvents();
             await sendHeartbeat();
             await flushEvents();
+            await tryStartRecoveredRecycleCommand();
             await tryFinalizeRecoveredActiveCommand();
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
