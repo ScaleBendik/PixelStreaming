@@ -289,11 +289,15 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         'powershell',
         'invoke_stack_recycle.ps1'
     );
+    const recycleLauncherScriptPath = path.resolve(
+        __dirname,
+        '..',
+        'platform_scripts',
+        'cmd',
+        'start_stack_recycle.bat'
+    );
     const recycleRepoRoot = path.resolve(__dirname, '..');
-    const powershellPath =
-        process.platform === 'win32' && process.env.WINDIR
-            ? path.join(process.env.WINDIR, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-            : 'powershell';
+
     const recoveredRecycleMarkerAtStartup = recycleMarkerPath.length > 0 && fs.existsSync(recycleMarkerPath);
 
     let zeroViewersTimer: NodeJS.Timeout | null = null;
@@ -869,6 +873,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             if (!fs.existsSync(recycleHelperScriptPath)) {
                 throw new Error(`Recycle helper script '${recycleHelperScriptPath}' was not found.`);
             }
+            if (!fs.existsSync(recycleLauncherScriptPath)) {
+                throw new Error(`Recycle launcher script '${recycleLauncherScriptPath}' was not found.`);
+            }
             const recycleMarker = writeInstanceAgentRecycleMarkerSnapshot(
                 recycleMarkerPath,
                 {
@@ -880,13 +887,12 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 log
             );
             const recycleProcess = spawn(
-                powershellPath,
+                'cmd.exe',
                 [
-                    '-NoProfile',
-                    '-ExecutionPolicy',
-                    'Bypass',
-                    '-File',
-                    recycleHelperScriptPath,
+                    '/d',
+                    '/s',
+                    '/c',
+                    recycleLauncherScriptPath,
                     '-RepoRoot',
                     recycleRepoRoot,
                     '-RecycleMarkerPath',
@@ -929,7 +935,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 process.exit(0);
             }, DEFAULT_RECYCLE_SELF_EXIT_DELAY_MS);
             log(
-                `[idle-stop] Requested full stack recycle (${recycleMarker.recycleId ?? 'unknown'}) via '${recycleHelperScriptPath}'.`
+                `[idle-stop] Requested full stack recycle (${recycleMarker.recycleId ?? 'unknown'}) via '${recycleLauncherScriptPath}'.`
             );
         } catch (error) {
             recycleLaunchRequested = false;

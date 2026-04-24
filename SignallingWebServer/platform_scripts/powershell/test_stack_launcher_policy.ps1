@@ -36,12 +36,16 @@ function Assert-DoesNotContainText {
 
 $cmdRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\cmd')
 $stackLauncherPath = Join-Path $cmdRoot 'start_streamer_stack.bat'
+$stackRecycleLauncherPath = Join-Path $cmdRoot 'start_stack_recycle.bat'
 $unrealLauncherPath = Join-Path $PSScriptRoot 'start_scaleworld.ps1'
 $watchdogPath = Join-Path $PSScriptRoot 'watchdog.ps1'
+$viewerIdleStopPath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\src\viewer-idle-stop.ts')
 
 $stackLauncher = [System.IO.File]::ReadAllText($stackLauncherPath)
+$stackRecycleLauncher = [System.IO.File]::ReadAllText($stackRecycleLauncherPath)
 $unrealLauncher = [System.IO.File]::ReadAllText($unrealLauncherPath)
 $watchdog = [System.IO.File]::ReadAllText($watchdogPath)
+$viewerIdleStop = [System.IO.File]::ReadAllText($viewerIdleStopPath)
 
 Assert-DoesNotContainText `
     -Content $stackLauncher `
@@ -101,5 +105,20 @@ Assert-ContainsText `
     -Content $watchdog `
     -Expected 'Waiting for in-progress launcher before declaring a missing process' `
     -Message 'Watchdog must log launcher waits instead of reporting the stack healthy.'
+
+Assert-ContainsText `
+    -Content $stackRecycleLauncher `
+    -Expected 'start "ScaleWorld Stack Recycle" /min powershell' `
+    -Message 'Stack recycle must be launched through cmd start so it survives Wilbur exit.'
+
+Assert-ContainsText `
+    -Content $stackRecycleLauncher `
+    -Expected 'stack-recycle-launch.log' `
+    -Message 'Stack recycle launcher must leave a launch breadcrumb for runtime diagnosis.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected 'start_stack_recycle.bat' `
+    -Message 'Viewer idle stop must launch the Windows recycle launcher instead of relying on a Node-owned helper process.'
 
 Write-Output 'Stack launcher policy tests passed.'
