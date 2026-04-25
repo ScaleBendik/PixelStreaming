@@ -149,6 +149,16 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $stackRecycleScript `
+    -Expected 'Resolve-StackRecycleScriptRoot' `
+    -Message 'Stack recycle must resolve its script root even when invoked without an explicit RepoRoot.'
+
+Assert-ContainsText `
+    -Content $stackRecycleScript `
+    -Expected 'return $hasNamePattern' `
+    -Message 'Stack recycle process matching must not treat a process name match as sufficient when command-line filters are present.'
+
+Assert-ContainsText `
+    -Content $stackRecycleScript `
     -Expected '$matches = @(Get-RecycleUnrealProcessMatches' `
     -Message 'Stack recycle Unreal checks must keep scalar results array-shaped under StrictMode.'
 

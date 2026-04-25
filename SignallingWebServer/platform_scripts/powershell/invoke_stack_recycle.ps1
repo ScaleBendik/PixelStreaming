@@ -1,17 +1,38 @@
 [CmdletBinding()]
 param(
-    [string]$RepoRoot = $(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
+    [string]$RepoRoot = '',
     [string]$RecycleMarkerPath = '',
     [int]$SourcePid = 0,
-    [int]$WaitBeforeTerminateMilliseconds = 1000,
+    [int]$WaitBeforeTerminateMilliseconds = 250,
     [int]$WaitForWilburTimeoutSeconds = 120
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:CurrentProcessId = $PID
+
+function Resolve-StackRecycleScriptRoot {
+    if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+        return $PSScriptRoot
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($PSCommandPath)) {
+        return Split-Path -Parent $PSCommandPath
+    }
+
+    if ($MyInvocation.MyCommand.Path) {
+        return Split-Path -Parent $MyInvocation.MyCommand.Path
+    }
+
+    throw 'Unable to resolve stack recycle script root.'
+}
+
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    $RepoRoot = (Resolve-Path (Join-Path (Resolve-StackRecycleScriptRoot) '..\..')).Path
+}
+
 $script:RecycleLogPath = Join-Path $RepoRoot 'state\stack-recycle.log'
-$script:ScaleWorldProcessHelperPath = Join-Path $PSScriptRoot 'scaleworld_process_helpers.ps1'
+$script:ScaleWorldProcessHelperPath = Join-Path (Resolve-StackRecycleScriptRoot) 'scaleworld_process_helpers.ps1'
 if (-not (Test-Path -LiteralPath $script:ScaleWorldProcessHelperPath)) {
     throw "ScaleWorld process helper '$script:ScaleWorldProcessHelperPath' was not found."
 }
@@ -58,8 +79,13 @@ function Get-RecycleProcessMatches {
                 return $false
             }
 
-            if (($NamePattern.Length -gt 0) -and ([string]$_.Name -like $NamePattern)) {
-                return $true
+            $hasNamePattern = -not [string]::IsNullOrWhiteSpace($NamePattern)
+            if ($hasNamePattern -and -not ([string]$_.Name -like $NamePattern)) {
+                return $false
+            }
+
+            if ($resolvedCommandLinePatterns.Count -eq 0) {
+                return $hasNamePattern
             }
 
             $commandLine = [string]$_.CommandLine
