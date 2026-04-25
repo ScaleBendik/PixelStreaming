@@ -37,6 +37,7 @@ function Assert-DoesNotContainText {
 $cmdRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\cmd')
 $stackLauncherPath = Join-Path $cmdRoot 'start_streamer_stack.bat'
 $stackRecycleLauncherPath = Join-Path $cmdRoot 'start_stack_recycle.bat'
+$startDevTurnPath = Join-Path $cmdRoot 'start_dev_turn.bat'
 $stackRecycleScriptPath = Join-Path $PSScriptRoot 'invoke_stack_recycle.ps1'
 $unrealLauncherPath = Join-Path $PSScriptRoot 'start_scaleworld.ps1'
 $watchdogPath = Join-Path $PSScriptRoot 'watchdog.ps1'
@@ -46,6 +47,7 @@ $repoSyncPath = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
 
 $stackLauncher = [System.IO.File]::ReadAllText($stackLauncherPath)
 $stackRecycleLauncher = [System.IO.File]::ReadAllText($stackRecycleLauncherPath)
+$startDevTurn = [System.IO.File]::ReadAllText($startDevTurnPath)
 $stackRecycleScript = [System.IO.File]::ReadAllText($stackRecycleScriptPath)
 $unrealLauncher = [System.IO.File]::ReadAllText($unrealLauncherPath)
 $watchdog = [System.IO.File]::ReadAllText($watchdogPath)
@@ -82,6 +84,36 @@ Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'Watchdog was scheduled when enabled for recovery.' `
     -Message 'Component startup failures must flow past watchdog scheduling before exit.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected ':load_runtime_parameters' `
+    -Message 'Wilbur startup must batch runtime parameter loading into one SSM request.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'ssm get-parameters --names %RUNTIME_PARAMETER_NAMES%' `
+    -Message 'Wilbur startup must use SSM get-parameters instead of serial get-parameter calls.'
+
+Assert-DoesNotContainText `
+    -Content $startDevTurn `
+    -Unexpected 'get-parameter --name "%TURN_USER_PARAM%"' `
+    -Message 'Wilbur startup must not read the TURN username with a separate SSM request.'
+
+Assert-DoesNotContainText `
+    -Content $startDevTurn `
+    -Unexpected 'get-parameter --name "%TURN_CREDENTIAL_PARAM%"' `
+    -Message 'Wilbur startup must not read the TURN credential with a separate SSM request.'
+
+Assert-DoesNotContainText `
+    -Content $startDevTurn `
+    -Unexpected 'get-parameter --name "%CONNECT_TICKET_SIGNING_KEY_PARAM%"' `
+    -Message 'Wilbur startup must not read the connect-ticket signing key with a separate SSM request.'
+
+Assert-DoesNotContainText `
+    -Content $startDevTurn `
+    -Unexpected 'get-parameter --name "%INSTANCE_AGENT_API_BASE_URL_PARAM%"' `
+    -Message 'Wilbur startup must not read the instance-agent API URL with a separate SSM request.'
 
 Assert-ContainsText `
     -Content $unrealLauncher `

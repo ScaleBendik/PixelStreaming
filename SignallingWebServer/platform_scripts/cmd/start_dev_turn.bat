@@ -126,14 +126,9 @@ if /i not "%AWS_EXE%"=="aws" (
 )
 
 set "TURN_USERNAME="
-for /f "usebackq delims=" %%I in (`%AWS_CALL% ssm get-parameter --name "%TURN_USER_PARAM%" --with-decryption --region "%REGION%" --query Parameter.Value --output text`) do (
-  set "TURN_USERNAME=%%I"
-)
-
 set "TURN_CREDENTIAL="
-for /f "usebackq delims=" %%I in (`%AWS_CALL% ssm get-parameter --name "%TURN_CREDENTIAL_PARAM%" --with-decryption --region "%REGION%" --query Parameter.Value --output text`) do (
-  set "TURN_CREDENTIAL=%%I"
-)
+call :load_runtime_parameters
+if errorlevel 1 exit /b 1
 
 if not defined TURN_USERNAME (
   echo ERROR: Failed to load TURN username from SSM parameter "%TURN_USER_PARAM%".
@@ -148,12 +143,6 @@ if not defined TURN_CREDENTIAL (
 echo Loaded TURN credentials from SSM parameter store.
 
 if /i not "%CONNECT_TICKET_AUTH_MODE%"=="off" (
-  if not defined CONNECT_TICKET_SIGNING_KEY (
-    for /f "usebackq delims=" %%I in (`%AWS_CALL% ssm get-parameter --name "%CONNECT_TICKET_SIGNING_KEY_PARAM%" --with-decryption --region "%REGION%" --query Parameter.Value --output text`) do (
-      set "CONNECT_TICKET_SIGNING_KEY=%%I"
-    )
-  )
-
   if not defined CONNECT_TICKET_SIGNING_KEY (
     echo ERROR: Failed to load connect-ticket signing key from SSM parameter "%CONNECT_TICKET_SIGNING_KEY_PARAM%".
     exit /b 1
@@ -289,6 +278,45 @@ call start.bat -- ^
 
 exit /b %errorlevel%
 
+:load_runtime_parameters
+set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM="
+set "RUNTIME_PARAMETER_NAMES=%TURN_USER_PARAM% %TURN_CREDENTIAL_PARAM%"
+
+if /i not "%CONNECT_TICKET_AUTH_MODE%"=="off" (
+  if not defined CONNECT_TICKET_SIGNING_KEY (
+    set "RUNTIME_PARAMETER_NAMES=%RUNTIME_PARAMETER_NAMES% %CONNECT_TICKET_SIGNING_KEY_PARAM%"
+  )
+)
+
+if not defined INSTANCE_AGENT_API_BASE_URL (
+  if defined INSTANCE_AGENT_API_BASE_URL_PARAM (
+    set "RUNTIME_PARAMETER_NAMES=%RUNTIME_PARAMETER_NAMES% %INSTANCE_AGENT_API_BASE_URL_PARAM%"
+  )
+)
+
+for /f "usebackq tokens=1,*" %%I in (`%AWS_CALL% ssm get-parameters --names %RUNTIME_PARAMETER_NAMES% --with-decryption --region "%REGION%" --query "Parameters[].[Name,Value]" --output text`) do (
+  if /i "%%I"=="%TURN_USER_PARAM%" set "TURN_USERNAME=%%J"
+  if /i "%%I"=="%TURN_CREDENTIAL_PARAM%" set "TURN_CREDENTIAL=%%J"
+  if /i "%%I"=="%CONNECT_TICKET_SIGNING_KEY_PARAM%" set "CONNECT_TICKET_SIGNING_KEY=%%J"
+  if /i "%%I"=="%INSTANCE_AGENT_API_BASE_URL_PARAM%" (
+    set "INSTANCE_AGENT_API_BASE_URL=%%J"
+    set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM=true"
+  )
+)
+
+if /i "%INSTANCE_AGENT_API_BASE_URL%"=="None" (
+  set "INSTANCE_AGENT_API_BASE_URL="
+  set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM="
+)
+
+if defined INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM (
+  if defined INSTANCE_AGENT_API_BASE_URL (
+    echo Loaded instance-agent API base URL from SSM parameter "%INSTANCE_AGENT_API_BASE_URL_PARAM%".
+  )
+)
+
+exit /b 0
+
 :apply_instance_agent_defaults
 if not defined INSTANCE_AGENT (
   if defined INSTANCE_ID (
@@ -299,17 +327,6 @@ if not defined INSTANCE_AGENT (
 )
 
 if /i not "%INSTANCE_AGENT%"=="false" (
-  if not defined INSTANCE_AGENT_API_BASE_URL (
-    if defined INSTANCE_AGENT_API_BASE_URL_PARAM (
-      for /f "usebackq delims=" %%I in (`%AWS_CALL% ssm get-parameter --name "%INSTANCE_AGENT_API_BASE_URL_PARAM%" --region "%REGION%" --query Parameter.Value --output text 2^>nul`) do (
-        set "INSTANCE_AGENT_API_BASE_URL=%%I"
-      )
-      if /i "%INSTANCE_AGENT_API_BASE_URL%"=="None" set "INSTANCE_AGENT_API_BASE_URL="
-      if defined INSTANCE_AGENT_API_BASE_URL (
-        echo Loaded instance-agent API base URL from SSM parameter "%INSTANCE_AGENT_API_BASE_URL_PARAM%".
-      )
-    )
-  )
   if not defined INSTANCE_AGENT_API_BASE_URL (
     if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
       set "INSTANCE_AGENT_API_BASE_URL=https://scaleworld.api.scaleaq.net"
