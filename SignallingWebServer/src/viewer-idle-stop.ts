@@ -447,6 +447,21 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         !hasExplicitRecycleIntent();
     const isWarmHoldActive = (): boolean => shouldSuppressNoViewerIdleAutomation() && !hasSeenViewer;
     const shouldResetIntoWarmReady = (): boolean => hasExplicitRecycleIntent();
+    const resolveDesiredStateShutdownReason = (): string => {
+        if (getActiveShutdownCommand()) {
+            return 'command_shutdown_requested';
+        }
+
+        const desiredStateMessage = currentDesiredState.message?.trim().toLowerCase() ?? '';
+        if (
+            desiredStateMessage.startsWith('automatic warm release') ||
+            desiredStateMessage.startsWith('warm-pool capacity release')
+        ) {
+            return 'warm_pool_capacity_release';
+        }
+
+        return 'agent_shutdown_requested';
+    };
     const refreshActiveCommand = (): void => {
         readActiveCommand();
     };
@@ -663,7 +678,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             if (currentDesiredState.shutdownRequested) {
-                void requestStop('agent_shutdown_requested');
+                void requestStop(resolveDesiredStateShutdownReason());
                 return;
             }
 
@@ -689,7 +704,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             if (currentDesiredState.shutdownRequested) {
-                void requestStop('agent_shutdown_requested');
+                void requestStop(resolveDesiredStateShutdownReason());
                 return;
             }
 
@@ -709,6 +724,19 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             !isMaintenanceActive()
         ) {
             tryResumeActiveShutdownCommand();
+            return;
+        }
+
+        if (
+            currentDesiredState.shutdownRequested &&
+            server.playerRegistry.count() === 0 &&
+            maintenanceStateInitialized &&
+            !isMaintenanceActive()
+        ) {
+            clearZeroTimer();
+            clearFirstViewerTimer();
+            clearTransientStatusHeartbeat();
+            void requestStop(resolveDesiredStateShutdownReason());
             return;
         }
 
@@ -744,7 +772,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             (currentDesiredState.shutdownRequested || getActiveShutdownCommand()) &&
             server.playerRegistry.count() === 0
         ) {
-            void requestStop('agent_shutdown_requested');
+            void requestStop(resolveDesiredStateShutdownReason());
         }
     };
 
@@ -832,7 +860,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             if (currentDesiredState.shutdownRequested) {
-                void requestStop('agent_shutdown_requested');
+                void requestStop(resolveDesiredStateShutdownReason());
                 return;
             }
 
@@ -890,7 +918,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             if (getActiveShutdownCommand() || currentDesiredState.shutdownRequested) {
-                void requestStop('agent_shutdown_requested');
+                void requestStop(resolveDesiredStateShutdownReason());
                 return;
             }
 
@@ -938,7 +966,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         hasSeenViewer = false;
         if (currentDesiredState.shutdownRequested) {
-            void requestStop('agent_shutdown_requested');
+            void requestStop(resolveDesiredStateShutdownReason());
             return;
         }
 
@@ -967,7 +995,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             if (currentDesiredState.shutdownRequested) {
-                void requestStop('agent_shutdown_requested');
+                void requestStop(resolveDesiredStateShutdownReason());
                 return;
             }
 
