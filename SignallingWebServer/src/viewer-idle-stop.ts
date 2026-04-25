@@ -895,12 +895,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             if (shouldSuppressNoViewerIdleAutomation()) {
-                publishStatus('reconnect_grace', 'waiting_for_control_plane_teardown', {
-                    preserveStatusAtUtc: true
-                });
-                startTransientStatusHeartbeat('reconnect_grace', 'waiting_for_control_plane_teardown');
+                clearTransientStatusHeartbeat();
+                runtimeStatusController?.restoreDerivedStatus();
                 log(
-                    '[idle-stop] Reconnect grace expired without an explicit teardown command. Holding warm instance without first-viewer/no-viewer stop or recycle.'
+                    '[idle-stop] Reconnect grace expired without an explicit teardown command. Holding warm instance without first-viewer/no-viewer stop or recycle, and restoring derived runtime status.'
                 );
                 return;
             }
