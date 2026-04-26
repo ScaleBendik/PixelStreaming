@@ -9,7 +9,7 @@ import { gzip } from 'zlib';
 const execFileAsync = promisify(execFile);
 const gzipAsync = promisify(gzip);
 
-const DEFAULT_OBJECT_PREFIX = 'pixelstreaming/session-log-artifacts';
+const DEFAULT_OBJECT_PREFIX = 'PixelStreamingLogs';
 const DEFAULT_MAX_BUNDLE_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_ENTRY_BYTES = 512 * 1024;
 const MAX_DRAIN_RECORDS = 3;
