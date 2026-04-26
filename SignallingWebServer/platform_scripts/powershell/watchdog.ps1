@@ -26,6 +26,7 @@ param(
     [string]$StreamerHealthPath = $(if ($env:WATCHDOG_STREAMER_HEALTH_PATH) { $env:WATCHDOG_STREAMER_HEALTH_PATH } else { 'state\streamer-health.json' }),
     [string]$StreamerHealthMaxStaleSeconds = $(if ($env:WATCHDOG_STREAMER_HEALTH_MAX_STALE_SECONDS) { $env:WATCHDOG_STREAMER_HEALTH_MAX_STALE_SECONDS } else { '75' }),
     [string]$StreamerHealthStartupGraceSeconds = $(if ($env:WATCHDOG_STREAMER_HEALTH_STARTUP_GRACE_SECONDS) { $env:WATCHDOG_STREAMER_HEALTH_STARTUP_GRACE_SECONDS } else { '120' }),
+    [string]$StreamerHealthUnreadyRecoverySeconds = $(if ($env:WATCHDOG_STREAMER_HEALTH_UNREADY_RECOVERY_SECONDS) { $env:WATCHDOG_STREAMER_HEALTH_UNREADY_RECOVERY_SECONDS } else { '180' }),
     [string]$ProvisioningStreamerHealthStartupGraceSeconds = $(if ($env:WATCHDOG_PROVISIONING_STREAMER_HEALTH_STARTUP_GRACE_SECONDS) { $env:WATCHDOG_PROVISIONING_STREAMER_HEALTH_STARTUP_GRACE_SECONDS } else { '3600' }),
     [string]$ProvisioningStreamerConnectTimeoutSeconds = $(if ($env:WATCHDOG_PROVISIONING_STREAMER_CONNECT_TIMEOUT_SECONDS) { $env:WATCHDOG_PROVISIONING_STREAMER_CONNECT_TIMEOUT_SECONDS } else { '960' }),
     [string]$ProvisioningMaxRecoveryRestarts = $(if ($env:WATCHDOG_PROVISIONING_MAX_RECOVERY_RESTARTS) { $env:WATCHDOG_PROVISIONING_MAX_RECOVERY_RESTARTS } else { '1' }),
@@ -695,6 +696,7 @@ $runtimeStatusEnabledValue = ConvertTo-Bool -Value $RuntimeStatusEnabled -Defaul
 $streamerHealthEnabledValue = ConvertTo-Bool -Value $StreamerHealthEnabled -Default $true
 $streamerHealthMaxStaleSecondsValue = ConvertTo-PositiveInt -Value $StreamerHealthMaxStaleSeconds -Default 75 -Name 'StreamerHealthMaxStaleSeconds'
 $streamerHealthStartupGraceSecondsValue = ConvertTo-PositiveInt -Value $StreamerHealthStartupGraceSeconds -Default 120 -Name 'StreamerHealthStartupGraceSeconds'
+$streamerHealthUnreadyRecoverySecondsValue = ConvertTo-PositiveInt -Value $StreamerHealthUnreadyRecoverySeconds -Default 180 -Name 'StreamerHealthUnreadyRecoverySeconds'
 $provisioningStreamerHealthStartupGraceSecondsValue = ConvertTo-PositiveInt -Value $ProvisioningStreamerHealthStartupGraceSeconds -Default 3600 -Name 'ProvisioningStreamerHealthStartupGraceSeconds'
 $provisioningStreamerConnectTimeoutSecondsValue = ConvertTo-PositiveInt -Value $ProvisioningStreamerConnectTimeoutSeconds -Default 960 -Name 'ProvisioningStreamerConnectTimeoutSeconds'
 $provisioningMaxRecoveryRestartsValue = ConvertTo-PositiveInt -Value $ProvisioningMaxRecoveryRestarts -Default 1 -Name 'ProvisioningMaxRecoveryRestarts'
@@ -777,6 +779,7 @@ foreach ($rule in $rules) {
     $ruleFailures[$rule.Name] = 0
 }
 $streamerHealthFailureCount = 0
+$streamerHealthFirstFaultAtUtc = [DateTimeOffset]::MinValue
 
 $watchdogStartedAtUtc = [DateTimeOffset]::UtcNow
 $lastRestartAtUtc = [DateTimeOffset]::MinValue
@@ -900,6 +903,7 @@ while ($true) {
 
         if ($secondsSinceHealthGraceReference -lt $effectiveStreamerHealthStartupGraceSeconds) {
             $streamerHealthFailureCount = 0
+            $streamerHealthFirstFaultAtUtc = [DateTimeOffset]::MinValue
         } else {
             $streamerHealthResult = Read-StreamerHealthSnapshot -Path $resolvedStreamerHealthPath
             $streamerHealthFaultReason = $null
@@ -962,14 +966,34 @@ while ($true) {
 
             if ($streamerHealthFaultReason) {
                 $streamerHealthFailureCount = $streamerHealthFailureCount + 1
+                if ($streamerHealthFirstFaultAtUtc -eq [DateTimeOffset]::MinValue) {
+                    $streamerHealthFirstFaultAtUtc = [DateTimeOffset]::UtcNow
+                }
+
                 if ($streamerHealthFailureCount -ge $failureThresholdValue) {
+                    $streamerHealthFaultDurationSeconds = ([DateTimeOffset]::UtcNow - $streamerHealthFirstFaultAtUtc).TotalSeconds
                     $streamerHealthSummaryWithCpu = if ([string]::IsNullOrWhiteSpace($unrealCpuStallSummary)) {
                         $streamerHealthFaultSummary
                     } else {
                         '{0}; {1}' -f $streamerHealthFaultSummary, $unrealCpuStallSummary
                     }
 
-                    if (-not $unrealCpuStallConfirmEnabledValue -or $unrealCpuStallConfirmed) {
+                    $isHardStreamerHealthFault = @(
+                        'streamer_health_missing',
+                        'streamer_health_invalid',
+                        'streamer_health_missing_timestamp',
+                        'streamer_health_file_stale'
+                    ) -contains $streamerHealthFaultReason
+                    $streamerHealthUnreadyRecoveryElapsed =
+                        $streamerHealthUnreadyRecoverySecondsValue -gt 0 -and
+                        $streamerHealthFaultDurationSeconds -ge $streamerHealthUnreadyRecoverySecondsValue
+
+                    if (
+                        -not $unrealCpuStallConfirmEnabledValue -or
+                        $unrealCpuStallConfirmed -or
+                        $isHardStreamerHealthFault -or
+                        $streamerHealthUnreadyRecoveryElapsed
+                    ) {
                         $failedRules += [pscustomobject]@{
                             Name = 'streamer-health'
                             ProcessName = 'streamer-health'
@@ -979,15 +1003,21 @@ while ($true) {
                         }
                     } else {
                         $pendingFaultSignature = $streamerHealthFaultReason
-                        $pendingFaultSummary = '{0}; awaiting CPU stall confirmation' -f $streamerHealthSummaryWithCpu
+                        if ($streamerHealthUnreadyRecoverySecondsValue -gt 0) {
+                            $pendingFaultSummary = '{0}; awaiting CPU stall confirmation or {1:N0}/{2}s continuous unhealthy runtime' -f $streamerHealthSummaryWithCpu, $streamerHealthFaultDurationSeconds, $streamerHealthUnreadyRecoverySecondsValue
+                        } else {
+                            $pendingFaultSummary = '{0}; awaiting CPU stall confirmation' -f $streamerHealthSummaryWithCpu
+                        }
                     }
                 }
             } else {
                 $streamerHealthFailureCount = 0
+                $streamerHealthFirstFaultAtUtc = [DateTimeOffset]::MinValue
             }
         }
     } else {
         $streamerHealthFailureCount = 0
+        $streamerHealthFirstFaultAtUtc = [DateTimeOffset]::MinValue
     }
 
     if ($failedRules.Count -eq 0) {
@@ -1172,4 +1202,3 @@ while ($true) {
         Start-Sleep -Seconds $pollIntervalSecondsValue
     }
 }
-

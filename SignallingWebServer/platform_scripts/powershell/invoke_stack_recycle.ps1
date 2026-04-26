@@ -4,7 +4,10 @@ param(
     [string]$RecycleMarkerPath = '',
     [int]$SourcePid = 0,
     [int]$WaitBeforeTerminateMilliseconds = 250,
-    [int]$WaitForWilburTimeoutSeconds = 120
+    [int]$WaitForWilburTimeoutSeconds = 120,
+    [int]$WaitForStreamerHealthTimeoutSeconds = 120,
+    [int]$StreamerHealthMaxStaleSeconds = 30,
+    [string]$StreamerHealthPath = ''
 )
 
 Set-StrictMode -Version Latest
@@ -37,6 +40,13 @@ if (-not (Test-Path -LiteralPath $script:ScaleWorldProcessHelperPath)) {
     throw "ScaleWorld process helper '$script:ScaleWorldProcessHelperPath' was not found."
 }
 . $script:ScaleWorldProcessHelperPath
+if ([string]::IsNullOrWhiteSpace($StreamerHealthPath)) {
+    $resolvedStreamerHealthPath = Join-Path $RepoRoot 'state\streamer-health.json'
+} elseif ([System.IO.Path]::IsPathRooted($StreamerHealthPath)) {
+    $resolvedStreamerHealthPath = $StreamerHealthPath
+} else {
+    $resolvedStreamerHealthPath = Join-Path $RepoRoot $StreamerHealthPath
+}
 
 function Write-RecycleLog {
     param(
@@ -355,6 +365,136 @@ function Wait-ForUnrealPresence {
     return $false
 }
 
+function Get-RecycleSnapshotPropertyValue {
+    param(
+        [object]$Snapshot,
+        [string]$Name
+    )
+
+    if ($null -eq $Snapshot) {
+        return $null
+    }
+
+    $property = $Snapshot.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        return $null
+    }
+
+    return $property.Value
+}
+
+function Read-RecycleStreamerHealthSnapshot {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return [pscustomobject]@{
+            State = 'missing'
+            Snapshot = $null
+            Error = $null
+        }
+    }
+
+    try {
+        $raw = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            return [pscustomobject]@{
+                State = 'missing'
+                Snapshot = $null
+                Error = $null
+            }
+        }
+
+        return [pscustomobject]@{
+            State = 'ok'
+            Snapshot = ($raw | ConvertFrom-Json -ErrorAction Stop)
+            Error = $null
+        }
+    } catch {
+        return [pscustomobject]@{
+            State = 'invalid'
+            Snapshot = $null
+            Error = $_.Exception.Message
+        }
+    }
+}
+
+function Wait-ForStreamerHealthReadiness {
+    param(
+        [string]$Path,
+        [int]$TimeoutSeconds,
+        [int]$MaxStaleSeconds,
+        [DateTimeOffset]$NotBeforeUtc
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $lastSummary = $null
+    while ((Get-Date) -lt $deadline) {
+        $result = Read-RecycleStreamerHealthSnapshot -Path $Path
+        $summary = $null
+
+        if ($result.State -eq 'ok') {
+            $snapshot = $result.Snapshot
+            $status = [string](Get-RecycleSnapshotPropertyValue -Snapshot $snapshot -Name 'status')
+            $reason = [string](Get-RecycleSnapshotPropertyValue -Snapshot $snapshot -Name 'reason')
+            $healthy = $false
+            $healthyValue = Get-RecycleSnapshotPropertyValue -Snapshot $snapshot -Name 'healthy'
+            if ($null -ne $healthyValue) {
+                try {
+                    $healthy = [bool]$healthyValue
+                } catch {
+                    $healthy = $false
+                }
+            }
+
+            $updatedAtUtc = $null
+            $updatedAtText = [string](Get-RecycleSnapshotPropertyValue -Snapshot $snapshot -Name 'updatedAtUtc')
+            if (-not [string]::IsNullOrWhiteSpace($updatedAtText)) {
+                try {
+                    $updatedAtUtc = [DateTimeOffset]::Parse(
+                        $updatedAtText,
+                        [System.Globalization.CultureInfo]::InvariantCulture,
+                        [System.Globalization.DateTimeStyles]::RoundtripKind
+                    )
+                } catch {
+                    $updatedAtUtc = $null
+                }
+            }
+
+            $isFresh = $false
+            $healthAgeSeconds = $null
+            if ($updatedAtUtc) {
+                $healthAgeSeconds = ([DateTimeOffset]::UtcNow - $updatedAtUtc).TotalSeconds
+                $isFresh = $updatedAtUtc -ge $NotBeforeUtc -and $healthAgeSeconds -le $MaxStaleSeconds
+            }
+
+            if ($isFresh -and $healthy -and $status.Equals('ready', [System.StringComparison]::OrdinalIgnoreCase)) {
+                Write-RecycleLog "Confirmed streamer runtime readiness from health snapshot status=$status reason=$reason updatedAtUtc=$updatedAtText."
+                return $true
+            }
+
+            $ageText = if ($null -eq $healthAgeSeconds) { 'unknown' } else { '{0:N0}s' -f $healthAgeSeconds }
+            $summary = "streamer health not ready (state=ok status=$status reason=$reason healthy=$healthy age=$ageText updatedAtUtc=$updatedAtText)"
+            if ($updatedAtUtc -and $updatedAtUtc -lt $NotBeforeUtc) {
+                $summary = "$summary; snapshot predates recycle restart"
+            }
+        } elseif ($result.State -eq 'missing') {
+            $summary = "streamer health file missing ($Path)"
+        } else {
+            $summary = "streamer health file invalid ($($result.Error))"
+        }
+
+        if ($summary -ne $lastSummary) {
+            Write-RecycleLog $summary
+            $lastSummary = $summary
+        }
+
+        Start-Sleep -Seconds 1
+    }
+
+    $timeoutSummary = if ([string]::IsNullOrWhiteSpace($lastSummary)) { 'no streamer health snapshot observed' } else { $lastSummary }
+    Write-RecycleLog "Streamer health did not reach ready within $TimeoutSeconds seconds: $timeoutSummary" 'WARN'
+    return $false
+}
 $stackLauncher = Join-Path $RepoRoot 'platform_scripts\cmd\start_streamer_stack.bat'
 $unrealExecutableName = if (-not [string]::IsNullOrWhiteSpace($env:SCALEWORLD_EXECUTABLE_NAME)) {
     [System.IO.Path]::GetFileName($env:SCALEWORLD_EXECUTABLE_NAME)
@@ -378,6 +518,7 @@ try {
     Write-RecycleLog "Resolved recycle repo root to '$RepoRoot'."
     Write-RecycleLog "Recycle log path is '$script:RecycleLogPath'."
     Write-RecycleLog "Resolved stack launcher to '$stackLauncher'."
+    Write-RecycleLog "Resolved streamer health path to '$resolvedStreamerHealthPath'."
     Write-RecycleLog "Resolved Unreal matcher installRoot='$($scaleWorldRuntimeMatcher.InstallRoot)' namePatterns='$($scaleWorldRuntimeMatcher.NamePatterns -join ';')' commandLinePatterns='$($scaleWorldRuntimeMatcher.CommandLinePatterns -join ';')'."
     Write-RecycleLog "Resolved Unreal startup matcher installRoot='$($scaleWorldStartupMatcher.InstallRoot)' namePatterns='$($scaleWorldStartupMatcher.NamePatterns -join ';')' commandLinePatterns='$($scaleWorldStartupMatcher.CommandLinePatterns -join ';')'."
 
@@ -414,6 +555,7 @@ try {
     }
 
     Write-RecycleLog 'Restarting streamer stack directly via start_streamer_stack.bat --recovery.'
+    $stackRestartStartedAtUtc = [DateTimeOffset]::UtcNow
     Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', ('"{0}" --recovery' -f $stackLauncher) -WorkingDirectory (Split-Path -Parent $stackLauncher) -WindowStyle Hidden | Out-Null
 
     $stackDetected =
@@ -423,6 +565,10 @@ try {
 
     if (-not $stackDetected) {
         throw "Stack recycle did not reach Wilbur readiness and Unreal runtime presence within $WaitForWilburTimeoutSeconds seconds."
+    }
+
+    if (-not (Wait-ForStreamerHealthReadiness -Path $resolvedStreamerHealthPath -TimeoutSeconds $WaitForStreamerHealthTimeoutSeconds -MaxStaleSeconds $StreamerHealthMaxStaleSeconds -NotBeforeUtc $stackRestartStartedAtUtc)) {
+        throw "Stack recycle did not reach streamer runtime readiness within $WaitForStreamerHealthTimeoutSeconds seconds."
     }
 
     $stoppedSummary = if ($stoppedProcesses.Count -gt 0) { $stoppedProcesses -join ', ' } else { '(none)' }

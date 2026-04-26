@@ -148,6 +148,20 @@ Assert-ContainsText `
     -Content $watchdog `
     -Expected 'Waiting for in-progress launcher before declaring a missing process' `
     -Message 'Watchdog must log launcher waits instead of reporting the stack healthy.'
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected 'StreamerHealthUnreadyRecoverySeconds' `
+    -Message 'Watchdog must expose a bounded streamer-health recovery window.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected 'awaiting CPU stall confirmation or' `
+    -Message 'Watchdog must preserve CPU stall confirmation while bounding indefinite unhealthy streamer states.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected 'streamer_health_file_stale' `
+    -Message 'Watchdog must treat stale streamer health as a hard health fault.'
 
 Assert-ContainsText `
     -Content $stackRecycleLauncher `
@@ -193,6 +207,20 @@ Assert-ContainsText `
     -Content $stackRecycleScript `
     -Expected '$matches = @(Get-RecycleUnrealProcessMatches' `
     -Message 'Stack recycle Unreal checks must keep scalar results array-shaped under StrictMode.'
+Assert-ContainsText `
+    -Content $stackRecycleScript `
+    -Expected 'Wait-ForStreamerHealthReadiness' `
+    -Message 'Stack recycle must wait for streamer runtime readiness after restart.'
+
+Assert-ContainsText `
+    -Content $stackRecycleScript `
+    -Expected 'snapshot predates recycle restart' `
+    -Message 'Stack recycle must not accept stale pre-recycle streamer health snapshots.'
+
+Assert-ContainsText `
+    -Content $stackRecycleScript `
+    -Expected '$status.Equals(''ready''' `
+    -Message 'Stack recycle must require runtime ready status, not only a running Unreal process.'
 
 Assert-ContainsText `
     -Content $viewerIdleStop `
