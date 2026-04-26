@@ -443,6 +443,41 @@ program
         config_file.instance_agent_desired_state_path || ''
     )
     .option(
+        '--instance_agent_artifact_upload_enabled <value>',
+        'Enables upload and agent registration of session diagnostic log artifacts. true/false',
+        config_file.instance_agent_artifact_upload_enabled || ''
+    )
+    .option(
+        '--instance_agent_artifact_bucket <value>',
+        'S3 bucket for session diagnostic log artifacts.',
+        config_file.instance_agent_artifact_bucket || ''
+    )
+    .option(
+        '--instance_agent_artifact_prefix <value>',
+        'S3 object key prefix for session diagnostic log artifacts.',
+        config_file.instance_agent_artifact_prefix || ''
+    )
+    .option(
+        '--instance_agent_artifact_aws_cli_path <path>',
+        'AWS CLI executable used for session artifact uploads (default: runtime status AWS CLI path or aws).',
+        config_file.instance_agent_artifact_aws_cli_path || ''
+    )
+    .option(
+        '--instance_agent_artifact_queue_path <path>',
+        'Local durable queue path for pending session artifact upload/registration records.',
+        config_file.instance_agent_artifact_queue_path || ''
+    )
+    .option(
+        '--instance_agent_artifact_max_bytes <number>',
+        'Maximum uncompressed log bytes to include in one diagnostic bundle.',
+        config_file.instance_agent_artifact_max_bytes || ''
+    )
+    .option(
+        '--instance_agent_artifact_unreal_log_directory <path>',
+        'Optional Unreal Saved\\Logs directory to include in session diagnostic bundles.',
+        config_file.instance_agent_artifact_unreal_log_directory || ''
+    )
+    .option(
         '--log_config',
         'Will print the program configuration on startup.',
         config_file.log_config || false
@@ -660,6 +695,18 @@ const instanceAgentClient = wireInstanceAgent(signallingServer, {
     ),
     heartbeatMs: options.instance_agent_heartbeat_ms,
     desiredStatePath: String(options.instance_agent_desired_state_path || ''),
+    sessionLogArtifacts: {
+        enabled: options.instance_agent_artifact_upload_enabled || undefined,
+        bucketName: options.instance_agent_artifact_bucket || undefined,
+        objectPrefix: options.instance_agent_artifact_prefix || undefined,
+        awsCliPath:
+            options.instance_agent_artifact_aws_cli_path || options.runtime_status_aws_cli_path || undefined,
+        awsRegion: options.instance_agent_region || undefined,
+        queuePath: options.instance_agent_artifact_queue_path || undefined,
+        maxBytes: options.instance_agent_artifact_max_bytes || undefined,
+        logFolder: options.log_folder || undefined,
+        unrealLogDirectory: options.instance_agent_artifact_unreal_log_directory || undefined
+    },
     logger: (message: string) => Logger.info(message)
 });
 const runtimeStatusPublisher = createRuntimeStatusPublisher({

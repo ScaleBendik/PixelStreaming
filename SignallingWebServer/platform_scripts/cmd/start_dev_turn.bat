@@ -98,6 +98,19 @@ if not defined INSTANCE_AGENT_VERSION set "INSTANCE_AGENT_VERSION="
 if not defined INSTANCE_AGENT_RUNTIME_VERSION set "INSTANCE_AGENT_RUNTIME_VERSION="
 if not defined INSTANCE_AGENT_HEARTBEAT_MS set "INSTANCE_AGENT_HEARTBEAT_MS="
 if not defined INSTANCE_AGENT_DESIRED_STATE_PATH set "INSTANCE_AGENT_DESIRED_STATE_PATH=C:\PixelStreaming\state\instance-agent-desired-state.json"
+if not defined INSTANCE_AGENT_ARTIFACT_BUCKET set "INSTANCE_AGENT_ARTIFACT_BUCKET="
+if not defined INSTANCE_AGENT_ARTIFACT_BUCKET_PARAM (
+  if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
+    set "INSTANCE_AGENT_ARTIFACT_BUCKET_PARAM=/pixelstreaming/prod/session-log-artifact-bucket"
+  ) else if /i "%SCALEWORLD_STREAMING_LANE%"=="nonprod" (
+    set "INSTANCE_AGENT_ARTIFACT_BUCKET_PARAM=/pixelstreaming/nonprod/session-log-artifact-bucket"
+  )
+)
+if not defined INSTANCE_AGENT_ARTIFACT_UPLOAD_ENABLED set "INSTANCE_AGENT_ARTIFACT_UPLOAD_ENABLED="
+if not defined INSTANCE_AGENT_ARTIFACT_PREFIX set "INSTANCE_AGENT_ARTIFACT_PREFIX=pixelstreaming/session-log-artifacts"
+if not defined INSTANCE_AGENT_ARTIFACT_QUEUE_PATH set "INSTANCE_AGENT_ARTIFACT_QUEUE_PATH=C:\PixelStreaming\state\session-artifact-queue"
+if not defined INSTANCE_AGENT_ARTIFACT_MAX_BYTES set "INSTANCE_AGENT_ARTIFACT_MAX_BYTES=2097152"
+if not defined INSTANCE_AGENT_ARTIFACT_UNREAL_LOG_DIRECTORY set "INSTANCE_AGENT_ARTIFACT_UNREAL_LOG_DIRECTORY="
 
 set "INSTANCE_ID="
 set "STARTUP_HEARTBEAT_STATE_FILE="
@@ -240,7 +253,14 @@ call start.bat -- ^
   --instance_agent_version="%INSTANCE_AGENT_VERSION%" ^
   --instance_agent_runtime_version="%INSTANCE_AGENT_RUNTIME_VERSION%" ^
   --instance_agent_heartbeat_ms="%INSTANCE_AGENT_HEARTBEAT_MS%" ^
-  --instance_agent_desired_state_path="%INSTANCE_AGENT_DESIRED_STATE_PATH%"
+  --instance_agent_desired_state_path="%INSTANCE_AGENT_DESIRED_STATE_PATH%" ^
+  --instance_agent_artifact_upload_enabled="%INSTANCE_AGENT_ARTIFACT_UPLOAD_ENABLED%" ^
+  --instance_agent_artifact_bucket="%INSTANCE_AGENT_ARTIFACT_BUCKET%" ^
+  --instance_agent_artifact_prefix="%INSTANCE_AGENT_ARTIFACT_PREFIX%" ^
+  --instance_agent_artifact_aws_cli_path="%AWS_EXE%" ^
+  --instance_agent_artifact_queue_path="%INSTANCE_AGENT_ARTIFACT_QUEUE_PATH%" ^
+  --instance_agent_artifact_max_bytes="%INSTANCE_AGENT_ARTIFACT_MAX_BYTES%" ^
+  --instance_agent_artifact_unreal_log_directory="%INSTANCE_AGENT_ARTIFACT_UNREAL_LOG_DIRECTORY%"
 
 exit /b %errorlevel%
 
@@ -273,6 +293,13 @@ call start.bat -- ^
   --instance_agent_runtime_version="%INSTANCE_AGENT_RUNTIME_VERSION%" ^
   --instance_agent_heartbeat_ms="%INSTANCE_AGENT_HEARTBEAT_MS%" ^
   --instance_agent_desired_state_path="%INSTANCE_AGENT_DESIRED_STATE_PATH%" ^
+  --instance_agent_artifact_upload_enabled="%INSTANCE_AGENT_ARTIFACT_UPLOAD_ENABLED%" ^
+  --instance_agent_artifact_bucket="%INSTANCE_AGENT_ARTIFACT_BUCKET%" ^
+  --instance_agent_artifact_prefix="%INSTANCE_AGENT_ARTIFACT_PREFIX%" ^
+  --instance_agent_artifact_aws_cli_path="%AWS_EXE%" ^
+  --instance_agent_artifact_queue_path="%INSTANCE_AGENT_ARTIFACT_QUEUE_PATH%" ^
+  --instance_agent_artifact_max_bytes="%INSTANCE_AGENT_ARTIFACT_MAX_BYTES%" ^
+  --instance_agent_artifact_unreal_log_directory="%INSTANCE_AGENT_ARTIFACT_UNREAL_LOG_DIRECTORY%" ^
   --reverse-proxy ^
   --reverse-proxy-num-proxies="%REVERSE_PROXY_NUM_PROXIES%"
 
@@ -280,6 +307,7 @@ exit /b %errorlevel%
 
 :load_runtime_parameters
 set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM="
+set "INSTANCE_AGENT_ARTIFACT_BUCKET_LOADED_FROM_PARAM="
 set "RUNTIME_PARAMETER_NAMES=%TURN_USER_PARAM% %TURN_CREDENTIAL_PARAM%"
 
 if /i not "%CONNECT_TICKET_AUTH_MODE%"=="off" (
@@ -294,6 +322,12 @@ if not defined INSTANCE_AGENT_API_BASE_URL (
   )
 )
 
+if not defined INSTANCE_AGENT_ARTIFACT_BUCKET (
+  if defined INSTANCE_AGENT_ARTIFACT_BUCKET_PARAM (
+    set "RUNTIME_PARAMETER_NAMES=%RUNTIME_PARAMETER_NAMES% %INSTANCE_AGENT_ARTIFACT_BUCKET_PARAM%"
+  )
+)
+
 for /f "usebackq tokens=1,*" %%I in (`%AWS_CALL% ssm get-parameters --names %RUNTIME_PARAMETER_NAMES% --with-decryption --region "%REGION%" --query "Parameters[].[Name,Value]" --output text`) do (
   if /i "%%I"=="%TURN_USER_PARAM%" set "TURN_USERNAME=%%J"
   if /i "%%I"=="%TURN_CREDENTIAL_PARAM%" set "TURN_CREDENTIAL=%%J"
@@ -302,6 +336,10 @@ for /f "usebackq tokens=1,*" %%I in (`%AWS_CALL% ssm get-parameters --names %RUN
     set "INSTANCE_AGENT_API_BASE_URL=%%J"
     set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM=true"
   )
+  if /i "%%I"=="%INSTANCE_AGENT_ARTIFACT_BUCKET_PARAM%" (
+    set "INSTANCE_AGENT_ARTIFACT_BUCKET=%%J"
+    set "INSTANCE_AGENT_ARTIFACT_BUCKET_LOADED_FROM_PARAM=true"
+  )
 )
 
 if /i "%INSTANCE_AGENT_API_BASE_URL%"=="None" (
@@ -309,9 +347,20 @@ if /i "%INSTANCE_AGENT_API_BASE_URL%"=="None" (
   set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM="
 )
 
+if /i "%INSTANCE_AGENT_ARTIFACT_BUCKET%"=="None" (
+  set "INSTANCE_AGENT_ARTIFACT_BUCKET="
+  set "INSTANCE_AGENT_ARTIFACT_BUCKET_LOADED_FROM_PARAM="
+)
+
 if defined INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM (
   if defined INSTANCE_AGENT_API_BASE_URL (
     echo Loaded instance-agent API base URL from SSM parameter "%INSTANCE_AGENT_API_BASE_URL_PARAM%".
+  )
+)
+
+if defined INSTANCE_AGENT_ARTIFACT_BUCKET_LOADED_FROM_PARAM (
+  if defined INSTANCE_AGENT_ARTIFACT_BUCKET (
+    echo Loaded instance-agent artifact bucket from SSM parameter "%INSTANCE_AGENT_ARTIFACT_BUCKET_PARAM%".
   )
 )
 
@@ -342,6 +391,13 @@ if defined INSTANCE_ID (
   if not defined INSTANCE_AGENT_INSTANCE_ID set "INSTANCE_AGENT_INSTANCE_ID=%INSTANCE_ID%"
 )
 if not defined INSTANCE_AGENT_REGION set "INSTANCE_AGENT_REGION=%REGION%"
+if not defined INSTANCE_AGENT_ARTIFACT_UPLOAD_ENABLED (
+  if defined INSTANCE_AGENT_ARTIFACT_BUCKET (
+    set "INSTANCE_AGENT_ARTIFACT_UPLOAD_ENABLED=true"
+  ) else (
+    set "INSTANCE_AGENT_ARTIFACT_UPLOAD_ENABLED=false"
+  )
+)
 exit /b 0
 
 :resolve_streaming_lane_from_instance_tag

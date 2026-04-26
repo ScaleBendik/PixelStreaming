@@ -21,6 +21,12 @@ import {
     type InstanceAgentCommandExecutionStatus,
     type InstanceAgentCommandJournalSnapshot
 } from './instance-agent-command-state';
+import {
+    createSessionLogArtifactManager,
+    type SessionLogArtifactManager,
+    type SessionLogArtifactRegistrationRequest,
+    type SessionLogArtifactRuntimeOptions
+} from './session-log-artifacts';
 
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
 const IMDS_METADATA_BASE_URL = 'http://169.254.169.254/latest/meta-data';
@@ -61,6 +67,13 @@ interface InstanceAgentCommandStatusResponse {
     accepted: boolean;
     commandStatus: string;
     recordedAtUtc: string;
+}
+
+interface InstanceAgentArtifactRegistrationResponse {
+    artifactId: string;
+    sessionRequestId: string;
+    userSessionId?: string;
+    registeredAtUtc: string;
 }
 
 interface InstanceAgentCommandResponse {
@@ -175,6 +188,7 @@ export interface InstanceAgentClientOptions {
     runtimeVersion?: string;
     heartbeatMs?: number;
     desiredStatePath?: string;
+    sessionLogArtifacts?: SessionLogArtifactRuntimeOptions;
     logger?: (message: string) => void;
 }
 
@@ -447,6 +461,7 @@ export function wireInstanceAgent(
     let runtimeSnapshot: InstanceAgentRuntimeSnapshot = {};
     let pendingEvents: PendingInstanceAgentEvent[] = [];
     let resetInProgress = false;
+    let artifactManager: SessionLogArtifactManager | null = null;
     const desiredStateListeners = new Set<InstanceAgentDesiredStateListener>();
     const commandListeners = new Set<InstanceAgentCommandListener>();
 
@@ -905,6 +920,88 @@ export function wireInstanceAgent(
         return result;
     };
 
+    const registerArtifact = async (request: SessionLogArtifactRegistrationRequest): Promise<void> => {
+        await ensureBootstrap();
+        const response = await authorizedFetch('/agent/artifacts/register', 'POST', {
+            instanceId: request.instanceId,
+            region: request.region,
+            sessionRequestId: request.sessionRequestId,
+            userSessionId: request.userSessionId,
+            sessionId: request.sessionId,
+            artifactType: request.artifactType,
+            bucketName: request.bucketName,
+            objectKey: request.objectKey,
+            objectVersionId: request.objectVersionId,
+            eTag: request.eTag,
+            sizeBytes: request.sizeBytes,
+            checksumSha256: request.checksumSha256,
+            timeRangeStartUtc: request.timeRangeStartUtc,
+            timeRangeEndUtc: request.timeRangeEndUtc,
+            uploadedAtUtc: request.uploadedAtUtc,
+            metadata: request.metadata
+        });
+        if (!response.ok) {
+            throw new Error(await describeErrorResponse(response, 'Artifact registration'));
+        }
+
+        const payload = await parseJsonResponse<InstanceAgentArtifactRegistrationResponse>(response);
+        log(
+            `[instance-agent] Registered session artifact ${payload.artifactId} for request ${payload.sessionRequestId} (${request.artifactType}).`
+        );
+    };
+
+    artifactManager = createSessionLogArtifactManager({
+        ...(options.sessionLogArtifacts ?? {}),
+        desiredStatePath,
+        registerArtifact,
+        logger: log
+    });
+
+    const captureSessionLogArtifact = (
+        trigger: string,
+        command:
+            | Pick<
+                  InstanceAgentCommand,
+                  'instanceCommandId' | 'commandType' | 'sessionRequestId' | 'requestedAtUtc'
+              >
+            | Pick<
+                  InstanceAgentCommandJournalSnapshot,
+                  'instanceCommandId' | 'commandType' | 'sessionRequestId' | 'requestedAtUtc'
+              >
+            | null
+            | undefined,
+        metadata: Record<string, unknown> = {}
+    ): void => {
+        if (!artifactManager) {
+            return;
+        }
+
+        void resolveBootstrapIdentity()
+            .then((identity) =>
+                artifactManager?.captureAndUpload({
+                    trigger,
+                    instanceId: identity.instanceId,
+                    region: identity.region,
+                    sessionRequestId: normalizeOptionalText(command?.sessionRequestId),
+                    instanceCommandId: normalizeOptionalText(command?.instanceCommandId),
+                    commandType: normalizeOptionalText(command?.commandType),
+                    runtimeStatus: runtimeSnapshot.status,
+                    runtimeReason: runtimeSnapshot.reason,
+                    runtimeVersion: runtimeSnapshot.version,
+                    recycleId: normalizeOptionalText(metadata.recycleId),
+                    recycleReason: normalizeOptionalText(metadata.recycleReason),
+                    recycleRequestedAtUtc: normalizeOptionalText(metadata.recycleRequestedAtUtc),
+                    timeRangeStartUtc: normalizeOptionalText(
+                        command?.requestedAtUtc ?? metadata.recycleRequestedAtUtc
+                    ),
+                    metadata
+                })
+            )
+            .catch((error) => {
+                const message = error instanceof Error ? error.message : String(error);
+                log(`[session-artifacts] ${trigger} capture failed: ${message}`);
+            });
+    };
     const ensureBootstrap = async (): Promise<void> => {
         if (token) {
             return;
@@ -1078,6 +1175,7 @@ export function wireInstanceAgent(
         tickInFlight = true;
         try {
             await ensureBootstrap();
+            await artifactManager?.drainQueue();
             await flushEvents();
             await sendHeartbeat();
             await flushEvents();
@@ -1173,6 +1271,12 @@ export function wireInstanceAgent(
                 });
                 if (activeCommand && isRecycleToWarmCommand(activeCommand)) {
                     const commandToComplete = activeCommand;
+                    captureSessionLogArtifact('reset_completed', commandToComplete, {
+                        recycleId: recycleMarker?.recycleId,
+                        recycleReason: recycleMarker?.reason,
+                        recycleRequestedAtUtc: recycleMarker?.requestedAtUtc,
+                        source: update.source
+                    });
                     void completeCommand(commandToComplete, {
                         resultJson: JSON.stringify({
                             status: nextStatus,
@@ -1218,6 +1322,14 @@ export function wireInstanceAgent(
                 });
                 if (activeCommand && isRecycleToWarmCommand(activeCommand)) {
                     const commandToFail = activeCommand;
+                    captureSessionLogArtifact('reset_cancelled', commandToFail, {
+                        recycleId: recycleMarker?.recycleId,
+                        recycleReason: recycleMarker?.reason,
+                        recycleRequestedAtUtc: recycleMarker?.requestedAtUtc,
+                        source: update.source,
+                        cancelledStatus: nextStatus,
+                        cancelledReason: nextReason
+                    });
                     void failCommand(commandToFail, {
                         failureCode: 'reset_cancelled',
                         failureMessage: `Runtime entered '${nextStatus}' before recycle completion.`,
