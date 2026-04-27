@@ -355,7 +355,12 @@ function discoverSessionCleanupCandidates(
     repoRoot: string,
     logFolder: string
 ): LogCandidate[] {
-    const candidates = [...discoverWilburSessionLogCandidates(logFolder)];
+    const candidates = parseBoolean(
+        options.includeWilburLogs ?? process.env.INSTANCE_AGENT_ARTIFACT_INCLUDE_WILBUR_LOGS,
+        true
+    )
+        ? [...discoverWilburSessionLogCandidates(logFolder)]
+        : [];
 
     if (
         parseBoolean(
