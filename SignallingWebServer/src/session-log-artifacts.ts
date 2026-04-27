@@ -13,6 +13,7 @@ const DEFAULT_OBJECT_PREFIX = 'PixelStreamingLogs';
 const DEFAULT_MAX_BUNDLE_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_ENTRY_BYTES = 512 * 1024;
 const MAX_DRAIN_RECORDS = 3;
+const TAR_BLOCK_SIZE = 512;
 
 type QueueRecordStatus = 'pending_upload' | 'pending_registration';
 
@@ -25,13 +26,24 @@ interface LogCandidate {
 interface BundleEntry {
     kind: string;
     path: string;
+    archivePath?: string;
     exists: boolean;
     sizeBytes?: number;
     modifiedAtUtc?: string;
     tailBytes?: number;
     truncatedStart?: boolean;
-    content?: string;
     error?: string;
+}
+
+interface BundleFile {
+    archivePath: string;
+    content: Buffer;
+    modifiedAtUtc?: string;
+}
+
+interface CollectedBundle {
+    entries: BundleEntry[];
+    files: BundleFile[];
 }
 
 interface ArtifactQueueRecord {
@@ -372,10 +384,10 @@ function discoverLogCandidates(
     return Array.from(deduped.values());
 }
 
-function readTailUtf8(
+function readTailBytes(
     filePath: string,
     maxBytes: number
-): { content: string; tailBytes: number; truncatedStart: boolean } {
+): { content: Buffer; tailBytes: number; truncatedStart: boolean } {
     const stat = fs.statSync(filePath);
     const tailBytes = Math.min(Math.max(0, maxBytes), stat.size);
     const buffer = Buffer.alloc(tailBytes);
@@ -387,14 +399,57 @@ function readTailUtf8(
     }
 
     return {
-        content: buffer.toString('utf8').replace(/^\uFEFF/, ''),
+        content: buffer,
         tailBytes,
         truncatedStart: stat.size > tailBytes
     };
 }
 
-function collectBundleEntries(candidates: LogCandidate[], maxBundleBytes: number): BundleEntry[] {
+function sanitizeArchiveSegment(value: string, fallback: string): string {
+    const normalized = normalizeOptionalText(value)?.replace(/[\\/]+/g, '-') ?? fallback;
+    const sanitized = normalized.replace(/[^a-zA-Z0-9._=-]+/g, '-').replace(/^-+|-+$/g, '');
+    return sanitized.length > 0 ? sanitized.slice(0, 96) : fallback;
+}
+
+function resolveArchiveFolder(kind: string): string {
+    switch (kind) {
+        case 'wilbur_log':
+            return 'wilbur';
+        case 'watchdog_log':
+            return 'watchdog';
+        case 'stack_recycle_log':
+        case 'stack_recycle_launch_log':
+            return 'stack';
+        case 'runtime_status_snapshot':
+        case 'desired_state_snapshot':
+            return 'state';
+        case 'unreal_log':
+            return 'unreal';
+        default:
+            return 'logs';
+    }
+}
+
+function allocateArchivePath(candidate: LogCandidate, usedArchivePaths: Set<string>): string {
+    const folder = resolveArchiveFolder(candidate.kind);
+    const parsed = path.parse(candidate.path);
+    const baseName = sanitizeArchiveSegment(parsed.name, candidate.kind);
+    const extension = sanitizeArchiveSegment(parsed.ext || '.log', '.log');
+    let archivePath = `${folder}/${baseName}${extension}`;
+    let attempt = 2;
+    while (usedArchivePaths.has(archivePath.toLowerCase())) {
+        archivePath = `${folder}/${baseName}-${attempt}${extension}`;
+        attempt += 1;
+    }
+
+    usedArchivePaths.add(archivePath.toLowerCase());
+    return archivePath;
+}
+
+function collectBundleFiles(candidates: LogCandidate[], maxBundleBytes: number): CollectedBundle {
     const entries: BundleEntry[] = [];
+    const files: BundleFile[] = [];
+    const usedArchivePaths = new Set<string>();
     let remainingBytes = maxBundleBytes;
     const maxEntryBytes = Math.min(DEFAULT_MAX_ENTRY_BYTES, maxBundleBytes);
 
@@ -416,7 +471,9 @@ function collectBundleEntries(candidates: LogCandidate[], maxBundleBytes: number
             }
 
             const bytesForEntry = Math.max(0, Math.min(maxEntryBytes, remainingBytes));
-            const tail = bytesForEntry > 0 ? readTailUtf8(candidate.path, bytesForEntry) : undefined;
+            const tail = bytesForEntry > 0 ? readTailBytes(candidate.path, bytesForEntry) : undefined;
+            const archivePath =
+                tail && tail.tailBytes > 0 ? allocateArchivePath(candidate, usedArchivePaths) : undefined;
             if (tail) {
                 remainingBytes -= tail.tailBytes;
             }
@@ -424,13 +481,21 @@ function collectBundleEntries(candidates: LogCandidate[], maxBundleBytes: number
             entries.push({
                 kind: candidate.kind,
                 path: candidate.path,
+                archivePath,
                 exists: true,
                 sizeBytes: stat.size,
                 modifiedAtUtc: stat.mtime.toISOString(),
                 tailBytes: tail?.tailBytes ?? 0,
-                truncatedStart: tail?.truncatedStart ?? stat.size > 0,
-                content: tail?.content ?? ''
+                truncatedStart: tail?.truncatedStart ?? stat.size > 0
             });
+
+            if (archivePath && tail) {
+                files.push({
+                    archivePath,
+                    content: tail.content,
+                    modifiedAtUtc: stat.mtime.toISOString()
+                });
+            }
         } catch (error) {
             entries.push({
                 kind: candidate.kind,
@@ -441,9 +506,92 @@ function collectBundleEntries(candidates: LogCandidate[], maxBundleBytes: number
         }
     }
 
-    return entries;
+    return { entries, files };
 }
 
+function writeTarString(header: Buffer, value: string, offset: number, length: number): void {
+    const normalized = value.slice(0, length);
+    header.write(normalized, offset, Math.min(length, Buffer.byteLength(normalized, 'utf8')), 'utf8');
+}
+
+function writeTarOctal(header: Buffer, value: number, offset: number, length: number): void {
+    const normalized = Math.max(0, Math.floor(value))
+        .toString(8)
+        .slice(-(length - 1));
+    header.write(normalized.padStart(length - 1, '0'), offset, length - 1, 'ascii');
+    header[offset + length - 1] = 0;
+}
+
+function splitTarPath(archivePath: string): { name: string; prefix: string } {
+    const normalized = archivePath.replace(/\\/g, '/').replace(/^\/+/, '');
+    if (Buffer.byteLength(normalized, 'utf8') <= 100) {
+        return { name: normalized, prefix: '' };
+    }
+
+    const segments = normalized.split('/');
+    for (let index = 1; index < segments.length; index += 1) {
+        const prefix = segments.slice(0, index).join('/');
+        const name = segments.slice(index).join('/');
+        if (Buffer.byteLength(prefix, 'utf8') <= 155 && Buffer.byteLength(name, 'utf8') <= 100) {
+            return { name, prefix };
+        }
+    }
+
+    throw new Error(`Archive path '${archivePath}' is too long for ustar.`);
+}
+
+function createTarHeader(archivePath: string, sizeBytes: number, modifiedAtUtc?: string): Buffer {
+    const header = Buffer.alloc(TAR_BLOCK_SIZE, 0);
+    const { name, prefix } = splitTarPath(archivePath);
+    const modifiedAt = normalizeOptionalText(modifiedAtUtc);
+    const modifiedSeconds = modifiedAt
+        ? Math.floor(new Date(modifiedAt).getTime() / 1000)
+        : Math.floor(Date.now() / 1000);
+
+    writeTarString(header, name, 0, 100);
+    writeTarOctal(header, 0o644, 100, 8);
+    writeTarOctal(header, 0, 108, 8);
+    writeTarOctal(header, 0, 116, 8);
+    writeTarOctal(header, sizeBytes, 124, 12);
+    writeTarOctal(
+        header,
+        Number.isFinite(modifiedSeconds) ? modifiedSeconds : Math.floor(Date.now() / 1000),
+        136,
+        12
+    );
+    header.fill(0x20, 148, 156);
+    header[156] = '0'.charCodeAt(0);
+    writeTarString(header, 'ustar', 257, 6);
+    writeTarString(header, '00', 263, 2);
+    writeTarString(header, 'scaleworld', 265, 32);
+    writeTarString(header, 'scaleworld', 297, 32);
+    writeTarString(header, prefix, 345, 155);
+
+    let checksum = 0;
+    for (const byte of header) {
+        checksum += byte;
+    }
+
+    header.write(checksum.toString(8).padStart(6, '0'), 148, 6, 'ascii');
+    header[154] = 0;
+    header[155] = 0x20;
+    return header;
+}
+
+function createTarArchive(files: BundleFile[]): Buffer {
+    const chunks: Buffer[] = [];
+    for (const file of files) {
+        chunks.push(createTarHeader(file.archivePath, file.content.length, file.modifiedAtUtc));
+        chunks.push(file.content);
+        const paddingLength = (TAR_BLOCK_SIZE - (file.content.length % TAR_BLOCK_SIZE)) % TAR_BLOCK_SIZE;
+        if (paddingLength > 0) {
+            chunks.push(Buffer.alloc(paddingLength, 0));
+        }
+    }
+
+    chunks.push(Buffer.alloc(TAR_BLOCK_SIZE * 2, 0));
+    return Buffer.concat(chunks);
+}
 function writeJsonAtomic(filePath: string, value: unknown): void {
     const directory = path.dirname(filePath);
     fs.mkdirSync(directory, { recursive: true });
@@ -477,13 +625,14 @@ function buildObjectKey(
     );
     const trigger = sanitizeKeySegment(context.trigger, 'capture');
     const instance = sanitizeKeySegment(context.instanceId, 'unknown-instance');
-    return `${prefix}/${year}/${month}/${day}/${instance}/${sessionSegment}/${timestamp}-${trigger}-${artifactId}.diagnostic-bundle.json.gz`;
+    return `${prefix}/${year}/${month}/${day}/${instance}/${sessionSegment}/${timestamp}-${trigger}-${artifactId}.diagnostic-bundle.tar.gz`;
 }
 
 function buildRegisterMetadata(
     context: SessionLogArtifactCaptureContext,
     includedEntryCount: number,
-    missingEntryCount: number
+    missingEntryCount: number,
+    includedFileCount: number
 ): Record<string, string> {
     return normalizeMetadata({
         trigger: context.trigger,
@@ -497,6 +646,9 @@ function buildRegisterMetadata(
         recycleRequestedAtUtc: context.recycleRequestedAtUtc,
         includedEntryCount,
         missingEntryCount,
+        includedFileCount,
+        bundleFormat: 'tar.gz',
+        manifestPath: 'manifest.json',
         ...context.metadata
     });
 }
@@ -710,14 +862,15 @@ export function createSessionLogArtifactManager(
         const artifactId = randomUUID();
         const createdAtUtc = new Date().toISOString();
         const candidates = discoverLogCandidates(options, repoRoot, logFolder, desiredStatePath);
-        const entries = collectBundleEntries(candidates, maxBundleBytes);
-        const includedEntryCount = entries.filter(
+        const collected = collectBundleFiles(candidates, maxBundleBytes);
+        const includedEntryCount = collected.entries.filter(
             (entry) => entry.exists && (entry.tailBytes ?? 0) > 0
         ).length;
-        const missingEntryCount = entries.filter((entry) => !entry.exists).length;
-        const bundle = {
-            schemaVersion: 1,
+        const missingEntryCount = collected.entries.filter((entry) => !entry.exists).length;
+        const manifest = {
+            schemaVersion: 2,
             artifactType: 'diagnostic_bundle',
+            bundleFormat: 'tar.gz',
             createdAtUtc,
             source: 'pixelstreaming-instance-agent',
             context: {
@@ -739,14 +892,24 @@ export function createSessionLogArtifactManager(
             summary: {
                 candidateCount: candidates.length,
                 includedEntryCount,
+                includedFileCount: collected.files.length,
                 missingEntryCount,
-                maxBundleBytes
+                maxBundleBytes,
+                maxEntryBytes: Math.min(DEFAULT_MAX_ENTRY_BYTES, maxBundleBytes)
             },
-            entries
+            entries: collected.entries
         };
-        const compressed = await gzipAsync(Buffer.from(JSON.stringify(bundle, null, 2), 'utf8'));
+        const archive = createTarArchive([
+            {
+                archivePath: 'manifest.json',
+                content: Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'),
+                modifiedAtUtc: createdAtUtc
+            },
+            ...collected.files
+        ]);
+        const compressed = await gzipAsync(archive);
         const checksumSha256 = createHash('sha256').update(compressed).digest('hex');
-        const localPath = path.join(bundlePath, `${artifactId}.diagnostic-bundle.json.gz`);
+        const localPath = path.join(bundlePath, `${artifactId}.diagnostic-bundle.tar.gz`);
         fs.writeFileSync(localPath, compressed);
 
         const objectKey = buildObjectKey(objectPrefix, context, createdAtUtc, artifactId);
@@ -765,7 +928,12 @@ export function createSessionLogArtifactManager(
                 context.timeRangeStartUtc ?? context.recycleRequestedAtUtc
             ),
             timeRangeEndUtc: normalizeOptionalText(context.timeRangeEndUtc ?? createdAtUtc),
-            metadata: buildRegisterMetadata(context, includedEntryCount, missingEntryCount)
+            metadata: buildRegisterMetadata(
+                context,
+                includedEntryCount,
+                missingEntryCount,
+                collected.files.length
+            )
         };
         const record: ArtifactQueueRecord = {
             id: artifactId,
@@ -781,7 +949,7 @@ export function createSessionLogArtifactManager(
 
         updateRecord(record);
         log(
-            `[session-artifacts] Captured diagnostic bundle ${localPath} (${compressed.length} bytes, entries=${includedEntryCount}, missing=${missingEntryCount}).`
+            `[session-artifacts] Captured diagnostic bundle ${localPath} (${compressed.length} bytes, files=${collected.files.length}, entries=${includedEntryCount}, missing=${missingEntryCount}).`
         );
         await drainQueue();
     };
