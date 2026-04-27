@@ -11,7 +11,7 @@ if not exist "%RECYCLE_STATE_DIR%" (
   mkdir "%RECYCLE_STATE_DIR%" >nul 2>&1
 )
 
->> "%RECYCLE_LAUNCH_LOG%" echo [%DATE% %TIME%] start_stack_recycle.bat %*
+> "%RECYCLE_LAUNCH_LOG%" echo [%DATE% %TIME%] start_stack_recycle.bat %*
 
 if not exist "%RECYCLE_SCRIPT%" (
   >> "%RECYCLE_LAUNCH_LOG%" echo [%DATE% %TIME%] ERROR: recycle script not found at "%RECYCLE_SCRIPT%".

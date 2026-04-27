@@ -76,6 +76,8 @@ export interface SessionLogArtifactRuntimeOptions {
     includeUnrealLogs?: unknown;
     includeStackRecycleLog?: unknown;
     includeRuntimeStatusSnapshot?: unknown;
+    cleanupSessionLogsAfterUpload?: unknown;
+    cleanupLifecycleLogsOnStartup?: unknown;
 }
 
 export interface SessionLogArtifactRegistrationRequest {
@@ -125,6 +127,7 @@ export interface SessionLogArtifactManagerOptions extends SessionLogArtifactRunt
 export interface SessionLogArtifactManager {
     captureAndUpload(context: SessionLogArtifactCaptureContext): Promise<void>;
     drainQueue(): Promise<void>;
+    cleanStartupLogs(options?: { preserveRecycleLogs?: boolean }): void;
 }
 
 function parseBoolean(rawValue: unknown, fallback: boolean): boolean {
@@ -233,7 +236,12 @@ function resolvePathMaybeRelative(value: string | undefined, root: string): stri
     return path.isAbsolute(normalized) ? normalized : path.resolve(root, normalized);
 }
 
-function listLatestFiles(directory: string, kind: string, limit: number): LogCandidate[] {
+function listLatestFiles(
+    directory: string,
+    kind: string,
+    limit: number,
+    predicate?: (filePath: string) => boolean
+): LogCandidate[] {
     let entries: fs.Dirent[];
     try {
         entries = fs.readdirSync(directory, { withFileTypes: true });
@@ -245,6 +253,7 @@ function listLatestFiles(directory: string, kind: string, limit: number): LogCan
         .filter((entry) => entry.isFile())
         .map((entry) => path.join(directory, entry.name))
         .filter((filePath) => /\.(log|txt|json)$/i.test(filePath))
+        .filter((filePath) => (predicate ? predicate(filePath) : true))
         .map((filePath) => {
             try {
                 return { filePath, modifiedMs: fs.statSync(filePath).mtimeMs };
@@ -255,6 +264,14 @@ function listLatestFiles(directory: string, kind: string, limit: number): LogCan
         .sort((left, right) => right.modifiedMs - left.modifiedMs)
         .slice(0, limit)
         .map((entry) => ({ kind, path: entry.filePath }));
+}
+
+function listAllFiles(
+    directory: string,
+    kind: string,
+    predicate?: (filePath: string) => boolean
+): LogCandidate[] {
+    return listLatestFiles(directory, kind, Number.MAX_SAFE_INTEGER, predicate);
 }
 
 function addExistingCandidate(
@@ -296,6 +313,72 @@ function discoverUnrealLogDirectories(options: SessionLogArtifactManagerOptions,
     return Array.from(new Set(directories.map((item) => path.normalize(item))));
 }
 
+function isWilburSessionLogFile(filePath: string): boolean {
+    const fileName = path.basename(filePath).toLowerCase();
+    return fileName !== 'scaleworld-watchdog.log';
+}
+
+function discoverWilburSessionLogCandidates(logFolder: string, limit?: number): LogCandidate[] {
+    return typeof limit === 'number'
+        ? listLatestFiles(logFolder, 'wilbur_log', limit, isWilburSessionLogFile)
+        : listAllFiles(logFolder, 'wilbur_log', isWilburSessionLogFile);
+}
+
+function discoverWatchdogLogCandidate(
+    options: SessionLogArtifactManagerOptions,
+    repoRoot: string
+): LogCandidate {
+    const watchdogLogPath =
+        resolvePathMaybeRelative(options.watchdogLogPath, repoRoot) ??
+        resolvePathMaybeRelative(process.env.WATCHDOG_LOG_PATH, repoRoot) ??
+        path.join(repoRoot, 'logs', 'scaleworld-watchdog.log');
+    return { kind: 'watchdog_log', path: watchdogLogPath, required: true };
+}
+
+function discoverStackRecycleLogCandidates(repoRoot: string): LogCandidate[] {
+    return [
+        {
+            kind: 'stack_recycle_log',
+            path: path.join(repoRoot, 'state', 'stack-recycle.log'),
+            required: true
+        },
+        {
+            kind: 'stack_recycle_launch_log',
+            path: path.join(repoRoot, 'state', 'stack-recycle-launch.log'),
+            required: true
+        }
+    ];
+}
+
+function discoverSessionCleanupCandidates(
+    options: SessionLogArtifactManagerOptions,
+    repoRoot: string,
+    logFolder: string
+): LogCandidate[] {
+    const candidates = [...discoverWilburSessionLogCandidates(logFolder)];
+
+    if (
+        parseBoolean(
+            options.includeUnrealLogs ?? process.env.INSTANCE_AGENT_ARTIFACT_INCLUDE_UNREAL_LOGS,
+            true
+        )
+    ) {
+        for (const directory of discoverUnrealLogDirectories(options, repoRoot)) {
+            candidates.push(...listAllFiles(directory, 'unreal_log'));
+        }
+    }
+
+    const deduped = new Map<string, LogCandidate>();
+    for (const candidate of candidates) {
+        const key = path.normalize(candidate.path).toLowerCase();
+        if (!deduped.has(key)) {
+            deduped.set(key, candidate);
+        }
+    }
+
+    return Array.from(deduped.values());
+}
+
 function discoverLogCandidates(
     options: SessionLogArtifactManagerOptions,
     repoRoot: string,
@@ -310,7 +393,7 @@ function discoverLogCandidates(
             true
         )
     ) {
-        candidates.push(...listLatestFiles(logFolder, 'wilbur_log', 5));
+        candidates.push(...discoverWilburSessionLogCandidates(logFolder, 5));
     }
 
     if (
@@ -319,11 +402,7 @@ function discoverLogCandidates(
             true
         )
     ) {
-        const watchdogLogPath =
-            resolvePathMaybeRelative(options.watchdogLogPath, repoRoot) ??
-            resolvePathMaybeRelative(process.env.WATCHDOG_LOG_PATH, repoRoot) ??
-            path.join(repoRoot, 'logs', 'scaleworld-watchdog.log');
-        addExistingCandidate(candidates, 'watchdog_log', watchdogLogPath, true);
+        candidates.push(discoverWatchdogLogCandidate(options, repoRoot));
     }
 
     if (
@@ -332,18 +411,7 @@ function discoverLogCandidates(
             true
         )
     ) {
-        addExistingCandidate(
-            candidates,
-            'stack_recycle_log',
-            path.join(repoRoot, 'state', 'stack-recycle.log'),
-            true
-        );
-        addExistingCandidate(
-            candidates,
-            'stack_recycle_launch_log',
-            path.join(repoRoot, 'state', 'stack-recycle-launch.log'),
-            true
-        );
+        candidates.push(...discoverStackRecycleLogCandidates(repoRoot));
     }
 
     if (
@@ -507,6 +575,71 @@ function collectBundleFiles(candidates: LogCandidate[], maxBundleBytes: number):
     }
 
     return { entries, files };
+}
+
+function pruneLocalLogFile(filePath: string): 'deleted' | 'truncated' | 'missing' | 'failed' {
+    try {
+        const stat = fs.statSync(filePath);
+        if (!stat.isFile()) {
+            return 'missing';
+        }
+    } catch {
+        return 'missing';
+    }
+
+    try {
+        fs.truncateSync(filePath, 0);
+        return 'truncated';
+    } catch {
+        try {
+            fs.unlinkSync(filePath);
+            return 'deleted';
+        } catch {
+            return 'failed';
+        }
+    }
+}
+
+function pruneLocalLogCandidates(
+    candidates: LogCandidate[],
+    log: (message: string) => void,
+    reason: string
+): void {
+    let deleted = 0;
+    let truncated = 0;
+    let failed = 0;
+    let missing = 0;
+    const deduped = new Map<string, LogCandidate>();
+
+    for (const candidate of candidates) {
+        const key = path.normalize(candidate.path).toLowerCase();
+        if (!deduped.has(key)) {
+            deduped.set(key, candidate);
+        }
+    }
+
+    for (const candidate of deduped.values()) {
+        switch (pruneLocalLogFile(candidate.path)) {
+            case 'deleted':
+                deleted += 1;
+                break;
+            case 'truncated':
+                truncated += 1;
+                break;
+            case 'failed':
+                failed += 1;
+                break;
+            case 'missing':
+                missing += 1;
+                break;
+        }
+    }
+
+    if (failed > 0) {
+        log(
+            `[session-artifacts] Log cleanup '${reason}' had failures: deleted=${deleted}, truncated=${truncated}, missing=${missing}, failed=${failed}.`
+        );
+    }
 }
 
 function writeTarString(header: Buffer, value: string, offset: number, length: number): void {
@@ -729,6 +862,16 @@ export function createSessionLogArtifactManager(
         resolvePathMaybeRelative(process.env.INSTANCE_AGENT_ARTIFACT_WILBUR_LOG_FOLDER, repoRoot) ??
         path.join(repoRoot, 'logs');
     const desiredStatePath = resolvePathMaybeRelative(options.desiredStatePath, repoRoot);
+    const cleanupSessionLogsAfterUpload = parseBoolean(
+        options.cleanupSessionLogsAfterUpload ??
+            process.env.INSTANCE_AGENT_ARTIFACT_CLEANUP_SESSION_LOGS_AFTER_UPLOAD,
+        true
+    );
+    const cleanupLifecycleLogsOnStartup = parseBoolean(
+        options.cleanupLifecycleLogsOnStartup ??
+            process.env.INSTANCE_AGENT_ARTIFACT_CLEANUP_LIFECYCLE_LOGS_ON_STARTUP,
+        true
+    );
     let drainPromise: Promise<void> | null = null;
 
     fs.mkdirSync(queuePath, { recursive: true });
@@ -740,6 +883,44 @@ export function createSessionLogArtifactManager(
     const updateRecord = (record: ArtifactQueueRecord): void => {
         record.updatedAtUtc = new Date().toISOString();
         writeJsonAtomic(path.join(queuePath, `${record.id}.json`), record);
+    };
+
+    const cleanSessionLogs = (reason: string): void => {
+        if (!cleanupSessionLogsAfterUpload) {
+            return;
+        }
+
+        pruneLocalLogCandidates(discoverSessionCleanupCandidates(options, repoRoot, logFolder), log, reason);
+    };
+
+    const cleanStartupLogs = (startupOptions?: { preserveRecycleLogs?: boolean }): void => {
+        if (!cleanupLifecycleLogsOnStartup || startupOptions?.preserveRecycleLogs) {
+            return;
+        }
+
+        const candidates: LogCandidate[] = [
+            ...discoverSessionCleanupCandidates(options, repoRoot, logFolder)
+        ];
+        if (
+            parseBoolean(
+                options.includeWatchdogLogs ?? process.env.INSTANCE_AGENT_ARTIFACT_INCLUDE_WATCHDOG_LOGS,
+                true
+            )
+        ) {
+            candidates.push(discoverWatchdogLogCandidate(options, repoRoot));
+        }
+
+        if (
+            parseBoolean(
+                options.includeStackRecycleLog ??
+                    process.env.INSTANCE_AGENT_ARTIFACT_INCLUDE_STACK_RECYCLE_LOG,
+                true
+            )
+        ) {
+            candidates.push(...discoverStackRecycleLogCandidates(repoRoot));
+        }
+
+        pruneLocalLogCandidates(candidates, log, 'startup_lifecycle');
     };
 
     const uploadRecord = async (record: ArtifactQueueRecord): Promise<void> => {
@@ -782,6 +963,7 @@ export function createSessionLogArtifactManager(
 
         updateRecord(record);
         log(`[session-artifacts] Uploaded ${record.localPath} to ${destination}.`);
+        cleanSessionLogs('after_upload');
     };
 
     const registerRecord = async (record: ArtifactQueueRecord): Promise<void> => {
@@ -801,6 +983,7 @@ export function createSessionLogArtifactManager(
         }
 
         log(`[session-artifacts] Registered artifact ${record.objectKey}.`);
+        cleanSessionLogs('after_registration');
     };
 
     const drainQueueCore = async (): Promise<void> => {
@@ -956,6 +1139,7 @@ export function createSessionLogArtifactManager(
 
     return {
         captureAndUpload,
-        drainQueue
+        drainQueue,
+        cleanStartupLogs
     };
 }

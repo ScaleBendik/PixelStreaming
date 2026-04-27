@@ -515,6 +515,16 @@ $scaleWorldRuntimeMatcher = Get-ScaleWorldRuntimeProcessMatcher -InstallRoot $un
 $scaleWorldStartupMatcher = Get-ScaleWorldRuntimeProcessMatcher -InstallRoot $unrealInstallRoot -ExecutableName $unrealExecutableName -RuntimeProcessPattern $unrealRuntimeProcessPattern -IncludeLauncherExecutable $false
 
 try {
+    $recycleLogDirectory = Split-Path -Parent $script:RecycleLogPath
+    if (-not (Test-Path -LiteralPath $recycleLogDirectory)) {
+        New-Item -ItemType Directory -Path $recycleLogDirectory -Force | Out-Null
+    }
+
+    Set-Content -LiteralPath $script:RecycleLogPath -Value '' -NoNewline -Encoding UTF8
+} catch {
+    # best effort only; Write-RecycleLog will still append if reset fails
+}
+try {
     Write-RecycleLog "Resolved recycle repo root to '$RepoRoot'."
     Write-RecycleLog "Recycle log path is '$script:RecycleLogPath'."
     Write-RecycleLog "Resolved stack launcher to '$stackLauncher'."

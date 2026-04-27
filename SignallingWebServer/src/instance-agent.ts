@@ -971,6 +971,11 @@ export function wireInstanceAgent(
         registerArtifact,
         logger: log
     });
+    artifactManager?.cleanStartupLogs({
+        preserveRecycleLogs:
+            pendingRecycleCompletion !== null ||
+            (activeCommand !== null && isRecycleToWarmCommand(activeCommand))
+    });
 
     const captureSessionLogArtifact = async (
         trigger: string,
