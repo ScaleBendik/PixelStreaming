@@ -4,6 +4,7 @@ import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignal
 import type { RuntimeStatusUpdate, SessionNetworkPathReport } from './runtime-status';
 import {
     normalizeInstanceAgentDesiredStateSnapshot,
+    readInstanceAgentDesiredStateSnapshot,
     type InstanceAgentDesiredStateSnapshot,
     writeInstanceAgentDesiredStateSnapshot
 } from './instance-agent-state';
@@ -458,7 +459,7 @@ export function wireInstanceAgent(
         0
     );
 
-    let currentDesiredState = writeInstanceAgentDesiredStateSnapshot(desiredStatePath, {}, log);
+    let currentDesiredState = readInstanceAgentDesiredStateSnapshot(desiredStatePath, log);
     let pendingRecycleCompletion: InstanceAgentRecycleMarkerSnapshot | null =
         readInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
     let activeCommand = readInstanceAgentCommandJournalSnapshot(commandJournalPath, log);

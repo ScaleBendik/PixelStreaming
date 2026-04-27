@@ -263,6 +263,15 @@ Assert-ContainsText `
     -Message 'Viewer idle stop must not keep stale recovered commands after the instance agent clears its command journal.'
 Assert-ContainsText `
     -Content $instanceAgent `
+    -Expected 'readInstanceAgentDesiredStateSnapshot(desiredStatePath, log)' `
+    -Message 'Instance agent must preserve the cached desired state at startup until the control plane returns an authoritative state.'
+
+Assert-DoesNotContainText `
+    -Content $instanceAgent `
+    -Unexpected 'writeInstanceAgentDesiredStateSnapshot(desiredStatePath, {}, log)' `
+    -Message 'Instance agent startup must not clear desired-state recycle or warm-hold intent before bootstrap.'
+Assert-ContainsText `
+    -Content $instanceAgent `
     -Expected 'recoveredActiveCommandId' `
     -Message 'Instance agent must distinguish commands recovered from the command journal from newly received commands.'
 
