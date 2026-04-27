@@ -32,6 +32,7 @@ const DEFAULT_RECYCLE_TERMINATE_DELAY_MS = 250;
 const DEFAULT_RECYCLE_SELF_EXIT_DELAY_MS = 5_000;
 const DEFAULT_RECYCLE_READY_TIMEOUT_SECONDS = 120;
 const DEFAULT_DISCONNECT_FAST_POLLING_WINDOW_MS = 120_000;
+const DEFAULT_SHUTDOWN_ARTIFACT_CAPTURE_TIMEOUT_MS = 15_000;
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
 const IMDS_METADATA_BASE_URL = 'http://169.254.169.254/latest/meta-data';
 const DEFAULT_MAINTENANCE_TAG_KEY = 'ScaleWorldMaintenanceMode';
@@ -63,6 +64,7 @@ export interface ViewerIdleOptions {
         | 'startCommand'
         | 'completeCommand'
         | 'failCommand'
+        | 'captureSessionLogArtifact'
         | 'requestFastPolling'
     > | null;
 }
@@ -154,6 +156,52 @@ async function stopCurrentInstance(
     if (stdout && stdout.trim().length > 0) log(`[idle-stop] StopInstances output: ${stdout.trim()}`);
     if (stderr && stderr.trim().length > 0) log(`[idle-stop] StopInstances stderr: ${stderr.trim()}`);
     log(`[idle-stop] StopInstances requested for ${instanceId} (${region}).`);
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+    let timeout: NodeJS.Timeout | null = null;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise<T>((_, reject) => {
+                timeout = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+            })
+        ]);
+    } finally {
+        if (timeout) {
+            clearTimeout(timeout);
+        }
+    }
+}
+
+async function captureShutdownSessionLogArtifact(
+    instanceAgentClient: Pick<InstanceAgentClient, 'captureSessionLogArtifact'> | null | undefined,
+    command: InstanceAgentCommand | null | undefined,
+    trigger: string,
+    reason: string,
+    log: (message: string) => void,
+    metadata: Record<string, unknown> = {}
+): Promise<void> {
+    if (!instanceAgentClient || !command) {
+        return;
+    }
+
+    try {
+        await withTimeout(
+            instanceAgentClient.captureSessionLogArtifact(trigger, command, {
+                reason,
+                source: 'viewer-idle-stop',
+                ...metadata
+            }),
+            DEFAULT_SHUTDOWN_ARTIFACT_CAPTURE_TIMEOUT_MS,
+            `Timed out after ${DEFAULT_SHUTDOWN_ARTIFACT_CAPTURE_TIMEOUT_MS} ms.`
+        );
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log(
+            `[idle-stop] Session artifact capture '${trigger}' for shutdown command ${command.instanceCommandId} failed: ${message}`
+        );
+    }
 }
 
 async function readCurrentMaintenanceMode(
@@ -1201,6 +1249,14 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 }
             }
 
+            await captureShutdownSessionLogArtifact(
+                options.instanceAgentClient,
+                commandToStart,
+                'shutdown_requested',
+                reason,
+                log
+            );
+
             publishStatus('stopping', mapStopReason(reason));
             log(`[idle-stop] Triggering stop (reason=${reason}).`);
             await stopCurrentInstance(awsCliPath, dryRun, log);
@@ -1228,6 +1284,14 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             const commandToFail = getActiveShutdownCommand();
             if (commandToFail && options.instanceAgentClient) {
                 try {
+                    await captureShutdownSessionLogArtifact(
+                        options.instanceAgentClient,
+                        commandToFail,
+                        'shutdown_failed',
+                        reason,
+                        log,
+                        { failureMessage: message }
+                    );
                     await options.instanceAgentClient.failCommand(commandToFail, {
                         failureCode: 'shutdown_request_failed',
                         failureMessage: message,

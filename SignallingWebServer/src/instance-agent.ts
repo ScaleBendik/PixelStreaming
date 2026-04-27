@@ -172,6 +172,21 @@ export interface InstanceAgentClient {
             occurredAtUtc?: string;
         }
     ): Promise<InstanceAgentCommandTransitionResult>;
+    captureSessionLogArtifact(
+        trigger: string,
+        command:
+            | Pick<
+                  InstanceAgentCommand,
+                  'instanceCommandId' | 'commandType' | 'sessionRequestId' | 'requestedAtUtc'
+              >
+            | Pick<
+                  InstanceAgentCommandJournalSnapshot,
+                  'instanceCommandId' | 'commandType' | 'sessionRequestId' | 'requestedAtUtc'
+              >
+            | null
+            | undefined,
+        metadata?: Record<string, unknown>
+    ): Promise<void>;
     requestFastPolling(reason: string, options?: { durationMs?: number; intervalMs?: number }): void;
 }
 
@@ -957,7 +972,7 @@ export function wireInstanceAgent(
         logger: log
     });
 
-    const captureSessionLogArtifact = (
+    const captureSessionLogArtifact = async (
         trigger: string,
         command:
             | Pick<
@@ -971,36 +986,36 @@ export function wireInstanceAgent(
             | null
             | undefined,
         metadata: Record<string, unknown> = {}
-    ): void => {
+    ): Promise<void> => {
         if (!artifactManager) {
             return;
         }
 
-        void resolveBootstrapIdentity()
-            .then((identity) =>
-                artifactManager?.captureAndUpload({
-                    trigger,
-                    instanceId: identity.instanceId,
-                    region: identity.region,
-                    sessionRequestId: normalizeOptionalText(command?.sessionRequestId),
-                    instanceCommandId: normalizeOptionalText(command?.instanceCommandId),
-                    commandType: normalizeOptionalText(command?.commandType),
-                    runtimeStatus: runtimeSnapshot.status,
-                    runtimeReason: runtimeSnapshot.reason,
-                    runtimeVersion: runtimeSnapshot.version,
-                    recycleId: normalizeOptionalText(metadata.recycleId),
-                    recycleReason: normalizeOptionalText(metadata.recycleReason),
-                    recycleRequestedAtUtc: normalizeOptionalText(metadata.recycleRequestedAtUtc),
-                    timeRangeStartUtc: normalizeOptionalText(
-                        command?.requestedAtUtc ?? metadata.recycleRequestedAtUtc
-                    ),
-                    metadata
-                })
-            )
-            .catch((error) => {
-                const message = error instanceof Error ? error.message : String(error);
-                log(`[session-artifacts] ${trigger} capture failed: ${message}`);
+        try {
+            const identity = await resolveBootstrapIdentity();
+            await artifactManager.captureAndUpload({
+                trigger,
+                instanceId: identity.instanceId,
+                region: identity.region,
+                sessionRequestId: normalizeOptionalText(command?.sessionRequestId),
+                instanceCommandId: normalizeOptionalText(command?.instanceCommandId),
+                commandType: normalizeOptionalText(command?.commandType),
+                runtimeStatus: runtimeSnapshot.status,
+                runtimeReason: runtimeSnapshot.reason,
+                runtimeVersion: runtimeSnapshot.version,
+                recycleId: normalizeOptionalText(metadata.recycleId),
+                recycleReason: normalizeOptionalText(metadata.recycleReason),
+                recycleRequestedAtUtc: normalizeOptionalText(metadata.recycleRequestedAtUtc),
+                timeRangeStartUtc: normalizeOptionalText(
+                    command?.requestedAtUtc ?? metadata.recycleRequestedAtUtc
+                ),
+                metadata
             });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            log(`[session-artifacts] ${trigger} capture failed: ${message}`);
+            throw error;
+        }
     };
     const ensureBootstrap = async (): Promise<void> => {
         if (token) {
@@ -1151,6 +1166,9 @@ export function wireInstanceAgent(
         }
 
         try {
+            await captureSessionLogArtifact('reset_recovered_ready', activeCommand, {
+                source: 'ready_recovery'
+            }).catch(() => undefined);
             await completeCommand(activeCommand, {
                 resultJson: JSON.stringify({
                     status: runtimeSnapshot.status,
@@ -1271,12 +1289,12 @@ export function wireInstanceAgent(
                 });
                 if (activeCommand && isRecycleToWarmCommand(activeCommand)) {
                     const commandToComplete = activeCommand;
-                    captureSessionLogArtifact('reset_completed', commandToComplete, {
+                    void captureSessionLogArtifact('reset_completed', commandToComplete, {
                         recycleId: recycleMarker?.recycleId,
                         recycleReason: recycleMarker?.reason,
                         recycleRequestedAtUtc: recycleMarker?.requestedAtUtc,
                         source: update.source
-                    });
+                    }).catch(() => undefined);
                     void completeCommand(commandToComplete, {
                         resultJson: JSON.stringify({
                             status: nextStatus,
@@ -1322,14 +1340,14 @@ export function wireInstanceAgent(
                 });
                 if (activeCommand && isRecycleToWarmCommand(activeCommand)) {
                     const commandToFail = activeCommand;
-                    captureSessionLogArtifact('reset_cancelled', commandToFail, {
+                    void captureSessionLogArtifact('reset_cancelled', commandToFail, {
                         recycleId: recycleMarker?.recycleId,
                         recycleReason: recycleMarker?.reason,
                         recycleRequestedAtUtc: recycleMarker?.requestedAtUtc,
                         source: update.source,
                         cancelledStatus: nextStatus,
                         cancelledReason: nextReason
-                    });
+                    }).catch(() => undefined);
                     void failCommand(commandToFail, {
                         failureCode: 'reset_cancelled',
                         failureMessage: `Runtime entered '${nextStatus}' before recycle completion.`,
@@ -1418,6 +1436,9 @@ export function wireInstanceAgent(
             }
         ) {
             return failCommand(command, options);
+        },
+        captureSessionLogArtifact(trigger, command, metadata) {
+            return captureSessionLogArtifact(trigger, command, metadata);
         },
         requestFastPolling(reason: string, options?: { durationMs?: number; intervalMs?: number }) {
             requestFastPolling(reason, options);
