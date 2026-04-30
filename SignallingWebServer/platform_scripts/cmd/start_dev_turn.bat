@@ -111,6 +111,13 @@ if not defined INSTANCE_AGENT_ARTIFACT_PREFIX set "INSTANCE_AGENT_ARTIFACT_PREFI
 if not defined INSTANCE_AGENT_ARTIFACT_QUEUE_PATH set "INSTANCE_AGENT_ARTIFACT_QUEUE_PATH=C:\PixelStreaming\state\session-artifact-queue"
 if not defined INSTANCE_AGENT_ARTIFACT_MAX_BYTES set "INSTANCE_AGENT_ARTIFACT_MAX_BYTES=2097152"
 if not defined INSTANCE_AGENT_ARTIFACT_UNREAL_LOG_DIRECTORY set "INSTANCE_AGENT_ARTIFACT_UNREAL_LOG_DIRECTORY="
+if not defined INSTANCE_AGENT_SCREENSHOT_ARTIFACT_PREFIX set "INSTANCE_AGENT_SCREENSHOT_ARTIFACT_PREFIX=PixelStreamingScreenshots/%SCALEWORLD_STREAMING_LANE%/%SCALEWORLD_DEPLOYMENT_TRACK%"
+if not defined INSTANCE_AGENT_SCREENSHOT_SOURCE_FOLDER set "INSTANCE_AGENT_SCREENSHOT_SOURCE_FOLDER="
+if not defined INSTANCE_AGENT_SCREENSHOT_ARTIFACT_QUEUE_PATH set "INSTANCE_AGENT_SCREENSHOT_ARTIFACT_QUEUE_PATH=C:\PixelStreaming\state\session-screenshot-artifact-queue"
+if not defined INSTANCE_AGENT_SCREENSHOT_ARTIFACT_MAX_FILES set "INSTANCE_AGENT_SCREENSHOT_ARTIFACT_MAX_FILES=250"
+if not defined INSTANCE_AGENT_SCREENSHOT_ARTIFACT_MAX_BYTES set "INSTANCE_AGENT_SCREENSHOT_ARTIFACT_MAX_BYTES=104857600"
+if not defined INSTANCE_AGENT_SCREENSHOT_ARTIFACT_RETENTION_DAYS set "INSTANCE_AGENT_SCREENSHOT_ARTIFACT_RETENTION_DAYS=7"
+if not defined INSTANCE_AGENT_SCREENSHOT_ARTIFACT_SETTLE_DELAY_MS set "INSTANCE_AGENT_SCREENSHOT_ARTIFACT_SETTLE_DELAY_MS=1000"
 
 set "INSTANCE_ID="
 set "STARTUP_HEARTBEAT_STATE_FILE="
@@ -260,7 +267,16 @@ call start.bat -- ^
   --instance_agent_artifact_aws_cli_path="%AWS_EXE%" ^
   --instance_agent_artifact_queue_path="%INSTANCE_AGENT_ARTIFACT_QUEUE_PATH%" ^
   --instance_agent_artifact_max_bytes="%INSTANCE_AGENT_ARTIFACT_MAX_BYTES%" ^
-  --instance_agent_artifact_unreal_log_directory="%INSTANCE_AGENT_ARTIFACT_UNREAL_LOG_DIRECTORY%"
+  --instance_agent_artifact_unreal_log_directory="%INSTANCE_AGENT_ARTIFACT_UNREAL_LOG_DIRECTORY%" ^
+  --instance_agent_screenshot_artifact_upload_enabled="%INSTANCE_AGENT_SCREENSHOT_ARTIFACT_UPLOAD_ENABLED%" ^
+  --instance_agent_screenshot_artifact_bucket="%INSTANCE_AGENT_SCREENSHOT_ARTIFACT_BUCKET%" ^
+  --instance_agent_screenshot_artifact_prefix="%INSTANCE_AGENT_SCREENSHOT_ARTIFACT_PREFIX%" ^
+  --instance_agent_screenshot_source_folder="%INSTANCE_AGENT_SCREENSHOT_SOURCE_FOLDER%" ^
+  --instance_agent_screenshot_artifact_queue_path="%INSTANCE_AGENT_SCREENSHOT_ARTIFACT_QUEUE_PATH%" ^
+  --instance_agent_screenshot_artifact_max_files="%INSTANCE_AGENT_SCREENSHOT_ARTIFACT_MAX_FILES%" ^
+  --instance_agent_screenshot_artifact_max_bytes="%INSTANCE_AGENT_SCREENSHOT_ARTIFACT_MAX_BYTES%" ^
+  --instance_agent_screenshot_artifact_retention_days="%INSTANCE_AGENT_SCREENSHOT_ARTIFACT_RETENTION_DAYS%" ^
+  --instance_agent_screenshot_artifact_settle_delay_ms="%INSTANCE_AGENT_SCREENSHOT_ARTIFACT_SETTLE_DELAY_MS%"
 
 exit /b %errorlevel%
 
@@ -300,6 +316,15 @@ call start.bat -- ^
   --instance_agent_artifact_queue_path="%INSTANCE_AGENT_ARTIFACT_QUEUE_PATH%" ^
   --instance_agent_artifact_max_bytes="%INSTANCE_AGENT_ARTIFACT_MAX_BYTES%" ^
   --instance_agent_artifact_unreal_log_directory="%INSTANCE_AGENT_ARTIFACT_UNREAL_LOG_DIRECTORY%" ^
+  --instance_agent_screenshot_artifact_upload_enabled="%INSTANCE_AGENT_SCREENSHOT_ARTIFACT_UPLOAD_ENABLED%" ^
+  --instance_agent_screenshot_artifact_bucket="%INSTANCE_AGENT_SCREENSHOT_ARTIFACT_BUCKET%" ^
+  --instance_agent_screenshot_artifact_prefix="%INSTANCE_AGENT_SCREENSHOT_ARTIFACT_PREFIX%" ^
+  --instance_agent_screenshot_source_folder="%INSTANCE_AGENT_SCREENSHOT_SOURCE_FOLDER%" ^
+  --instance_agent_screenshot_artifact_queue_path="%INSTANCE_AGENT_SCREENSHOT_ARTIFACT_QUEUE_PATH%" ^
+  --instance_agent_screenshot_artifact_max_files="%INSTANCE_AGENT_SCREENSHOT_ARTIFACT_MAX_FILES%" ^
+  --instance_agent_screenshot_artifact_max_bytes="%INSTANCE_AGENT_SCREENSHOT_ARTIFACT_MAX_BYTES%" ^
+  --instance_agent_screenshot_artifact_retention_days="%INSTANCE_AGENT_SCREENSHOT_ARTIFACT_RETENTION_DAYS%" ^
+  --instance_agent_screenshot_artifact_settle_delay_ms="%INSTANCE_AGENT_SCREENSHOT_ARTIFACT_SETTLE_DELAY_MS%" ^
   --reverse-proxy ^
   --reverse-proxy-num-proxies="%REVERSE_PROXY_NUM_PROXIES%"
 
@@ -398,6 +423,12 @@ if not defined INSTANCE_AGENT_ARTIFACT_UPLOAD_ENABLED (
     set "INSTANCE_AGENT_ARTIFACT_UPLOAD_ENABLED=false"
   )
 )
+if not defined INSTANCE_AGENT_SCREENSHOT_ARTIFACT_BUCKET (
+  if defined INSTANCE_AGENT_ARTIFACT_BUCKET set "INSTANCE_AGENT_SCREENSHOT_ARTIFACT_BUCKET=%INSTANCE_AGENT_ARTIFACT_BUCKET%"
+)
+if not defined INSTANCE_AGENT_SCREENSHOT_ARTIFACT_UPLOAD_ENABLED (
+  set "INSTANCE_AGENT_SCREENSHOT_ARTIFACT_UPLOAD_ENABLED=%INSTANCE_AGENT_ARTIFACT_UPLOAD_ENABLED%"
+)
 exit /b 0
 
 :resolve_streaming_lane_from_instance_tag
@@ -485,11 +516,17 @@ if not exist "%REPO_SYNC_SCRIPT%" (
 echo Checking PixelStreaming repo using git sync mode "%SCALEWORLD_GIT_SYNC_MODE%".
 call :set_runtime_status "booting" "startup-script" "git_sync_check"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%REPO_SYNC_SCRIPT%" -RepoRoot "%REPO_ROOT%" -Mode "startup"
-if errorlevel 1 (
+set "REPO_SYNC_EXIT=%errorlevel%"
+if "%REPO_SYNC_EXIT%"=="42" (
+  echo Repo sync launched a fresh stack from the updated checkout. Exiting this pre-update launcher.
+  call :stop_startup_heartbeat
+  exit /b 0
+)
+if not "%REPO_SYNC_EXIT%"=="0" (
   echo ERROR: Repo sync helper failed.
   call :set_runtime_status "runtime_fault" "startup-script" "repo_sync_failed"
   call :stop_startup_heartbeat
-  exit /b 1
+  exit /b %REPO_SYNC_EXIT%
 )
 
 exit /b 0

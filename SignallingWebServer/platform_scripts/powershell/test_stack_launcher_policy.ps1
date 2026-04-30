@@ -333,4 +333,18 @@ Assert-ContainsText `
     -Content $stackLauncher `
     -Expected '"%REPO_SYNC_EXIT%"=="42"' `
     -Message 'Repo sync subroutine must preserve the post-sync relaunch handoff exit code.'
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected '"%REPO_SYNC_EXIT%"=="42"' `
+    -Message 'Legacy Wilbur launcher must treat post-sync relaunch as successful handoff.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected '--instance_agent_screenshot_artifact_upload_enabled' `
+    -Message 'Legacy Wilbur launcher must pass screenshot artifact upload settings to Wilbur.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'INSTANCE_AGENT_SCREENSHOT_ARTIFACT_UPLOAD_ENABLED=%INSTANCE_AGENT_ARTIFACT_UPLOAD_ENABLED%' `
+    -Message 'Legacy Wilbur launcher must enable screenshot bundles when session artifact uploads are enabled.'
 Write-Output 'Stack launcher policy tests passed.'
