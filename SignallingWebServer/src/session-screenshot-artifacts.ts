@@ -31,6 +31,10 @@ interface SelectedScreenshot extends SourceFileSnapshot {
     checksumSha256: string;
 }
 
+interface SourceFileCleanupEntry extends SourceFileSnapshot {
+    checksumSha256: string;
+}
+
 interface ActiveScreenshotSession {
     startedAtUtc: string;
     baselineCapturedAtUtc: string;
@@ -59,6 +63,7 @@ interface ArtifactQueueRecord {
     localPath: string;
     bucketName: string;
     objectKey: string;
+    sourceFiles?: SourceFileCleanupEntry[];
     request: SessionScreenshotArtifactRegistrationRequest;
 }
 
@@ -590,6 +595,75 @@ export function createSessionScreenshotArtifactManager(
         writeJsonAtomic(path.join(queuePath, `${record.id}.json`), record);
     };
 
+    const cleanScreenshotSourceFolder = (reason: string): void => {
+        const discovered = listScreenshotFiles(sourceFolder, MAX_DISCOVERED_SCREENSHOTS);
+        let removed = 0;
+        let failed = 0;
+        for (const file of discovered.files) {
+            try {
+                fs.unlinkSync(file.path);
+                removed += 1;
+            } catch {
+                failed += 1;
+            }
+        }
+
+        if (removed > 0 || failed > 0) {
+            log(
+                `[screenshot-artifacts] ${reason} screenshot cleanup removed ${removed} file(s) from ${sourceFolder}${failed > 0 ? ` (failed=${failed})` : ''}.`
+            );
+        }
+    };
+
+    const cleanupRegisteredSourceFiles = (record: ArtifactQueueRecord): void => {
+        if (!Array.isArray(record.sourceFiles) || record.sourceFiles.length === 0) {
+            return;
+        }
+
+        let removed = 0;
+        let skipped = 0;
+        let failed = 0;
+        const recordCreatedMs = Date.parse(record.createdAtUtc);
+
+        for (const sourceFile of record.sourceFiles) {
+            try {
+                if (!fs.existsSync(sourceFile.path)) {
+                    skipped += 1;
+                    continue;
+                }
+
+                const stat = fs.statSync(sourceFile.path);
+                if (
+                    !stat.isFile() ||
+                    stat.size !== sourceFile.sizeBytes ||
+                    (Number.isFinite(recordCreatedMs) && stat.mtimeMs > recordCreatedMs + 1_000)
+                ) {
+                    skipped += 1;
+                    continue;
+                }
+
+                const checksumSha256 = createHash('sha256')
+                    .update(fs.readFileSync(sourceFile.path))
+                    .digest('hex');
+                if (checksumSha256 !== sourceFile.checksumSha256) {
+                    skipped += 1;
+                    continue;
+                }
+
+                fs.unlinkSync(sourceFile.path);
+                removed += 1;
+            } catch {
+                failed += 1;
+            }
+        }
+
+        if (removed > 0 || skipped > 0 || failed > 0) {
+            log(
+                `[screenshot-artifacts] Registered artifact source cleanup removed ${removed} file(s) from ${sourceFolder}${skipped > 0 ? ` (skipped=${skipped})` : ''}${failed > 0 ? ` (failed=${failed})` : ''}.`
+            );
+        }
+    };
+
     const uploadRecord = async (record: ArtifactQueueRecord): Promise<void> => {
         const destination = `s3://${record.bucketName}/${record.objectKey}`;
         const args = appendRegion(
@@ -640,6 +714,13 @@ export function createSessionScreenshotArtifactManager(
             if (fs.existsSync(record.localPath)) fs.unlinkSync(record.localPath);
         } catch {
             // best effort
+        }
+        cleanupRegisteredSourceFiles(record);
+        const skippedByMaxFiles = Number.parseInt(record.request.metadata.skippedByMaxFiles ?? '0', 10);
+        const skippedByMaxBytes = Number.parseInt(record.request.metadata.skippedByMaxBytes ?? '0', 10);
+        const hasSkippedSourceFiles = skippedByMaxFiles > 0 || skippedByMaxBytes > 0;
+        if (!activeSession && !hasSkippedSourceFiles) {
+            cleanScreenshotSourceFolder('Post-registration');
         }
         log(`[screenshot-artifacts] Registered artifact ${record.objectKey}.`);
     };
@@ -735,23 +816,7 @@ export function createSessionScreenshotArtifactManager(
             return;
         }
 
-        const discovered = listScreenshotFiles(sourceFolder, MAX_DISCOVERED_SCREENSHOTS);
-        let removed = 0;
-        let failed = 0;
-        for (const file of discovered.files) {
-            try {
-                fs.unlinkSync(file.path);
-                removed += 1;
-            } catch {
-                failed += 1;
-            }
-        }
-
-        if (removed > 0 || failed > 0) {
-            log(
-                `[screenshot-artifacts] Startup screenshot cleanup removed ${removed} file(s) from ${sourceFolder}${failed > 0 ? ` (failed=${failed})` : ''}.`
-            );
-        }
+        cleanScreenshotSourceFolder('Startup');
     };
 
     const completeSessionAndUpload = async (
@@ -827,6 +892,9 @@ export function createSessionScreenshotArtifactManager(
             }
             if (selectedFiles.length === 0) {
                 clearActiveSessionSnapshot(activeSessionStatePath);
+                if (changedFiles.length === 0) {
+                    cleanScreenshotSourceFolder('Post-session empty');
+                }
                 log(
                     `[screenshot-artifacts] No screenshots found for session request ${sessionRequestId} (${mergedContext.trigger}).`
                 );
@@ -955,6 +1023,13 @@ export function createSessionScreenshotArtifactManager(
                 localPath,
                 bucketName,
                 objectKey,
+                sourceFiles: selectedScreenshots.map((file) => ({
+                    path: file.path,
+                    sizeBytes: file.sizeBytes,
+                    modifiedMs: file.modifiedMs,
+                    modifiedAtUtc: file.modifiedAtUtc,
+                    checksumSha256: file.checksumSha256
+                })),
                 request
             };
             updateRecord(record);
