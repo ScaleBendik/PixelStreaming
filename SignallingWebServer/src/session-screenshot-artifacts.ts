@@ -40,6 +40,15 @@ interface ActiveScreenshotSession {
     context: Partial<SessionScreenshotArtifactCaptureContext>;
 }
 
+interface ActiveScreenshotSessionSnapshot {
+    startedAtUtc: string;
+    baselineCapturedAtUtc: string;
+    baseline: SourceFileSnapshot[];
+    baselineFileCount: number;
+    baselineTruncated: boolean;
+    context: Partial<SessionScreenshotArtifactCaptureContext>;
+}
+
 interface ArtifactQueueRecord {
     id: string;
     status: QueueRecordStatus;
@@ -110,11 +119,33 @@ export interface SessionScreenshotArtifactManagerOptions extends SessionScreensh
     logger?: (message: string) => void;
 }
 
+export type SessionScreenshotArtifactCompletionStatus =
+    | 'captured'
+    | 'no_screenshots'
+    | 'skipped_no_session_request';
+
+export interface SessionScreenshotArtifactCompletionResult {
+    status: SessionScreenshotArtifactCompletionStatus;
+    sessionRequestId?: string;
+    artifactId?: string;
+    objectKey?: string;
+    screenshotCount: number;
+    changedFileCount?: number;
+    discoveredFileCount?: number;
+    sourceFolder: string;
+    trigger?: string;
+    timeRangeStartUtc?: string;
+    timeRangeEndUtc?: string;
+}
+
 export interface SessionScreenshotArtifactManager {
     startSession(context: Partial<SessionScreenshotArtifactCaptureContext>): void;
     attachSessionContext(context: Partial<SessionScreenshotArtifactCaptureContext>): void;
-    completeSessionAndUpload(context: SessionScreenshotArtifactCaptureContext): Promise<void>;
+    completeSessionAndUpload(
+        context: SessionScreenshotArtifactCaptureContext
+    ): Promise<SessionScreenshotArtifactCompletionResult>;
     drainQueue(): Promise<void>;
+    cleanStartupScreenshots(options?: { preserveActiveSession?: boolean }): void;
 }
 
 function parseBoolean(rawValue: unknown, fallback: boolean): boolean {
@@ -341,6 +372,58 @@ function removeDirectoryBestEffort(directory: string): void {
     }
 }
 
+function writeActiveSessionSnapshot(filePath: string, session: ActiveScreenshotSession): void {
+    const snapshot: ActiveScreenshotSessionSnapshot = {
+        startedAtUtc: session.startedAtUtc,
+        baselineCapturedAtUtc: session.baselineCapturedAtUtc,
+        baseline: [...session.baseline.values()],
+        baselineFileCount: session.baselineFileCount,
+        baselineTruncated: session.baselineTruncated,
+        context: session.context
+    };
+    writeJsonAtomic(filePath, snapshot);
+}
+
+function readActiveSessionSnapshot(filePath: string): ActiveScreenshotSession | null {
+    try {
+        const snapshot = JSON.parse(fs.readFileSync(filePath, 'utf8')) as ActiveScreenshotSessionSnapshot;
+        if (
+            !snapshot ||
+            typeof snapshot.startedAtUtc !== 'string' ||
+            typeof snapshot.baselineCapturedAtUtc !== 'string' ||
+            !Array.isArray(snapshot.baseline)
+        ) {
+            return null;
+        }
+
+        const baseline = new Map<string, SourceFileSnapshot>();
+        for (const file of snapshot.baseline) {
+            if (!file || typeof file.path !== 'string') continue;
+            baseline.set(normalizePathKey(file.path), file);
+        }
+
+        return {
+            startedAtUtc: snapshot.startedAtUtc,
+            baselineCapturedAtUtc: snapshot.baselineCapturedAtUtc,
+            baseline,
+            baselineFileCount:
+                typeof snapshot.baselineFileCount === 'number' ? snapshot.baselineFileCount : baseline.size,
+            baselineTruncated: snapshot.baselineTruncated === true,
+            context: snapshot.context ?? {}
+        };
+    } catch {
+        return null;
+    }
+}
+
+function clearActiveSessionSnapshot(filePath: string): void {
+    try {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    } catch {
+        // best effort
+    }
+}
+
 function buildObjectKey(
     prefix: string,
     lane: string | undefined,
@@ -463,6 +546,7 @@ export function createSessionScreenshotArtifactManager(
         path.join(repoRoot, 'state', 'session-screenshot-artifact-queue');
     const bundlePath = path.join(queuePath, 'bundles');
     const stagingRootPath = path.join(queuePath, 'staging');
+    const activeSessionStatePath = path.join(queuePath, 'active-session', 'session.json');
     const maxFiles = parsePositiveInteger(
         options.maxFiles ?? process.env.INSTANCE_AGENT_SCREENSHOT_ARTIFACT_MAX_FILES,
         DEFAULT_MAX_FILE_COUNT
@@ -490,9 +574,16 @@ export function createSessionScreenshotArtifactManager(
     fs.mkdirSync(queuePath, { recursive: true });
     fs.mkdirSync(bundlePath, { recursive: true });
     fs.mkdirSync(stagingRootPath, { recursive: true });
+    fs.mkdirSync(path.dirname(activeSessionStatePath), { recursive: true });
+    activeSession = readActiveSessionSnapshot(activeSessionStatePath);
     log(
         `[screenshot-artifacts] Enabled. bucket=${bucketName}, prefix=${objectPrefix}, source=${sourceFolder}, queue=${queuePath}, maxFiles=${maxFiles}, maxBundleBytes=${maxBundleBytes}.`
     );
+    if (activeSession) {
+        log(
+            `[screenshot-artifacts] Recovered active screenshot baseline from ${activeSessionStatePath} (files=${activeSession.baselineFileCount}).`
+        );
+    }
 
     const updateRecord = (record: ArtifactQueueRecord): void => {
         record.updatedAtUtc = new Date().toISOString();
@@ -599,6 +690,7 @@ export function createSessionScreenshotArtifactManager(
             ...context,
             metadata: { ...(activeSession.context.metadata ?? {}), ...(context.metadata ?? {}) }
         };
+        writeActiveSessionSnapshot(activeSessionStatePath, activeSession);
     };
 
     const startSession = (context: Partial<SessionScreenshotArtifactCaptureContext>): void => {
@@ -620,6 +712,7 @@ export function createSessionScreenshotArtifactManager(
             baselineTruncated: baseline.size >= MAX_DISCOVERED_SCREENSHOTS,
             context
         };
+        writeActiveSessionSnapshot(activeSessionStatePath, activeSession);
         log(
             `[screenshot-artifacts] Session baseline captured at ${baselineCapturedAtUtc} (files=${baseline.size}${baseline.size >= MAX_DISCOVERED_SCREENSHOTS ? ', truncated=true' : ''}).`
         );
@@ -633,10 +726,39 @@ export function createSessionScreenshotArtifactManager(
         mergeActiveContext(context);
     };
 
+    const cleanStartupScreenshots = (startupOptions?: { preserveActiveSession?: boolean }): void => {
+        const recoveredSession = activeSession ?? readActiveSessionSnapshot(activeSessionStatePath);
+        if (startupOptions?.preserveActiveSession || recoveredSession) {
+            log(
+                '[screenshot-artifacts] Startup screenshot cleanup skipped because an active session may need recovery.'
+            );
+            return;
+        }
+
+        const discovered = listScreenshotFiles(sourceFolder, MAX_DISCOVERED_SCREENSHOTS);
+        let removed = 0;
+        let failed = 0;
+        for (const file of discovered.files) {
+            try {
+                fs.unlinkSync(file.path);
+                removed += 1;
+            } catch {
+                failed += 1;
+            }
+        }
+
+        if (removed > 0 || failed > 0) {
+            log(
+                `[screenshot-artifacts] Startup screenshot cleanup removed ${removed} file(s) from ${sourceFolder}${failed > 0 ? ` (failed=${failed})` : ''}.`
+            );
+        }
+    };
+
     const completeSessionAndUpload = async (
         context: SessionScreenshotArtifactCaptureContext
-    ): Promise<void> => {
-        const session: ActiveScreenshotSession = activeSession ?? {
+    ): Promise<SessionScreenshotArtifactCompletionResult> => {
+        const recoveredSession = activeSession ?? readActiveSessionSnapshot(activeSessionStatePath);
+        const session: ActiveScreenshotSession = recoveredSession ?? {
             startedAtUtc:
                 normalizeOptionalText(context.timeRangeStartUtc) ??
                 normalizeOptionalText(context.metadata?.sessionStartUtc) ??
@@ -655,10 +777,16 @@ export function createSessionScreenshotArtifactManager(
         } as SessionScreenshotArtifactCaptureContext;
         const sessionRequestId = normalizeGuidText(mergedContext.sessionRequestId);
         if (!sessionRequestId) {
+            clearActiveSessionSnapshot(activeSessionStatePath);
             log(
                 `[screenshot-artifacts] Skipping screenshot capture for '${mergedContext.trigger}' because no sessionRequestId is available.`
             );
-            return;
+            return {
+                status: 'skipped_no_session_request',
+                screenshotCount: 0,
+                sourceFolder,
+                trigger: mergedContext.trigger
+            };
         }
 
         await sleep(settleDelayMs);
@@ -673,6 +801,12 @@ export function createSessionScreenshotArtifactManager(
         let stagingCreated = false;
 
         try {
+            const lane = normalizeOptionalText(mergedContext.lane) ?? configuredLane;
+            const runtimeVersion =
+                normalizeOptionalText(mergedContext.runtimeVersion) ?? configuredRuntimeVersion;
+            const timeRangeStartUtc =
+                normalizeOptionalText(mergedContext.timeRangeStartUtc) ?? session.startedAtUtc;
+            const timeRangeEndUtc = normalizeOptionalText(mergedContext.timeRangeEndUtc) ?? createdAtUtc;
             const discovered = listScreenshotFiles(sourceFolder, MAX_DISCOVERED_SCREENSHOTS);
             const changedFiles = discovered.files.filter((file) => hasChangedSinceBaseline(file, session));
             const selectedFiles: SourceFileSnapshot[] = [];
@@ -692,10 +826,21 @@ export function createSessionScreenshotArtifactManager(
                 selectedSourceBytes += file.sizeBytes;
             }
             if (selectedFiles.length === 0) {
+                clearActiveSessionSnapshot(activeSessionStatePath);
                 log(
                     `[screenshot-artifacts] No screenshots found for session request ${sessionRequestId} (${mergedContext.trigger}).`
                 );
-                return;
+                return {
+                    status: 'no_screenshots',
+                    sessionRequestId,
+                    screenshotCount: 0,
+                    changedFileCount: changedFiles.length,
+                    discoveredFileCount: discovered.files.length,
+                    sourceFolder,
+                    trigger: mergedContext.trigger,
+                    timeRangeStartUtc,
+                    timeRangeEndUtc
+                };
             }
             fs.mkdirSync(stagingPath, { recursive: true });
             stagingCreated = true;
@@ -715,12 +860,6 @@ export function createSessionScreenshotArtifactManager(
                 });
             }
 
-            const lane = normalizeOptionalText(mergedContext.lane) ?? configuredLane;
-            const runtimeVersion =
-                normalizeOptionalText(mergedContext.runtimeVersion) ?? configuredRuntimeVersion;
-            const timeRangeStartUtc =
-                normalizeOptionalText(mergedContext.timeRangeStartUtc) ?? session.startedAtUtc;
-            const timeRangeEndUtc = normalizeOptionalText(mergedContext.timeRangeEndUtc) ?? createdAtUtc;
             const manifest = {
                 schemaVersion: 1,
                 artifactType: 'screenshot_bundle',
@@ -819,14 +958,33 @@ export function createSessionScreenshotArtifactManager(
                 request
             };
             updateRecord(record);
+            clearActiveSessionSnapshot(activeSessionStatePath);
             log(
                 `[screenshot-artifacts] Captured screenshot bundle ${localPath} (${archive.length} bytes, screenshots=${selectedScreenshots.length}, skippedByMaxFiles=${skippedByMaxFiles}, skippedByMaxBytes=${skippedByMaxBytes}).`
             );
             await drainQueue();
+            return {
+                status: 'captured',
+                sessionRequestId,
+                artifactId,
+                objectKey,
+                screenshotCount: selectedScreenshots.length,
+                changedFileCount: changedFiles.length,
+                discoveredFileCount: discovered.files.length,
+                sourceFolder,
+                trigger: mergedContext.trigger,
+                timeRangeStartUtc,
+                timeRangeEndUtc
+            };
         } finally {
             if (stagingCreated) removeDirectoryBestEffort(stagingPath);
         }
     };
-
-    return { startSession, attachSessionContext, completeSessionAndUpload, drainQueue };
+    return {
+        startSession,
+        attachSessionContext,
+        completeSessionAndUpload,
+        drainQueue,
+        cleanStartupScreenshots
+    };
 }

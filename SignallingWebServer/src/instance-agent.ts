@@ -1024,6 +1024,11 @@ export function wireInstanceAgent(
         registerArtifact,
         logger: log
     });
+    screenshotArtifactManager?.cleanStartupScreenshots({
+        preserveActiveSession:
+            pendingRecycleCompletion !== null ||
+            (activeCommand !== null && isRecycleToWarmCommand(activeCommand))
+    });
 
     const captureSessionLogArtifact = async (
         trigger: string,
@@ -1092,7 +1097,7 @@ export function wireInstanceAgent(
 
         try {
             const identity = await resolveBootstrapIdentity();
-            await screenshotArtifactManager.completeSessionAndUpload({
+            const result = await screenshotArtifactManager.completeSessionAndUpload({
                 trigger,
                 instanceId: identity.instanceId,
                 region: identity.region,
@@ -1108,6 +1113,22 @@ export function wireInstanceAgent(
                     ...metadata
                 }
             });
+            if (result.status === 'no_screenshots') {
+                queueEvent('screenshot_artifact_empty', {
+                    trigger,
+                    sessionRequestId: result.sessionRequestId,
+                    screenshotCount: result.screenshotCount,
+                    changedFileCount: result.changedFileCount,
+                    discoveredFileCount: result.discoveredFileCount,
+                    sourceFolder: result.sourceFolder,
+                    timeRangeStartUtc: result.timeRangeStartUtc,
+                    timeRangeEndUtc: result.timeRangeEndUtc,
+                    instanceCommandId: normalizeOptionalText(command?.instanceCommandId),
+                    commandType: normalizeOptionalText(command?.commandType),
+                    ...metadata
+                });
+                void flushEvents().catch(() => undefined);
+            }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             log(`[screenshot-artifacts] ${trigger} capture failed: ${message}`);
