@@ -478,6 +478,51 @@ program
         config_file.instance_agent_artifact_unreal_log_directory || ''
     )
     .option(
+        '--instance_agent_screenshot_artifact_upload_enabled <value>',
+        'Enables upload and agent registration of user screenshot bundles. true/false',
+        config_file.instance_agent_screenshot_artifact_upload_enabled || ''
+    )
+    .option(
+        '--instance_agent_screenshot_artifact_bucket <value>',
+        'S3 bucket for user screenshot bundles. Defaults to the session artifact bucket.',
+        config_file.instance_agent_screenshot_artifact_bucket || ''
+    )
+    .option(
+        '--instance_agent_screenshot_artifact_prefix <value>',
+        'S3 object key prefix for user screenshot bundles.',
+        config_file.instance_agent_screenshot_artifact_prefix || ''
+    )
+    .option(
+        '--instance_agent_screenshot_source_folder <path>',
+        'Unreal Saved\\Screenshots source folder for user screenshot bundles.',
+        config_file.instance_agent_screenshot_source_folder || ''
+    )
+    .option(
+        '--instance_agent_screenshot_artifact_queue_path <path>',
+        'Local durable queue path for pending screenshot bundle upload/registration records.',
+        config_file.instance_agent_screenshot_artifact_queue_path || ''
+    )
+    .option(
+        '--instance_agent_screenshot_artifact_max_files <number>',
+        'Maximum screenshot files to include in one screenshot bundle.',
+        config_file.instance_agent_screenshot_artifact_max_files || ''
+    )
+    .option(
+        '--instance_agent_screenshot_artifact_max_bytes <number>',
+        'Maximum source screenshot bytes to include in one screenshot bundle.',
+        config_file.instance_agent_screenshot_artifact_max_bytes || ''
+    )
+    .option(
+        '--instance_agent_screenshot_artifact_retention_days <number>',
+        'Retention days written to screenshot bundle metadata.',
+        config_file.instance_agent_screenshot_artifact_retention_days || ''
+    )
+    .option(
+        '--instance_agent_screenshot_artifact_settle_delay_ms <number>',
+        'Delay before collecting screenshots after session teardown starts.',
+        config_file.instance_agent_screenshot_artifact_settle_delay_ms || ''
+    )
+    .option(
         '--log_config',
         'Will print the program configuration on startup.',
         config_file.log_config || false
@@ -706,6 +751,29 @@ const instanceAgentClient = wireInstanceAgent(signallingServer, {
         maxBytes: options.instance_agent_artifact_max_bytes || undefined,
         logFolder: options.log_folder || undefined,
         unrealLogDirectory: options.instance_agent_artifact_unreal_log_directory || undefined
+    },
+    sessionScreenshotArtifacts: {
+        enabled: options.instance_agent_screenshot_artifact_upload_enabled || undefined,
+        bucketName:
+            options.instance_agent_screenshot_artifact_bucket ||
+            options.instance_agent_artifact_bucket ||
+            undefined,
+        objectPrefix: options.instance_agent_screenshot_artifact_prefix || undefined,
+        sourceFolder: options.instance_agent_screenshot_source_folder || undefined,
+        awsCliPath:
+            options.instance_agent_artifact_aws_cli_path || options.runtime_status_aws_cli_path || undefined,
+        awsRegion: options.instance_agent_region || undefined,
+        queuePath: options.instance_agent_screenshot_artifact_queue_path || undefined,
+        maxFiles: options.instance_agent_screenshot_artifact_max_files || undefined,
+        maxBytes: options.instance_agent_screenshot_artifact_max_bytes || undefined,
+        retentionDays: options.instance_agent_screenshot_artifact_retention_days || undefined,
+        settleDelayMs: options.instance_agent_screenshot_artifact_settle_delay_ms || undefined,
+        lane: options.instance_agent_lane || undefined,
+        runtimeVersion:
+            options.instance_agent_runtime_version ||
+            options.runtime_status_version ||
+            pjson.version ||
+            undefined
     },
     logger: (message: string) => Logger.info(message)
 });

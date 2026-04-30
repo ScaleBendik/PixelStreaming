@@ -28,6 +28,11 @@ import {
     type SessionLogArtifactRegistrationRequest,
     type SessionLogArtifactRuntimeOptions
 } from './session-log-artifacts';
+import {
+    createSessionScreenshotArtifactManager,
+    type SessionScreenshotArtifactManager,
+    type SessionScreenshotArtifactRuntimeOptions
+} from './session-screenshot-artifacts';
 
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
 const IMDS_METADATA_BASE_URL = 'http://169.254.169.254/latest/meta-data';
@@ -188,6 +193,21 @@ export interface InstanceAgentClient {
             | undefined,
         metadata?: Record<string, unknown>
     ): Promise<void>;
+    captureSessionScreenshotArtifact(
+        trigger: string,
+        command:
+            | Pick<
+                  InstanceAgentCommand,
+                  'instanceCommandId' | 'commandType' | 'sessionRequestId' | 'requestedAtUtc'
+              >
+            | Pick<
+                  InstanceAgentCommandJournalSnapshot,
+                  'instanceCommandId' | 'commandType' | 'sessionRequestId' | 'requestedAtUtc'
+              >
+            | null
+            | undefined,
+        metadata?: Record<string, unknown>
+    ): Promise<void>;
     requestFastPolling(reason: string, options?: { durationMs?: number; intervalMs?: number }): void;
 }
 
@@ -205,6 +225,7 @@ export interface InstanceAgentClientOptions {
     heartbeatMs?: number;
     desiredStatePath?: string;
     sessionLogArtifacts?: SessionLogArtifactRuntimeOptions;
+    sessionScreenshotArtifacts?: SessionScreenshotArtifactRuntimeOptions;
     logger?: (message: string) => void;
 }
 
@@ -478,6 +499,7 @@ export function wireInstanceAgent(
     let pendingEvents: PendingInstanceAgentEvent[] = [];
     let resetInProgress = false;
     let artifactManager: SessionLogArtifactManager | null = null;
+    let screenshotArtifactManager: SessionScreenshotArtifactManager | null = null;
     const desiredStateListeners = new Set<InstanceAgentDesiredStateListener>();
     const commandListeners = new Set<InstanceAgentCommandListener>();
 
@@ -615,6 +637,21 @@ export function wireInstanceAgent(
             log(
                 `[instance-agent] Command received from ${source}: id=${command.instanceCommandId}, type=${command.commandType}, key=${command.idempotencyKey}.`
             );
+            screenshotArtifactManager?.attachSessionContext({
+                trigger: 'instance_command_received',
+                instanceId: command.instanceId,
+                region: command.region,
+                sessionRequestId: command.sessionRequestId,
+                runtimeStatus: runtimeSnapshot.status,
+                runtimeReason: runtimeSnapshot.reason,
+                runtimeVersion: runtimeSnapshot.version,
+                lane: configuredLane,
+                metadata: {
+                    instanceCommandId: command.instanceCommandId,
+                    commandType: command.commandType,
+                    commandSource: source
+                }
+            });
 
             for (const listener of commandListeners) {
                 try {
@@ -977,6 +1014,16 @@ export function wireInstanceAgent(
             pendingRecycleCompletion !== null ||
             (activeCommand !== null && isRecycleToWarmCommand(activeCommand))
     });
+    screenshotArtifactManager = createSessionScreenshotArtifactManager({
+        ...(options.sessionScreenshotArtifacts ?? {}),
+        lane: configuredLane ?? options.sessionScreenshotArtifacts?.lane,
+        runtimeVersion:
+            configuredRuntimeVersion ??
+            runtimeSnapshot.version ??
+            options.sessionScreenshotArtifacts?.runtimeVersion,
+        registerArtifact,
+        logger: log
+    });
 
     const captureSessionLogArtifact = async (
         trigger: string,
@@ -1023,6 +1070,75 @@ export function wireInstanceAgent(
             throw error;
         }
     };
+
+    const captureSessionScreenshotArtifact = async (
+        trigger: string,
+        command:
+            | Pick<
+                  InstanceAgentCommand,
+                  'instanceCommandId' | 'commandType' | 'sessionRequestId' | 'requestedAtUtc'
+              >
+            | Pick<
+                  InstanceAgentCommandJournalSnapshot,
+                  'instanceCommandId' | 'commandType' | 'sessionRequestId' | 'requestedAtUtc'
+              >
+            | null
+            | undefined,
+        metadata: Record<string, unknown> = {}
+    ): Promise<void> => {
+        if (!screenshotArtifactManager) {
+            return;
+        }
+
+        try {
+            const identity = await resolveBootstrapIdentity();
+            await screenshotArtifactManager.completeSessionAndUpload({
+                trigger,
+                instanceId: identity.instanceId,
+                region: identity.region,
+                sessionRequestId: normalizeOptionalText(command?.sessionRequestId),
+                runtimeStatus: runtimeSnapshot.status,
+                runtimeReason: runtimeSnapshot.reason,
+                runtimeVersion: runtimeSnapshot.version,
+                lane: configuredLane,
+                timeRangeEndUtc: new Date().toISOString(),
+                metadata: {
+                    instanceCommandId: normalizeOptionalText(command?.instanceCommandId),
+                    commandType: normalizeOptionalText(command?.commandType),
+                    ...metadata
+                }
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            log(`[screenshot-artifacts] ${trigger} capture failed: ${message}`);
+            throw error;
+        }
+    };
+
+    const startSessionScreenshotArtifacts = async (metadata: Record<string, unknown> = {}): Promise<void> => {
+        if (!screenshotArtifactManager) {
+            return;
+        }
+
+        try {
+            const identity = await resolveBootstrapIdentity();
+            screenshotArtifactManager.startSession({
+                trigger: 'viewer_connected',
+                instanceId: identity.instanceId,
+                region: identity.region,
+                runtimeStatus: runtimeSnapshot.status,
+                runtimeReason: runtimeSnapshot.reason,
+                runtimeVersion: runtimeSnapshot.version,
+                lane: configuredLane,
+                timeRangeStartUtc: new Date().toISOString(),
+                metadata
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            log(`[screenshot-artifacts] Failed to capture session baseline: ${message}`);
+        }
+    };
+
     const ensureBootstrap = async (): Promise<void> => {
         if (token) {
             return;
@@ -1175,6 +1291,9 @@ export function wireInstanceAgent(
             await captureSessionLogArtifact('reset_recovered_ready', activeCommand, {
                 source: 'ready_recovery'
             }).catch(() => undefined);
+            await captureSessionScreenshotArtifact('reset_recovered_ready', activeCommand, {
+                source: 'ready_recovery'
+            }).catch(() => undefined);
             await completeCommand(activeCommand, {
                 resultJson: JSON.stringify({
                     status: runtimeSnapshot.status,
@@ -1200,6 +1319,7 @@ export function wireInstanceAgent(
         try {
             await ensureBootstrap();
             await artifactManager?.drainQueue();
+            await screenshotArtifactManager?.drainQueue();
             await flushEvents();
             await sendHeartbeat();
             await flushEvents();
@@ -1219,10 +1339,12 @@ export function wireInstanceAgent(
     });
 
     server.playerRegistry.on('added', (playerId: string) => {
+        const viewerCount = server.playerRegistry.count();
         queueEvent('viewer_connected', {
             playerId,
-            viewerCount: server.playerRegistry.count()
+            viewerCount
         });
+        void startSessionScreenshotArtifacts({ playerId, viewerCount });
         requestFastPolling('viewer_connected');
     });
     server.playerRegistry.on('removed', (playerId?: string) => {
@@ -1301,6 +1423,12 @@ export function wireInstanceAgent(
                         recycleRequestedAtUtc: recycleMarker?.requestedAtUtc,
                         source: update.source
                     }).catch(() => undefined);
+                    void captureSessionScreenshotArtifact('reset_completed', commandToComplete, {
+                        recycleId: recycleMarker?.recycleId,
+                        recycleReason: recycleMarker?.reason,
+                        recycleRequestedAtUtc: recycleMarker?.requestedAtUtc,
+                        source: update.source
+                    }).catch(() => undefined);
                     void completeCommand(commandToComplete, {
                         resultJson: JSON.stringify({
                             status: nextStatus,
@@ -1347,6 +1475,14 @@ export function wireInstanceAgent(
                 if (activeCommand && isRecycleToWarmCommand(activeCommand)) {
                     const commandToFail = activeCommand;
                     void captureSessionLogArtifact('reset_cancelled', commandToFail, {
+                        recycleId: recycleMarker?.recycleId,
+                        recycleReason: recycleMarker?.reason,
+                        recycleRequestedAtUtc: recycleMarker?.requestedAtUtc,
+                        source: update.source,
+                        cancelledStatus: nextStatus,
+                        cancelledReason: nextReason
+                    }).catch(() => undefined);
+                    void captureSessionScreenshotArtifact('reset_cancelled', commandToFail, {
                         recycleId: recycleMarker?.recycleId,
                         recycleReason: recycleMarker?.reason,
                         recycleRequestedAtUtc: recycleMarker?.requestedAtUtc,
@@ -1445,6 +1581,9 @@ export function wireInstanceAgent(
         },
         captureSessionLogArtifact(trigger, command, metadata) {
             return captureSessionLogArtifact(trigger, command, metadata);
+        },
+        captureSessionScreenshotArtifact(trigger, command, metadata) {
+            return captureSessionScreenshotArtifact(trigger, command, metadata);
         },
         requestFastPolling(reason: string, options?: { durationMs?: number; intervalMs?: number }) {
             requestFastPolling(reason, options);

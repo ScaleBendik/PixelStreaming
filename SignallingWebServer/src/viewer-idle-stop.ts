@@ -65,6 +65,7 @@ export interface ViewerIdleOptions {
         | 'completeCommand'
         | 'failCommand'
         | 'captureSessionLogArtifact'
+        | 'captureSessionScreenshotArtifact'
         | 'requestFastPolling'
     > | null;
 }
@@ -175,7 +176,10 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMes
 }
 
 async function captureShutdownSessionLogArtifact(
-    instanceAgentClient: Pick<InstanceAgentClient, 'captureSessionLogArtifact'> | null | undefined,
+    instanceAgentClient:
+        | Pick<InstanceAgentClient, 'captureSessionLogArtifact' | 'captureSessionScreenshotArtifact'>
+        | null
+        | undefined,
     command: InstanceAgentCommand | null | undefined,
     trigger: string,
     reason: string,
@@ -189,6 +193,15 @@ async function captureShutdownSessionLogArtifact(
     try {
         await withTimeout(
             instanceAgentClient.captureSessionLogArtifact(trigger, command, {
+                reason,
+                source: 'viewer-idle-stop',
+                ...metadata
+            }),
+            DEFAULT_SHUTDOWN_ARTIFACT_CAPTURE_TIMEOUT_MS,
+            `Timed out after ${DEFAULT_SHUTDOWN_ARTIFACT_CAPTURE_TIMEOUT_MS} ms.`
+        );
+        await withTimeout(
+            instanceAgentClient.captureSessionScreenshotArtifact(trigger, command, {
                 reason,
                 source: 'viewer-idle-stop',
                 ...metadata
