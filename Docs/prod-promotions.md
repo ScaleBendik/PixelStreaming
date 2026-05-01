@@ -201,7 +201,7 @@ The helper:
 1. reads the prod signing key from SSM
 2. resolves `RouteKey` from the instance tag when present
 3. falls back to instance id when no explicit route key exists
-4. prints the full dark-connect URL and raw token
+4. prints the full dark-connect URL, while raw token output is suppressed unless `-ShowRawToken` is passed
 
 ## Reference Ledger Format
 
