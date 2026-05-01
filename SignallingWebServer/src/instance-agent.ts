@@ -745,31 +745,40 @@ export function wireInstanceAgent(
     };
 
     const resolveBootstrapIdentity = async (): Promise<BootstrapIdentity> => {
-        if (configuredInstanceId && configuredRegion) {
-            return {
-                instanceId: configuredInstanceId,
-                region: configuredRegion
-            };
-        }
-
         if (!bootstrapIdentityPromise) {
             bootstrapIdentityPromise = (async () => {
                 const tokenValue = await readImdsToken();
-                const [instanceId, region, identityDocumentJson, identitySignature] = await Promise.all([
-                    readImdsValue('instance-id', tokenValue),
-                    readImdsValue('placement/region', tokenValue),
-                    readImdsDynamicValue('document', tokenValue),
-                    readImdsDynamicValue('signature', tokenValue)
-                ]);
+                const [resolvedInstanceId, resolvedRegion, identityDocumentJson, identitySignature] =
+                    await Promise.all([
+                        configuredInstanceId
+                            ? Promise.resolve(configuredInstanceId)
+                            : readImdsValue('instance-id', tokenValue),
+                        configuredRegion
+                            ? Promise.resolve(configuredRegion)
+                            : readImdsValue('placement/region', tokenValue),
+                        readImdsDynamicValue('document', tokenValue),
+                        readImdsDynamicValue('signature', tokenValue)
+                    ]);
 
                 return {
-                    instanceId: instanceId.trim(),
-                    region: region.trim(),
+                    instanceId: resolvedInstanceId.trim(),
+                    region: resolvedRegion.trim(),
                     identityDocumentJson: identityDocumentJson.trim(),
                     identitySignature: identitySignature.trim()
                 };
             })().catch((error) => {
                 bootstrapIdentityPromise = null;
+                if (configuredInstanceId && configuredRegion) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    log(
+                        `[instance-agent] Could not attach EC2 identity proof during bootstrap; continuing with configured instance identity: ${message}`
+                    );
+                    return {
+                        instanceId: configuredInstanceId,
+                        region: configuredRegion
+                    };
+                }
+
                 throw error;
             });
         }
