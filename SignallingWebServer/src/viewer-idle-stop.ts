@@ -32,7 +32,8 @@ const DEFAULT_RECYCLE_TERMINATE_DELAY_MS = 250;
 const DEFAULT_RECYCLE_SELF_EXIT_DELAY_MS = 5_000;
 const DEFAULT_RECYCLE_READY_TIMEOUT_SECONDS = 120;
 const DEFAULT_DISCONNECT_FAST_POLLING_WINDOW_MS = 120_000;
-const DEFAULT_SHUTDOWN_ARTIFACT_CAPTURE_TIMEOUT_MS = 15_000;
+const DEFAULT_SHUTDOWN_LOG_ARTIFACT_CAPTURE_TIMEOUT_MS = 30_000;
+const DEFAULT_SHUTDOWN_SCREENSHOT_ARTIFACT_CAPTURE_TIMEOUT_MS = 120_000;
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
 const IMDS_METADATA_BASE_URL = 'http://169.254.169.254/latest/meta-data';
 const DEFAULT_MAINTENANCE_TAG_KEY = 'ScaleWorldMaintenanceMode';
@@ -49,6 +50,8 @@ export interface ViewerIdleOptions {
     maintenanceTagKey?: string;
     desiredStatePath?: string;
     desiredStateRefreshMs?: number;
+    shutdownLogArtifactCaptureTimeoutMs?: number;
+    shutdownScreenshotArtifactCaptureTimeoutMs?: number;
     awsCliPath?: string;
     dryRun?: boolean;
     logger?: (message: string) => void;
@@ -69,6 +72,8 @@ export interface ViewerIdleOptions {
         | 'requestFastPolling'
     > | null;
 }
+
+type RuntimeInstanceCommand = InstanceAgentCommand & { status?: string; attemptNumber?: number };
 
 async function readCurrentInstanceIdentity(): Promise<{ instanceId: string; region: string }> {
     const token = await readImdsToken();
@@ -160,6 +165,10 @@ async function stopCurrentInstance(
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+    if (timeoutMs <= 0) {
+        return promise;
+    }
+
     let timeout: NodeJS.Timeout | null = null;
     try {
         return await Promise.race([
@@ -175,44 +184,59 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMes
     }
 }
 
-async function captureShutdownSessionLogArtifact(
+async function captureShutdownSessionArtifacts(
     instanceAgentClient:
         | Pick<InstanceAgentClient, 'captureSessionLogArtifact' | 'captureSessionScreenshotArtifact'>
         | null
         | undefined,
-    command: InstanceAgentCommand | null | undefined,
+    command: RuntimeInstanceCommand | null | undefined,
     trigger: string,
     reason: string,
     log: (message: string) => void,
+    logTimeoutMs: number,
+    screenshotTimeoutMs: number,
     metadata: Record<string, unknown> = {}
 ): Promise<void> {
-    if (!instanceAgentClient || !command) {
+    if (!instanceAgentClient) {
         return;
     }
 
+    if (!command) {
+        log(
+            `[idle-stop] Skipping shutdown artifact capture '${trigger}' because no active shutdown command is available.`
+        );
+        return;
+    }
+
+    const captureMetadata = {
+        reason,
+        source: 'viewer-idle-stop',
+        ...metadata
+    };
+
     try {
         await withTimeout(
-            instanceAgentClient.captureSessionLogArtifact(trigger, command, {
-                reason,
-                source: 'viewer-idle-stop',
-                ...metadata
-            }),
-            DEFAULT_SHUTDOWN_ARTIFACT_CAPTURE_TIMEOUT_MS,
-            `Timed out after ${DEFAULT_SHUTDOWN_ARTIFACT_CAPTURE_TIMEOUT_MS} ms.`
-        );
-        await withTimeout(
-            instanceAgentClient.captureSessionScreenshotArtifact(trigger, command, {
-                reason,
-                source: 'viewer-idle-stop',
-                ...metadata
-            }),
-            DEFAULT_SHUTDOWN_ARTIFACT_CAPTURE_TIMEOUT_MS,
-            `Timed out after ${DEFAULT_SHUTDOWN_ARTIFACT_CAPTURE_TIMEOUT_MS} ms.`
+            instanceAgentClient.captureSessionScreenshotArtifact(trigger, command, captureMetadata),
+            screenshotTimeoutMs,
+            `Timed out after ${screenshotTimeoutMs} ms.`
         );
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         log(
-            `[idle-stop] Session artifact capture '${trigger}' for shutdown command ${command.instanceCommandId} failed: ${message}`
+            `[idle-stop] Screenshot artifact capture '${trigger}' for shutdown command ${command.instanceCommandId} failed: ${message}`
+        );
+    }
+
+    try {
+        await withTimeout(
+            instanceAgentClient.captureSessionLogArtifact(trigger, command, captureMetadata),
+            logTimeoutMs,
+            `Timed out after ${logTimeoutMs} ms.`
+        );
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log(
+            `[idle-stop] Diagnostic artifact capture '${trigger}' for shutdown command ${command.instanceCommandId} failed: ${message}`
         );
     }
 }
@@ -330,6 +354,22 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         'VIEWER_IDLE_DESIRED_STATE_REFRESH_MS',
         log
     );
+    const shutdownLogArtifactCaptureTimeoutMs = parseNonNegativeInteger(
+        options.shutdownLogArtifactCaptureTimeoutMs ??
+            process.env.VIEWER_IDLE_SHUTDOWN_LOG_ARTIFACT_CAPTURE_TIMEOUT_MS ??
+            process.env.VIEWER_IDLE_SHUTDOWN_ARTIFACT_CAPTURE_TIMEOUT_MS,
+        DEFAULT_SHUTDOWN_LOG_ARTIFACT_CAPTURE_TIMEOUT_MS,
+        'VIEWER_IDLE_SHUTDOWN_LOG_ARTIFACT_CAPTURE_TIMEOUT_MS',
+        log
+    );
+    const shutdownScreenshotArtifactCaptureTimeoutMs = parseNonNegativeInteger(
+        options.shutdownScreenshotArtifactCaptureTimeoutMs ??
+            process.env.VIEWER_IDLE_SHUTDOWN_SCREENSHOT_ARTIFACT_CAPTURE_TIMEOUT_MS ??
+            process.env.VIEWER_IDLE_SHUTDOWN_ARTIFACT_CAPTURE_TIMEOUT_MS,
+        DEFAULT_SHUTDOWN_SCREENSHOT_ARTIFACT_CAPTURE_TIMEOUT_MS,
+        'VIEWER_IDLE_SHUTDOWN_SCREENSHOT_ARTIFACT_CAPTURE_TIMEOUT_MS',
+        log
+    );
     const dryRun = parseBoolean(options.dryRun ?? process.env.VIEWER_IDLE_STOP_DRY_RUN ?? false, false);
     const awsCliPath = String(options.awsCliPath ?? process.env.VIEWER_IDLE_AWS_CLI_PATH ?? 'aws');
     const maintenanceTagKey = String(
@@ -382,7 +422,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     const recoveredRecycleTokenAtStartup = recoveredRecycleMarkerAtStartup
         ? currentDesiredState.recycleRequestedToken
         : null;
-    let activeCommand = options.instanceAgentClient?.getActiveCommand() ?? null;
+    let activeCommand: RuntimeInstanceCommand | null =
+        options.instanceAgentClient?.getActiveCommand() ?? null;
+    let observedCommand: RuntimeInstanceCommand | null = null;
     let pendingImmediateRecycleToken: string | null = null;
     let resetInFlight = false;
     let recycleLaunchRequested = false;
@@ -474,11 +516,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     const isShutdownCommand = (
         command: { commandType?: string | null; instanceCommandId?: string | null } | null | undefined
     ): boolean => (command?.commandType?.trim().toLowerCase() ?? '') === 'shutdown';
-    const readActiveCommand = () => {
+    const readActiveCommand = (): RuntimeInstanceCommand | null => {
         if (options.instanceAgentClient) {
             activeCommand = options.instanceAgentClient.getActiveCommand();
         }
-        return activeCommand;
+        return activeCommand ?? observedCommand;
     };
     const getActiveRecycleCommand = () => {
         const currentActiveCommand = readActiveCommand();
@@ -1262,12 +1304,14 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 }
             }
 
-            await captureShutdownSessionLogArtifact(
+            await captureShutdownSessionArtifacts(
                 options.instanceAgentClient,
                 commandToStart,
                 'shutdown_requested',
                 reason,
-                log
+                log,
+                shutdownLogArtifactCaptureTimeoutMs,
+                shutdownScreenshotArtifactCaptureTimeoutMs
             );
 
             publishStatus('stopping', mapStopReason(reason));
@@ -1297,12 +1341,14 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             const commandToFail = getActiveShutdownCommand();
             if (commandToFail && options.instanceAgentClient) {
                 try {
-                    await captureShutdownSessionLogArtifact(
+                    await captureShutdownSessionArtifacts(
                         options.instanceAgentClient,
                         commandToFail,
                         'shutdown_failed',
                         reason,
                         log,
+                        shutdownLogArtifactCaptureTimeoutMs,
+                        shutdownScreenshotArtifactCaptureTimeoutMs,
                         { failureMessage: message }
                     );
                     await options.instanceAgentClient.failCommand(commandToFail, {
@@ -1398,7 +1444,8 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         });
         options.instanceAgentClient.addCommandListener((command: InstanceAgentCommand) => {
             void (async () => {
-                if (activeCommand && activeCommand.instanceCommandId === command.instanceCommandId) {
+                const trackedCommand = readActiveCommand();
+                if (trackedCommand && trackedCommand.instanceCommandId === command.instanceCommandId) {
                     return;
                 }
 
@@ -1424,14 +1471,14 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     return;
                 }
 
-                if (activeCommand && activeCommand.instanceCommandId !== command.instanceCommandId) {
+                if (trackedCommand && trackedCommand.instanceCommandId !== command.instanceCommandId) {
                     log(
-                        `[idle-stop] Rejecting recycle command ${command.instanceCommandId} because command ${activeCommand.instanceCommandId} is already active.`
+                        `[idle-stop] Rejecting recycle command ${command.instanceCommandId} because command ${trackedCommand.instanceCommandId} is already active.`
                     );
                     try {
                         await options.instanceAgentClient?.failCommand(command, {
                             failureCode: 'command_conflict',
-                            failureMessage: `Instance command '${activeCommand.instanceCommandId}' is already active on this host.`,
+                            failureMessage: `Instance command '${trackedCommand.instanceCommandId}' is already active on this host.`,
                             terminalStatus: 'Cancelled',
                             occurredAtUtc: new Date().toISOString()
                         });
@@ -1444,10 +1491,12 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     return;
                 }
 
+                observedCommand = command;
                 try {
                     await options.instanceAgentClient?.acknowledgeCommand(command, {
                         occurredAtUtc: new Date().toISOString()
                     });
+                    observedCommand = null;
                     refreshActiveCommand();
                     if (server.playerRegistry.count() === 0) {
                         if (isShutdownCommand(command)) {
@@ -1469,6 +1518,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                         );
                     }
                 } catch (error) {
+                    if (observedCommand?.instanceCommandId === command.instanceCommandId) {
+                        observedCommand = null;
+                    }
                     const message = error instanceof Error ? error.message : String(error);
                     log(
                         `${isShutdownCommand(command) ? '[idle-stop] Failed to acknowledge shutdown command' : '[idle-stop] Failed to acknowledge recycle command'} ${command.instanceCommandId}: ${message}`

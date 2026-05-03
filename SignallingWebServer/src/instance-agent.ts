@@ -1210,8 +1210,8 @@ export function wireInstanceAgent(
 
             const payload = await parseJsonResponse<InstanceAgentBootstrapResponse>(response);
             token = payload.agentToken;
-            applyDesiredState(payload.desiredState, 'bootstrap');
             applyCommands(payload.commands, 'bootstrap');
+            applyDesiredState(payload.desiredState, 'bootstrap');
             if (explicitHeartbeatMs <= 0 && payload.heartbeatIntervalSeconds > 0) {
                 scheduleHeartbeat(payload.heartbeatIntervalSeconds * 1000);
             }
@@ -1249,8 +1249,8 @@ export function wireInstanceAgent(
         }
 
         const payload = await parseJsonResponse<InstanceAgentHeartbeatResponse>(response);
-        applyDesiredState(payload.desiredState, 'heartbeat');
         applyCommands(payload.commands, 'heartbeat');
+        applyDesiredState(payload.desiredState, 'heartbeat');
         if (explicitHeartbeatMs <= 0 && payload.heartbeatIntervalSeconds > 0) {
             scheduleHeartbeat(payload.heartbeatIntervalSeconds * 1000);
         }
@@ -1274,8 +1274,8 @@ export function wireInstanceAgent(
 
         const payload = await parseJsonResponse<InstanceAgentEventBatchResponse>(response);
         pendingEvents = pendingEvents.slice(Math.max(0, payload.acceptedCount));
-        applyDesiredState(payload.desiredState, 'events');
         applyCommands(payload.commands, 'events');
+        applyDesiredState(payload.desiredState, 'events');
     };
 
     const tryStartRecoveredRecycleCommand = async (): Promise<void> => {
