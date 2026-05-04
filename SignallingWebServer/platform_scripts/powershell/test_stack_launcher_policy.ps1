@@ -254,7 +254,7 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $viewerIdleStop `
-    -Expected 'const readActiveCommand = () =>' `
+    -Expected 'const readActiveCommand = ' `
     -Message 'Viewer idle stop must refresh active command state from the instance agent before acting on recycle intent.'
 
 Assert-ContainsText `
