@@ -1,6 +1,6 @@
-﻿# ScaleWorld Cloud Infrastructure (Source of Truth)
+# ScaleWorld Cloud Infrastructure (Source of Truth)
 
-Last updated: 2026-03-30
+Last updated: 2026-05-05
 Owner: ScaleWorld Platform
 
 ## Purpose
@@ -91,6 +91,14 @@ Current SSM SecureString parameters used by streamer startup:
 - `/pixelstreaming/connect-ticket/signing-key`
 - `/pixelstreaming/prod/connect-ticket/signing-key`
 
+Target SSM SecureString parameters for instance-agent bootstrap secrets:
+
+- `/pixelstreaming/dev/instance-agent-bootstrap-shared-secret`
+- `/pixelstreaming/stage/instance-agent-bootstrap-shared-secret`
+- `/pixelstreaming/prod/instance-agent-bootstrap-shared-secret`
+
+The instance-agent bootstrap secret must be separate from the connect-ticket signing key. The same secret value is copied only between one environment's Azure Key Vault secret and that same environment's AWS SSM parameter. Do not share the value between Dev, Stage, and Prod.
+
 Current SSM String parameter used for prod streamer release pinning:
 
 - `/pixelstreaming/prod/git-target-ref`
@@ -99,14 +107,21 @@ Current SSM String parameter used for the stage/candidate nonprod streamer relea
 
 - `/pixelstreaming/nonprod/git-target-ref`
 
-Current Azure Key Vault secret used by the API workload in each environment:
+Current Azure Key Vault secret used by the API workload for connect tickets:
 
 - `kv-scaleworld-dev` -> `connect-ticket-signing-key`
 - `kv-scaleworld-stage` -> `connect-ticket-signing-key`
 - `kv-scaleworld-prod` -> `connect-ticket-signing-key`
 
+Target Azure Key Vault secret used by the API workload for instance-agent bootstrap:
+
+- `kv-scaleworld-dev` -> `instance-agent-bootstrap-shared-secret`
+- `kv-scaleworld-stage` -> `instance-agent-bootstrap-shared-secret`
+- `kv-scaleworld-prod` -> `instance-agent-bootstrap-shared-secret`
+
 Current note:
 - `dev` and `stage` intentionally still share the same active connect-ticket signer on the streamer side
+- instance-agent bootstrap secrets should not share that connect-ticket signer; use separate `instance-agent-bootstrap-shared-secret` values per environment
 - prod lane is now live for normal Session Manager traffic
 - prod API startup requires `kv-scaleworld-prod/connect-ticket-signing-key` to be populated with the real prod signing key and that value must match streamer-side SSM `/pixelstreaming/prod/connect-ticket/signing-key`
 - streamer startup is now lane-aware through `SCALEWORLD_STREAMING_LANE=nonprod|prod`
@@ -125,6 +140,10 @@ Current note:
   - `INSTANCE_AGENT_API_BASE_URL=<absolute-http(s)-url>` for an explicit per-instance override
   - `INSTANCE_AGENT_API_BASE_URL_PARAM=/pixelstreaming/nonprod/instance-agent-api-base-url` for normal nonprod lane override
   - `INSTANCE_AGENT_API_BASE_URL_PARAM=/pixelstreaming/prod/instance-agent-api-base-url` for prod lane override
+  - `INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/dev/instance-agent-bootstrap-shared-secret` for Dev-specific bootstrap secret override
+  - `INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/stage/instance-agent-bootstrap-shared-secret` for Stage-specific bootstrap secret override
+  - `INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/prod/instance-agent-bootstrap-shared-secret` for Prod-specific bootstrap secret override
+  - `INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF=true` to make Wilbur fail bootstrap instead of falling back when IMDS identity proof is unavailable
   - if no explicit override or lane parameter is present, startup still falls back to deployment-track defaults:
     - `dev` -> `https://scaleworld.api.scaleaq-dev.net`
     - `stage` -> `https://scaleworld.api.scaleaq-stage.net`
@@ -156,6 +175,7 @@ Current note:
   - if the AMI repo/build baseline is behind the promoted prod tag, first boot may spend several minutes in repo reset + `BuildScripts/build-all.bat` before Wilbur starts
 
 TURN server cert materials were previously managed via SSM as well (`/turn/*` pattern).
+The canonical instance-agent bootstrap trust runbook is `../../scaleworld-server-manager-web/docs/instance-agent-bootstrap-trust-runbook-2026-05-05.md`.
 
 ### IAM
 
