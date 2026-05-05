@@ -841,18 +841,6 @@ export function createSessionScreenshotArtifactManager(
             metadata: { ...(session.context.metadata ?? {}), ...(context.metadata ?? {}) }
         } as SessionScreenshotArtifactCaptureContext;
         const sessionRequestId = normalizeGuidText(mergedContext.sessionRequestId);
-        if (!sessionRequestId) {
-            clearActiveSessionSnapshot(activeSessionStatePath);
-            log(
-                `[screenshot-artifacts] Skipping screenshot capture for '${mergedContext.trigger}' because no sessionRequestId is available.`
-            );
-            return {
-                status: 'skipped_no_session_request',
-                screenshotCount: 0,
-                sourceFolder,
-                trigger: mergedContext.trigger
-            };
-        }
 
         await sleep(settleDelayMs);
         const artifactId = randomUUID();
@@ -896,7 +884,11 @@ export function createSessionScreenshotArtifactManager(
                     cleanScreenshotSourceFolder('Post-session empty');
                 }
                 log(
-                    `[screenshot-artifacts] No screenshots found for session request ${sessionRequestId} (${mergedContext.trigger}).`
+                    `[screenshot-artifacts] No screenshots found for ${
+                        sessionRequestId
+                            ? `session request ${sessionRequestId}`
+                            : 'session without explicit request id'
+                    } (${mergedContext.trigger}).`
                 );
                 return {
                     status: 'no_screenshots',

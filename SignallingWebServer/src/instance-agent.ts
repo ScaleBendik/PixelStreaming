@@ -1475,6 +1475,14 @@ export function wireInstanceAgent(
                             `[instance-agent] Failed to report recycle command completion for ${commandToComplete.instanceCommandId}: ${message}`
                         );
                     });
+                } else {
+                    void captureSessionScreenshotArtifact('reset_completed', null, {
+                        recycleId: recycleMarker?.recycleId,
+                        recycleReason: recycleMarker?.reason,
+                        recycleRequestedAtUtc: recycleMarker?.requestedAtUtc,
+                        source: update.source,
+                        correlation: 'instance_time'
+                    }).catch(() => undefined);
                 }
             } else if (
                 (resetInProgress || pendingRecycleCompletion) &&

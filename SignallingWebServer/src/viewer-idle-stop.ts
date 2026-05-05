@@ -201,18 +201,33 @@ async function captureShutdownSessionArtifacts(
         return;
     }
 
-    if (!command) {
-        log(
-            `[idle-stop] Skipping shutdown artifact capture '${trigger}' because no active shutdown command is available.`
-        );
-        return;
-    }
-
     const captureMetadata = {
         reason,
         source: 'viewer-idle-stop',
         ...metadata
     };
+
+    if (!command) {
+        log(
+            `[idle-stop] Capturing shutdown screenshot artifact '${trigger}' without an active shutdown command; API correlation will use instance and event time.`
+        );
+        try {
+            await withTimeout(
+                instanceAgentClient.captureSessionScreenshotArtifact(trigger, null, {
+                    ...captureMetadata,
+                    correlation: 'instance_time'
+                }),
+                screenshotTimeoutMs,
+                `Timed out after ${screenshotTimeoutMs} ms.`
+            );
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            log(
+                `[idle-stop] Screenshot artifact capture '${trigger}' without shutdown command failed: ${message}`
+            );
+        }
+        return;
+    }
 
     try {
         await withTimeout(
