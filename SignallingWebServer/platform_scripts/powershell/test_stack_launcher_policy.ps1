@@ -244,13 +244,13 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $viewerIdleStop `
-    -Expected 'without first-viewer/no-viewer stop or recycle' `
-    -Message 'Warm-held instances must not stop or recycle only because no viewer is present.'
+    -Expected 'Recycling warm instance for post-session cleanup' `
+    -Message 'Warm-held reconnect grace expiry must recycle for post-session cleanup even without an explicit teardown command.'
 
 Assert-ContainsText `
     -Content $viewerIdleStop `
-    -Expected 'warm hold will wait for an explicit teardown command before recycling' `
-    -Message 'Warm-held reconnect grace must wait for explicit teardown instead of self-recycling.'
+    -Expected 'warm hold will recycle when grace expires unless an explicit teardown command arrives first' `
+    -Message 'Warm-held reconnect grace must document that expiry triggers recycle unless a command arrives first.'
 
 Assert-ContainsText `
     -Content $viewerIdleStop `

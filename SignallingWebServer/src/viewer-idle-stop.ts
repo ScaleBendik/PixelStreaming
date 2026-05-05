@@ -443,6 +443,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     let pendingImmediateRecycleToken: string | null = null;
     let resetInFlight = false;
     let recycleLaunchRequested = false;
+    let passiveReconnectRecycleRequested = false;
 
     if (server.playerRegistry.count() === 0 && currentDesiredState.recycleRequestedToken) {
         if (currentDesiredState.recycleRequestedToken === recoveredRecycleTokenAtStartup) {
@@ -557,14 +558,15 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         pendingImmediateRecycleToken === currentDesiredState.recycleRequestedToken;
     const hasImmediateRecycleRequest = (): boolean =>
         hasPendingImmediateRecycle() && !hasRecycleLaunchInProgress();
+    const hasPassiveReconnectRecycleRequest = (): boolean =>
+        passiveReconnectRecycleRequested && !hasRecycleLaunchInProgress();
     const hasExplicitRecycleIntent = (): boolean =>
         getActiveRecycleCommand() !== null || hasImmediateRecycleRequest();
+    const hasRecycleIntent = (): boolean => hasExplicitRecycleIntent() || hasPassiveReconnectRecycleRequest();
     const shouldSuppressNoViewerIdleAutomation = (): boolean =>
-        canHoldWarmReadyWithoutShutdown() &&
-        getActiveShutdownCommand() === null &&
-        !hasExplicitRecycleIntent();
+        canHoldWarmReadyWithoutShutdown() && getActiveShutdownCommand() === null && !hasRecycleIntent();
     const isWarmHoldActive = (): boolean => shouldSuppressNoViewerIdleAutomation() && !hasSeenViewer;
-    const shouldResetIntoWarmReady = (): boolean => hasExplicitRecycleIntent();
+    const shouldResetIntoWarmReady = (): boolean => hasRecycleIntent();
     const resolveDesiredStateShutdownReason = (): string => {
         if (getActiveShutdownCommand()) {
             return 'command_shutdown_requested';
@@ -1014,13 +1016,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         publishStatus('reconnect_grace', 'waiting_for_viewer_reconnect');
         startTransientStatusHeartbeat('reconnect_grace', 'waiting_for_viewer_reconnect');
 
-        if (delayMs <= 0 || reconnectGraceTimer) {
-            return;
-        }
-
-        reconnectGraceTimer = setTimeout(() => {
-            reconnectGraceTimer = null;
-
+        const expireWarmHoldReconnectGrace = (): void => {
             if (!maintenanceStateInitialized || isMaintenanceActive()) {
                 return;
             }
@@ -1042,18 +1038,33 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
             if (shouldSuppressNoViewerIdleAutomation()) {
                 clearTransientStatusHeartbeat();
-                runtimeStatusController?.restoreDerivedStatus();
+                passiveReconnectRecycleRequested = true;
                 log(
-                    '[idle-stop] Reconnect grace expired without an explicit teardown command. Holding warm instance without first-viewer/no-viewer stop or recycle, and restoring derived runtime status.'
+                    '[idle-stop] Reconnect grace expired without an explicit teardown command. Recycling warm instance for post-session cleanup.'
                 );
+                startResetWindow(true);
                 return;
             }
 
             scheduleStop('grace-after-last-viewer', 0);
+        };
+
+        if (delayMs <= 0) {
+            expireWarmHoldReconnectGrace();
+            return;
+        }
+
+        if (reconnectGraceTimer) {
+            return;
+        }
+
+        reconnectGraceTimer = setTimeout(() => {
+            reconnectGraceTimer = null;
+            expireWarmHoldReconnectGrace();
         }, delayMs);
 
         log(
-            `[idle-stop] Viewer reconnect window active for ${delayMs} ms; warm hold will wait for an explicit teardown command before recycling.`
+            `[idle-stop] Viewer reconnect window active for ${delayMs} ms; warm hold will recycle when grace expires unless an explicit teardown command arrives first.`
         );
     };
 
@@ -1074,6 +1085,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     const restoreAfterReset = (): void => {
         resetInFlight = false;
         recycleLaunchRequested = false;
+        passiveReconnectRecycleRequested = false;
         clearRecycleExitFallbackTimer();
         clearReconnectGraceTimer();
         clearResetTimer();
@@ -1276,6 +1288,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         if (stopInFlight) return;
         resetInFlight = false;
         recycleLaunchRequested = false;
+        passiveReconnectRecycleRequested = false;
         clearRecycleExitFallbackTimer();
         clearTransientStatusHeartbeat();
         clearReconnectGraceTimer();
@@ -1392,6 +1405,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         hasSeenViewer = true;
         resetInFlight = false;
         recycleLaunchRequested = false;
+        passiveReconnectRecycleRequested = false;
         clearRecycleExitFallbackTimer();
         clearZeroTimer();
         clearFirstViewerTimer();
