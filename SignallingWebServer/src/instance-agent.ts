@@ -217,6 +217,7 @@ export interface InstanceAgentClientOptions {
     bootstrapSharedSecret?: string;
     instanceId?: string;
     region?: string;
+    requireIdentityProof?: boolean;
     lane?: string;
     routeKey?: string;
     scopeValue?: string;
@@ -457,6 +458,10 @@ export function wireInstanceAgent(
         options.instanceId ?? process.env.INSTANCE_AGENT_INSTANCE_ID
     );
     const configuredRegion = normalizeOptionalText(options.region ?? process.env.INSTANCE_AGENT_REGION);
+    const requireIdentityProof = parseBoolean(
+        options.requireIdentityProof ?? process.env.INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF ?? false,
+        false
+    );
     const configuredLane = normalizeOptionalText(options.lane ?? process.env.INSTANCE_AGENT_LANE);
     const configuredRouteKey = normalizeOptionalText(
         options.routeKey ?? process.env.INSTANCE_AGENT_ROUTE_KEY
@@ -768,8 +773,14 @@ export function wireInstanceAgent(
                 };
             })().catch((error) => {
                 bootstrapIdentityPromise = null;
+                const message = error instanceof Error ? error.message : String(error);
+                if (requireIdentityProof) {
+                    throw new Error(
+                        `EC2 identity proof is required for instance-agent bootstrap: ${message}`
+                    );
+                }
+
                 if (configuredInstanceId && configuredRegion) {
-                    const message = error instanceof Error ? error.message : String(error);
                     log(
                         `[instance-agent] Could not attach EC2 identity proof during bootstrap; continuing with configured instance identity: ${message}`
                     );

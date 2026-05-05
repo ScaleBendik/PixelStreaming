@@ -254,13 +254,33 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $viewerIdleStop `
-    -Expected 'const readActiveCommand = ' `
+    -Expected 'const readActiveCommand = (): RuntimeInstanceCommand | null =>' `
     -Message 'Viewer idle stop must refresh active command state from the instance agent before acting on recycle intent.'
 
 Assert-ContainsText `
     -Content $viewerIdleStop `
     -Expected 'activeCommand = options.instanceAgentClient.getActiveCommand();' `
     -Message 'Viewer idle stop must not keep stale recovered commands after the instance agent clears its command journal.'
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'if not defined INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF set "INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF=false"' `
+    -Message 'Streamer startup must expose an opt-in hosted identity proof requirement.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected '--instance_agent_require_identity_proof="%INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF%"' `
+    -Message 'Streamer startup must pass the hosted identity proof requirement to Wilbur.'
+
+Assert-ContainsText `
+    -Content $instanceAgent `
+    -Expected 'INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF' `
+    -Message 'Instance agent must read the hosted identity proof requirement.'
+
+Assert-ContainsText `
+    -Content $instanceAgent `
+    -Expected 'EC2 identity proof is required for instance-agent bootstrap' `
+    -Message 'Instance agent must fail bootstrap when identity proof is required but unavailable.'
+
 Assert-ContainsText `
     -Content $instanceAgent `
     -Expected 'readInstanceAgentDesiredStateSnapshot(desiredStatePath, log)' `

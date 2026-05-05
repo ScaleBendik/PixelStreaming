@@ -398,6 +398,11 @@ program
         config_file.instance_agent_bootstrap_shared_secret || ''
     )
     .option(
+        '--instance_agent_require_identity_proof <value>',
+        'Requires EC2 instance identity document and signature reads before agent bootstrap. true/false',
+        config_file.instance_agent_require_identity_proof ?? 'false'
+    )
+    .option(
         '--instance_agent_instance_id <value>',
         'Optional explicit instance id for local or non-IMDS testing.',
         config_file.instance_agent_instance_id || ''
@@ -731,6 +736,7 @@ const instanceAgentClient = wireInstanceAgent(signallingServer, {
     bootstrapSharedSecret: String(options.instance_agent_bootstrap_shared_secret || ''),
     instanceId: String(options.instance_agent_instance_id || ''),
     region: String(options.instance_agent_region || ''),
+    requireIdentityProof: options.instance_agent_require_identity_proof,
     lane: String(options.instance_agent_lane || ''),
     routeKey: String(options.instance_agent_route_key || ''),
     scopeValue: String(options.instance_agent_scope_value || ''),

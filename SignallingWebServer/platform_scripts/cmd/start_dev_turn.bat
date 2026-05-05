@@ -98,6 +98,7 @@ if not defined INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM (
 )
 if not defined INSTANCE_AGENT_INSTANCE_ID set "INSTANCE_AGENT_INSTANCE_ID="
 if not defined INSTANCE_AGENT_REGION set "INSTANCE_AGENT_REGION="
+if not defined INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF set "INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF=false"
 if not defined INSTANCE_AGENT_LANE set "INSTANCE_AGENT_LANE=%SCALEWORLD_STREAMING_LANE%"
 if not defined INSTANCE_AGENT_ROUTE_KEY set "INSTANCE_AGENT_ROUTE_KEY="
 if not defined INSTANCE_AGENT_SCOPE_VALUE set "INSTANCE_AGENT_SCOPE_VALUE="
@@ -261,6 +262,7 @@ call start.bat -- ^
   --instance_agent_bootstrap_shared_secret="%INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET%" ^
   --instance_agent_instance_id="%INSTANCE_AGENT_INSTANCE_ID%" ^
   --instance_agent_region="%INSTANCE_AGENT_REGION%" ^
+  --instance_agent_require_identity_proof="%INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF%" ^
   --instance_agent_lane="%INSTANCE_AGENT_LANE%" ^
   --instance_agent_route_key="%INSTANCE_AGENT_ROUTE_KEY%" ^
   --instance_agent_scope_value="%INSTANCE_AGENT_SCOPE_VALUE%" ^
@@ -309,6 +311,7 @@ call start.bat -- ^
   --instance_agent_bootstrap_shared_secret="%INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET%" ^
   --instance_agent_instance_id="%INSTANCE_AGENT_INSTANCE_ID%" ^
   --instance_agent_region="%INSTANCE_AGENT_REGION%" ^
+  --instance_agent_require_identity_proof="%INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF%" ^
   --instance_agent_lane="%INSTANCE_AGENT_LANE%" ^
   --instance_agent_route_key="%INSTANCE_AGENT_ROUTE_KEY%" ^
   --instance_agent_scope_value="%INSTANCE_AGENT_SCOPE_VALUE%" ^
