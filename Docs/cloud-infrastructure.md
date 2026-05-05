@@ -140,9 +140,11 @@ Current note:
   - `INSTANCE_AGENT_API_BASE_URL=<absolute-http(s)-url>` for an explicit per-instance override
   - `INSTANCE_AGENT_API_BASE_URL_PARAM=/pixelstreaming/nonprod/instance-agent-api-base-url` for normal nonprod lane override
   - `INSTANCE_AGENT_API_BASE_URL_PARAM=/pixelstreaming/prod/instance-agent-api-base-url` for prod lane override
-  - `INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/dev/instance-agent-bootstrap-shared-secret` for Dev-specific bootstrap secret override
-  - `INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/stage/instance-agent-bootstrap-shared-secret` for Stage-specific bootstrap secret override
-  - `INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/prod/instance-agent-bootstrap-shared-secret` for Prod-specific bootstrap secret override
+  - bootstrap secret SSM path is derived from `SCALEWORLD_DEPLOYMENT_TRACK` when `INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM` is not set:
+    - `dev` -> `/pixelstreaming/dev/instance-agent-bootstrap-shared-secret`
+    - `stage` -> `/pixelstreaming/stage/instance-agent-bootstrap-shared-secret`
+    - `prod` -> `/pixelstreaming/prod/instance-agent-bootstrap-shared-secret`
+  - `INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=<ssm-path>` remains available as an explicit emergency override
   - `INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF=true` to make Wilbur fail bootstrap instead of falling back when IMDS identity proof is unavailable
   - if no explicit override or lane parameter is present, startup still falls back to deployment-track defaults:
     - `dev` -> `https://scaleworld.api.scaleaq-dev.net`

@@ -272,6 +272,21 @@ Assert-ContainsText `
     -Message 'Streamer startup must pass the hosted identity proof requirement to Wilbur.'
 
 Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected '%SCALEWORLD_DEPLOYMENT_TRACK%"=="dev' `
+    -Message 'Streamer startup must derive the Dev instance-agent bootstrap secret path from deployment track.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected '/pixelstreaming/dev/instance-agent-bootstrap-shared-secret' `
+    -Message 'Streamer startup must support the Dev-specific instance-agent bootstrap secret path.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected '/pixelstreaming/stage/instance-agent-bootstrap-shared-secret' `
+    -Message 'Streamer startup must support the Stage-specific instance-agent bootstrap secret path.'
+
+Assert-ContainsText `
     -Content $instanceAgent `
     -Expected 'INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF' `
     -Message 'Instance agent must read the hosted identity proof requirement.'

@@ -90,10 +90,16 @@ if not defined INSTANCE_AGENT_API_BASE_URL_PARAM (
 )
 if not defined INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET="
 if not defined INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM (
-  if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
+  if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
+    set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/prod/instance-agent-bootstrap-shared-secret"
+  ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
+    set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/stage/instance-agent-bootstrap-shared-secret"
+  ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="dev" (
+    set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/dev/instance-agent-bootstrap-shared-secret"
+  ) else if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
     set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/prod/instance-agent-bootstrap-shared-secret"
   ) else if /i "%SCALEWORLD_STREAMING_LANE%"=="nonprod" (
-    set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/nonprod/instance-agent-bootstrap-shared-secret"
+    set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/stage/instance-agent-bootstrap-shared-secret"
   )
 )
 if not defined INSTANCE_AGENT_INSTANCE_ID set "INSTANCE_AGENT_INSTANCE_ID="
