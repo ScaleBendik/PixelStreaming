@@ -136,14 +136,25 @@ Current note:
 - current bootstrap defaults are:
   - `nonprod` -> SSM `/pixelstreaming/connect-ticket/signing-key`, issuer `scaleworld-dev-connect-ticket`
   - `prod` -> SSM `/pixelstreaming/prod/connect-ticket/signing-key`, issuer `scaleworld-prod-connect-ticket`
-- lane-wide instance-agent API targeting now supports:
-  - `INSTANCE_AGENT_API_BASE_URL=<absolute-http(s)-url>` for an explicit per-instance override
-  - `INSTANCE_AGENT_API_BASE_URL_PARAM=/pixelstreaming/nonprod/instance-agent-api-base-url` for normal nonprod lane override
-  - `INSTANCE_AGENT_API_BASE_URL_PARAM=/pixelstreaming/prod/instance-agent-api-base-url` for prod lane override
-  - bootstrap secret SSM path is derived from `SCALEWORLD_DEPLOYMENT_TRACK` when `INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM` is not set:
+- lane-wide instance-agent control-plane targeting now uses a paired API URL + environment model:
+  - `INSTANCE_AGENT_API_BASE_URL=<absolute-http(s)-url>` remains available as an explicit per-instance override
+  - `INSTANCE_AGENT_CONTROL_PLANE_ENV=dev|stage|prod` remains available as an explicit per-instance override
+  - normal nonprod lane parameters:
+    - API URL: `/pixelstreaming/nonprod/instance-agent-api-base-url`
+    - control-plane env: `/pixelstreaming/nonprod/instance-agent-control-plane-env`
+  - normal prod lane parameters:
+    - API URL: `/pixelstreaming/prod/instance-agent-api-base-url`
+    - control-plane env: `/pixelstreaming/prod/instance-agent-control-plane-env`
+  - startup resolves the effective control-plane env before loading the bootstrap secret:
+    - a known hosted API URL wins so URL and secret stay paired even if the env parameter is stale
+    - known URL mapping: `scaleaq-dev.net` -> `dev`, `scaleaq-stage.net` -> `stage`, `scaleaq.net` -> `prod`
+    - unknown/custom URLs use the explicit/lane control-plane env parameter
+    - if neither URL nor env is set, startup falls back to deployment-track defaults
+  - the bootstrap secret SSM path is derived from the effective control-plane env when `INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM` is not set:
     - `dev` -> `/pixelstreaming/dev/instance-agent-bootstrap-shared-secret`
     - `stage` -> `/pixelstreaming/stage/instance-agent-bootstrap-shared-secret`
     - `prod` -> `/pixelstreaming/prod/instance-agent-bootstrap-shared-secret`
+  - startup refuses a prod control-plane env on the nonprod streaming lane and refuses non-prod envs on the prod streaming lane
   - `INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=<ssm-path>` remains available as an explicit emergency override
   - `INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF=true` to make Wilbur fail bootstrap instead of falling back when IMDS identity proof is unavailable
   - if no explicit override or lane parameter is present, startup still falls back to deployment-track defaults:
@@ -198,20 +209,28 @@ Normal serving stage/prod instance role should keep:
   - `/pixelstreaming/nonprod/git-target-ref`
   - `/pixelstreaming/prod/git-target-ref`
   - `/pixelstreaming/nonprod/instance-agent-api-base-url`
+  - `/pixelstreaming/nonprod/instance-agent-control-plane-env`
   - `/pixelstreaming/prod/instance-agent-api-base-url`
+  - `/pixelstreaming/prod/instance-agent-control-plane-env`
 
 Gold/promotion operator context must also support:
 
 - `ssm:GetParameter` on `/pixelstreaming/nonprod/git-target-ref`
 - `ssm:GetParameter` on `/pixelstreaming/prod/git-target-ref`
 - `ssm:GetParameter` on `/pixelstreaming/nonprod/instance-agent-api-base-url`
+- `ssm:GetParameter` on `/pixelstreaming/nonprod/instance-agent-control-plane-env`
 - `ssm:GetParameter` on `/pixelstreaming/prod/instance-agent-api-base-url`
+- `ssm:GetParameter` on `/pixelstreaming/prod/instance-agent-control-plane-env`
 - `ssm:PutParameter` on `/pixelstreaming/nonprod/git-target-ref`
 - `ssm:PutParameter` on `/pixelstreaming/prod/git-target-ref`
 - `ssm:PutParameter` on `/pixelstreaming/nonprod/instance-agent-api-base-url`
+- `ssm:PutParameter` on `/pixelstreaming/nonprod/instance-agent-control-plane-env`
 - `ssm:PutParameter` on `/pixelstreaming/prod/instance-agent-api-base-url`
+- `ssm:PutParameter` on `/pixelstreaming/prod/instance-agent-control-plane-env`
 - `ssm:DeleteParameter` on `/pixelstreaming/nonprod/instance-agent-api-base-url`
+- `ssm:DeleteParameter` on `/pixelstreaming/nonprod/instance-agent-control-plane-env`
 - `ssm:DeleteParameter` on `/pixelstreaming/prod/instance-agent-api-base-url`
+- `ssm:DeleteParameter` on `/pixelstreaming/prod/instance-agent-control-plane-env`
 
 Current hardening note:
 

@@ -116,10 +116,48 @@ Assert-DoesNotContainText `
     -Message 'Wilbur startup must not read the instance-agent API URL with a separate SSM request.'
 
 Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM=/pixelstreaming/nonprod/instance-agent-control-plane-env' `
+    -Message 'Wilbur startup must support a nonprod lane control-plane env parameter.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'call :resolve_instance_agent_control_plane_env' `
+    -Message 'Wilbur startup must resolve the instance-agent control-plane env before loading the bootstrap secret.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'INSTANCE_AGENT_CONTROL_PLANE_ENV_INFERRED_FROM_URL' `
+    -Message 'Wilbur startup must infer the control-plane env from known hosted API URLs to keep URL and secret paired.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/dev/instance-agent-bootstrap-shared-secret' `
+    -Message 'Wilbur startup must derive the Dev bootstrap secret path from the effective control-plane env.'
+Assert-ContainsText `
     -Content $unrealLauncher `
     -Expected 'else { 120 }' `
     -Message 'Direct Unreal launcher default runtime wait must match the stack launcher default.'
 
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM=/pixelstreaming/nonprod/instance-agent-control-plane-env' `
+    -Message 'Wilbur startup must support a nonprod lane control-plane env parameter.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'call :resolve_instance_agent_control_plane_env' `
+    -Message 'Wilbur startup must resolve the instance-agent control-plane env before loading the bootstrap secret.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'INSTANCE_AGENT_CONTROL_PLANE_ENV_INFERRED_FROM_URL' `
+    -Message 'Wilbur startup must infer the control-plane env from known hosted API URLs to keep URL and secret paired.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/dev/instance-agent-bootstrap-shared-secret' `
+    -Message 'Wilbur startup must derive the Dev bootstrap secret path from the effective control-plane env.'
 Assert-ContainsText `
     -Content $unrealLauncher `
     -Expected 'Stopped ScaleWorld launcher process PID' `

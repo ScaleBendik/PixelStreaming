@@ -88,20 +88,15 @@ if not defined INSTANCE_AGENT_API_BASE_URL_PARAM (
     set "INSTANCE_AGENT_API_BASE_URL_PARAM=/pixelstreaming/nonprod/instance-agent-api-base-url"
   )
 )
-if not defined INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET="
-if not defined INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM (
-  if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
-    set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/prod/instance-agent-bootstrap-shared-secret"
-  ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
-    set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/stage/instance-agent-bootstrap-shared-secret"
-  ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="dev" (
-    set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/dev/instance-agent-bootstrap-shared-secret"
-  ) else if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
-    set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/prod/instance-agent-bootstrap-shared-secret"
+if not defined INSTANCE_AGENT_CONTROL_PLANE_ENV set "INSTANCE_AGENT_CONTROL_PLANE_ENV="
+if not defined INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM (
+  if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
+    set "INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM=/pixelstreaming/prod/instance-agent-control-plane-env"
   ) else if /i "%SCALEWORLD_STREAMING_LANE%"=="nonprod" (
-    set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/stage/instance-agent-bootstrap-shared-secret"
+    set "INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM=/pixelstreaming/nonprod/instance-agent-control-plane-env"
   )
 )
+if not defined INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET="
 if not defined INSTANCE_AGENT_INSTANCE_ID set "INSTANCE_AGENT_INSTANCE_ID="
 if not defined INSTANCE_AGENT_REGION set "INSTANCE_AGENT_REGION="
 if not defined INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF set "INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF=false"
@@ -162,6 +157,12 @@ if /i not "%AWS_EXE%"=="aws" (
 set "TURN_USERNAME="
 set "TURN_CREDENTIAL="
 call :load_runtime_parameters
+if errorlevel 1 exit /b 1
+call :resolve_instance_agent_control_plane_env
+if errorlevel 1 exit /b 1
+call :apply_instance_agent_control_plane_defaults
+if errorlevel 1 exit /b 1
+call :load_instance_agent_bootstrap_shared_secret
 if errorlevel 1 exit /b 1
 
 if not defined TURN_USERNAME (
@@ -348,6 +349,7 @@ exit /b %errorlevel%
 
 :load_runtime_parameters
 set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM="
+set "INSTANCE_AGENT_CONTROL_PLANE_ENV_LOADED_FROM_PARAM="
 set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_LOADED_FROM_PARAM="
 set "INSTANCE_AGENT_ARTIFACT_BUCKET_LOADED_FROM_PARAM="
 set "RUNTIME_PARAMETER_NAMES=%TURN_USER_PARAM% %TURN_CREDENTIAL_PARAM%"
@@ -364,9 +366,9 @@ if not defined INSTANCE_AGENT_API_BASE_URL (
   )
 )
 
-if not defined INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET (
-  if defined INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM (
-    set "RUNTIME_PARAMETER_NAMES=%RUNTIME_PARAMETER_NAMES% %INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM%"
+if not defined INSTANCE_AGENT_CONTROL_PLANE_ENV (
+  if defined INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM (
+    set "RUNTIME_PARAMETER_NAMES=%RUNTIME_PARAMETER_NAMES% %INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM%"
   )
 )
 
@@ -384,9 +386,9 @@ for /f "usebackq tokens=1,*" %%I in (`%AWS_CALL% ssm get-parameters --names %RUN
     set "INSTANCE_AGENT_API_BASE_URL=%%J"
     set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM=true"
   )
-  if /i "%%I"=="%INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM%" (
-    set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET=%%J"
-    set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_LOADED_FROM_PARAM=true"
+  if /i "%%I"=="%INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM%" (
+    set "INSTANCE_AGENT_CONTROL_PLANE_ENV=%%J"
+    set "INSTANCE_AGENT_CONTROL_PLANE_ENV_LOADED_FROM_PARAM=true"
   )
   if /i "%%I"=="%INSTANCE_AGENT_ARTIFACT_BUCKET_PARAM%" (
     set "INSTANCE_AGENT_ARTIFACT_BUCKET=%%J"
@@ -397,6 +399,11 @@ for /f "usebackq tokens=1,*" %%I in (`%AWS_CALL% ssm get-parameters --names %RUN
 if /i "%INSTANCE_AGENT_API_BASE_URL%"=="None" (
   set "INSTANCE_AGENT_API_BASE_URL="
   set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM="
+)
+
+if /i "%INSTANCE_AGENT_CONTROL_PLANE_ENV%"=="None" (
+  set "INSTANCE_AGENT_CONTROL_PLANE_ENV="
+  set "INSTANCE_AGENT_CONTROL_PLANE_ENV_LOADED_FROM_PARAM="
 )
 
 if /i "%INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET%"=="None" (
@@ -415,6 +422,12 @@ if defined INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM (
   )
 )
 
+if defined INSTANCE_AGENT_CONTROL_PLANE_ENV_LOADED_FROM_PARAM (
+  if defined INSTANCE_AGENT_CONTROL_PLANE_ENV (
+    echo Loaded instance-agent control-plane environment from SSM parameter "%INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM%".
+  )
+)
+
 if defined INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_LOADED_FROM_PARAM (
   if defined INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET (
     echo Loaded instance-agent bootstrap shared secret from SSM parameter "%INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM%".
@@ -425,6 +438,162 @@ if defined INSTANCE_AGENT_ARTIFACT_BUCKET_LOADED_FROM_PARAM (
   if defined INSTANCE_AGENT_ARTIFACT_BUCKET (
     echo Loaded instance-agent artifact bucket from SSM parameter "%INSTANCE_AGENT_ARTIFACT_BUCKET_PARAM%".
   )
+)
+
+exit /b 0
+
+:resolve_instance_agent_control_plane_env
+set "INSTANCE_AGENT_CONTROL_PLANE_ENV_INFERRED_FROM_URL="
+call :normalize_instance_agent_control_plane_env
+if errorlevel 1 exit /b 1
+
+if defined INSTANCE_AGENT_API_BASE_URL (
+  call :infer_instance_agent_control_plane_env_from_url
+  if errorlevel 1 exit /b 1
+  if defined INSTANCE_AGENT_CONTROL_PLANE_ENV_INFERRED_FROM_URL (
+    if defined INSTANCE_AGENT_CONTROL_PLANE_ENV (
+      if /i not "!INSTANCE_AGENT_CONTROL_PLANE_ENV!"=="!INSTANCE_AGENT_CONTROL_PLANE_ENV_INFERRED_FROM_URL!" (
+        echo WARNING: Instance-agent control-plane environment "!INSTANCE_AGENT_CONTROL_PLANE_ENV!" conflicts with API base URL "!INSTANCE_AGENT_API_BASE_URL!".
+        echo WARNING: Using "!INSTANCE_AGENT_CONTROL_PLANE_ENV_INFERRED_FROM_URL!" so the API URL and bootstrap secret stay paired.
+      )
+    ) else (
+      if defined INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM (
+        echo WARNING: Inferred instance-agent control-plane environment "!INSTANCE_AGENT_CONTROL_PLANE_ENV_INFERRED_FROM_URL!" from API base URL "!INSTANCE_AGENT_API_BASE_URL!".
+        echo WARNING: Prefer setting "!INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM!" so API URL and bootstrap secret stay paired explicitly.
+      )
+    )
+    set "INSTANCE_AGENT_CONTROL_PLANE_ENV=!INSTANCE_AGENT_CONTROL_PLANE_ENV_INFERRED_FROM_URL!"
+    exit /b 0
+  )
+
+  if defined INSTANCE_AGENT_CONTROL_PLANE_ENV exit /b 0
+
+  if defined INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM (
+    echo WARNING: Instance-agent API URL override "!INSTANCE_AGENT_API_BASE_URL!" did not match a known Dev, Stage, or Prod host.
+    echo WARNING: Falling back to deployment track "!SCALEWORLD_DEPLOYMENT_TRACK!" for bootstrap secret selection.
+  )
+)
+
+if defined INSTANCE_AGENT_CONTROL_PLANE_ENV exit /b 0
+
+if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
+  set "INSTANCE_AGENT_CONTROL_PLANE_ENV=prod"
+) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
+  set "INSTANCE_AGENT_CONTROL_PLANE_ENV=stage"
+) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="dev" (
+  set "INSTANCE_AGENT_CONTROL_PLANE_ENV=dev"
+) else if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
+  set "INSTANCE_AGENT_CONTROL_PLANE_ENV=prod"
+) else (
+  set "INSTANCE_AGENT_CONTROL_PLANE_ENV=stage"
+)
+
+call :normalize_instance_agent_control_plane_env
+if errorlevel 1 exit /b 1
+exit /b 0
+
+:normalize_instance_agent_control_plane_env
+if not defined INSTANCE_AGENT_CONTROL_PLANE_ENV exit /b 0
+if /i "%INSTANCE_AGENT_CONTROL_PLANE_ENV%"=="dev" (
+  set "INSTANCE_AGENT_CONTROL_PLANE_ENV=dev"
+  exit /b 0
+)
+if /i "%INSTANCE_AGENT_CONTROL_PLANE_ENV%"=="stage" (
+  set "INSTANCE_AGENT_CONTROL_PLANE_ENV=stage"
+  exit /b 0
+)
+if /i "%INSTANCE_AGENT_CONTROL_PLANE_ENV%"=="prod" (
+  set "INSTANCE_AGENT_CONTROL_PLANE_ENV=prod"
+  exit /b 0
+)
+echo ERROR: Unsupported INSTANCE_AGENT_CONTROL_PLANE_ENV "%INSTANCE_AGENT_CONTROL_PLANE_ENV%". Expected dev, stage, or prod.
+exit /b 1
+
+:infer_instance_agent_control_plane_env_from_url
+if not defined INSTANCE_AGENT_API_BASE_URL exit /b 0
+echo(%INSTANCE_AGENT_API_BASE_URL%| findstr /i /c:"scaleaq-dev.net" >nul
+if not errorlevel 1 (
+  set "INSTANCE_AGENT_CONTROL_PLANE_ENV_INFERRED_FROM_URL=dev"
+  exit /b 0
+)
+echo(%INSTANCE_AGENT_API_BASE_URL%| findstr /i /c:"scaleaq-stage.net" >nul
+if not errorlevel 1 (
+  set "INSTANCE_AGENT_CONTROL_PLANE_ENV_INFERRED_FROM_URL=stage"
+  exit /b 0
+)
+echo(%INSTANCE_AGENT_API_BASE_URL%| findstr /i /c:"scaleaq.net" >nul
+if not errorlevel 1 (
+  set "INSTANCE_AGENT_CONTROL_PLANE_ENV_INFERRED_FROM_URL=prod"
+  exit /b 0
+)
+exit /b 0
+
+:apply_instance_agent_control_plane_defaults
+if not defined INSTANCE_AGENT_CONTROL_PLANE_ENV (
+  echo ERROR: Instance-agent control-plane environment was not resolved.
+  exit /b 1
+)
+
+if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
+  if /i not "%INSTANCE_AGENT_CONTROL_PLANE_ENV%"=="prod" (
+    echo ERROR: Prod streaming lane cannot use instance-agent control-plane environment "%INSTANCE_AGENT_CONTROL_PLANE_ENV%".
+    exit /b 1
+  )
+) else if /i "%SCALEWORLD_STREAMING_LANE%"=="nonprod" (
+  if /i "%INSTANCE_AGENT_CONTROL_PLANE_ENV%"=="prod" (
+    echo ERROR: Nonprod streaming lane cannot use the prod instance-agent control-plane environment.
+    exit /b 1
+  )
+)
+
+if not defined INSTANCE_AGENT_API_BASE_URL (
+  if /i "%INSTANCE_AGENT_CONTROL_PLANE_ENV%"=="prod" (
+    set "INSTANCE_AGENT_API_BASE_URL=https://scaleworld.api.scaleaq.net"
+  ) else if /i "%INSTANCE_AGENT_CONTROL_PLANE_ENV%"=="stage" (
+    set "INSTANCE_AGENT_API_BASE_URL=https://scaleworld.api.scaleaq-stage.net"
+  ) else (
+    set "INSTANCE_AGENT_API_BASE_URL=https://scaleworld.api.scaleaq-dev.net"
+  )
+)
+
+if not defined INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM (
+  if /i "%INSTANCE_AGENT_CONTROL_PLANE_ENV%"=="prod" (
+    set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/prod/instance-agent-bootstrap-shared-secret"
+  ) else if /i "%INSTANCE_AGENT_CONTROL_PLANE_ENV%"=="stage" (
+    set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/stage/instance-agent-bootstrap-shared-secret"
+  ) else (
+    set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/dev/instance-agent-bootstrap-shared-secret"
+  )
+)
+
+echo Using instance-agent control-plane environment: "%INSTANCE_AGENT_CONTROL_PLANE_ENV%".
+echo Using instance-agent API base URL: "%INSTANCE_AGENT_API_BASE_URL%".
+if defined INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM echo Using instance-agent bootstrap shared secret parameter: "%INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM%".
+exit /b 0
+
+:load_instance_agent_bootstrap_shared_secret
+if defined INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET exit /b 0
+if not defined INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM exit /b 0
+
+set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_LOADED_FROM_PARAM="
+for /f "usebackq tokens=1,*" %%I in (`%AWS_CALL% ssm get-parameters --names "%INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM%" --with-decryption --region "%REGION%" --query "Parameters[].[Name,Value]" --output text`) do (
+  if /i "%%I"=="%INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM%" (
+    set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET=%%J"
+    set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_LOADED_FROM_PARAM=true"
+  )
+)
+
+if /i "%INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET%"=="None" (
+  set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET="
+  set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_LOADED_FROM_PARAM="
+)
+
+if defined INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_LOADED_FROM_PARAM (
+  if defined INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET (
+    echo Loaded instance-agent bootstrap shared secret from SSM parameter "%INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM%".
+  )
+) else (
+  echo WARNING: Instance-agent bootstrap shared secret was not loaded from SSM parameter "%INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM%".
 )
 
 exit /b 0
@@ -440,9 +609,9 @@ if not defined INSTANCE_AGENT (
 
 if /i not "%INSTANCE_AGENT%"=="false" (
   if not defined INSTANCE_AGENT_API_BASE_URL (
-    if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
+    if /i "%INSTANCE_AGENT_CONTROL_PLANE_ENV%"=="prod" (
       set "INSTANCE_AGENT_API_BASE_URL=https://scaleworld.api.scaleaq.net"
-    ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
+    ) else if /i "%INSTANCE_AGENT_CONTROL_PLANE_ENV%"=="stage" (
       set "INSTANCE_AGENT_API_BASE_URL=https://scaleworld.api.scaleaq-stage.net"
     ) else (
       set "INSTANCE_AGENT_API_BASE_URL=https://scaleworld.api.scaleaq-dev.net"
