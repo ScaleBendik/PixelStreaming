@@ -1,6 +1,6 @@
 # PixelStreaming Documentation
 
-Last updated: 2026-05-05
+Last updated: 2026-05-07
 
 This directory mixes upstream Pixel Streaming reference documentation with ScaleWorld operational docs for the customized streamer runtime.
 
@@ -26,7 +26,7 @@ Use these first for the Server Manager integration:
 2. `start_dev_turn.bat` launches Wilbur and loads runtime secrets/SSM parameters.
 3. `start_unreal.bat` launches the Unreal application.
 4. The in-house watchdog can restart Wilbur, Unreal, or the full stack and publishes `ScaleWorldRuntimeStatus*` tags.
-5. The instance agent is currently embedded in Wilbur. It bootstraps to the API, sends heartbeats/runtime events, consumes desired state and commands, and registers diagnostic/screenshot artifacts.
+5. The instance agent is currently embedded in Wilbur. It bootstraps to the API, sends heartbeats/runtime events, consumes desired state and commands, and registers diagnostic/screenshot artifacts. Desired-state writes are normally driven by SQL-backed session, warm-pool, and operational controls rather than ad hoc server-card UI toggles.
 6. Diagnostic bundles and screenshot bundles are uploaded to S3 through AWS CLI and registered with the API for SQL-backed analytics/downloads.
 7. The long-term backlog still tracks splitting the instance agent into a separate service once current warm-pool behavior is stable.
 
