@@ -117,8 +117,8 @@ Assert-DoesNotContainText `
 
 Assert-ContainsText `
     -Content $startDevTurn `
-    -Expected 'INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM=/pixelstreaming/nonprod/instance-agent-control-plane-env' `
-    -Message 'Wilbur startup must support a nonprod lane control-plane env parameter.'
+    -Expected 'INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM=/pixelstreaming/dev/instance-agent-control-plane-env' `
+    -Message 'Wilbur startup must support a Dev deployment-track control-plane env parameter.'
 
 Assert-ContainsText `
     -Content $startDevTurn `
@@ -141,8 +141,8 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $startDevTurn `
-    -Expected 'INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM=/pixelstreaming/nonprod/instance-agent-control-plane-env' `
-    -Message 'Wilbur startup must support a nonprod lane control-plane env parameter.'
+    -Expected 'INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM=/pixelstreaming/dev/instance-agent-control-plane-env' `
+    -Message 'Wilbur startup must support a Dev deployment-track control-plane env parameter.'
 
 Assert-ContainsText `
     -Content $startDevTurn `

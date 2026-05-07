@@ -560,36 +560,59 @@ function Resolve-GitTargetRefValue {
         return $ExplicitRef.Trim()
     }
 
-    if ([string]::IsNullOrWhiteSpace($TargetRefParam)) {
+    $targetRefParams = @(
+        $TargetRefParam -split '[;,]' |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    if ($targetRefParams.Count -eq 0) {
         return ''
     }
 
     $awsCli = Get-AwsCliPath
     $region = Resolve-SsmRegion
+    $lastFailure = $null
 
-    Write-RepoSyncLog "Resolving pinned git target ref from SSM parameter '$TargetRefParam' in region '$region'."
-    $result = Invoke-AwsCliCapture -AwsCli $awsCli -Arguments @(
-        'ssm',
-        'get-parameter',
-        '--region', $region,
-        '--name', $TargetRefParam,
-        '--query', 'Parameter.Value',
-        '--output', 'text'
-    )
-    if ($result.ExitCode -ne 0) {
-        if ([string]::IsNullOrWhiteSpace($result.Combined)) {
-            throw "Failed to resolve pinned git target ref from SSM parameter '$TargetRefParam'."
+    foreach ($parameterName in $targetRefParams) {
+        Write-RepoSyncLog "Resolving pinned git target ref from SSM parameter '$parameterName' in region '$region'."
+        $result = Invoke-AwsCliCapture -AwsCli $awsCli -Arguments @(
+            'ssm',
+            'get-parameter',
+            '--region', $region,
+            '--name', $parameterName,
+            '--query', 'Parameter.Value',
+            '--output', 'text'
+        )
+        if ($result.ExitCode -ne 0) {
+            $lastFailure = if ([string]::IsNullOrWhiteSpace($result.Combined)) {
+                "Failed to resolve pinned git target ref from SSM parameter '$parameterName'."
+            }
+            else {
+                "Failed to resolve pinned git target ref from SSM parameter '$parameterName'. $($result.Combined)"
+            }
+            if ($targetRefParams.Count -gt 1) {
+                Write-RepoSyncLog "$lastFailure Trying the next configured fallback parameter." -Level WARN
+                continue
+            }
+
+            throw $lastFailure
         }
 
-        throw "Failed to resolve pinned git target ref from SSM parameter '$TargetRefParam'. $($result.Combined)"
+        $resolved = ($result.StdOut | Out-String).Trim()
+        if ([string]::IsNullOrWhiteSpace($resolved)) {
+            $lastFailure = "SSM parameter '$parameterName' did not contain a pinned git target ref."
+            if ($targetRefParams.Count -gt 1) {
+                Write-RepoSyncLog "$lastFailure Trying the next configured fallback parameter." -Level WARN
+                continue
+            }
+
+            throw $lastFailure
+        }
+
+        return $resolved
     }
 
-    $resolved = ($result.StdOut | Out-String).Trim()
-    if ([string]::IsNullOrWhiteSpace($resolved)) {
-        throw "SSM parameter '$TargetRefParam' did not contain a pinned git target ref."
-    }
-
-    return $resolved
+    throw ($lastFailure ?? "No configured SSM parameter contained a pinned git target ref.")
 }
 
 function Resolve-CommitFromRef {

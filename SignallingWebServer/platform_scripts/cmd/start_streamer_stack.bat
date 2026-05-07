@@ -33,6 +33,8 @@ if not defined SCALEWORLD_GIT_SYNC_MODE (
     set "SCALEWORLD_GIT_SYNC_MODE=pinned"
   ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
     set "SCALEWORLD_GIT_SYNC_MODE=pinned"
+  ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="dev" (
+    set "SCALEWORLD_GIT_SYNC_MODE=pinned"
   ) else (
     set "SCALEWORLD_GIT_SYNC_MODE=upstream"
   )
@@ -41,7 +43,9 @@ if not defined SCALEWORLD_GIT_TARGET_REF_PARAM (
   if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
     set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref"
   ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
-    set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/nonprod/git-target-ref"
+    set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/stage/git-target-ref;/pixelstreaming/nonprod/git-target-ref"
+  ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="dev" (
+    set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/dev/git-target-ref;/pixelstreaming/nonprod/git-target-ref"
   )
 )
 if not defined STACK_ENABLE_BOOT_GIT_SYNC (

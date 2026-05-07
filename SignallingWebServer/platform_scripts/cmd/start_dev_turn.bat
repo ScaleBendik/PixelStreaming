@@ -50,6 +50,8 @@ if not defined SCALEWORLD_GIT_SYNC_MODE (
     set "SCALEWORLD_GIT_SYNC_MODE=pinned"
   ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
     set "SCALEWORLD_GIT_SYNC_MODE=pinned"
+  ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="dev" (
+    set "SCALEWORLD_GIT_SYNC_MODE=pinned"
   ) else (
     set "SCALEWORLD_GIT_SYNC_MODE=upstream"
   )
@@ -58,7 +60,9 @@ if not defined SCALEWORLD_GIT_TARGET_REF_PARAM (
   if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
     set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref"
   ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
-    set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/nonprod/git-target-ref"
+    set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/stage/git-target-ref;/pixelstreaming/nonprod/git-target-ref"
+  ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="dev" (
+    set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/dev/git-target-ref;/pixelstreaming/nonprod/git-target-ref"
   )
 )
 set "RUNTIME_STATUS_ENABLED=true"
@@ -82,16 +86,28 @@ if not defined VIEWER_IDLE_STOP_RETRY_MS set "VIEWER_IDLE_STOP_RETRY_MS=60000"
 if not defined VIEWER_IDLE_STOP_DRY_RUN set "VIEWER_IDLE_STOP_DRY_RUN=false"
 if not defined INSTANCE_AGENT_API_BASE_URL set "INSTANCE_AGENT_API_BASE_URL="
 if not defined INSTANCE_AGENT_API_BASE_URL_PARAM (
-  if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
+  if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
     set "INSTANCE_AGENT_API_BASE_URL_PARAM=/pixelstreaming/prod/instance-agent-api-base-url"
+  ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
+    set "INSTANCE_AGENT_API_BASE_URL_PARAM=/pixelstreaming/stage/instance-agent-api-base-url"
+    if not defined INSTANCE_AGENT_API_BASE_URL_FALLBACK_PARAM set "INSTANCE_AGENT_API_BASE_URL_FALLBACK_PARAM=/pixelstreaming/nonprod/instance-agent-api-base-url"
+  ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="dev" (
+    set "INSTANCE_AGENT_API_BASE_URL_PARAM=/pixelstreaming/dev/instance-agent-api-base-url"
+    if not defined INSTANCE_AGENT_API_BASE_URL_FALLBACK_PARAM set "INSTANCE_AGENT_API_BASE_URL_FALLBACK_PARAM=/pixelstreaming/nonprod/instance-agent-api-base-url"
   ) else if /i "%SCALEWORLD_STREAMING_LANE%"=="nonprod" (
     set "INSTANCE_AGENT_API_BASE_URL_PARAM=/pixelstreaming/nonprod/instance-agent-api-base-url"
   )
 )
 if not defined INSTANCE_AGENT_CONTROL_PLANE_ENV set "INSTANCE_AGENT_CONTROL_PLANE_ENV="
 if not defined INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM (
-  if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" (
+  if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
     set "INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM=/pixelstreaming/prod/instance-agent-control-plane-env"
+  ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
+    set "INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM=/pixelstreaming/stage/instance-agent-control-plane-env"
+    if not defined INSTANCE_AGENT_CONTROL_PLANE_ENV_FALLBACK_PARAM set "INSTANCE_AGENT_CONTROL_PLANE_ENV_FALLBACK_PARAM=/pixelstreaming/nonprod/instance-agent-control-plane-env"
+  ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="dev" (
+    set "INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM=/pixelstreaming/dev/instance-agent-control-plane-env"
+    if not defined INSTANCE_AGENT_CONTROL_PLANE_ENV_FALLBACK_PARAM set "INSTANCE_AGENT_CONTROL_PLANE_ENV_FALLBACK_PARAM=/pixelstreaming/nonprod/instance-agent-control-plane-env"
   ) else if /i "%SCALEWORLD_STREAMING_LANE%"=="nonprod" (
     set "INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM=/pixelstreaming/nonprod/instance-agent-control-plane-env"
   )
@@ -349,7 +365,9 @@ exit /b %errorlevel%
 
 :load_runtime_parameters
 set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM="
+set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM_NAME="
 set "INSTANCE_AGENT_CONTROL_PLANE_ENV_LOADED_FROM_PARAM="
+set "INSTANCE_AGENT_CONTROL_PLANE_ENV_LOADED_FROM_PARAM_NAME="
 set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_LOADED_FROM_PARAM="
 set "INSTANCE_AGENT_ARTIFACT_BUCKET_LOADED_FROM_PARAM="
 set "RUNTIME_PARAMETER_NAMES=%TURN_USER_PARAM% %TURN_CREDENTIAL_PARAM%"
@@ -364,11 +382,17 @@ if not defined INSTANCE_AGENT_API_BASE_URL (
   if defined INSTANCE_AGENT_API_BASE_URL_PARAM (
     set "RUNTIME_PARAMETER_NAMES=%RUNTIME_PARAMETER_NAMES% %INSTANCE_AGENT_API_BASE_URL_PARAM%"
   )
+  if defined INSTANCE_AGENT_API_BASE_URL_FALLBACK_PARAM (
+    set "RUNTIME_PARAMETER_NAMES=%RUNTIME_PARAMETER_NAMES% %INSTANCE_AGENT_API_BASE_URL_FALLBACK_PARAM%"
+  )
 )
 
 if not defined INSTANCE_AGENT_CONTROL_PLANE_ENV (
   if defined INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM (
     set "RUNTIME_PARAMETER_NAMES=%RUNTIME_PARAMETER_NAMES% %INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM%"
+  )
+  if defined INSTANCE_AGENT_CONTROL_PLANE_ENV_FALLBACK_PARAM (
+    set "RUNTIME_PARAMETER_NAMES=%RUNTIME_PARAMETER_NAMES% %INSTANCE_AGENT_CONTROL_PLANE_ENV_FALLBACK_PARAM%"
   )
 )
 
@@ -385,10 +409,30 @@ for /f "usebackq tokens=1,*" %%I in (`%AWS_CALL% ssm get-parameters --names %RUN
   if /i "%%I"=="%INSTANCE_AGENT_API_BASE_URL_PARAM%" (
     set "INSTANCE_AGENT_API_BASE_URL=%%J"
     set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM=true"
+    set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM_NAME=%%I"
+  )
+  if defined INSTANCE_AGENT_API_BASE_URL_FALLBACK_PARAM (
+    if /i "%%I"=="%INSTANCE_AGENT_API_BASE_URL_FALLBACK_PARAM%" (
+      if not defined INSTANCE_AGENT_API_BASE_URL (
+        set "INSTANCE_AGENT_API_BASE_URL=%%J"
+        set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM=true"
+        set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM_NAME=%%I"
+      )
+    )
   )
   if /i "%%I"=="%INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM%" (
     set "INSTANCE_AGENT_CONTROL_PLANE_ENV=%%J"
     set "INSTANCE_AGENT_CONTROL_PLANE_ENV_LOADED_FROM_PARAM=true"
+    set "INSTANCE_AGENT_CONTROL_PLANE_ENV_LOADED_FROM_PARAM_NAME=%%I"
+  )
+  if defined INSTANCE_AGENT_CONTROL_PLANE_ENV_FALLBACK_PARAM (
+    if /i "%%I"=="%INSTANCE_AGENT_CONTROL_PLANE_ENV_FALLBACK_PARAM%" (
+      if not defined INSTANCE_AGENT_CONTROL_PLANE_ENV (
+        set "INSTANCE_AGENT_CONTROL_PLANE_ENV=%%J"
+        set "INSTANCE_AGENT_CONTROL_PLANE_ENV_LOADED_FROM_PARAM=true"
+        set "INSTANCE_AGENT_CONTROL_PLANE_ENV_LOADED_FROM_PARAM_NAME=%%I"
+      )
+    )
   )
   if /i "%%I"=="%INSTANCE_AGENT_ARTIFACT_BUCKET_PARAM%" (
     set "INSTANCE_AGENT_ARTIFACT_BUCKET=%%J"
@@ -399,11 +443,13 @@ for /f "usebackq tokens=1,*" %%I in (`%AWS_CALL% ssm get-parameters --names %RUN
 if /i "%INSTANCE_AGENT_API_BASE_URL%"=="None" (
   set "INSTANCE_AGENT_API_BASE_URL="
   set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM="
+  set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM_NAME="
 )
 
 if /i "%INSTANCE_AGENT_CONTROL_PLANE_ENV%"=="None" (
   set "INSTANCE_AGENT_CONTROL_PLANE_ENV="
   set "INSTANCE_AGENT_CONTROL_PLANE_ENV_LOADED_FROM_PARAM="
+  set "INSTANCE_AGENT_CONTROL_PLANE_ENV_LOADED_FROM_PARAM_NAME="
 )
 
 if /i "%INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET%"=="None" (
@@ -418,13 +464,13 @@ if /i "%INSTANCE_AGENT_ARTIFACT_BUCKET%"=="None" (
 
 if defined INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM (
   if defined INSTANCE_AGENT_API_BASE_URL (
-    echo Loaded instance-agent API base URL from SSM parameter "%INSTANCE_AGENT_API_BASE_URL_PARAM%".
+    echo Loaded instance-agent API base URL from SSM parameter "%INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM_NAME%".
   )
 )
 
 if defined INSTANCE_AGENT_CONTROL_PLANE_ENV_LOADED_FROM_PARAM (
   if defined INSTANCE_AGENT_CONTROL_PLANE_ENV (
-    echo Loaded instance-agent control-plane environment from SSM parameter "%INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM%".
+    echo Loaded instance-agent control-plane environment from SSM parameter "%INSTANCE_AGENT_CONTROL_PLANE_ENV_LOADED_FROM_PARAM_NAME%".
   )
 )
 
