@@ -62,17 +62,33 @@ type CandidateLike = {
     id?: string;
     candidateType?: string;
     relayProtocol?: string;
+    transportId?: string;
 };
 
 type CandidatePairLike = {
+    id?: string;
     localCandidateId?: string;
     remoteCandidateId?: string;
+    localCandidateType?: string;
+    remoteCandidateType?: string;
+    candidateType?: string;
+    relayProtocol?: string;
+    selected?: boolean;
+    nominated?: boolean;
+    state?: string;
+    bytesReceived?: number;
+    bytesSent?: number;
+    transportId?: string;
 };
 
 type AggregatedStatsLike = {
-    getActiveCandidatePair(): CandidatePairLike | null;
+    getActiveCandidatePair?: () => CandidatePairLike | null;
+    candidatePairs?: CandidatePairLike[];
     localCandidates: CandidateLike[];
     remoteCandidates: CandidateLike[];
+    transportStats?: {
+        selectedCandidatePairId?: string;
+    };
 };
 
 type SessionNetworkPathReport = {
@@ -277,38 +293,116 @@ const normalizeRelayProtocol = (value: string | undefined): string | undefined =
     return undefined;
 };
 
+const findActiveCandidatePair = (
+    aggregatedStats: AggregatedStatsLike
+): CandidatePairLike | null => {
+    try {
+        const activeCandidatePair = aggregatedStats.getActiveCandidatePair?.();
+        if (activeCandidatePair) {
+            return activeCandidatePair;
+        }
+    } catch {
+        // Fall through to raw stats heuristics.
+    }
+
+    const candidatePairs = aggregatedStats.candidatePairs ?? [];
+    const selectedCandidatePairId = aggregatedStats.transportStats?.selectedCandidatePairId;
+    if (selectedCandidatePairId) {
+        const selectedCandidatePair = candidatePairs.find(
+            (candidatePair) => candidatePair.id === selectedCandidatePairId
+        );
+        if (selectedCandidatePair) {
+            return selectedCandidatePair;
+        }
+    }
+
+    return (
+        candidatePairs.find((candidatePair) => candidatePair.selected) ??
+        candidatePairs.find(
+            (candidatePair) =>
+                candidatePair.nominated &&
+                candidatePair.state?.trim().toLowerCase() === 'succeeded'
+        ) ??
+        candidatePairs
+            .filter(
+                (candidatePair) =>
+                    candidatePair.state?.trim().toLowerCase() === 'succeeded'
+            )
+            .sort(
+                (left, right) =>
+                    (right.bytesReceived ?? 0) +
+                    (right.bytesSent ?? 0) -
+                    ((left.bytesReceived ?? 0) + (left.bytesSent ?? 0))
+            )[0] ??
+        null
+    );
+};
+
+const findCandidateByIdOrUniqueTransport = (
+    candidates: CandidateLike[],
+    candidateId: string | undefined,
+    transportId: string | undefined
+): CandidateLike | undefined => {
+    const byId = candidateId
+        ? candidates.find((candidate) => candidate.id === candidateId)
+        : undefined;
+    if (byId || !transportId) {
+        return byId;
+    }
+
+    const transportMatches = candidates.filter(
+        (candidate) => candidate.transportId === transportId
+    );
+    return transportMatches.length === 1 ? transportMatches[0] : undefined;
+};
+
 const deriveSessionNetworkPathReport = (
     sessionId: string,
     aggregatedStats: AggregatedStatsLike
 ): SessionNetworkPathReport | null => {
-    const activeCandidatePair = aggregatedStats.getActiveCandidatePair();
+    const activeCandidatePair = findActiveCandidatePair(aggregatedStats);
     if (!activeCandidatePair) {
         return null;
     }
 
-    const localCandidate = aggregatedStats.localCandidates.find(
-        (candidate) => candidate.id === activeCandidatePair.localCandidateId
+    const localCandidate = findCandidateByIdOrUniqueTransport(
+        aggregatedStats.localCandidates,
+        activeCandidatePair.localCandidateId,
+        activeCandidatePair.transportId
     );
-    const remoteCandidate = aggregatedStats.remoteCandidates.find(
-        (candidate) => candidate.id === activeCandidatePair.remoteCandidateId
+    const remoteCandidate = findCandidateByIdOrUniqueTransport(
+        aggregatedStats.remoteCandidates,
+        activeCandidatePair.remoteCandidateId,
+        activeCandidatePair.transportId
     );
-    if (!localCandidate && !remoteCandidate) {
-        return null;
-    }
 
-    const localCandidateType = normalizeCandidateType(localCandidate?.candidateType);
-    const remoteCandidateType = normalizeCandidateType(remoteCandidate?.candidateType);
-    const usesTurn = localCandidateType === 'relay' || remoteCandidateType === 'relay';
+    const localCandidateType = normalizeCandidateType(
+        localCandidate?.candidateType ?? activeCandidatePair.localCandidateType
+    );
+    const remoteCandidateType = normalizeCandidateType(
+        remoteCandidate?.candidateType ?? activeCandidatePair.remoteCandidateType
+    );
+    const pairCandidateType = normalizeCandidateType(activeCandidatePair.candidateType);
+    const pairRelayProtocol = normalizeRelayProtocol(activeCandidatePair.relayProtocol);
+    const usesTurn =
+        localCandidateType === 'relay' ||
+        remoteCandidateType === 'relay' ||
+        pairCandidateType === 'relay' ||
+        pairRelayProtocol !== undefined;
     const relayProtocol = normalizeRelayProtocol(
         localCandidateType === 'relay'
             ? localCandidate?.relayProtocol
             : remoteCandidateType === 'relay'
               ? remoteCandidate?.relayProtocol
-              : undefined
+              : activeCandidatePair.relayProtocol
     );
     const candidateType = usesTurn
         ? 'relay'
-        : localCandidateType ?? remoteCandidateType ?? 'unknown';
+        : localCandidateType ?? remoteCandidateType ?? pairCandidateType;
+
+    if (!candidateType) {
+        return null;
+    }
 
     return {
         sessionId,
