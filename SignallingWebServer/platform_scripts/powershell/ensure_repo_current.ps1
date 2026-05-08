@@ -612,7 +612,11 @@ function Resolve-GitTargetRefValue {
         return $resolved
     }
 
-    throw ($lastFailure ?? "No configured SSM parameter contained a pinned git target ref.")
+    if ([string]::IsNullOrWhiteSpace($lastFailure)) {
+        throw "No configured SSM parameter contained a pinned git target ref."
+    }
+
+    throw $lastFailure
 }
 
 function Resolve-CommitFromRef {
