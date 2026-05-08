@@ -190,6 +190,8 @@ Current note:
 TURN server cert materials were previously managed via SSM as well (`/turn/*` pattern).
 The canonical instance-agent bootstrap trust runbook is `../../scaleworld-server-manager-web/docs/instance-agent-bootstrap-trust-runbook-2026-05-05.md`.
 
+Screenshot bundle retention is currently three days. Keep the S3 lifecycle rule for `PixelStreamingScreenshots/*`, the streamer default `INSTANCE_AGENT_SCREENSHOT_ARTIFACT_RETENTION_DAYS`, and the Server Manager API `UserSessionArtifacts:ScreenshotRetentionDays` setting aligned so user-facing download availability does not outlive the object.
+
 ### IAM
 
 Streamer/TURN instance role must currently support:

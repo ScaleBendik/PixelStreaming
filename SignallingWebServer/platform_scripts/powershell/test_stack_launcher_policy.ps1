@@ -311,6 +311,11 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $startDevTurn `
+    -Expected 'INSTANCE_AGENT_SCREENSHOT_ARTIFACT_RETENTION_DAYS=3' `
+    -Message 'Streamer startup must keep screenshot artifact metadata aligned with the three-day S3 lifecycle.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
     -Expected '%SCALEWORLD_DEPLOYMENT_TRACK%"=="dev' `
     -Message 'Streamer startup must derive the Dev instance-agent bootstrap secret path from deployment track.'
 
