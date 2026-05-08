@@ -25,6 +25,7 @@ const CONNECT_TICKET_PARAM = 'ct';
 const RECONNECT_REGION_PARAM = 'sm_region';
 const RECONNECT_INSTANCE_ID_PARAM = 'sm_instance_id';
 const RECONNECT_SESSION_ID_PARAM = 'sm_session_id';
+const RECONNECT_SESSION_REQUEST_ID_PARAM = 'sm_session_request_id';
 const RECONNECT_SESSION_MANAGER_ENV_PARAM = 'sm_session_manager_env';
 const SESSION_MANAGER_BASE_URLS = {
     dev: 'https://scaleworld.scaleaq-dev.net',
@@ -43,6 +44,7 @@ const RECONNECT_BOOTSTRAP_QUERY_PARAMS = new Set<string>([
     RECONNECT_REGION_PARAM,
     RECONNECT_INSTANCE_ID_PARAM,
     RECONNECT_SESSION_ID_PARAM,
+    RECONNECT_SESSION_REQUEST_ID_PARAM,
     RECONNECT_SESSION_MANAGER_ENV_PARAM
 ]);
 
@@ -52,6 +54,7 @@ type ReconnectContext = {
     region: string;
     instanceId: string;
     sessionId: string | null;
+    sessionRequestId: string | null;
     sessionManagerEnvironment: SessionManagerEnvironment | null;
 };
 
@@ -144,12 +147,14 @@ const hasReconnectContextParams = (params: URLSearchParams): boolean =>
     params.has(RECONNECT_REGION_PARAM) ||
     params.has(RECONNECT_INSTANCE_ID_PARAM) ||
     params.has(RECONNECT_SESSION_ID_PARAM) ||
+    params.has(RECONNECT_SESSION_REQUEST_ID_PARAM) ||
     params.has(RECONNECT_SESSION_MANAGER_ENV_PARAM);
 
 const deleteReconnectContextParams = (params: URLSearchParams): void => {
     params.delete(RECONNECT_REGION_PARAM);
     params.delete(RECONNECT_INSTANCE_ID_PARAM);
     params.delete(RECONNECT_SESSION_ID_PARAM);
+    params.delete(RECONNECT_SESSION_REQUEST_ID_PARAM);
     params.delete(RECONNECT_SESSION_MANAGER_ENV_PARAM);
 };
 
@@ -183,11 +188,13 @@ const parseReconnectContext = (
     region: string | null,
     instanceId: string | null,
     sessionId: string | null,
+    sessionRequestId: string | null,
     sessionManagerEnvironment: string | null
 ): ReconnectContext | null => {
     const normalizedRegion = region?.trim() ?? '';
     const normalizedInstanceId = instanceId?.trim() ?? '';
     const normalizedSessionId = sessionId?.trim() ?? '';
+    const normalizedSessionRequestId = sessionRequestId?.trim() ?? '';
 
     if (!normalizedRegion || !normalizedInstanceId) {
         return null;
@@ -197,6 +204,7 @@ const parseReconnectContext = (
         region: normalizedRegion,
         instanceId: normalizedInstanceId,
         sessionId: normalizedSessionId || null,
+        sessionRequestId: normalizedSessionRequestId || null,
         sessionManagerEnvironment: parseSessionManagerEnvironment(
             sessionManagerEnvironment
         )
@@ -215,6 +223,7 @@ const loadReconnectContextFromStorage = (key: string): ReconnectContext | null =
             typeof parsed.region === 'string' ? parsed.region : null,
             typeof parsed.instanceId === 'string' ? parsed.instanceId : null,
             typeof parsed.sessionId === 'string' ? parsed.sessionId : null,
+            typeof parsed.sessionRequestId === 'string' ? parsed.sessionRequestId : null,
             typeof parsed.sessionManagerEnvironment === 'string'
                 ? parsed.sessionManagerEnvironment
                 : null
@@ -381,12 +390,14 @@ document.body.onload = function() {
         pageHashParams.get(RECONNECT_REGION_PARAM),
         pageHashParams.get(RECONNECT_INSTANCE_ID_PARAM),
         pageHashParams.get(RECONNECT_SESSION_ID_PARAM),
+        pageHashParams.get(RECONNECT_SESSION_REQUEST_ID_PARAM),
         pageHashParams.get(RECONNECT_SESSION_MANAGER_ENV_PARAM)
     );
     const reconnectContextFromQuery = parseReconnectContext(
         pageUrl.searchParams.get(RECONNECT_REGION_PARAM),
         pageUrl.searchParams.get(RECONNECT_INSTANCE_ID_PARAM),
         pageUrl.searchParams.get(RECONNECT_SESSION_ID_PARAM),
+        pageUrl.searchParams.get(RECONNECT_SESSION_REQUEST_ID_PARAM),
         pageUrl.searchParams.get(RECONNECT_SESSION_MANAGER_ENV_PARAM)
     );
 
@@ -499,6 +510,12 @@ document.body.onload = function() {
                 if (reconnectContext.sessionId) {
                     parsed.searchParams.set(RECONNECT_SESSION_ID_PARAM, reconnectContext.sessionId);
                 }
+                if (reconnectContext.sessionRequestId) {
+                    parsed.searchParams.set(
+                        RECONNECT_SESSION_REQUEST_ID_PARAM,
+                        reconnectContext.sessionRequestId
+                    );
+                }
             }
 
             return parsed.toString();
@@ -508,10 +525,13 @@ document.body.onload = function() {
         config.setFlagEnabled(Flags.AutoConnect, true);
     }
 
-    const activeSessionId = reconnectContext?.sessionId?.trim() ?? '';
+    const sessionNetworkPathCorrelationId =
+        reconnectContext?.sessionId?.trim() ||
+        reconnectContext?.sessionRequestId?.trim() ||
+        '';
     let lastConfirmedSessionNetworkPathSignature = '';
     let pendingSessionNetworkPathSignature = '';
-    if (activeSessionId) {
+    if (sessionNetworkPathCorrelationId) {
         stream.addEventListener('statsReceived', (event) => {
             const aggregatedStats = (event as Event & {
                 data?: { aggregatedStats?: AggregatedStatsLike };
@@ -520,7 +540,10 @@ document.body.onload = function() {
                 return;
             }
 
-            const report = deriveSessionNetworkPathReport(activeSessionId, aggregatedStats);
+            const report = deriveSessionNetworkPathReport(
+                sessionNetworkPathCorrelationId,
+                aggregatedStats
+            );
             if (!report) {
                 return;
             }
