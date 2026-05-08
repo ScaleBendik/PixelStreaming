@@ -493,6 +493,13 @@ document.body.onload = function() {
             if (!parsed.searchParams.get('ct')) {
                 parsed.searchParams.set('ct', connectTicket);
             }
+            if (reconnectContext) {
+                parsed.searchParams.set(RECONNECT_REGION_PARAM, reconnectContext.region);
+                parsed.searchParams.set(RECONNECT_INSTANCE_ID_PARAM, reconnectContext.instanceId);
+                if (reconnectContext.sessionId) {
+                    parsed.searchParams.set(RECONNECT_SESSION_ID_PARAM, reconnectContext.sessionId);
+                }
+            }
 
             return parsed.toString();
         });

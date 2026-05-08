@@ -103,7 +103,12 @@ Current SSM String parameter used for prod streamer release pinning:
 
 - `/pixelstreaming/prod/git-target-ref`
 
-Current SSM String parameter used for the stage/candidate nonprod streamer release pinning:
+Current SSM String parameters used for dev/stage streamer release pinning:
+
+- `/pixelstreaming/dev/git-target-ref`
+- `/pixelstreaming/stage/git-target-ref`
+
+Legacy compatibility fallback during the lane split migration. Do not use this as a canonical promotion target:
 
 - `/pixelstreaming/nonprod/git-target-ref`
 
@@ -130,18 +135,22 @@ Current note:
   - fallback env `SCALEWORLD_DEPLOYMENT_TRACK=dev|stage|prod`
 - if the instance tag resolves successfully, that value overrides stale inherited machine `SCALEWORLD_DEPLOYMENT_TRACK`
 - current intended deployment-track model:
-  - `Gold` -> tag `ScaleWorldDeploymentTrack=dev`
-  - normal nonprod fleet -> default `stage`
-  - prod fleet -> default `prod`
+  - dev fleet and any remaining Gold instance -> tag `ScaleWorldDeploymentTrack=dev`
+  - stage fleet -> tag `ScaleWorldDeploymentTrack=stage`
+  - prod fleet -> tag `ScaleWorldDeploymentTrack=prod`
 - current bootstrap defaults are:
   - `nonprod` -> SSM `/pixelstreaming/connect-ticket/signing-key`, issuer `scaleworld-dev-connect-ticket`
   - `prod` -> SSM `/pixelstreaming/prod/connect-ticket/signing-key`, issuer `scaleworld-prod-connect-ticket`
 - lane-wide instance-agent control-plane targeting now uses a paired API URL + environment model:
   - `INSTANCE_AGENT_API_BASE_URL=<absolute-http(s)-url>` remains available as an explicit per-instance override
   - `INSTANCE_AGENT_CONTROL_PLANE_ENV=dev|stage|prod` remains available as an explicit per-instance override
-  - normal nonprod lane parameters:
-    - API URL: `/pixelstreaming/nonprod/instance-agent-api-base-url`
-    - control-plane env: `/pixelstreaming/nonprod/instance-agent-control-plane-env`
+  - nonprod deployment-track parameters:
+    - dev API URL: `/pixelstreaming/dev/instance-agent-api-base-url`
+    - dev control-plane env: `/pixelstreaming/dev/instance-agent-control-plane-env`
+    - stage API URL: `/pixelstreaming/stage/instance-agent-api-base-url`
+    - stage control-plane env: `/pixelstreaming/stage/instance-agent-control-plane-env`
+    - legacy fallback API URL: `/pixelstreaming/nonprod/instance-agent-api-base-url`
+    - legacy fallback control-plane env: `/pixelstreaming/nonprod/instance-agent-control-plane-env`
   - normal prod lane parameters:
     - API URL: `/pixelstreaming/prod/instance-agent-api-base-url`
     - control-plane env: `/pixelstreaming/prod/instance-agent-control-plane-env`
@@ -168,19 +177,19 @@ Current note:
   - this matches the current ALB/X-Forwarded-For path and avoids `express-rate-limit` proxy warnings
 - repo/bootstrap sync policy now supports:
   - `SCALEWORLD_GIT_SYNC_MODE=upstream|pinned|off`
-  - default `nonprod` behavior: `pinned` through deployment track `stage`
+  - default `nonprod` behavior: `pinned` through deployment track `dev` or `stage`
   - default `prod` behavior: `pinned`
   - deployment-track defaults:
-    - `dev` -> `upstream`
-    - `stage` -> `pinned` with `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/nonprod/git-target-ref`
+    - `dev` -> `pinned` with `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/dev/git-target-ref;/pixelstreaming/nonprod/git-target-ref`
+    - `stage` -> `pinned` with `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/stage/git-target-ref;/pixelstreaming/nonprod/git-target-ref`
     - `prod` -> `pinned` with `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref`
   - `SCALEWORLD_GIT_TARGET_REF=<tag-or-commit>` or `SCALEWORLD_GIT_TARGET_REF_PARAM=<ssm-parameter-name>` is required for `pinned`
   - boot-time repo sync now defaults on for any sync mode except `off`
   - recommended prod launch-template setting:
     - `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref`
-  - recommended Gold instance tag setting:
+  - recommended dev warm-pool launch-template / provisioning tag setting:
     - `ScaleWorldDeploymentTrack=dev`
-  - recommended stage-like nonprod launch-template / provisioning tag setting:
+  - recommended stage launch-template / provisioning tag setting:
     - `ScaleWorldDeploymentTrack=stage`
   - note:
     - explicit machine env vars such as `SCALEWORLD_GIT_SYNC_MODE`, `SCALEWORLD_GIT_TARGET_REF_PARAM`, `INSTANCE_AGENT_API_BASE_URL`, or `INSTANCE_AGENT_API_BASE_URL_PARAM` still override the derived defaults if they were manually set on the box
@@ -205,34 +214,43 @@ Streamer/TURN instance role must currently support:
   - `ScaleWorldSessionRelayProtocol`
   - `ScaleWorldSessionCandidateType`
 
-Normal serving stage/prod instance role should keep:
+Normal serving dev/stage/prod instance roles should keep read-only SSM access for their active lane plus the temporary legacy fallback while the AMI/bootstrap migration is in progress:
 
 - `ssm:GetParameter` on:
-  - `/pixelstreaming/nonprod/git-target-ref`
+  - `/pixelstreaming/dev/git-target-ref`
+  - `/pixelstreaming/stage/git-target-ref`
   - `/pixelstreaming/prod/git-target-ref`
-  - `/pixelstreaming/nonprod/instance-agent-api-base-url`
-  - `/pixelstreaming/nonprod/instance-agent-control-plane-env`
+  - `/pixelstreaming/nonprod/git-target-ref` (temporary fallback only)
+  - `/pixelstreaming/nonprod/instance-agent-api-base-url` (temporary fallback only)
+  - `/pixelstreaming/nonprod/instance-agent-control-plane-env` (temporary fallback only)
+  - `/pixelstreaming/stage/instance-agent-api-base-url`
+  - `/pixelstreaming/stage/instance-agent-control-plane-env`
   - `/pixelstreaming/prod/instance-agent-api-base-url`
   - `/pixelstreaming/prod/instance-agent-control-plane-env`
 
-Gold/promotion operator context must also support:
+Gold/stage-prod promotion operator context must also support:
 
-- `ssm:GetParameter` on `/pixelstreaming/nonprod/git-target-ref`
+- `ssm:GetParameter` on `/pixelstreaming/stage/git-target-ref`
 - `ssm:GetParameter` on `/pixelstreaming/prod/git-target-ref`
-- `ssm:GetParameter` on `/pixelstreaming/nonprod/instance-agent-api-base-url`
-- `ssm:GetParameter` on `/pixelstreaming/nonprod/instance-agent-control-plane-env`
+- `ssm:GetParameter` on `/pixelstreaming/stage/instance-agent-api-base-url`
+- `ssm:GetParameter` on `/pixelstreaming/stage/instance-agent-control-plane-env`
 - `ssm:GetParameter` on `/pixelstreaming/prod/instance-agent-api-base-url`
 - `ssm:GetParameter` on `/pixelstreaming/prod/instance-agent-control-plane-env`
-- `ssm:PutParameter` on `/pixelstreaming/nonprod/git-target-ref`
+- `ssm:PutParameter` on `/pixelstreaming/stage/git-target-ref`
 - `ssm:PutParameter` on `/pixelstreaming/prod/git-target-ref`
-- `ssm:PutParameter` on `/pixelstreaming/nonprod/instance-agent-api-base-url`
-- `ssm:PutParameter` on `/pixelstreaming/nonprod/instance-agent-control-plane-env`
+- `ssm:PutParameter` on `/pixelstreaming/stage/instance-agent-api-base-url`
+- `ssm:PutParameter` on `/pixelstreaming/stage/instance-agent-control-plane-env`
 - `ssm:PutParameter` on `/pixelstreaming/prod/instance-agent-api-base-url`
 - `ssm:PutParameter` on `/pixelstreaming/prod/instance-agent-control-plane-env`
-- `ssm:DeleteParameter` on `/pixelstreaming/nonprod/instance-agent-api-base-url`
-- `ssm:DeleteParameter` on `/pixelstreaming/nonprod/instance-agent-control-plane-env`
+- `ssm:DeleteParameter` on `/pixelstreaming/stage/instance-agent-api-base-url`
+- `ssm:DeleteParameter` on `/pixelstreaming/stage/instance-agent-control-plane-env`
 - `ssm:DeleteParameter` on `/pixelstreaming/prod/instance-agent-api-base-url`
 - `ssm:DeleteParameter` on `/pixelstreaming/prod/instance-agent-control-plane-env`
+
+Workstation/manual dev-pool target updates may additionally need:
+
+- `ssm:GetParameter` on `/pixelstreaming/dev/git-target-ref`
+- `ssm:PutParameter` on `/pixelstreaming/dev/git-target-ref`
 
 Current hardening note:
 

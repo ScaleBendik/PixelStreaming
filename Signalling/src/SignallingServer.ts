@@ -11,6 +11,18 @@ import { PlayerRegistry } from './PlayerRegistry';
 import { Messages, MessageHelpers, SignallingProtocol } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
 import { stringify } from './Utils';
 
+const SCALEWORLD_SESSION_ID_PARAM = 'sm_session_id';
+
+function readScaleWorldSessionId(request: http.IncomingMessage): string | undefined {
+    try {
+        const parsed = new URL(request.url || '/', 'http://localhost');
+        const sessionId = parsed.searchParams.get(SCALEWORLD_SESSION_ID_PARAM)?.trim() ?? '';
+        return sessionId || undefined;
+    } catch {
+        return undefined;
+    }
+}
+
 /**
  * An interface describing the possible options to pass when creating
  * a new SignallingServer object.
@@ -262,6 +274,11 @@ export class SignallingServer {
         Logger.info(`New player connection: %s (%s)`, request.socket.remoteAddress, request.url);
 
         const newPlayer = new PlayerConnection(this, ws, request.socket.remoteAddress);
+        const scaleWorldSessionId = readScaleWorldSessionId(request);
+        if (scaleWorldSessionId) {
+            (newPlayer as PlayerConnection & { scaleWorldSessionId?: string }).scaleWorldSessionId =
+                scaleWorldSessionId;
+        }
         this.registerPlayerKeepalive(ws, request.socket.remoteAddress);
 
         // add it to the registry and when the transport closes, remove it

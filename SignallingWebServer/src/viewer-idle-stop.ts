@@ -74,6 +74,7 @@ export interface ViewerIdleOptions {
 }
 
 type RuntimeInstanceCommand = InstanceAgentCommand & { status?: string; attemptNumber?: number };
+type ScaleWorldSessionPlayer = { scaleWorldSessionId?: string | null };
 
 async function readCurrentInstanceIdentity(): Promise<{ instanceId: string; region: string }> {
     const token = await readImdsToken();
@@ -424,6 +425,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     let recycleExitFallbackTimer: NodeJS.Timeout | null = null;
     let stopInFlight = false;
     let hasSeenViewer = server.playerRegistry.count() > 0;
+    let hasSeenManagedSessionViewer = false;
     let currentMaintenanceMode: string | null = null;
     let maintenanceStateInitialized = false;
     let maintenanceRefreshInFlight = false;
@@ -567,6 +569,21 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         canHoldWarmReadyWithoutShutdown() && getActiveShutdownCommand() === null && !hasRecycleIntent();
     const isWarmHoldActive = (): boolean => shouldSuppressNoViewerIdleAutomation() && !hasSeenViewer;
     const shouldResetIntoWarmReady = (): boolean => hasRecycleIntent();
+    const markManagedSessionViewer = (playerId?: string): boolean => {
+        if (!playerId) {
+            return false;
+        }
+
+        const player = server.playerRegistry.get(playerId) as ScaleWorldSessionPlayer | undefined;
+        const sessionId =
+            typeof player?.scaleWorldSessionId === 'string' ? player.scaleWorldSessionId.trim() : '';
+        if (!sessionId) {
+            return false;
+        }
+
+        hasSeenManagedSessionViewer = true;
+        return true;
+    };
     const resolveDesiredStateShutdownReason = (): string => {
         if (getActiveShutdownCommand()) {
             return 'command_shutdown_requested';
@@ -1009,6 +1026,14 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
+        if (!hasSeenManagedSessionViewer) {
+            runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+            log(
+                '[idle-stop] Warm-held viewer disconnect ignored for passive recycle because no managed session viewer was observed.'
+            );
+            return;
+        }
+
         clearZeroTimer();
         clearFirstViewerTimer();
         clearTransientStatusHeartbeat();
@@ -1037,6 +1062,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             if (shouldSuppressNoViewerIdleAutomation()) {
+                if (!hasSeenManagedSessionViewer) {
+                    runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+                    return;
+                }
+
                 clearTransientStatusHeartbeat();
                 passiveReconnectRecycleRequested = true;
                 log(
@@ -1401,8 +1431,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
     };
 
-    const onViewerAdded = (): void => {
+    const onViewerAdded = (playerId?: string): void => {
         hasSeenViewer = true;
+        markManagedSessionViewer(playerId);
         resetInFlight = false;
         recycleLaunchRequested = false;
         passiveReconnectRecycleRequested = false;
@@ -1417,6 +1448,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     };
 
     const onViewerRemoved = (removedPlayerId?: string): void => {
+        markManagedSessionViewer(removedPlayerId);
         const rawCount = server.playerRegistry.count();
         const removedEntryStillPresent =
             typeof removedPlayerId === 'string' && removedPlayerId.length > 0
