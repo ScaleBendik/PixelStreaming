@@ -48,8 +48,8 @@ switch (task)
 
 	case 'lint':
 	{
-		execute('MEDIASOUP_NODE_LANGUAGE=typescript eslint -c .eslintrc.js --ext=ts src/');
-		execute('MEDIASOUP_NODE_LANGUAGE=javascript eslint -c .eslintrc.js --ext=js --ignore-pattern \'!.eslintrc.js\' .eslintrc.js npm-scripts.js test/');
+		execute('eslint -c .eslintrc.js --ext=ts src/', { MEDIASOUP_NODE_LANGUAGE: 'typescript', ESLINT_USE_FLAT_CONFIG: 'false' });
+		execute('eslint -c .eslintrc.js --ext=js --ignore-pattern "!.eslintrc.js" .eslintrc.js npm-scripts.js test/', { MEDIASOUP_NODE_LANGUAGE: 'javascript', ESLINT_USE_FLAT_CONFIG: 'false' });
 
 		break;
 	}
@@ -95,14 +95,17 @@ function taskReplaceVersion()
 	fs.writeFileSync(file, result, { encoding: 'utf8' });
 }
 
-function execute(command)
+function execute(command, env = {})
 {
 	// eslint-disable-next-line no-console
 	console.log(`npm-scripts.js [INFO] executing command: ${command}`);
 
 	try
 	{
-		execSync(command,	{ stdio: [ 'ignore', process.stdout, process.stderr ] });
+		execSync(command,	{
+			stdio: [ 'ignore', process.stdout, process.stderr ],
+			env: { ...process.env, ...env }
+		});
 	}
 	catch (error)
 	{
