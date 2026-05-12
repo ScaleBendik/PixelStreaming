@@ -192,16 +192,16 @@ try {
         "SSM target parameter '$GitTargetRefParam'"
     }
     Write-GoldRefreshLog "Synchronizing PixelStreaming repo to pinned $targetDescription and validating build outputs."
-    $repoSyncArguments = @(
-        '-RepoRoot', $RepoRoot,
-        '-Mode', 'maintenance',
-        '-GitSyncMode', 'pinned'
-    )
+    $repoSyncArguments = @{
+        RepoRoot = $RepoRoot
+        Mode = 'maintenance'
+        GitSyncMode = 'pinned'
+    }
     if (-not [string]::IsNullOrWhiteSpace($GitTargetRef)) {
-        $repoSyncArguments += @('-GitTargetRef', $GitTargetRef)
+        $repoSyncArguments.GitTargetRef = $GitTargetRef
     }
     if (-not [string]::IsNullOrWhiteSpace($GitTargetRefParam)) {
-        $repoSyncArguments += @('-GitTargetRefParam', $GitTargetRefParam)
+        $repoSyncArguments.GitTargetRefParam = $GitTargetRefParam
     }
 
     & $repoSyncScript @repoSyncArguments
