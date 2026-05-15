@@ -1,6 +1,6 @@
 # ScaleWorld Cloud Infrastructure (Source of Truth)
 
-Last updated: 2026-05-05
+Last updated: 2026-05-15
 Owner: ScaleWorld Platform
 
 ## Purpose
@@ -192,7 +192,8 @@ Current note:
   - recommended stage launch-template / provisioning tag setting:
     - `ScaleWorldDeploymentTrack=stage`
   - note:
-    - explicit machine env vars such as `SCALEWORLD_GIT_SYNC_MODE`, `SCALEWORLD_GIT_TARGET_REF_PARAM`, `INSTANCE_AGENT_API_BASE_URL`, or `INSTANCE_AGENT_API_BASE_URL_PARAM` still override the derived defaults if they were manually set on the box
+    - explicit machine env vars such as `SCALEWORLD_GIT_TARGET_REF_PARAM`, `INSTANCE_AGENT_API_BASE_URL`, or `INSTANCE_AGENT_API_BASE_URL_PARAM` still override the derived defaults if they were manually set on the box
+    - `SCALEWORLD_GIT_SYNC_MODE=upstream` is not accepted for `stage` or `prod`; startup forces those deployment tracks back to `pinned` so the environment-specific SSM target ref remains authoritative
   - normal prod boot through `start_streamer_stack.bat` now applies pinned repo sync before the stack launch
   - if the AMI repo/build baseline is behind the promoted prod tag, first boot may spend several minutes in repo reset + `BuildScripts/build-all.bat` before Wilbur starts
 
@@ -566,4 +567,5 @@ Note:
 - 2026-03-20: Added SSM-backed prod streamer promotion flow, `BuildScripts/` operator entrypoints, runtime-status publish ordering fixes, and provisioning-heartbeat visibility during repo/bootstrap work.
 - 2026-03-21: Added helper-based lane fallback from instance tag `ScaleWorldLane` (with temporary `ScaleWorldlane` compatibility), switched prod promotion ledger writes to a local untracked file, fixed annotated-tag pinned-sync resolution, added a stale-HEAD guard to prod promotion, and validated a dark-launch prod instance booting successfully in the prod lane after pinned catch-up.
 - 2026-03-22: Added a manual dark-connect helper (`mint-prod-dark-connect-ticket.ps1`) and validated end-to-end prod dark connect through manual ALB routing plus a prod-shaped ticket against the current promoted prod ref.
+- 2026-05-15: Hardened stage/prod streamer startup so stale machine-level `SCALEWORLD_GIT_SYNC_MODE=upstream` cannot bypass the stage/prod SSM target refs.
 

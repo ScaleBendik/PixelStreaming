@@ -39,6 +39,15 @@ if not defined SCALEWORLD_GIT_SYNC_MODE (
     set "SCALEWORLD_GIT_SYNC_MODE=pinned"
   )
 )
+if /i "%SCALEWORLD_GIT_SYNC_MODE%"=="upstream" (
+  if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
+    echo WARNING: Prod deployment track cannot use upstream git sync. Forcing pinned mode so /pixelstreaming/prod/git-target-ref controls startup.
+    set "SCALEWORLD_GIT_SYNC_MODE=pinned"
+  ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
+    echo WARNING: Stage deployment track cannot use upstream git sync. Forcing pinned mode so /pixelstreaming/stage/git-target-ref controls startup.
+    set "SCALEWORLD_GIT_SYNC_MODE=pinned"
+  )
+)
 if not defined SCALEWORLD_GIT_TARGET_REF_PARAM (
   if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
     set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref"

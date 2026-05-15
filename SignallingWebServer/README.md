@@ -215,7 +215,7 @@ Important:
    - `ScaleWorldLane=prod` -> deployment track `prod`
    - `ScaleWorldLane=nonprod` -> deployment track `stage`
    - `Gold` should be explicitly tagged `ScaleWorldDeploymentTrack=dev`
-13. Boot repo sync now defaults on for all tracks unless `SCALEWORLD_GIT_SYNC_MODE=off`.
+13. Boot repo sync now defaults on for all tracks unless `SCALEWORLD_GIT_SYNC_MODE=off`; `stage` and `prod` force stale `SCALEWORLD_GIT_SYNC_MODE=upstream` overrides back to `pinned` so the environment target-ref parameters remain authoritative.
 14. If tracked local repo changes are present, repo-sync recovery fails fast instead of overwriting them.
 15. On successful maintenance validation, the instance keeps Fleet command tags in place, requests stop, and relies on the API to clear those command tags after the stopped instance is observed for the matching job.
 16. The updater uses the prepared data drive (preferably `D:`) for download/scratch space when available, while the final active install remains on `C:\PixelStreaming\WindowsNoEditor`.

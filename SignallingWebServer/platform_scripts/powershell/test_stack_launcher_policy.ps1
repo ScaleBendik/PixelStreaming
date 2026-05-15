@@ -34,6 +34,21 @@ function Assert-DoesNotContainText {
     }
 }
 
+function Assert-MatchesText {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Content,
+        [Parameter(Mandatory = $true)]
+        [string]$Pattern,
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+
+    if (-not [regex]::IsMatch($Content, $Pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)) {
+        throw $Message
+    }
+}
+
 $cmdRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\cmd')
 $stackLauncherPath = Join-Path $cmdRoot 'start_streamer_stack.bat'
 $stackRecycleLauncherPath = Join-Path $cmdRoot 'start_stack_recycle.bat'
@@ -134,6 +149,32 @@ Assert-ContainsText `
     -Content $startDevTurn `
     -Expected 'INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=/pixelstreaming/dev/instance-agent-bootstrap-shared-secret' `
     -Message 'Wilbur startup must derive the Dev bootstrap secret path from the effective control-plane env.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'Stage deployment track cannot use upstream git sync. Forcing pinned mode so /pixelstreaming/stage/git-target-ref controls startup.' `
+    -Message 'Canonical stack startup must force Stage off stale upstream git sync overrides.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'Stage deployment track cannot use upstream git sync. Forcing pinned mode so /pixelstreaming/stage/git-target-ref controls startup.' `
+    -Message 'Wilbur startup must force Stage off stale upstream git sync overrides.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'Prod deployment track cannot use upstream git sync. Forcing pinned mode so /pixelstreaming/prod/git-target-ref controls startup.' `
+    -Message 'Canonical stack startup must force Prod off upstream git sync overrides.'
+
+Assert-MatchesText `
+    -Content $startDevTurn `
+    -Pattern 'else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" \(\s*set "INSTANCE_AGENT_API_BASE_URL_PARAM=/pixelstreaming/stage/instance-agent-api-base-url"\s*\) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="dev"' `
+    -Message 'Stage instance-agent API URL resolution must not fall back to the legacy nonprod parameter.'
+
+Assert-MatchesText `
+    -Content $startDevTurn `
+    -Pattern 'else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" \(\s*set "INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM=/pixelstreaming/stage/instance-agent-control-plane-env"\s*\) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="dev"' `
+    -Message 'Stage instance-agent control-plane env resolution must not fall back to the legacy nonprod parameter.'
+
 Assert-ContainsText `
     -Content $unrealLauncher `
     -Expected 'else { 120 }' `

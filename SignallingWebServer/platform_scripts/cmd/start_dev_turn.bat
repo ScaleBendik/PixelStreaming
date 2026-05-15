@@ -56,6 +56,15 @@ if not defined SCALEWORLD_GIT_SYNC_MODE (
     set "SCALEWORLD_GIT_SYNC_MODE=pinned"
   )
 )
+if /i "%SCALEWORLD_GIT_SYNC_MODE%"=="upstream" (
+  if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
+    echo WARNING: Prod deployment track cannot use upstream git sync. Forcing pinned mode so /pixelstreaming/prod/git-target-ref controls startup.
+    set "SCALEWORLD_GIT_SYNC_MODE=pinned"
+  ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
+    echo WARNING: Stage deployment track cannot use upstream git sync. Forcing pinned mode so /pixelstreaming/stage/git-target-ref controls startup.
+    set "SCALEWORLD_GIT_SYNC_MODE=pinned"
+  )
+)
 if not defined SCALEWORLD_GIT_TARGET_REF_PARAM (
   if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
     set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref"
@@ -92,7 +101,6 @@ if not defined INSTANCE_AGENT_API_BASE_URL_PARAM (
     set "INSTANCE_AGENT_API_BASE_URL_PARAM=/pixelstreaming/prod/instance-agent-api-base-url"
   ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
     set "INSTANCE_AGENT_API_BASE_URL_PARAM=/pixelstreaming/stage/instance-agent-api-base-url"
-    if not defined INSTANCE_AGENT_API_BASE_URL_FALLBACK_PARAM set "INSTANCE_AGENT_API_BASE_URL_FALLBACK_PARAM=/pixelstreaming/nonprod/instance-agent-api-base-url"
   ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="dev" (
     set "INSTANCE_AGENT_API_BASE_URL_PARAM=/pixelstreaming/dev/instance-agent-api-base-url"
     if not defined INSTANCE_AGENT_API_BASE_URL_FALLBACK_PARAM set "INSTANCE_AGENT_API_BASE_URL_FALLBACK_PARAM=/pixelstreaming/nonprod/instance-agent-api-base-url"
@@ -106,7 +114,6 @@ if not defined INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM (
     set "INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM=/pixelstreaming/prod/instance-agent-control-plane-env"
   ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="stage" (
     set "INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM=/pixelstreaming/stage/instance-agent-control-plane-env"
-    if not defined INSTANCE_AGENT_CONTROL_PLANE_ENV_FALLBACK_PARAM set "INSTANCE_AGENT_CONTROL_PLANE_ENV_FALLBACK_PARAM=/pixelstreaming/nonprod/instance-agent-control-plane-env"
   ) else if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="dev" (
     set "INSTANCE_AGENT_CONTROL_PLANE_ENV_PARAM=/pixelstreaming/dev/instance-agent-control-plane-env"
     if not defined INSTANCE_AGENT_CONTROL_PLANE_ENV_FALLBACK_PARAM set "INSTANCE_AGENT_CONTROL_PLANE_ENV_FALLBACK_PARAM=/pixelstreaming/nonprod/instance-agent-control-plane-env"
