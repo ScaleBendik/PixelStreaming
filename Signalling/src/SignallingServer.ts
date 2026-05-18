@@ -12,15 +12,24 @@ import { Messages, MessageHelpers, SignallingProtocol } from '@epicgames-ps/lib-
 import { stringify } from './Utils';
 
 const SCALEWORLD_SESSION_ID_PARAM = 'sm_session_id';
+const SCALEWORLD_SESSION_REQUEST_ID_PARAM = 'sm_session_request_id';
 
-function readScaleWorldSessionId(request: http.IncomingMessage): string | undefined {
+function readScaleWorldQueryParam(request: http.IncomingMessage, name: string): string | undefined {
     try {
         const parsed = new URL(request.url || '/', 'http://localhost');
-        const sessionId = parsed.searchParams.get(SCALEWORLD_SESSION_ID_PARAM)?.trim() ?? '';
-        return sessionId || undefined;
+        const value = parsed.searchParams.get(name)?.trim() ?? '';
+        return value || undefined;
     } catch {
         return undefined;
     }
+}
+
+function readScaleWorldSessionId(request: http.IncomingMessage): string | undefined {
+    return readScaleWorldQueryParam(request, SCALEWORLD_SESSION_ID_PARAM);
+}
+
+function readScaleWorldSessionRequestId(request: http.IncomingMessage): string | undefined {
+    return readScaleWorldQueryParam(request, SCALEWORLD_SESSION_REQUEST_ID_PARAM);
 }
 
 /**
@@ -278,6 +287,14 @@ export class SignallingServer {
         if (scaleWorldSessionId) {
             (newPlayer as PlayerConnection & { scaleWorldSessionId?: string }).scaleWorldSessionId =
                 scaleWorldSessionId;
+        }
+        const scaleWorldSessionRequestId = readScaleWorldSessionRequestId(request);
+        if (scaleWorldSessionRequestId) {
+            (
+                newPlayer as PlayerConnection & {
+                    scaleWorldSessionRequestId?: string;
+                }
+            ).scaleWorldSessionRequestId = scaleWorldSessionRequestId;
         }
         this.registerPlayerKeepalive(ws, request.socket.remoteAddress);
 

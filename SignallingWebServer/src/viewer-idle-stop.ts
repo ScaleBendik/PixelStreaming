@@ -34,6 +34,7 @@ const DEFAULT_RECYCLE_READY_TIMEOUT_SECONDS = 120;
 const DEFAULT_DISCONNECT_FAST_POLLING_WINDOW_MS = 120_000;
 const DEFAULT_SHUTDOWN_LOG_ARTIFACT_CAPTURE_TIMEOUT_MS = 30_000;
 const DEFAULT_SHUTDOWN_SCREENSHOT_ARTIFACT_CAPTURE_TIMEOUT_MS = 120_000;
+const COMMAND_SUPERSESSION_CLOCK_SKEW_MS = 5_000;
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
 const IMDS_METADATA_BASE_URL = 'http://169.254.169.254/latest/meta-data';
 const DEFAULT_MAINTENANCE_TAG_KEY = 'ScaleWorldMaintenanceMode';
@@ -74,7 +75,10 @@ export interface ViewerIdleOptions {
 }
 
 type RuntimeInstanceCommand = InstanceAgentCommand & { status?: string; attemptNumber?: number };
-type ScaleWorldSessionPlayer = { scaleWorldSessionId?: string | null };
+type ScaleWorldSessionPlayer = {
+    scaleWorldSessionId?: string | null;
+    scaleWorldSessionRequestId?: string | null;
+};
 
 async function readCurrentInstanceIdentity(): Promise<{ instanceId: string; region: string }> {
     const token = await readImdsToken();
@@ -426,6 +430,8 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     let stopInFlight = false;
     let hasSeenViewer = server.playerRegistry.count() > 0;
     let hasSeenManagedSessionViewer = false;
+    let lastManagedSessionRequestId: string | null = null;
+    let lastManagedSessionObservedAtMs: number | null = null;
     let currentMaintenanceMode: string | null = null;
     let maintenanceStateInitialized = false;
     let maintenanceRefreshInFlight = false;
@@ -534,6 +540,38 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     const isShutdownCommand = (
         command: { commandType?: string | null; instanceCommandId?: string | null } | null | undefined
     ): boolean => (command?.commandType?.trim().toLowerCase() ?? '') === 'shutdown';
+    const normalizeOptionalText = (value?: string | null): string | null => {
+        const normalized = value?.trim() ?? '';
+        return normalized.length > 0 ? normalized : null;
+    };
+    const commandMatchesCurrentManagedSession = (
+        command: { sessionRequestId?: string | null; requestedAtUtc?: string | null } | null | undefined
+    ): boolean => {
+        const commandSessionRequestId = normalizeOptionalText(command?.sessionRequestId);
+        if (!commandSessionRequestId || !lastManagedSessionRequestId) {
+            return true;
+        }
+
+        if (commandSessionRequestId.toLowerCase() === lastManagedSessionRequestId.toLowerCase()) {
+            return true;
+        }
+
+        if (lastManagedSessionObservedAtMs === null) {
+            return true;
+        }
+
+        // The last managed session id can survive warm reuse. Only treat a
+        // different command as stale when it predates the latest managed viewer.
+        const commandRequestedAtMs = Date.parse(normalizeOptionalText(command?.requestedAtUtc) ?? '');
+        if (!Number.isFinite(commandRequestedAtMs)) {
+            return true;
+        }
+
+        return commandRequestedAtMs > lastManagedSessionObservedAtMs - COMMAND_SUPERSESSION_CLOCK_SKEW_MS;
+    };
+    const isCommandSupersededByCurrentManagedSession = (
+        command: { sessionRequestId?: string | null; requestedAtUtc?: string | null } | null | undefined
+    ): boolean => !commandMatchesCurrentManagedSession(command);
     const readActiveCommand = (): RuntimeInstanceCommand | null => {
         if (options.instanceAgentClient) {
             activeCommand = options.instanceAgentClient.getActiveCommand();
@@ -542,11 +580,17 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     };
     const getActiveRecycleCommand = () => {
         const currentActiveCommand = readActiveCommand();
-        return isRecycleToWarmCommand(currentActiveCommand) ? currentActiveCommand : null;
+        return isRecycleToWarmCommand(currentActiveCommand) &&
+            commandMatchesCurrentManagedSession(currentActiveCommand)
+            ? currentActiveCommand
+            : null;
     };
     const getActiveShutdownCommand = () => {
         const currentActiveCommand = readActiveCommand();
-        return isShutdownCommand(currentActiveCommand) ? currentActiveCommand : null;
+        return isShutdownCommand(currentActiveCommand) &&
+            commandMatchesCurrentManagedSession(currentActiveCommand)
+            ? currentActiveCommand
+            : null;
     };
     const hasRecycleLaunchMarker = (): boolean =>
         recycleMarkerPath.length > 0 && fs.existsSync(recycleMarkerPath);
@@ -577,12 +621,63 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         const player = server.playerRegistry.get(playerId) as ScaleWorldSessionPlayer | undefined;
         const sessionId =
             typeof player?.scaleWorldSessionId === 'string' ? player.scaleWorldSessionId.trim() : '';
-        if (!sessionId) {
+        const sessionRequestId =
+            typeof player?.scaleWorldSessionRequestId === 'string'
+                ? player.scaleWorldSessionRequestId.trim()
+                : '';
+        if (!sessionId && !sessionRequestId) {
             return false;
         }
 
         hasSeenManagedSessionViewer = true;
+        if (sessionRequestId) {
+            lastManagedSessionRequestId = sessionRequestId;
+            lastManagedSessionObservedAtMs = Date.now();
+        }
         return true;
+    };
+    const failSupersededCommand = async (
+        command: RuntimeInstanceCommand | InstanceAgentCommand,
+        source: string
+    ): Promise<boolean> => {
+        if (!isCommandSupersededByCurrentManagedSession(command)) {
+            return false;
+        }
+
+        log(
+            `[idle-stop] Cancelling stale ${command.commandType} command ${command.instanceCommandId} from ${source} because it targets session request ${command.sessionRequestId ?? '(none)'} while the current managed session request is ${lastManagedSessionRequestId}.`
+        );
+
+        if (!options.instanceAgentClient) {
+            return true;
+        }
+
+        try {
+            await options.instanceAgentClient.failCommand(command, {
+                failureCode: 'superseded_by_current_session',
+                failureMessage:
+                    'Command targets an older session request after a newer managed session connected.',
+                terminalStatus: 'Cancelled',
+                occurredAtUtc: new Date().toISOString()
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            log(
+                `[idle-stop] Failed to cancel stale command ${command.instanceCommandId} from ${source}: ${message}`
+            );
+        } finally {
+            refreshActiveCommand();
+        }
+
+        return true;
+    };
+    const failSupersededActiveCommand = (source: string): void => {
+        const command = readActiveCommand();
+        if (!command || !isCommandSupersededByCurrentManagedSession(command)) {
+            return;
+        }
+
+        void failSupersededCommand(command, source);
     };
     const resolveDesiredStateShutdownReason = (): string => {
         if (getActiveShutdownCommand()) {
@@ -1434,6 +1529,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     const onViewerAdded = (playerId?: string): void => {
         hasSeenViewer = true;
         markManagedSessionViewer(playerId);
+        failSupersededActiveCommand('viewer_connected');
         resetInFlight = false;
         recycleLaunchRequested = false;
         passiveReconnectRecycleRequested = false;
@@ -1462,37 +1558,59 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
-        if (maintenanceStateInitialized && !isMaintenanceActive() && shouldResetIntoWarmReady()) {
-            options.instanceAgentClient?.requestFastPolling('viewer_disconnected_reconnect_grace', {
-                durationMs: Math.min(Math.max(graceMs, 20_000), DEFAULT_DISCONNECT_FAST_POLLING_WINDOW_MS)
-            });
-            if (getActiveRecycleCommand()) {
-                startResetWindow(true);
-                return;
-            }
-            if (hasPendingImmediateRecycle()) {
-                startResetWindow(true);
+        const handleZeroViewersAfterRemoval = (): void => {
+            if (server.playerRegistry.count() > 0) {
+                log(
+                    '[idle-stop] Viewer disconnect handling skipped because viewers are connected after registry settled.'
+                );
                 return;
             }
 
-            scheduleResetAfterLastViewer(graceMs);
+            failSupersededActiveCommand('viewer_disconnected');
+
+            if (maintenanceStateInitialized && !isMaintenanceActive() && shouldResetIntoWarmReady()) {
+                options.instanceAgentClient?.requestFastPolling('viewer_disconnected_reconnect_grace', {
+                    durationMs: Math.min(Math.max(graceMs, 20_000), DEFAULT_DISCONNECT_FAST_POLLING_WINDOW_MS)
+                });
+                if (getActiveRecycleCommand()) {
+                    startResetWindow(true);
+                    return;
+                }
+                if (hasPendingImmediateRecycle()) {
+                    startResetWindow(true);
+                    return;
+                }
+
+                scheduleResetAfterLastViewer(graceMs);
+                return;
+            }
+
+            if (maintenanceStateInitialized && !isMaintenanceActive() && getActiveShutdownCommand()) {
+                void requestStop('command_shutdown_requested');
+                return;
+            }
+
+            if (
+                maintenanceStateInitialized &&
+                !isMaintenanceActive() &&
+                shouldSuppressNoViewerIdleAutomation()
+            ) {
+                options.instanceAgentClient?.requestFastPolling('viewer_disconnected_reconnect_grace', {
+                    durationMs: Math.min(Math.max(graceMs, 20_000), DEFAULT_DISCONNECT_FAST_POLLING_WINDOW_MS)
+                });
+                scheduleWarmHoldReconnectGrace(graceMs);
+                return;
+            }
+
+            scheduleStop('grace-after-last-viewer', graceMs);
+        };
+
+        if (removedEntryStillPresent) {
+            setTimeout(handleZeroViewersAfterRemoval, 0);
             return;
         }
 
-        if (maintenanceStateInitialized && !isMaintenanceActive() && getActiveShutdownCommand()) {
-            void requestStop('command_shutdown_requested');
-            return;
-        }
-
-        if (maintenanceStateInitialized && !isMaintenanceActive() && shouldSuppressNoViewerIdleAutomation()) {
-            options.instanceAgentClient?.requestFastPolling('viewer_disconnected_reconnect_grace', {
-                durationMs: Math.min(Math.max(graceMs, 20_000), DEFAULT_DISCONNECT_FAST_POLLING_WINDOW_MS)
-            });
-            scheduleWarmHoldReconnectGrace(graceMs);
-            return;
-        }
-
-        scheduleStop('grace-after-last-viewer', graceMs);
+        handleZeroViewersAfterRemoval();
     };
 
     server.playerRegistry.on('added', onViewerAdded);
@@ -1505,7 +1623,15 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         });
         options.instanceAgentClient.addCommandListener((command: InstanceAgentCommand) => {
             void (async () => {
-                const trackedCommand = readActiveCommand();
+                let trackedCommand = readActiveCommand();
+                if (trackedCommand && (await failSupersededCommand(trackedCommand, 'active-command'))) {
+                    trackedCommand = null;
+                }
+
+                if (await failSupersededCommand(command, 'command-listener')) {
+                    return;
+                }
+
                 if (trackedCommand && trackedCommand.instanceCommandId === command.instanceCommandId) {
                     return;
                 }
