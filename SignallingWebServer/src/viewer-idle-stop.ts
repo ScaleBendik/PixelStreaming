@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
 import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
+import type { IPlayer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
 import type { InstanceAgentClient, InstanceAgentCommand } from './instance-agent';
 import { RuntimeStatusPublisher, SignallingRuntimeStatusController } from './runtime-status';
 import {
@@ -635,6 +636,30 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             lastManagedSessionObservedAtMs = Date.now();
         }
         return true;
+    };
+    const disconnectPlayersForExplicitTeardown = (command: RuntimeInstanceCommand): number => {
+        const players: IPlayer[] = server.playerRegistry.listPlayers();
+        if (players.length === 0) {
+            return 0;
+        }
+
+        const operation = isShutdownCommand(command) ? 'shutdown' : 'recycle';
+        log(
+            `[idle-stop] ${operation} command ${command.instanceCommandId} requested while ${players.length} viewer(s) are still connected. Disconnecting viewers before teardown.`
+        );
+
+        for (const player of players) {
+            try {
+                player.protocol.disconnect(4001, 'ScaleWorld session ended');
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                log(
+                    `[idle-stop] Failed to disconnect viewer ${player.playerId} for ${operation} command ${command.instanceCommandId}: ${message}`
+                );
+            }
+        }
+
+        return players.length;
     };
     const failSupersededCommand = async (
         command: RuntimeInstanceCommand | InstanceAgentCommand,
@@ -1698,11 +1723,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
                         tryResumeActiveRecycleCommand();
                     } else {
-                        log(
-                            isShutdownCommand(command)
-                                ? `[idle-stop] Shutdown command ${command.instanceCommandId} acknowledged while viewers are still connected. Waiting for disconnect before stop.`
-                                : `[idle-stop] Recycle command ${command.instanceCommandId} acknowledged while viewers are still connected. Waiting for disconnect before recycle.`
-                        );
+                        disconnectPlayersForExplicitTeardown(command);
                     }
                 } catch (error) {
                     if (observedCommand?.instanceCommandId === command.instanceCommandId) {

@@ -340,6 +340,11 @@ Assert-ContainsText `
     -Content $viewerIdleStop `
     -Expected 'activeCommand = options.instanceAgentClient.getActiveCommand();' `
     -Message 'Viewer idle stop must not keep stale recovered commands after the instance agent clears its command journal.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected 'Disconnecting viewers before teardown' `
+    -Message 'Explicit teardown commands must disconnect active viewers instead of waiting for the browser tab to close.'
 Assert-ContainsText `
     -Content $startDevTurn `
     -Expected 'if not defined INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF set "INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF=false"' `
