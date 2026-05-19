@@ -39,6 +39,8 @@ const SESSION_MANAGER_RECONNECT_SESSION_ID_PARAM = 'reconnectSessionId';
 const SESSION_NETWORK_PATH_ENDPOINT = '/api/session-network-path';
 const EXPIRED_CONNECTION_GUIDANCE =
     'Connection expired. Return to your ScaleWorld session manager and click connect again to continue your session.';
+const SESSION_ENDED_GUIDANCE =
+    'This ScaleWorld session has ended. Return to your ScaleWorld session manager to start a new session.';
 const RECONNECT_BOOTSTRAP_QUERY_PARAMS = new Set<string>([
     CONNECT_TICKET_PARAM,
     RECONNECT_REGION_PARAM,
@@ -430,6 +432,11 @@ const isConnectTicketDisconnectReason = (reason: string): boolean => {
     );
 };
 
+const isScaleWorldSessionEndedReason = (reason: string): boolean => {
+    const normalized = reason.trim().toLowerCase();
+    return normalized.includes('scaleworld session ended');
+};
+
 const parseConnectTicketExpiryMs = (ticket: string): number | null => {
     const trimmedTicket = ticket.trim();
     if (!trimmedTicket) {
@@ -466,6 +473,33 @@ const showExpiredConnectionGuidance = () => {
         const errorOverlayText = document.getElementById('errorOverlayInner');
         if (errorOverlayText) {
             errorOverlayText.innerHTML = EXPIRED_CONNECTION_GUIDANCE;
+        }
+    }, 0);
+};
+
+const showSessionEndedGuidance = () => {
+    window.setTimeout(() => {
+        const disconnectOverlay = document.getElementById('disconnectOverlay');
+        if (disconnectOverlay) {
+            disconnectOverlay.classList.remove('clickableState');
+            disconnectOverlay.addEventListener(
+                'click',
+                (event) => {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                },
+                { capture: true }
+            );
+        }
+
+        const disconnectOverlayText = document.getElementById('disconnectButton');
+        if (disconnectOverlayText) {
+            disconnectOverlayText.innerHTML = SESSION_ENDED_GUIDANCE;
+        }
+
+        const errorOverlayText = document.getElementById('errorOverlayInner');
+        if (errorOverlayText) {
+            errorOverlayText.innerHTML = SESSION_ENDED_GUIDANCE;
         }
     }, 0);
 };
@@ -682,6 +716,16 @@ document.body.onload = function() {
     stream.addEventListener('webRtcDisconnected', (event) => {
         const eventData = (event as { data?: { eventString?: string } }).data;
         const reason = eventData?.eventString ?? '';
+        if (isScaleWorldSessionEndedReason(reason)) {
+            removeSessionStorage(connectTicketStorageKey);
+            removeSessionStorage(reconnectContextStorageKey);
+            showSessionEndedGuidance();
+            window.setTimeout(() => {
+                window.close();
+            }, 0);
+            return;
+        }
+
         const isConnectTicketDisconnect =
             isConnectTicketDisconnectReason(reason) ||
             (connectTicketExpiresAtMs !== null && Date.now() >= connectTicketExpiresAtMs);

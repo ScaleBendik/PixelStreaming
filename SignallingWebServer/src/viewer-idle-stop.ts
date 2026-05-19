@@ -7,6 +7,7 @@ import { promisify } from 'util';
 import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
 import type { IPlayer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
 import type { InstanceAgentClient, InstanceAgentCommand } from './instance-agent';
+import type { ConnectTicketRuntimeGate } from './connect-ticket-runtime-state';
 import { RuntimeStatusPublisher, SignallingRuntimeStatusController } from './runtime-status';
 import {
     normalizeInstanceAgentDesiredStateSnapshot,
@@ -73,6 +74,7 @@ export interface ViewerIdleOptions {
         | 'captureSessionScreenshotArtifact'
         | 'requestFastPolling'
     > | null;
+    connectTicketRuntimeGate?: Pick<ConnectTicketRuntimeGate, 'markTeardownStarted'> | null;
 }
 
 type RuntimeInstanceCommand = InstanceAgentCommand & { status?: string; attemptNumber?: number };
@@ -541,6 +543,18 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     const isShutdownCommand = (
         command: { commandType?: string | null; instanceCommandId?: string | null } | null | undefined
     ): boolean => (command?.commandType?.trim().toLowerCase() ?? '') === 'shutdown';
+    const markConnectTicketTeardownStarted = (
+        reason: string,
+        command?: RuntimeInstanceCommand | null,
+        occurredAtUtc?: string | null
+    ): void => {
+        options.connectTicketRuntimeGate?.markTeardownStarted({
+            reason,
+            commandType: command?.commandType,
+            instanceCommandId: command?.instanceCommandId,
+            occurredAtUtc: occurredAtUtc ?? undefined
+        });
+    };
     const normalizeOptionalText = (value?: string | null): string | null => {
         const normalized = value?.trim() ?? '';
         return normalized.length > 0 ? normalized : null;
@@ -650,7 +664,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         for (const player of players) {
             try {
-                player.protocol.disconnect(4001, 'ScaleWorld session ended');
+                player.protocol.disconnect(4001, 'Connect ticket revoked: ScaleWorld session ended');
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 log(
@@ -877,10 +891,12 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     ): void => {
         const recycleRequestedTokenChanged =
             nextDesiredState.recycleRequestedToken !== currentDesiredState.recycleRequestedToken;
+        const shutdownRequestedChanged =
+            nextDesiredState.shutdownRequested !== currentDesiredState.shutdownRequested;
         const changed =
             nextDesiredState.warmHoldEnabled !== currentDesiredState.warmHoldEnabled ||
             nextDesiredState.drainEnabled !== currentDesiredState.drainEnabled ||
-            nextDesiredState.shutdownRequested !== currentDesiredState.shutdownRequested ||
+            shutdownRequestedChanged ||
             recycleRequestedTokenChanged ||
             nextDesiredState.policyVersion !== currentDesiredState.policyVersion ||
             nextDesiredState.message !== currentDesiredState.message;
@@ -892,6 +908,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         if (recycleRequestedTokenChanged) {
             if (currentDesiredState.recycleRequestedToken) {
+                markConnectTicketTeardownStarted(
+                    'desired_state_recycle_request',
+                    null,
+                    currentDesiredState.updatedAtUtc
+                );
                 if (currentDesiredState.recycleRequestedToken === recoveredRecycleTokenAtStartup) {
                     pendingImmediateRecycleToken = null;
                     log(
@@ -912,6 +933,13 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             } else {
                 pendingImmediateRecycleToken = null;
             }
+        }
+        if (shutdownRequestedChanged && currentDesiredState.shutdownRequested) {
+            markConnectTicketTeardownStarted(
+                'desired_state_shutdown_request',
+                null,
+                currentDesiredState.updatedAtUtc
+            );
         }
 
         log(
@@ -1189,6 +1217,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
                 clearTransientStatusHeartbeat();
                 passiveReconnectRecycleRequested = true;
+                markConnectTicketTeardownStarted('passive_reconnect_grace_recycle');
                 log(
                     '[idle-stop] Reconnect grace expired without an explicit teardown command. Recycling warm instance for post-session cleanup.'
                 );
@@ -1703,6 +1732,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     return;
                 }
 
+                markConnectTicketTeardownStarted(
+                    isShutdownCommand(command) ? 'explicit_shutdown_command' : 'explicit_recycle_command',
+                    command
+                );
                 observedCommand = command;
                 try {
                     await options.instanceAgentClient?.acknowledgeCommand(command, {

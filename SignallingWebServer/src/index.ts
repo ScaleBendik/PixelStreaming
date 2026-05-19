@@ -15,6 +15,7 @@ import { initInputHandler } from './InputHandler';
 import { Command, Option } from 'commander';
 import { initialize } from 'express-openapi';
 import { ConnectTicketAuthMode, createPlayerVerifyClient } from './ConnectTicketAuth';
+import { createConnectTicketRuntimeGate } from './connect-ticket-runtime-state';
 import { wireViewerIdleStop } from './viewer-idle-stop';
 import { wireInstanceAgent } from './instance-agent';
 import {
@@ -672,6 +673,11 @@ if (Number.isNaN(authClockSkewSeconds)) {
         `Invalid auth_clock_skew_seconds value '${options.auth_clock_skew_seconds}'. Expected an integer.`
     );
 }
+const instanceAgentDesiredStatePath = String(options.instance_agent_desired_state_path || '');
+const connectTicketRuntimeGate = createConnectTicketRuntimeGate({
+    desiredStatePath: instanceAgentDesiredStatePath,
+    logger: (message: string) => Logger.info(message)
+});
 
 const playerVerifyClient = createPlayerVerifyClient({
     mode: authMode,
@@ -680,7 +686,8 @@ const playerVerifyClient = createPlayerVerifyClient({
     signingKey: String(options.auth_signing_key || ''),
     instanceId: String(options.auth_instance_id || ''),
     routeHostSuffix: String(options.auth_route_host_suffix || ''),
-    clockSkewSeconds: authClockSkewSeconds
+    clockSkewSeconds: authClockSkewSeconds,
+    runtimeGate: connectTicketRuntimeGate
 });
 
 const serverOpts: IServerConfig = {
@@ -745,7 +752,7 @@ const instanceAgentClient = wireInstanceAgent(signallingServer, {
         options.instance_agent_runtime_version || options.runtime_status_version || pjson.version || ''
     ),
     heartbeatMs: options.instance_agent_heartbeat_ms,
-    desiredStatePath: String(options.instance_agent_desired_state_path || ''),
+    desiredStatePath: instanceAgentDesiredStatePath,
     sessionLogArtifacts: {
         enabled: options.instance_agent_artifact_upload_enabled || undefined,
         bucketName: options.instance_agent_artifact_bucket || undefined,
@@ -856,15 +863,14 @@ wireViewerIdleStop(signallingServer, {
     stopRetryMs: options.viewer_idle_stop_retry_ms,
     resetGraceMs: options.viewer_idle_reset_grace_ms,
     desiredStatePath:
-        String(options.instance_agent_desired_state_path || '').trim().length > 0
-            ? String(options.instance_agent_desired_state_path || '')
-            : undefined,
+        instanceAgentDesiredStatePath.trim().length > 0 ? instanceAgentDesiredStatePath : undefined,
     awsCliPath: options.viewer_idle_aws_cli_path,
     dryRun: options.viewer_idle_stop_dry_run,
     logger: (message: string) => Logger.info(message),
     runtimeStatusPublisher,
     runtimeStatusController,
-    instanceAgentClient
+    instanceAgentClient,
+    connectTicketRuntimeGate
 });
 
 if (options.stdin) {

@@ -57,6 +57,8 @@ $stackRecycleScriptPath = Join-Path $PSScriptRoot 'invoke_stack_recycle.ps1'
 $unrealLauncherPath = Join-Path $PSScriptRoot 'start_scaleworld.ps1'
 $watchdogPath = Join-Path $PSScriptRoot 'watchdog.ps1'
 $viewerIdleStopPath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\src\viewer-idle-stop.ts')
+$connectTicketAuthPath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\src\ConnectTicketAuth.ts')
+$connectTicketRuntimeStatePath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\src\connect-ticket-runtime-state.ts')
 $instanceAgentPath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\src\instance-agent.ts')
 $repoSyncPath = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
 
@@ -67,6 +69,8 @@ $stackRecycleScript = [System.IO.File]::ReadAllText($stackRecycleScriptPath)
 $unrealLauncher = [System.IO.File]::ReadAllText($unrealLauncherPath)
 $watchdog = [System.IO.File]::ReadAllText($watchdogPath)
 $viewerIdleStop = [System.IO.File]::ReadAllText($viewerIdleStopPath)
+$connectTicketAuth = [System.IO.File]::ReadAllText($connectTicketAuthPath)
+$connectTicketRuntimeState = [System.IO.File]::ReadAllText($connectTicketRuntimeStatePath)
 $instanceAgent = [System.IO.File]::ReadAllText($instanceAgentPath)
 $repoSync = [System.IO.File]::ReadAllText($repoSyncPath)
 
@@ -345,6 +349,21 @@ Assert-ContainsText `
     -Content $viewerIdleStop `
     -Expected 'Disconnecting viewers before teardown' `
     -Message 'Explicit teardown commands must disconnect active viewers instead of waiting for the browser tab to close.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected 'markConnectTicketTeardownStarted' `
+    -Message 'Explicit teardown commands must revoke active connect tickets before disconnecting viewers.'
+
+Assert-ContainsText `
+    -Content $connectTicketAuth `
+    -Expected 'runtimeGate?.rejectReasonForTicket' `
+    -Message 'Player websocket auth must consult runtime teardown state before accepting a connect ticket.'
+
+Assert-ContainsText `
+    -Content $connectTicketRuntimeState `
+    -Expected 'rejectTicketsIssuedAtOrBeforeEpochSeconds' `
+    -Message 'Connect-ticket teardown revocation must persist a cutoff across Wilbur restarts.'
 Assert-ContainsText `
     -Content $startDevTurn `
     -Expected 'if not defined INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF set "INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF=false"' `
