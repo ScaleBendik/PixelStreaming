@@ -31,6 +31,7 @@ export interface RuntimeStatusPublisherOptions {
     source?: string;
     version?: string;
     logger?: (message: string) => void;
+    observer?: (update: RuntimeStatusUpdate) => void;
 }
 export interface SessionNetworkPathReport {
     sessionId: string;
@@ -223,8 +224,10 @@ export function createRuntimeStatusPublisher(
         options.source ?? process.env.RUNTIME_STATUS_SOURCE ?? 'signalling-server'
     );
     const defaultVersion = normalizeTagValue(options.version ?? process.env.RUNTIME_STATUS_VERSION ?? '');
+    const observer = options.observer;
     const resolveIdentity = createInstanceIdentityResolver();
     let desiredStatus: string | null = null;
+    let desiredSequence = 0;
     let publishQueue: Promise<void> = Promise.resolve();
 
     return {
@@ -233,8 +236,9 @@ export function createRuntimeStatusPublisher(
             const heartbeatOnly = update.heartbeatOnly === true;
             const preserveStatusAtUtc = update.preserveStatusAtUtc === true;
             const preservesCurrentStatusTimestamp = preserveStatusAtUtc && !heartbeatOnly;
+            const publishSequence = heartbeatOnly ? desiredSequence : ++desiredSequence;
 
-            if (!heartbeatOnly || preservesCurrentStatusTimestamp) {
+            if (!heartbeatOnly) {
                 desiredStatus = normalizedStatus;
             }
 
@@ -247,6 +251,13 @@ export function createRuntimeStatusPublisher(
 
             const previousPublish = publishQueue.catch(() => undefined);
             const publishTask = previousPublish.then(async () => {
+                if (!heartbeatOnly && publishSequence !== desiredSequence) {
+                    log(
+                        `[runtime-status] Skipping stale status transition for status='${normalizedStatus}' because a newer status has already been requested.`
+                    );
+                    return false;
+                }
+
                 if (heartbeatOnly && desiredStatus && normalizedStatus !== desiredStatus) {
                     log(
                         `[runtime-status] Ignoring stale heartbeat for status='${normalizedStatus}' while current status='${desiredStatus}'.`
@@ -254,7 +265,33 @@ export function createRuntimeStatusPublisher(
                     return false;
                 }
 
+                if (heartbeatOnly && publishSequence !== desiredSequence) {
+                    log(
+                        `[runtime-status] Ignoring stale heartbeat for status='${normalizedStatus}' because a newer status has already been requested.`
+                    );
+                    return false;
+                }
+
                 try {
+                    if (observer) {
+                        try {
+                            observer({
+                                ...update,
+                                status: normalizedStatus,
+                                source: normalizeTagValue(update.source ?? defaultSource),
+                                version: normalizeTagValue(update.version ?? defaultVersion)
+                            });
+                        } catch (observerError) {
+                            const observerMessage =
+                                observerError instanceof Error
+                                    ? observerError.message
+                                    : String(observerError);
+                            log(
+                                `[runtime-status] Observer failed for status '${normalizedStatus}': ${observerMessage}`
+                            );
+                        }
+                    }
+
                     const { instanceId, region } = await resolveIdentity();
                     const nowIso = new Date().toISOString();
                     const tags: Array<{ Key: string; Value: string }> = [

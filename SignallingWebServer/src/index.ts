@@ -15,7 +15,9 @@ import { initInputHandler } from './InputHandler';
 import { Command, Option } from 'commander';
 import { initialize } from 'express-openapi';
 import { ConnectTicketAuthMode, createPlayerVerifyClient } from './ConnectTicketAuth';
+import { createConnectTicketRuntimeGate } from './connect-ticket-runtime-state';
 import { wireViewerIdleStop } from './viewer-idle-stop';
+import { wireInstanceAgent } from './instance-agent';
 import {
     createRuntimeStatusPublisher,
     createSessionNetworkPathReporter,
@@ -29,6 +31,7 @@ const ENV_PLACEHOLDER_REGEX = /\$\{ENV:([A-Z0-9_]+)\}/g;
 
 const REDACTED_LOG_FIELDS = new Set([
     'auth_signing_key',
+    'instance_agent_bootstrap_shared_secret',
     'peer_options',
     'peer_options_player',
     'peer_options_streamer'
@@ -328,11 +331,11 @@ program
     .option(
         '--viewer_idle_grace_ms <number>',
         'Grace period after last viewer disconnect before instance stop.',
-        config_file.viewer_idle_grace_ms || '900000'
+        config_file.viewer_idle_grace_ms || '300000'
     )
     .option(
         '--viewer_idle_first_viewer_grace_ms <number>',
-        'Maximum wait for first viewer connection before instance stop.',
+        'Maximum wait for first viewer connection before reclaiming an unused started instance.',
         config_file.viewer_idle_first_viewer_grace_ms || '1800000'
     )
     .option(
@@ -344,6 +347,11 @@ program
         '--viewer_idle_stop_retry_ms <number>',
         'Retry delay for stop request failures while still idle.',
         config_file.viewer_idle_stop_retry_ms || '60000'
+    )
+    .option(
+        '--viewer_idle_reset_grace_ms <number>',
+        'Warm-reset window after the last viewer disconnects before the instance is reusable again.',
+        config_file.viewer_idle_reset_grace_ms || '15000'
     )
     .option(
         '--viewer_idle_aws_cli_path <path>',
@@ -374,6 +382,151 @@ program
         '--runtime_status_version <value>',
         'Version label written with runtime status tags.',
         config_file.runtime_status_version || ''
+    )
+    .option(
+        '--instance_agent <value>',
+        'Enables passive instance-agent heartbeat and runtime event publishing. true/false',
+        config_file.instance_agent ?? 'false'
+    )
+    .option(
+        '--instance_agent_api_base_url <value>',
+        'Base URL for the ScaleWorld agent API (for example https://api.example.test).',
+        config_file.instance_agent_api_base_url || ''
+    )
+    .option(
+        '--instance_agent_bootstrap_shared_secret <value>',
+        'Optional shared secret sent during agent bootstrap.',
+        config_file.instance_agent_bootstrap_shared_secret || ''
+    )
+    .option(
+        '--instance_agent_require_identity_proof <value>',
+        'Requires EC2 instance identity document and signature reads before agent bootstrap. true/false',
+        config_file.instance_agent_require_identity_proof ?? 'false'
+    )
+    .option(
+        '--instance_agent_instance_id <value>',
+        'Optional explicit instance id for local or non-IMDS testing.',
+        config_file.instance_agent_instance_id || ''
+    )
+    .option(
+        '--instance_agent_region <value>',
+        'Optional explicit AWS region for local or non-IMDS testing.',
+        config_file.instance_agent_region || ''
+    )
+    .option(
+        '--instance_agent_lane <value>',
+        'Optional lane hint reported during agent bootstrap.',
+        config_file.instance_agent_lane || ''
+    )
+    .option(
+        '--instance_agent_route_key <value>',
+        'Optional route key hint reported during agent bootstrap.',
+        config_file.instance_agent_route_key || ''
+    )
+    .option(
+        '--instance_agent_scope_value <value>',
+        'Optional access scope hint reported during agent bootstrap.',
+        config_file.instance_agent_scope_value || ''
+    )
+    .option(
+        '--instance_agent_version <value>',
+        'Optional agent version label reported to the API.',
+        config_file.instance_agent_version || ''
+    )
+    .option(
+        '--instance_agent_runtime_version <value>',
+        'Optional runtime version label reported to the API.',
+        config_file.instance_agent_runtime_version || ''
+    )
+    .option(
+        '--instance_agent_heartbeat_ms <number>',
+        'Overrides the agent heartbeat interval in milliseconds.',
+        config_file.instance_agent_heartbeat_ms || ''
+    )
+    .option(
+        '--instance_agent_desired_state_path <path>',
+        'Local file path where desired-state snapshots from the API are written.',
+        config_file.instance_agent_desired_state_path || ''
+    )
+    .option(
+        '--instance_agent_artifact_upload_enabled <value>',
+        'Enables upload and agent registration of session diagnostic log artifacts. true/false',
+        config_file.instance_agent_artifact_upload_enabled || ''
+    )
+    .option(
+        '--instance_agent_artifact_bucket <value>',
+        'S3 bucket for session diagnostic log artifacts.',
+        config_file.instance_agent_artifact_bucket || ''
+    )
+    .option(
+        '--instance_agent_artifact_prefix <value>',
+        'S3 object key prefix for session diagnostic log artifacts.',
+        config_file.instance_agent_artifact_prefix || ''
+    )
+    .option(
+        '--instance_agent_artifact_aws_cli_path <path>',
+        'AWS CLI executable used for session artifact uploads (default: runtime status AWS CLI path or aws).',
+        config_file.instance_agent_artifact_aws_cli_path || ''
+    )
+    .option(
+        '--instance_agent_artifact_queue_path <path>',
+        'Local durable queue path for pending session artifact upload/registration records.',
+        config_file.instance_agent_artifact_queue_path || ''
+    )
+    .option(
+        '--instance_agent_artifact_max_bytes <number>',
+        'Maximum uncompressed log bytes to include in one diagnostic bundle.',
+        config_file.instance_agent_artifact_max_bytes || ''
+    )
+    .option(
+        '--instance_agent_artifact_unreal_log_directory <path>',
+        'Optional Unreal Saved\\Logs directory to include in session diagnostic bundles.',
+        config_file.instance_agent_artifact_unreal_log_directory || ''
+    )
+    .option(
+        '--instance_agent_screenshot_artifact_upload_enabled <value>',
+        'Enables upload and agent registration of user screenshot bundles. true/false',
+        config_file.instance_agent_screenshot_artifact_upload_enabled || ''
+    )
+    .option(
+        '--instance_agent_screenshot_artifact_bucket <value>',
+        'S3 bucket for user screenshot bundles. Defaults to the session artifact bucket.',
+        config_file.instance_agent_screenshot_artifact_bucket || ''
+    )
+    .option(
+        '--instance_agent_screenshot_artifact_prefix <value>',
+        'S3 object key prefix for user screenshot bundles.',
+        config_file.instance_agent_screenshot_artifact_prefix || ''
+    )
+    .option(
+        '--instance_agent_screenshot_source_folder <path>',
+        'Unreal Saved\\Screenshots source folder for user screenshot bundles.',
+        config_file.instance_agent_screenshot_source_folder || ''
+    )
+    .option(
+        '--instance_agent_screenshot_artifact_queue_path <path>',
+        'Local durable queue path for pending screenshot bundle upload/registration records.',
+        config_file.instance_agent_screenshot_artifact_queue_path || ''
+    )
+    .option(
+        '--instance_agent_screenshot_artifact_max_files <number>',
+        'Maximum screenshot files to include in one screenshot bundle.',
+        config_file.instance_agent_screenshot_artifact_max_files || ''
+    )
+    .option(
+        '--instance_agent_screenshot_artifact_max_bytes <number>',
+        'Maximum source screenshot bytes to include in one screenshot bundle.',
+        config_file.instance_agent_screenshot_artifact_max_bytes || ''
+    )
+    .option(
+        '--instance_agent_screenshot_artifact_retention_days <number>',
+        'Retention days written to screenshot bundle metadata.',
+        config_file.instance_agent_screenshot_artifact_retention_days || ''
+    )
+    .option(
+        '--instance_agent_screenshot_artifact_settle_delay_ms <number>',
+        'Delay before collecting screenshots after session teardown starts.',
+        config_file.instance_agent_screenshot_artifact_settle_delay_ms || ''
     )
     .option(
         '--log_config',
@@ -520,6 +673,11 @@ if (Number.isNaN(authClockSkewSeconds)) {
         `Invalid auth_clock_skew_seconds value '${options.auth_clock_skew_seconds}'. Expected an integer.`
     );
 }
+const instanceAgentDesiredStatePath = String(options.instance_agent_desired_state_path || '');
+const connectTicketRuntimeGate = createConnectTicketRuntimeGate({
+    desiredStatePath: instanceAgentDesiredStatePath,
+    logger: (message: string) => Logger.info(message)
+});
 
 const playerVerifyClient = createPlayerVerifyClient({
     mode: authMode,
@@ -528,7 +686,8 @@ const playerVerifyClient = createPlayerVerifyClient({
     signingKey: String(options.auth_signing_key || ''),
     instanceId: String(options.auth_instance_id || ''),
     routeHostSuffix: String(options.auth_route_host_suffix || ''),
-    clockSkewSeconds: authClockSkewSeconds
+    clockSkewSeconds: authClockSkewSeconds,
+    runtimeGate: connectTicketRuntimeGate
 });
 
 const serverOpts: IServerConfig = {
@@ -578,11 +737,67 @@ if (options.serve) {
 }
 
 const signallingServer = new SignallingServer(serverOpts);
+const instanceAgentClient = wireInstanceAgent(signallingServer, {
+    enabled: options.instance_agent,
+    apiBaseUrl: String(options.instance_agent_api_base_url || ''),
+    bootstrapSharedSecret: String(options.instance_agent_bootstrap_shared_secret || ''),
+    instanceId: String(options.instance_agent_instance_id || ''),
+    region: String(options.instance_agent_region || ''),
+    requireIdentityProof: options.instance_agent_require_identity_proof,
+    lane: String(options.instance_agent_lane || ''),
+    routeKey: String(options.instance_agent_route_key || ''),
+    scopeValue: String(options.instance_agent_scope_value || ''),
+    agentVersion: String(options.instance_agent_version || pjson.version || ''),
+    runtimeVersion: String(
+        options.instance_agent_runtime_version || options.runtime_status_version || pjson.version || ''
+    ),
+    heartbeatMs: options.instance_agent_heartbeat_ms,
+    desiredStatePath: instanceAgentDesiredStatePath,
+    sessionLogArtifacts: {
+        enabled: options.instance_agent_artifact_upload_enabled || undefined,
+        bucketName: options.instance_agent_artifact_bucket || undefined,
+        objectPrefix: options.instance_agent_artifact_prefix || undefined,
+        awsCliPath:
+            options.instance_agent_artifact_aws_cli_path || options.runtime_status_aws_cli_path || undefined,
+        awsRegion: options.instance_agent_region || undefined,
+        queuePath: options.instance_agent_artifact_queue_path || undefined,
+        maxBytes: options.instance_agent_artifact_max_bytes || undefined,
+        logFolder: options.log_folder || undefined,
+        unrealLogDirectory: options.instance_agent_artifact_unreal_log_directory || undefined
+    },
+    sessionScreenshotArtifacts: {
+        enabled: options.instance_agent_screenshot_artifact_upload_enabled || undefined,
+        bucketName:
+            options.instance_agent_screenshot_artifact_bucket ||
+            options.instance_agent_artifact_bucket ||
+            undefined,
+        objectPrefix: options.instance_agent_screenshot_artifact_prefix || undefined,
+        sourceFolder: options.instance_agent_screenshot_source_folder || undefined,
+        awsCliPath:
+            options.instance_agent_artifact_aws_cli_path || options.runtime_status_aws_cli_path || undefined,
+        awsRegion: options.instance_agent_region || undefined,
+        queuePath: options.instance_agent_screenshot_artifact_queue_path || undefined,
+        maxFiles: options.instance_agent_screenshot_artifact_max_files || undefined,
+        maxBytes: options.instance_agent_screenshot_artifact_max_bytes || undefined,
+        retentionDays: options.instance_agent_screenshot_artifact_retention_days || undefined,
+        settleDelayMs: options.instance_agent_screenshot_artifact_settle_delay_ms || undefined,
+        lane: options.instance_agent_lane || undefined,
+        runtimeVersion:
+            options.instance_agent_runtime_version ||
+            options.runtime_status_version ||
+            pjson.version ||
+            undefined
+    },
+    logger: (message: string) => Logger.info(message)
+});
 const runtimeStatusPublisher = createRuntimeStatusPublisher({
     enabled: options.runtime_status,
     awsCliPath: options.runtime_status_aws_cli_path,
     source: String(options.runtime_status_source || 'signalling-server'),
     version: String(options.runtime_status_version || pjson.version || ''),
+    observer: (update) => {
+        instanceAgentClient?.recordRuntimeStatus(update);
+    },
     logger: (message: string) => Logger.info(message)
 });
 const sessionNetworkPathReporter = createSessionNetworkPathReporter({
@@ -615,6 +830,12 @@ app.post('/api/session-network-path', express.json({ limit: '8kb' }), async (req
         return;
     }
 
+    instanceAgentClient?.recordSessionNetworkPath({
+        sessionId,
+        usesTurn,
+        candidateType,
+        relayProtocol
+    });
     if (!sessionNetworkPathReporter) {
         response.sendStatus(204);
         return;
@@ -640,11 +861,16 @@ wireViewerIdleStop(signallingServer, {
     firstViewerGraceMs: options.viewer_idle_first_viewer_grace_ms,
     firstViewerDelayMs: options.viewer_idle_first_viewer_delay_ms,
     stopRetryMs: options.viewer_idle_stop_retry_ms,
+    resetGraceMs: options.viewer_idle_reset_grace_ms,
+    desiredStatePath:
+        instanceAgentDesiredStatePath.trim().length > 0 ? instanceAgentDesiredStatePath : undefined,
     awsCliPath: options.viewer_idle_aws_cli_path,
     dryRun: options.viewer_idle_stop_dry_run,
     logger: (message: string) => Logger.info(message),
     runtimeStatusPublisher,
-    runtimeStatusController
+    runtimeStatusController,
+    instanceAgentClient,
+    connectTicketRuntimeGate
 });
 
 if (options.stdin) {

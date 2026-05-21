@@ -13,7 +13,8 @@ param(
     [string]$Audience = 'scaleworld-pixelstreaming',
     [string]$SigningKeyParameterName = '/pixelstreaming/prod/connect-ticket/signing-key',
     [string]$RouteHostSuffix = 'stream.scaleworld.net',
-    [int]$TtlSeconds = 90
+    [int]$TtlSeconds = 90,
+    [switch]$ShowRawToken
 )
 
 Set-StrictMode -Version Latest
@@ -216,6 +217,11 @@ Write-Host "ExpiresAtUtc: $($now.AddSeconds($TtlSeconds).ToString('u'))"
 Write-Host ''
 Write-Host 'Open this URL:'
 Write-Host $url
-Write-Host ''
-Write-Host 'Raw token:'
-Write-Host $token
+if ($ShowRawToken) {
+    Write-Host ''
+    Write-Host 'Raw token:'
+    Write-Host $token
+} else {
+    Write-Host ''
+    Write-Host 'Raw token output suppressed. Pass -ShowRawToken only when token inspection is required.'
+}

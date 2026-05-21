@@ -14,6 +14,7 @@ export default tseslint.config(
             'copyright': checkCopyrightPlugin
         },
         rules: {
+            "prettier/prettier": ["error", { endOfLine: "auto" }],
             "copyright/copyright": [
                 "error",
                 {

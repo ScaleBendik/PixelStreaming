@@ -65,3 +65,9 @@ The updater will:
 - download to `D:\ScaleWorldBuilds` when the data drive exists
 - use `D:\ScaleWorldBuilds\staging` for extraction scratch space
 - keep final installed releases on `C:\PixelStreaming\releases`
+
+## Session Artifact Boundary
+
+This contract is only for immutable Unreal update ZIPs under `ScaleworldBuilds/`.
+
+Do not store diagnostic bundles or user screenshot bundles under this prefix. Runtime/session evidence uses the agent artifact pipeline and separate prefixes such as `PixelStreamingLogs/` and `PixelStreamingScreenshots/`, with SQL metadata and signed download URLs owned by the Server Manager API.

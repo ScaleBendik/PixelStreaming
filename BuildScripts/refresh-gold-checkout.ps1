@@ -1,9 +1,9 @@
 [CmdletBinding()]
 param(
     [string]$RepoRoot = $(Resolve-Path (Join-Path $PSScriptRoot '..')).Path,
-    [string]$StackTaskName = '',
     [int]$WaitForWilburTimeoutSeconds = 120,
-    [string]$RemoteName = 'origin'
+    [string]$GitTargetRef = $(if ($env:SCALEWORLD_GIT_TARGET_REF) { $env:SCALEWORLD_GIT_TARGET_REF } else { '' }),
+    [string]$GitTargetRefParam = $(if ($env:SCALEWORLD_GIT_TARGET_REF_PARAM) { $env:SCALEWORLD_GIT_TARGET_REF_PARAM } else { '' })
 )
 
 Set-StrictMode -Version Latest
@@ -159,52 +159,20 @@ try {
 
     $stoppedProcesses = [System.Collections.Generic.List[string]]::new()
 
-    $script:goldRefreshStep = 'preflight_repo_freshness'
+    $script:goldRefreshStep = 'preflight_pinned_target'
     Set-Location -LiteralPath $RepoRoot
-    $branch = ((git rev-parse --abbrev-ref HEAD) | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Failed to resolve the current Gold branch before refresh.'
+
+    if ([string]::IsNullOrWhiteSpace($GitTargetRef) -and [string]::IsNullOrWhiteSpace($GitTargetRefParam)) {
+        throw 'Gold refresh requires a pinned git target via -GitTargetRef or -GitTargetRefParam. Upstream refresh is no longer supported.'
     }
 
-    $currentHead = ((git rev-parse HEAD) | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($currentHead)) {
-        throw 'Failed to resolve the current Gold HEAD before refresh.'
-    }
-
-    $trackedChanges = ((git status --porcelain --untracked-files=no) | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Failed to inspect Gold repo dirtiness before refresh.'
-    }
-
-    $fetchOutput = ((git fetch $RemoteName --prune 2>&1) | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0) {
-        if ([string]::IsNullOrWhiteSpace($fetchOutput)) {
-            throw "Failed to fetch '$RemoteName' before Gold refresh."
-        }
-
-        throw "Failed to fetch '$RemoteName' before Gold refresh. $fetchOutput"
-    }
-
-    $upstreamBranch = ((git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null) | Out-String).Trim()
-    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($upstreamBranch)) {
-        $upstreamHead = ((git rev-parse '@{u}' 2>$null) | Out-String).Trim()
-        $buildStamp = Get-OptionalTextFileValue -Path $buildStampPath
-        $buildArtifactsMatch =
-            (Test-Path -LiteralPath $wilburDistPath) -and
-            (Test-Path -LiteralPath $frontendBundlePath) -and
-            ($buildStamp -eq $currentHead)
-
-        if (
-            [string]::IsNullOrWhiteSpace($trackedChanges) -and
-            -not [string]::IsNullOrWhiteSpace($upstreamHead) -and
-            $currentHead -eq $upstreamHead -and
-            $buildArtifactsMatch
-        ) {
-            Write-GoldRefreshLog "Gold already matches $upstreamBranch at $currentHead and build artifacts match HEAD. Skipping refresh."
-            Write-Output ('Startup method: no-op')
-            Write-Output 'Gold repo already matches upstream and build artifacts match HEAD. No refresh was needed.'
-            return
-        }
+    $env:SCALEWORLD_GIT_SYNC_MODE = 'pinned'
+    if (-not [string]::IsNullOrWhiteSpace($GitTargetRef)) {
+        $env:SCALEWORLD_GIT_TARGET_REF = $GitTargetRef
+        Remove-Item Env:SCALEWORLD_GIT_TARGET_REF_PARAM -ErrorAction SilentlyContinue
+    } else {
+        $env:SCALEWORLD_GIT_TARGET_REF_PARAM = $GitTargetRefParam
+        Remove-Item Env:SCALEWORLD_GIT_TARGET_REF -ErrorAction SilentlyContinue
     }
 
     $script:goldRefreshStep = 'stopping_existing_processes'
@@ -218,45 +186,43 @@ try {
     Start-Sleep -Seconds 2
 
     $script:goldRefreshStep = 'repo_sync_and_build_validation'
-    Write-GoldRefreshLog 'Synchronizing PixelStreaming repo and validating build outputs.'
-    & $repoSyncScript -RepoRoot $RepoRoot -Mode 'maintenance' -GitSyncMode 'upstream'
+    $targetDescription = if (-not [string]::IsNullOrWhiteSpace($GitTargetRef)) {
+        "explicit target '$GitTargetRef'"
+    } else {
+        "SSM target parameter '$GitTargetRefParam'"
+    }
+    Write-GoldRefreshLog "Synchronizing PixelStreaming repo to pinned $targetDescription and validating build outputs."
+    $repoSyncArguments = @{
+        RepoRoot = $RepoRoot
+        Mode = 'maintenance'
+        GitSyncMode = 'pinned'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($GitTargetRef)) {
+        $repoSyncArguments.GitTargetRef = $GitTargetRef
+    }
+    if (-not [string]::IsNullOrWhiteSpace($GitTargetRefParam)) {
+        $repoSyncArguments.GitTargetRefParam = $GitTargetRefParam
+    }
+
+    & $repoSyncScript @repoSyncArguments
     if ($LASTEXITCODE -ne 0) {
         throw "ensure_repo_current.ps1 exited with code $LASTEXITCODE."
     }
 
-    $startupMethod = ''
-    $stackDetected = $false
-
-    if (-not [string]::IsNullOrWhiteSpace($StackTaskName)) {
-        $script:goldRefreshStep = 'scheduled_task_query'
-        schtasks.exe /Query /TN $StackTaskName *> $null
-        if ($LASTEXITCODE -eq 0) {
-            $script:goldRefreshStep = 'scheduled_task_restart'
-            Write-GoldRefreshLog "Restarting Gold stack via scheduled task '$StackTaskName'."
-            schtasks.exe /Run /TN $StackTaskName *> $null
-            if ($LASTEXITCODE -eq 0) {
-                $startupMethod = 'scheduled-task'
-            } else {
-                Write-GoldRefreshLog "Scheduled task '$StackTaskName' returned exit code $LASTEXITCODE. Falling back to direct stack restart." 'WARN'
-            }
-        }
+    $script:goldRefreshStep = 'direct_stack_restart'
+    Write-GoldRefreshLog 'Restarting Gold stack directly from the synced checkout.'
+    $stackCommand = 'set "STACK_ENABLE_BOOT_GIT_SYNC=false" && set "SCALEWORLD_GIT_SYNC_MODE=pinned"'
+    if (-not [string]::IsNullOrWhiteSpace($GitTargetRef)) {
+        $stackCommand += (' && set "SCALEWORLD_GIT_TARGET_REF={0}"' -f $GitTargetRef)
+    } else {
+        $stackCommand += (' && set "SCALEWORLD_GIT_TARGET_REF_PARAM={0}"' -f $GitTargetRefParam)
     }
-
-    if ($startupMethod -eq 'scheduled-task') {
-        $script:goldRefreshStep = 'waiting_for_wilbur_after_scheduled_task'
-        $stackDetected = (Wait-ForWilbur -TimeoutSeconds $WaitForWilburTimeoutSeconds) -and
-            (Wait-ForWilburReadiness -TimeoutSeconds $WaitForWilburTimeoutSeconds)
-    }
-
-    if (-not $stackDetected) {
-        $script:goldRefreshStep = 'direct_stack_restart'
-        Write-GoldRefreshLog 'Restarting Gold stack directly via start_streamer_stack.bat.'
-        Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', ('"{0}"' -f $stackLauncher) -WorkingDirectory (Split-Path -Parent $stackLauncher) -WindowStyle Hidden | Out-Null
-        $startupMethod = if ($startupMethod.Length -gt 0) { $startupMethod + ' -> direct' } else { 'direct' }
-        $script:goldRefreshStep = 'waiting_for_wilbur_after_direct_restart'
-        $stackDetected = (Wait-ForWilbur -TimeoutSeconds $WaitForWilburTimeoutSeconds) -and
-            (Wait-ForWilburReadiness -TimeoutSeconds $WaitForWilburTimeoutSeconds)
-    }
+    $stackCommand += (' && call "{0}"' -f $stackLauncher)
+    Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $stackCommand -WorkingDirectory (Split-Path -Parent $stackLauncher) -WindowStyle Hidden | Out-Null
+    $startupMethod = 'direct pinned target'
+    $script:goldRefreshStep = 'waiting_for_wilbur_after_direct_restart'
+    $stackDetected = (Wait-ForWilbur -TimeoutSeconds $WaitForWilburTimeoutSeconds) -and
+        (Wait-ForWilburReadiness -TimeoutSeconds $WaitForWilburTimeoutSeconds)
 
     if (-not $stackDetected) {
         throw "Gold stack restart did not reach Wilbur readiness within $WaitForWilburTimeoutSeconds seconds."

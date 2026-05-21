@@ -11,4 +11,4 @@ coverage/
 common/types/*
 .nx/cache
 .nx/workspace-data
-Docs/prod-promotions.local.md
+Docs/*-promotions.local.md

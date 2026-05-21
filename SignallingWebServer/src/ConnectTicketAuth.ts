@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import type http from 'http';
 import type * as wslib from 'ws';
 import { Logger } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
+import type { ConnectTicketRuntimeGate } from './connect-ticket-runtime-state';
 
 export type ConnectTicketAuthMode = 'off' | 'soft' | 'enforce';
 
@@ -14,6 +15,7 @@ export interface ConnectTicketAuthSettings {
     instanceId: string;
     routeHostSuffix: string;
     clockSkewSeconds: number;
+    runtimeGate?: ConnectTicketRuntimeGate;
 }
 
 type ValidationResult = {
@@ -114,6 +116,14 @@ function validateAudience(payloadAud: unknown, expectedAudience: string): boolea
     return false;
 }
 
+function parseNumericDateClaim(value: unknown): number | null {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return null;
+    }
+
+    return Math.trunc(value);
+}
+
 function validateToken(token: string, host: string, settings: ConnectTicketAuthSettings): ValidationResult {
     const segments = token.split('.');
     if (segments.length !== 3) {
@@ -153,8 +163,8 @@ function validateToken(token: string, host: string, settings: ConnectTicketAuthS
         return { isValid: false, reason: 'Connect ticket audience is invalid.' };
     }
 
-    const exp = typeof payload.exp === 'number' ? payload.exp : Number.NaN;
-    if (!Number.isFinite(exp)) {
+    const exp = parseNumericDateClaim(payload.exp);
+    if (exp === null) {
         return { isValid: false, reason: 'Connect ticket is missing exp claim.' };
     }
 
@@ -162,7 +172,7 @@ function validateToken(token: string, host: string, settings: ConnectTicketAuthS
         return { isValid: false, reason: 'Connect ticket has expired.' };
     }
 
-    const nbf = typeof payload.nbf === 'number' ? payload.nbf : null;
+    const nbf = parseNumericDateClaim(payload.nbf);
     if (nbf !== null && nowEpoch + skew < nbf) {
         return { isValid: false, reason: 'Connect ticket is not active yet.' };
     }
@@ -183,6 +193,17 @@ function validateToken(token: string, host: string, settings: ConnectTicketAuthS
             isValid: false,
             reason: `Connect ticket host mismatch. Expected '${expectedHost}', got '${host || 'unknown'}'.`
         };
+    }
+
+    const issuedAtEpochSeconds = parseNumericDateClaim(payload.iat) ?? nbf;
+    const runtimeRejectReason = settings.runtimeGate?.rejectReasonForTicket({
+        issuedAtEpochSeconds,
+        expiresAtEpochSeconds: exp,
+        tokenId: typeof payload.jti === 'string' ? payload.jti : undefined,
+        subject: typeof payload.sub === 'string' ? payload.sub : undefined
+    });
+    if (runtimeRejectReason) {
+        return { isValid: false, reason: runtimeRejectReason };
     }
 
     return { isValid: true };
@@ -253,7 +274,8 @@ export function normalizeAuthSettings(settings: ConnectTicketAuthSettings): Conn
         signingKey: settings.signingKey,
         instanceId: settings.instanceId.trim(),
         routeHostSuffix: normalizeHost(settings.routeHostSuffix),
-        clockSkewSeconds: Number.isFinite(settings.clockSkewSeconds) ? settings.clockSkewSeconds : 5
+        clockSkewSeconds: Number.isFinite(settings.clockSkewSeconds) ? settings.clockSkewSeconds : 5,
+        runtimeGate: settings.runtimeGate
     };
 
     validateSettings(normalized);

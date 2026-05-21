@@ -393,6 +393,51 @@ function Start-StartupRuntimeStatusHeartbeat {
     Start-Process -FilePath 'powershell.exe' -ArgumentList $heartbeatArgumentString -WindowStyle Hidden | Out-Null
 }
 
+function Publish-RepoUpdateRuntimeStatus {
+    param(
+        [pscustomobject]$Context,
+        [ref]$Published
+    )
+
+    if ($null -eq $Context -or $Published.Value) {
+        return
+    }
+
+    Invoke-PublishRuntimeStatusScript -Context $Context -Status 'updating_infra' -Reason 'repo_update_in_progress'
+    $Published.Value = $true
+}
+
+function Start-PostRepoSyncStackRelaunch {
+    param(
+        [string]$RepoRootPath,
+        [string]$InitialHead,
+        [string]$CurrentHead,
+        [string]$CurrentMode
+    )
+
+    if ($CurrentMode -ne 'startup') {
+        return $false
+    }
+
+    if ($env:SCALEWORLD_DISABLE_POST_SYNC_STACK_RELAUNCH -ieq 'true' -or
+        $env:STACK_RELAUNCHED_AFTER_BOOT_SYNC -ieq 'true' -or
+        [string]::IsNullOrWhiteSpace($InitialHead) -or
+        [string]::IsNullOrWhiteSpace($CurrentHead) -or
+        [string]::Equals($InitialHead, $CurrentHead, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $false
+    }
+
+    $stackLauncherPath = Join-Path $RepoRootPath 'SignallingWebServer\platform_scripts\cmd\start_streamer_stack.bat'
+    if (-not (Test-Path -LiteralPath $stackLauncherPath)) {
+        Write-RepoSyncLog "Updated checkout requires stack relaunch, but stack launcher was not found at '$stackLauncherPath'." 'WARN'
+        return $false
+    }
+
+    $command = 'set "STACK_ENABLE_BOOT_GIT_SYNC=false" && set "STACK_RELAUNCHED_AFTER_BOOT_SYNC=true" && call "{0}"' -f $stackLauncherPath
+    Write-RepoSyncLog "Repo HEAD changed from $InitialHead to $CurrentHead. Launching fresh stack from updated checkout."
+    Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $command) -WindowStyle Minimized | Out-Null
+    return $true
+}
 function Stop-StartupRuntimeStatusHeartbeat {
     param([pscustomobject]$Context)
 
@@ -469,6 +514,42 @@ function Resolve-PixelStreamingVersionTagValue {
     return $normalizedHead.Substring(0, 12)
 }
 
+function Resolve-ServiceSafeGitRemoteUrl {
+    param([string]$OriginUrl)
+
+    if (-not [string]::IsNullOrWhiteSpace($env:SCALEWORLD_GIT_REMOTE_URL)) {
+        return $env:SCALEWORLD_GIT_REMOTE_URL.Trim()
+    }
+
+    if ([string]::IsNullOrWhiteSpace($OriginUrl)) {
+        return ''
+    }
+
+    $trimmedUrl = $OriginUrl.Trim()
+    $githubAliasPrefix = 'git@github-pixelstreaming:'
+    if ($trimmedUrl.StartsWith($githubAliasPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return 'https://github.com/' + $trimmedUrl.Substring($githubAliasPrefix.Length)
+    }
+
+    return ''
+}
+
+function Ensure-ServiceSafeGitOriginRemote {
+    param([string]$GitCli)
+
+    $originUrl = ((& $GitCli remote get-url origin 2>$null) | Out-String).Trim()
+    $safeOriginUrl = Resolve-ServiceSafeGitRemoteUrl -OriginUrl $originUrl
+    if ([string]::IsNullOrWhiteSpace($safeOriginUrl) -or
+        [string]::Equals($originUrl, $safeOriginUrl, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return
+    }
+
+    Write-RepoSyncLog "Updating PixelStreaming origin fetch URL for service startup from '$originUrl' to '$safeOriginUrl'."
+    & $GitCli remote set-url origin $safeOriginUrl
+    if ($LASTEXITCODE -ne 0) {
+        throw "git remote set-url origin '$safeOriginUrl' failed."
+    }
+}
 function Resolve-GitTargetRefValue {
     param(
         [string]$ExplicitRef,
@@ -479,36 +560,63 @@ function Resolve-GitTargetRefValue {
         return $ExplicitRef.Trim()
     }
 
-    if ([string]::IsNullOrWhiteSpace($TargetRefParam)) {
+    $targetRefParams = @(
+        $TargetRefParam -split '[;,]' |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    if ($targetRefParams.Count -eq 0) {
         return ''
     }
 
     $awsCli = Get-AwsCliPath
     $region = Resolve-SsmRegion
+    $lastFailure = $null
 
-    Write-RepoSyncLog "Resolving pinned git target ref from SSM parameter '$TargetRefParam' in region '$region'."
-    $result = Invoke-AwsCliCapture -AwsCli $awsCli -Arguments @(
-        'ssm',
-        'get-parameter',
-        '--region', $region,
-        '--name', $TargetRefParam,
-        '--query', 'Parameter.Value',
-        '--output', 'text'
-    )
-    if ($result.ExitCode -ne 0) {
-        if ([string]::IsNullOrWhiteSpace($result.Combined)) {
-            throw "Failed to resolve pinned git target ref from SSM parameter '$TargetRefParam'."
+    foreach ($parameterName in $targetRefParams) {
+        Write-RepoSyncLog "Resolving pinned git target ref from SSM parameter '$parameterName' in region '$region'."
+        $result = Invoke-AwsCliCapture -AwsCli $awsCli -Arguments @(
+            'ssm',
+            'get-parameter',
+            '--region', $region,
+            '--name', $parameterName,
+            '--query', 'Parameter.Value',
+            '--output', 'text'
+        )
+        if ($result.ExitCode -ne 0) {
+            $lastFailure = if ([string]::IsNullOrWhiteSpace($result.Combined)) {
+                "Failed to resolve pinned git target ref from SSM parameter '$parameterName'."
+            }
+            else {
+                "Failed to resolve pinned git target ref from SSM parameter '$parameterName'. $($result.Combined)"
+            }
+            if ($targetRefParams.Count -gt 1) {
+                Write-RepoSyncLog "$lastFailure Trying the next configured fallback parameter." -Level WARN
+                continue
+            }
+
+            throw $lastFailure
         }
 
-        throw "Failed to resolve pinned git target ref from SSM parameter '$TargetRefParam'. $($result.Combined)"
+        $resolved = ($result.StdOut | Out-String).Trim()
+        if ([string]::IsNullOrWhiteSpace($resolved)) {
+            $lastFailure = "SSM parameter '$parameterName' did not contain a pinned git target ref."
+            if ($targetRefParams.Count -gt 1) {
+                Write-RepoSyncLog "$lastFailure Trying the next configured fallback parameter." -Level WARN
+                continue
+            }
+
+            throw $lastFailure
+        }
+
+        return $resolved
     }
 
-    $resolved = ($result.StdOut | Out-String).Trim()
-    if ([string]::IsNullOrWhiteSpace($resolved)) {
-        throw "SSM parameter '$TargetRefParam' did not contain a pinned git target ref."
+    if ([string]::IsNullOrWhiteSpace($lastFailure)) {
+        throw "No configured SSM parameter contained a pinned git target ref."
     }
 
-    return $resolved
+    throw $lastFailure
 }
 
 function Resolve-CommitFromRef {
@@ -523,6 +631,75 @@ function Resolve-CommitFromRef {
     }
 
     return $resolved
+}
+
+function Try-ResolveCommitFromRef {
+    param(
+        [string]$GitCli,
+        [string]$Ref
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Ref)) {
+        return $null
+    }
+
+    $resolved = ((& $GitCli rev-parse --verify --quiet "$Ref^{commit}" 2>$null) | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($resolved)) {
+        return $null
+    }
+
+    return $resolved
+}
+
+function Get-PinnedRefCandidates {
+    param([string]$Ref)
+
+    $trimmedRef = $Ref.Trim()
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    $candidates.Add($trimmedRef)
+
+    if (-not $trimmedRef.StartsWith('refs/', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $candidates.Add("refs/tags/$trimmedRef")
+        $candidates.Add("refs/remotes/origin/$trimmedRef")
+        $candidates.Add("origin/$trimmedRef")
+    }
+
+    return @($candidates | Select-Object -Unique)
+}
+
+function Try-ResolvePinnedCommitFromRef {
+    param(
+        [string]$GitCli,
+        [string]$Ref
+    )
+
+    foreach ($candidate in Get-PinnedRefCandidates -Ref $Ref) {
+        $resolved = Try-ResolveCommitFromRef -GitCli $GitCli -Ref $candidate
+        if (-not [string]::IsNullOrWhiteSpace($resolved)) {
+            if (-not [string]::Equals($candidate, $Ref.Trim(), [System.StringComparison]::Ordinal)) {
+                Write-RepoSyncLog "Resolved pinned ref '$($Ref.Trim())' via '$candidate'."
+            }
+
+            return $resolved
+        }
+    }
+
+    return $null
+}
+
+function Resolve-PinnedCommitFromRef {
+    param(
+        [string]$GitCli,
+        [string]$Ref
+    )
+
+    $trimmedRef = $Ref.Trim()
+    $resolved = Try-ResolvePinnedCommitFromRef -GitCli $GitCli -Ref $trimmedRef
+    if (-not [string]::IsNullOrWhiteSpace($resolved)) {
+        return $resolved
+    }
+
+    throw "Pinned git target ref '$trimmedRef' could not be resolved after fetch. Confirm the branch or tag exists on the remote and that the configured ref name is exact."
 }
 
 $gitCli = Get-GitCliPath
@@ -691,12 +868,16 @@ try {
         throw "PixelStreaming root '$RepoRoot' is not a git repository."
     }
 
+    Ensure-ServiceSafeGitOriginRemote -GitCli $gitCli
+
     $currentHead = ((& $gitCli rev-parse HEAD) | Out-String).Trim()
+    $initialHead = $currentHead
     if ([string]::IsNullOrWhiteSpace($currentHead)) {
         throw 'Failed to resolve local git commit for PixelStreaming repo.'
     }
 
     $requiresInfraUpdateStatus = $false
+    $publishedRepoUpdateStatus = $false
     $buildReasons = [System.Collections.Generic.List[string]]::new()
     $buildScope = 'none'
     $updateBuildStampWithoutBuild = $false
@@ -719,6 +900,8 @@ try {
                 if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
                     $requiresInfraUpdateStatus = $true
                     Write-RepoSyncLog "Discarding tracked local PixelStreaming repo changes before $Mode mode."
+                    Publish-RepoUpdateRuntimeStatus -Context $startupRuntimeStatusContext -Published ([ref]$publishedRepoUpdateStatus)
+
                     & $gitCli reset --hard $upstreamHead
                     if ($LASTEXITCODE -ne 0) {
                         throw "git reset --hard $upstreamHead failed."
@@ -730,6 +913,8 @@ try {
                 if ($currentHead -ne $upstreamHead) {
                     $requiresInfraUpdateStatus = $true
                     Write-RepoSyncLog "Remote PixelStreaming changes detected on $upstreamBranch. Resetting local checkout to upstream before continuing."
+                    Publish-RepoUpdateRuntimeStatus -Context $startupRuntimeStatusContext -Published ([ref]$publishedRepoUpdateStatus)
+
                     & $gitCli reset --hard $upstreamHead
                     if ($LASTEXITCODE -ne 0) {
                         throw "git reset --hard $upstreamHead failed."
@@ -743,6 +928,8 @@ try {
                 if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
                     $requiresInfraUpdateStatus = $true
                     Write-RepoSyncLog "Discarding tracked local PixelStreaming repo changes without upstream before $Mode mode."
+                    Publish-RepoUpdateRuntimeStatus -Context $startupRuntimeStatusContext -Published ([ref]$publishedRepoUpdateStatus)
+
                     & $gitCli reset --hard $currentHead
                     if ($LASTEXITCODE -ne 0) {
                         throw "git reset --hard $currentHead failed."
@@ -756,17 +943,32 @@ try {
                 throw 'Pinned git sync mode requires SCALEWORLD_GIT_TARGET_REF or SCALEWORLD_GIT_TARGET_REF_PARAM.'
             }
 
-            Write-RepoSyncLog "Fetching PixelStreaming repo before resolving pinned ref '$gitTargetRefNormalized'."
-            & $gitCli fetch --prune --tags
-            if ($LASTEXITCODE -ne 0) {
-                throw 'git fetch --prune --tags failed.'
-            }
+            $targetHead = Try-ResolvePinnedCommitFromRef -GitCli $gitCli -Ref $gitTargetRefNormalized
+            $buildStampBeforeFetch = Get-BuildStamp -Path $buildStampPath
+            $buildArtifactsFreshBeforeFetch =
+                -not [string]::IsNullOrWhiteSpace($targetHead) `
+                -and [string]::Equals($currentHead, $targetHead, [System.StringComparison]::OrdinalIgnoreCase) `
+                -and [string]::Equals($buildStampBeforeFetch, $currentHead, [System.StringComparison]::OrdinalIgnoreCase) `
+                -and (Test-Path -LiteralPath $frontendBundlePath) `
+                -and (Test-Path -LiteralPath $wilburDistPath)
 
-            $targetHead = Resolve-CommitFromRef -GitCli $gitCli -Ref $gitTargetRefNormalized
+            if ([string]::IsNullOrWhiteSpace($targetHead) -or -not [string]::IsNullOrWhiteSpace($trackedChanges) -or -not $buildArtifactsFreshBeforeFetch) {
+                Write-RepoSyncLog "Fetching PixelStreaming repo before resolving pinned ref '$gitTargetRefNormalized'."
+                & $gitCli fetch --prune --tags
+                if ($LASTEXITCODE -ne 0) {
+                    throw 'git fetch --prune --tags failed.'
+                }
+
+                $targetHead = Resolve-PinnedCommitFromRef -GitCli $gitCli -Ref $gitTargetRefNormalized
+            } else {
+                Write-RepoSyncLog "Pinned ref '$gitTargetRefNormalized' already matches HEAD $currentHead with fresh build artifacts. Skipping git fetch."
+            }
 
             if (-not [string]::IsNullOrWhiteSpace($trackedChanges)) {
                 $requiresInfraUpdateStatus = $true
                 Write-RepoSyncLog "Discarding tracked local PixelStreaming repo changes before pinned reset to '$gitTargetRefNormalized'."
+                Publish-RepoUpdateRuntimeStatus -Context $startupRuntimeStatusContext -Published ([ref]$publishedRepoUpdateStatus)
+
                 & $gitCli reset --hard $targetHead
                 if ($LASTEXITCODE -ne 0) {
                     throw "git reset --hard $targetHead failed."
@@ -778,6 +980,8 @@ try {
             if ($currentHead -ne $targetHead) {
                 $requiresInfraUpdateStatus = $true
                 Write-RepoSyncLog "Resetting local checkout to pinned ref '$gitTargetRefNormalized' ($targetHead)."
+                Publish-RepoUpdateRuntimeStatus -Context $startupRuntimeStatusContext -Published ([ref]$publishedRepoUpdateStatus)
+
                 & $gitCli reset --hard $targetHead
                 if ($LASTEXITCODE -ne 0) {
                     throw "git reset --hard $targetHead failed."
@@ -836,12 +1040,12 @@ try {
         }
     }
 
-    if ($buildScope -ne 'none' -or $updateBuildStampWithoutBuild) {
+    if ($buildScope -ne 'none') {
         $requiresInfraUpdateStatus = $true
     }
 
-    if ($startupRuntimeStatusContext -and $requiresInfraUpdateStatus) {
-        Invoke-PublishRuntimeStatusScript -Context $startupRuntimeStatusContext -Status 'updating_infra' -Reason 'git_sync_in_progress'
+    if ($startupRuntimeStatusContext -and $buildScope -ne 'none') {
+        Invoke-PublishRuntimeStatusScript -Context $startupRuntimeStatusContext -Status 'updating_infra' -Reason 'repo_build_in_progress'
     }
 
     if ($buildScope -ne 'none') {
@@ -863,6 +1067,10 @@ try {
 
     $currentVersionTagValue = Resolve-PixelStreamingVersionTagValue -SyncMode $gitSyncModeNormalized -TargetRef $gitTargetRefNormalized -CurrentHead $currentHead
     Publish-RepoHeadTag -Context $repoHeadTagContext -CurrentHead $currentHead -CurrentVersion $currentVersionTagValue
+
+    if (Start-PostRepoSyncStackRelaunch -RepoRootPath $RepoRoot -InitialHead $initialHead -CurrentHead $currentHead -CurrentMode $Mode) {
+        exit 42
+    }
 } catch {
     if ($startupRuntimeStatusContext) {
         Invoke-PublishRuntimeStatusScript -Context $startupRuntimeStatusContext -Status 'runtime_fault' -Reason 'repo_sync_failed'

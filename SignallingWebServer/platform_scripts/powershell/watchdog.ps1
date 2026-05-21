@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$UnrealProcessName = $(if ($env:WATCHDOG_UNREAL_PROCESS_NAME) { $env:WATCHDOG_UNREAL_PROCESS_NAME } else { 'ScaleWorld*' }),
+    [string]$UnrealProcessName = $(if ($env:WATCHDOG_UNREAL_PROCESS_NAME) { $env:WATCHDOG_UNREAL_PROCESS_NAME } elseif ($env:SCALEWORLD_RUNTIME_PROCESS_PATTERN) { $env:SCALEWORLD_RUNTIME_PROCESS_PATTERN } else { 'ScaleWorld-Win64-*' }),
     [string]$UnrealCommandLinePattern = $env:WATCHDOG_UNREAL_COMMANDLINE_PATTERN,
     [string]$WilburProcessName = $(if ($env:WATCHDOG_WILBUR_PROCESS_NAME) { $env:WATCHDOG_WILBUR_PROCESS_NAME } else { 'node.exe' }),
     [string]$WilburCommandLinePattern = $(if ($env:WATCHDOG_WILBUR_COMMANDLINE_PATTERN) { $env:WATCHDOG_WILBUR_COMMANDLINE_PATTERN } else { 'index.js' }),
@@ -26,6 +26,7 @@ param(
     [string]$StreamerHealthPath = $(if ($env:WATCHDOG_STREAMER_HEALTH_PATH) { $env:WATCHDOG_STREAMER_HEALTH_PATH } else { 'state\streamer-health.json' }),
     [string]$StreamerHealthMaxStaleSeconds = $(if ($env:WATCHDOG_STREAMER_HEALTH_MAX_STALE_SECONDS) { $env:WATCHDOG_STREAMER_HEALTH_MAX_STALE_SECONDS } else { '75' }),
     [string]$StreamerHealthStartupGraceSeconds = $(if ($env:WATCHDOG_STREAMER_HEALTH_STARTUP_GRACE_SECONDS) { $env:WATCHDOG_STREAMER_HEALTH_STARTUP_GRACE_SECONDS } else { '120' }),
+    [string]$StreamerHealthUnreadyRecoverySeconds = $(if ($env:WATCHDOG_STREAMER_HEALTH_UNREADY_RECOVERY_SECONDS) { $env:WATCHDOG_STREAMER_HEALTH_UNREADY_RECOVERY_SECONDS } else { '180' }),
     [string]$ProvisioningStreamerHealthStartupGraceSeconds = $(if ($env:WATCHDOG_PROVISIONING_STREAMER_HEALTH_STARTUP_GRACE_SECONDS) { $env:WATCHDOG_PROVISIONING_STREAMER_HEALTH_STARTUP_GRACE_SECONDS } else { '3600' }),
     [string]$ProvisioningStreamerConnectTimeoutSeconds = $(if ($env:WATCHDOG_PROVISIONING_STREAMER_CONNECT_TIMEOUT_SECONDS) { $env:WATCHDOG_PROVISIONING_STREAMER_CONNECT_TIMEOUT_SECONDS } else { '960' }),
     [string]$ProvisioningMaxRecoveryRestarts = $(if ($env:WATCHDOG_PROVISIONING_MAX_RECOVERY_RESTARTS) { $env:WATCHDOG_PROVISIONING_MAX_RECOVERY_RESTARTS } else { '1' }),
@@ -35,7 +36,8 @@ param(
     [string]$MaintenanceModeRefreshSeconds = $(if ($env:WATCHDOG_MAINTENANCE_MODE_REFRESH_SECONDS) { $env:WATCHDOG_MAINTENANCE_MODE_REFRESH_SECONDS } else { '60' }),
     [string]$UnrealCpuStallConfirmEnabled = $(if ($env:WATCHDOG_UNREAL_CPU_STALL_CONFIRM_ENABLED) { $env:WATCHDOG_UNREAL_CPU_STALL_CONFIRM_ENABLED } else { 'true' }),
     [string]$UnrealCpuStallMinDeltaSeconds = $(if ($env:WATCHDOG_UNREAL_CPU_STALL_MIN_DELTA_SECONDS) { $env:WATCHDOG_UNREAL_CPU_STALL_MIN_DELTA_SECONDS } else { '0.001' }),
-    [string]$UnrealCpuStallConfirmSeconds = $(if ($env:WATCHDOG_UNREAL_CPU_STALL_CONFIRM_SECONDS) { $env:WATCHDOG_UNREAL_CPU_STALL_CONFIRM_SECONDS } else { '10' })
+    [string]$UnrealCpuStallConfirmSeconds = $(if ($env:WATCHDOG_UNREAL_CPU_STALL_CONFIRM_SECONDS) { $env:WATCHDOG_UNREAL_CPU_STALL_CONFIRM_SECONDS } else { '10' }),
+    [string]$LauncherGraceSeconds = $(if ($env:WATCHDOG_LAUNCHER_GRACE_SECONDS) { $env:WATCHDOG_LAUNCHER_GRACE_SECONDS } elseif ($env:SCALEWORLD_RUNTIME_PROCESS_WAIT_SECONDS) { ([int]$env:SCALEWORLD_RUNTIME_PROCESS_WAIT_SECONDS + 15).ToString([System.Globalization.CultureInfo]::InvariantCulture) } else { '135' })
 )
 
 Set-StrictMode -Version Latest
@@ -365,7 +367,39 @@ function Test-NameMatch {
 }
 
 function Get-ProcessSnapshot {
-    Get-CimInstance Win32_Process | Select-Object ProcessId, Name, CommandLine
+    Get-CimInstance Win32_Process | Select-Object ProcessId, Name, CommandLine, CreationDate
+}
+
+function Get-ProcessCreationUtcDateTime {
+    param([object]$Process)
+
+    if ($null -eq $Process) {
+        return $null
+    }
+
+    $creationDateProperty = $Process.PSObject.Properties['CreationDate']
+    if ($null -eq $creationDateProperty) {
+        return $null
+    }
+
+    $creationDateValue = $creationDateProperty.Value
+    if ($creationDateValue -is [DateTime]) {
+        return $creationDateValue.ToUniversalTime()
+    }
+    if ($creationDateValue -is [DateTimeOffset]) {
+        return $creationDateValue.UtcDateTime
+    }
+
+    $creationDate = [string]$creationDateValue
+    if ([string]::IsNullOrWhiteSpace($creationDate)) {
+        return $null
+    }
+
+    try {
+        return [System.Management.ManagementDateTimeConverter]::ToDateTime($creationDate).ToUniversalTime()
+    } catch {
+        return $null
+    }
 }
 
 function Get-ProcessCpuSnapshot {
@@ -416,6 +450,53 @@ function Find-MatchingProcesses {
 
     return ,$matches
 }
+
+function Get-FreshLauncherMatchesForRule {
+    param(
+        [object[]]$Snapshot,
+        [object]$Rule,
+        [object[]]$LauncherRules,
+        [int]$GraceSeconds
+    )
+
+    if ($GraceSeconds -le 0) {
+        return @()
+    }
+
+    $launcherRulePrefix = ([string]$Rule.Name) + '-'
+    $cutoffUtc = [DateTimeOffset]::UtcNow.AddSeconds(-$GraceSeconds).UtcDateTime
+    $matches = [System.Collections.Generic.List[object]]::new()
+
+    foreach ($launcherRule in @($LauncherRules)) {
+        if (-not ([string]$launcherRule.Name).StartsWith($launcherRulePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+
+        $launcherMatches = Find-MatchingProcesses -Snapshot $Snapshot -Rule $launcherRule
+        foreach ($match in $launcherMatches) {
+            $createdAtUtc = Get-ProcessCreationUtcDateTime -Process $match
+            if ($null -eq $createdAtUtc -or $createdAtUtc -lt $cutoffUtc) {
+                continue
+            }
+
+            $matches.Add($match) | Out-Null
+        }
+    }
+
+    return @($matches | Sort-Object ProcessId -Unique)
+}
+
+function Format-LauncherWaitSummary {
+    param([object[]]$LauncherWaits)
+
+    return (@($LauncherWaits) | ForEach-Object {
+        $processSummary = (@($_.Matches) | ForEach-Object {
+            '{0} PID={1}' -f $_.Name, $_.ProcessId
+        }) -join ', '
+        '{0} launcher active: {1}' -f $_.RuleName, $processSummary
+    }) -join '; '
+}
+
 function Invoke-CommandString {
     param(
         [string]$Command,
@@ -615,6 +696,7 @@ $runtimeStatusEnabledValue = ConvertTo-Bool -Value $RuntimeStatusEnabled -Defaul
 $streamerHealthEnabledValue = ConvertTo-Bool -Value $StreamerHealthEnabled -Default $true
 $streamerHealthMaxStaleSecondsValue = ConvertTo-PositiveInt -Value $StreamerHealthMaxStaleSeconds -Default 75 -Name 'StreamerHealthMaxStaleSeconds'
 $streamerHealthStartupGraceSecondsValue = ConvertTo-PositiveInt -Value $StreamerHealthStartupGraceSeconds -Default 120 -Name 'StreamerHealthStartupGraceSeconds'
+$streamerHealthUnreadyRecoverySecondsValue = ConvertTo-PositiveInt -Value $StreamerHealthUnreadyRecoverySeconds -Default 180 -Name 'StreamerHealthUnreadyRecoverySeconds'
 $provisioningStreamerHealthStartupGraceSecondsValue = ConvertTo-PositiveInt -Value $ProvisioningStreamerHealthStartupGraceSeconds -Default 3600 -Name 'ProvisioningStreamerHealthStartupGraceSeconds'
 $provisioningStreamerConnectTimeoutSecondsValue = ConvertTo-PositiveInt -Value $ProvisioningStreamerConnectTimeoutSeconds -Default 960 -Name 'ProvisioningStreamerConnectTimeoutSeconds'
 $provisioningMaxRecoveryRestartsValue = ConvertTo-PositiveInt -Value $ProvisioningMaxRecoveryRestarts -Default 1 -Name 'ProvisioningMaxRecoveryRestarts'
@@ -625,6 +707,7 @@ $maintenanceModeRefreshSecondsValue = ConvertTo-PositiveInt -Value $MaintenanceM
 $unrealCpuStallConfirmEnabledValue = ConvertTo-Bool -Value $UnrealCpuStallConfirmEnabled -Default $true
 $unrealCpuStallMinDeltaSecondsValue = ConvertTo-NonNegativeDouble -Value $UnrealCpuStallMinDeltaSeconds -Default 0.001 -Name 'UnrealCpuStallMinDeltaSeconds'
 $unrealCpuStallConfirmSecondsValue = ConvertTo-NonNegativeDouble -Value $UnrealCpuStallConfirmSeconds -Default 10 -Name 'UnrealCpuStallConfirmSeconds'
+$launcherGraceSecondsValue = ConvertTo-PositiveInt -Value $LauncherGraceSeconds -Default 135 -Name 'LauncherGraceSeconds'
 $resolvedStreamerHealthPath = if ([System.IO.Path]::IsPathRooted($StreamerHealthPath)) { $StreamerHealthPath } else { Join-Path $script:SignallingWebServerRoot $StreamerHealthPath }
 
 $rules = [System.Collections.Generic.List[object]]::new()
@@ -696,6 +779,7 @@ foreach ($rule in $rules) {
     $ruleFailures[$rule.Name] = 0
 }
 $streamerHealthFailureCount = 0
+$streamerHealthFirstFaultAtUtc = [DateTimeOffset]::MinValue
 
 $watchdogStartedAtUtc = [DateTimeOffset]::UtcNow
 $lastRestartAtUtc = [DateTimeOffset]::MinValue
@@ -707,7 +791,7 @@ $unrealCpuStallAccumulatedSeconds = 0.0
 $provisioningRecoveryRestartCount = 0
 $updateRecoveryRestartCount = 0
 
-Write-WatchdogLog ('Starting watchdog. Poll={0}s threshold={1} restartCooldown={2}s postRestartGrace={3}s processStartupGrace={4}s dryRun={5} runtimeStatus={6} streamerHealth={7} streamerHealthPath={8} streamerHealthMaxStale={9}s streamerHealthStartupGrace={10}s provisioningStreamerHealthStartupGrace={11}s provisioningConnectTimeout={12}s provisioningMaxRecoveryRestarts={13}s updateStreamerHealthStartupGrace={14}s updateConnectTimeout={15}s updateMaxRecoveryRestarts={16}s maintenanceRefresh={17}s unrealCpuConfirm={18} unrealCpuMinDelta={19}s unrealCpuConfirmWindow={20}s' -f $pollIntervalSecondsValue, $failureThresholdValue, $restartCooldownSecondsValue, $postRestartGraceSecondsValue, $processStartupGraceSecondsValue, $dryRunValue, $runtimeStatusEnabledValue, $streamerHealthEnabledValue, $resolvedStreamerHealthPath, $streamerHealthMaxStaleSecondsValue, $streamerHealthStartupGraceSecondsValue, $provisioningStreamerHealthStartupGraceSecondsValue, $provisioningStreamerConnectTimeoutSecondsValue, $provisioningMaxRecoveryRestartsValue, $updateStreamerHealthStartupGraceSecondsValue, $updateStreamerConnectTimeoutSecondsValue, $updateMaxRecoveryRestartsValue, $maintenanceModeRefreshSecondsValue, $unrealCpuStallConfirmEnabledValue, $unrealCpuStallMinDeltaSecondsValue, $unrealCpuStallConfirmSecondsValue)
+Write-WatchdogLog ('Starting watchdog. Poll={0}s threshold={1} restartCooldown={2}s postRestartGrace={3}s processStartupGrace={4}s launcherGrace={5}s dryRun={6} runtimeStatus={7} streamerHealth={8} streamerHealthPath={9} streamerHealthMaxStale={10}s streamerHealthStartupGrace={11}s provisioningStreamerHealthStartupGrace={12}s provisioningConnectTimeout={13}s provisioningMaxRecoveryRestarts={14}s updateStreamerHealthStartupGrace={15}s updateConnectTimeout={16}s updateMaxRecoveryRestarts={17}s maintenanceRefresh={18}s unrealCpuConfirm={19} unrealCpuMinDelta={20}s unrealCpuConfirmWindow={21}s' -f $pollIntervalSecondsValue, $failureThresholdValue, $restartCooldownSecondsValue, $postRestartGraceSecondsValue, $processStartupGraceSecondsValue, $launcherGraceSecondsValue, $dryRunValue, $runtimeStatusEnabledValue, $streamerHealthEnabledValue, $resolvedStreamerHealthPath, $streamerHealthMaxStaleSecondsValue, $streamerHealthStartupGraceSecondsValue, $provisioningStreamerHealthStartupGraceSecondsValue, $provisioningStreamerConnectTimeoutSecondsValue, $provisioningMaxRecoveryRestartsValue, $updateStreamerHealthStartupGraceSecondsValue, $updateStreamerConnectTimeoutSecondsValue, $updateMaxRecoveryRestartsValue, $maintenanceModeRefreshSecondsValue, $unrealCpuStallConfirmEnabledValue, $unrealCpuStallMinDeltaSecondsValue, $unrealCpuStallConfirmSecondsValue)
 Write-WatchdogLog ('Rules: {0}' -f (($rules | ForEach-Object { if ([string]::IsNullOrWhiteSpace($_.CommandLinePattern)) { $_.ProcessName } else { '{0} [{1}]' -f $_.ProcessName, $_.CommandLinePattern } }) -join ', '))
 
 while ($true) {
@@ -716,6 +800,7 @@ while ($true) {
     $snapshot = @(Get-ProcessSnapshot)
     $ruleMatches = @{}
     $failedRules = @()
+    $launcherWaits = [System.Collections.Generic.List[object]]::new()
     $currentMaintenanceMode = Get-MaintenanceMode
     $isProvisioningMaintenance = -not [string]::IsNullOrWhiteSpace($currentMaintenanceMode) -and $currentMaintenanceMode.Equals('provisioning', [System.StringComparison]::OrdinalIgnoreCase)
     $isUpdateMaintenance = -not [string]::IsNullOrWhiteSpace($currentMaintenanceMode) -and $currentMaintenanceMode.Equals('update', [System.StringComparison]::OrdinalIgnoreCase)
@@ -731,6 +816,16 @@ while ($true) {
         $ruleMatches[$rule.Name] = $matches
         if ($matches.Count -gt 0) {
             $ruleFailures[$rule.Name] = 0
+            continue
+        }
+
+        $freshLauncherMatches = @(Get-FreshLauncherMatchesForRule -Snapshot $snapshot -Rule $rule -LauncherRules $recoveryLauncherRules -GraceSeconds $launcherGraceSecondsValue)
+        if ($freshLauncherMatches.Count -gt 0) {
+            $ruleFailures[$rule.Name] = 0
+            $launcherWaits.Add([pscustomobject]@{
+                RuleName = $rule.Name
+                Matches = $freshLauncherMatches
+            }) | Out-Null
             continue
         }
 
@@ -808,6 +903,7 @@ while ($true) {
 
         if ($secondsSinceHealthGraceReference -lt $effectiveStreamerHealthStartupGraceSeconds) {
             $streamerHealthFailureCount = 0
+            $streamerHealthFirstFaultAtUtc = [DateTimeOffset]::MinValue
         } else {
             $streamerHealthResult = Read-StreamerHealthSnapshot -Path $resolvedStreamerHealthPath
             $streamerHealthFaultReason = $null
@@ -870,14 +966,34 @@ while ($true) {
 
             if ($streamerHealthFaultReason) {
                 $streamerHealthFailureCount = $streamerHealthFailureCount + 1
+                if ($streamerHealthFirstFaultAtUtc -eq [DateTimeOffset]::MinValue) {
+                    $streamerHealthFirstFaultAtUtc = [DateTimeOffset]::UtcNow
+                }
+
                 if ($streamerHealthFailureCount -ge $failureThresholdValue) {
+                    $streamerHealthFaultDurationSeconds = ([DateTimeOffset]::UtcNow - $streamerHealthFirstFaultAtUtc).TotalSeconds
                     $streamerHealthSummaryWithCpu = if ([string]::IsNullOrWhiteSpace($unrealCpuStallSummary)) {
                         $streamerHealthFaultSummary
                     } else {
                         '{0}; {1}' -f $streamerHealthFaultSummary, $unrealCpuStallSummary
                     }
 
-                    if (-not $unrealCpuStallConfirmEnabledValue -or $unrealCpuStallConfirmed) {
+                    $isHardStreamerHealthFault = @(
+                        'streamer_health_missing',
+                        'streamer_health_invalid',
+                        'streamer_health_missing_timestamp',
+                        'streamer_health_file_stale'
+                    ) -contains $streamerHealthFaultReason
+                    $streamerHealthUnreadyRecoveryElapsed =
+                        $streamerHealthUnreadyRecoverySecondsValue -gt 0 -and
+                        $streamerHealthFaultDurationSeconds -ge $streamerHealthUnreadyRecoverySecondsValue
+
+                    if (
+                        -not $unrealCpuStallConfirmEnabledValue -or
+                        $unrealCpuStallConfirmed -or
+                        $isHardStreamerHealthFault -or
+                        $streamerHealthUnreadyRecoveryElapsed
+                    ) {
                         $failedRules += [pscustomobject]@{
                             Name = 'streamer-health'
                             ProcessName = 'streamer-health'
@@ -887,18 +1003,41 @@ while ($true) {
                         }
                     } else {
                         $pendingFaultSignature = $streamerHealthFaultReason
-                        $pendingFaultSummary = '{0}; awaiting CPU stall confirmation' -f $streamerHealthSummaryWithCpu
+                        if ($streamerHealthUnreadyRecoverySecondsValue -gt 0) {
+                            $pendingFaultSummary = '{0}; awaiting CPU stall confirmation or {1:N0}/{2}s continuous unhealthy runtime' -f $streamerHealthSummaryWithCpu, $streamerHealthFaultDurationSeconds, $streamerHealthUnreadyRecoverySecondsValue
+                        } else {
+                            $pendingFaultSummary = '{0}; awaiting CPU stall confirmation' -f $streamerHealthSummaryWithCpu
+                        }
                     }
                 }
             } else {
                 $streamerHealthFailureCount = 0
+                $streamerHealthFirstFaultAtUtc = [DateTimeOffset]::MinValue
             }
         }
     } else {
         $streamerHealthFailureCount = 0
+        $streamerHealthFirstFaultAtUtc = [DateTimeOffset]::MinValue
     }
 
     if ($failedRules.Count -eq 0) {
+        if ($launcherWaits.Count -gt 0) {
+            $launcherWaitSummary = Format-LauncherWaitSummary -LauncherWaits $launcherWaits.ToArray()
+            if ($launcherWaitSummary -ne $lastSuspiciousSignature) {
+                Write-WatchdogLog "Waiting for in-progress launcher before declaring a missing process: $launcherWaitSummary" 'INFO'
+                $lastSuspiciousSignature = $launcherWaitSummary
+            }
+
+            $healthyLogged = $false
+            $lastFaultSignature = $null
+            if ($runOnceValue) {
+                break
+            }
+
+            Start-Sleep -Seconds $pollIntervalSecondsValue
+            continue
+        }
+
         if ($processStartupGraceActive) {
             $lastSuspiciousSignature = $null
             $lastFaultSignature = $null
@@ -1063,4 +1202,3 @@ while ($true) {
         Start-Sleep -Seconds $pollIntervalSecondsValue
     }
 }
-

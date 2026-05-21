@@ -25,6 +25,7 @@ const CONNECT_TICKET_PARAM = 'ct';
 const RECONNECT_REGION_PARAM = 'sm_region';
 const RECONNECT_INSTANCE_ID_PARAM = 'sm_instance_id';
 const RECONNECT_SESSION_ID_PARAM = 'sm_session_id';
+const RECONNECT_SESSION_REQUEST_ID_PARAM = 'sm_session_request_id';
 const RECONNECT_SESSION_MANAGER_ENV_PARAM = 'sm_session_manager_env';
 const SESSION_MANAGER_BASE_URLS = {
     dev: 'https://scaleworld.scaleaq-dev.net',
@@ -38,11 +39,14 @@ const SESSION_MANAGER_RECONNECT_SESSION_ID_PARAM = 'reconnectSessionId';
 const SESSION_NETWORK_PATH_ENDPOINT = '/api/session-network-path';
 const EXPIRED_CONNECTION_GUIDANCE =
     'Connection expired. Return to your ScaleWorld session manager and click connect again to continue your session.';
+const SESSION_ENDED_GUIDANCE =
+    'This ScaleWorld session has ended. Return to your ScaleWorld session manager to start a new session.';
 const RECONNECT_BOOTSTRAP_QUERY_PARAMS = new Set<string>([
     CONNECT_TICKET_PARAM,
     RECONNECT_REGION_PARAM,
     RECONNECT_INSTANCE_ID_PARAM,
     RECONNECT_SESSION_ID_PARAM,
+    RECONNECT_SESSION_REQUEST_ID_PARAM,
     RECONNECT_SESSION_MANAGER_ENV_PARAM
 ]);
 
@@ -52,6 +56,7 @@ type ReconnectContext = {
     region: string;
     instanceId: string;
     sessionId: string | null;
+    sessionRequestId: string | null;
     sessionManagerEnvironment: SessionManagerEnvironment | null;
 };
 
@@ -59,17 +64,33 @@ type CandidateLike = {
     id?: string;
     candidateType?: string;
     relayProtocol?: string;
+    transportId?: string;
 };
 
 type CandidatePairLike = {
+    id?: string;
     localCandidateId?: string;
     remoteCandidateId?: string;
+    localCandidateType?: string;
+    remoteCandidateType?: string;
+    candidateType?: string;
+    relayProtocol?: string;
+    selected?: boolean;
+    nominated?: boolean;
+    state?: string;
+    bytesReceived?: number;
+    bytesSent?: number;
+    transportId?: string;
 };
 
 type AggregatedStatsLike = {
-    getActiveCandidatePair(): CandidatePairLike | null;
+    getActiveCandidatePair?: () => CandidatePairLike | null;
+    candidatePairs?: CandidatePairLike[];
     localCandidates: CandidateLike[];
     remoteCandidates: CandidateLike[];
+    transportStats?: {
+        selectedCandidatePairId?: string;
+    };
 };
 
 type SessionNetworkPathReport = {
@@ -144,12 +165,14 @@ const hasReconnectContextParams = (params: URLSearchParams): boolean =>
     params.has(RECONNECT_REGION_PARAM) ||
     params.has(RECONNECT_INSTANCE_ID_PARAM) ||
     params.has(RECONNECT_SESSION_ID_PARAM) ||
+    params.has(RECONNECT_SESSION_REQUEST_ID_PARAM) ||
     params.has(RECONNECT_SESSION_MANAGER_ENV_PARAM);
 
 const deleteReconnectContextParams = (params: URLSearchParams): void => {
     params.delete(RECONNECT_REGION_PARAM);
     params.delete(RECONNECT_INSTANCE_ID_PARAM);
     params.delete(RECONNECT_SESSION_ID_PARAM);
+    params.delete(RECONNECT_SESSION_REQUEST_ID_PARAM);
     params.delete(RECONNECT_SESSION_MANAGER_ENV_PARAM);
 };
 
@@ -183,11 +206,13 @@ const parseReconnectContext = (
     region: string | null,
     instanceId: string | null,
     sessionId: string | null,
+    sessionRequestId: string | null,
     sessionManagerEnvironment: string | null
 ): ReconnectContext | null => {
     const normalizedRegion = region?.trim() ?? '';
     const normalizedInstanceId = instanceId?.trim() ?? '';
     const normalizedSessionId = sessionId?.trim() ?? '';
+    const normalizedSessionRequestId = sessionRequestId?.trim() ?? '';
 
     if (!normalizedRegion || !normalizedInstanceId) {
         return null;
@@ -197,6 +222,7 @@ const parseReconnectContext = (
         region: normalizedRegion,
         instanceId: normalizedInstanceId,
         sessionId: normalizedSessionId || null,
+        sessionRequestId: normalizedSessionRequestId || null,
         sessionManagerEnvironment: parseSessionManagerEnvironment(
             sessionManagerEnvironment
         )
@@ -215,6 +241,7 @@ const loadReconnectContextFromStorage = (key: string): ReconnectContext | null =
             typeof parsed.region === 'string' ? parsed.region : null,
             typeof parsed.instanceId === 'string' ? parsed.instanceId : null,
             typeof parsed.sessionId === 'string' ? parsed.sessionId : null,
+            typeof parsed.sessionRequestId === 'string' ? parsed.sessionRequestId : null,
             typeof parsed.sessionManagerEnvironment === 'string'
                 ? parsed.sessionManagerEnvironment
                 : null
@@ -268,38 +295,116 @@ const normalizeRelayProtocol = (value: string | undefined): string | undefined =
     return undefined;
 };
 
+const findActiveCandidatePair = (
+    aggregatedStats: AggregatedStatsLike
+): CandidatePairLike | null => {
+    try {
+        const activeCandidatePair = aggregatedStats.getActiveCandidatePair?.();
+        if (activeCandidatePair) {
+            return activeCandidatePair;
+        }
+    } catch {
+        // Fall through to raw stats heuristics.
+    }
+
+    const candidatePairs = aggregatedStats.candidatePairs ?? [];
+    const selectedCandidatePairId = aggregatedStats.transportStats?.selectedCandidatePairId;
+    if (selectedCandidatePairId) {
+        const selectedCandidatePair = candidatePairs.find(
+            (candidatePair) => candidatePair.id === selectedCandidatePairId
+        );
+        if (selectedCandidatePair) {
+            return selectedCandidatePair;
+        }
+    }
+
+    return (
+        candidatePairs.find((candidatePair) => candidatePair.selected) ??
+        candidatePairs.find(
+            (candidatePair) =>
+                candidatePair.nominated &&
+                candidatePair.state?.trim().toLowerCase() === 'succeeded'
+        ) ??
+        candidatePairs
+            .filter(
+                (candidatePair) =>
+                    candidatePair.state?.trim().toLowerCase() === 'succeeded'
+            )
+            .sort(
+                (left, right) =>
+                    (right.bytesReceived ?? 0) +
+                    (right.bytesSent ?? 0) -
+                    ((left.bytesReceived ?? 0) + (left.bytesSent ?? 0))
+            )[0] ??
+        null
+    );
+};
+
+const findCandidateByIdOrUniqueTransport = (
+    candidates: CandidateLike[],
+    candidateId: string | undefined,
+    transportId: string | undefined
+): CandidateLike | undefined => {
+    const byId = candidateId
+        ? candidates.find((candidate) => candidate.id === candidateId)
+        : undefined;
+    if (byId || !transportId) {
+        return byId;
+    }
+
+    const transportMatches = candidates.filter(
+        (candidate) => candidate.transportId === transportId
+    );
+    return transportMatches.length === 1 ? transportMatches[0] : undefined;
+};
+
 const deriveSessionNetworkPathReport = (
     sessionId: string,
     aggregatedStats: AggregatedStatsLike
 ): SessionNetworkPathReport | null => {
-    const activeCandidatePair = aggregatedStats.getActiveCandidatePair();
+    const activeCandidatePair = findActiveCandidatePair(aggregatedStats);
     if (!activeCandidatePair) {
         return null;
     }
 
-    const localCandidate = aggregatedStats.localCandidates.find(
-        (candidate) => candidate.id === activeCandidatePair.localCandidateId
+    const localCandidate = findCandidateByIdOrUniqueTransport(
+        aggregatedStats.localCandidates,
+        activeCandidatePair.localCandidateId,
+        activeCandidatePair.transportId
     );
-    const remoteCandidate = aggregatedStats.remoteCandidates.find(
-        (candidate) => candidate.id === activeCandidatePair.remoteCandidateId
+    const remoteCandidate = findCandidateByIdOrUniqueTransport(
+        aggregatedStats.remoteCandidates,
+        activeCandidatePair.remoteCandidateId,
+        activeCandidatePair.transportId
     );
-    if (!localCandidate && !remoteCandidate) {
-        return null;
-    }
 
-    const localCandidateType = normalizeCandidateType(localCandidate?.candidateType);
-    const remoteCandidateType = normalizeCandidateType(remoteCandidate?.candidateType);
-    const usesTurn = localCandidateType === 'relay' || remoteCandidateType === 'relay';
+    const localCandidateType = normalizeCandidateType(
+        localCandidate?.candidateType ?? activeCandidatePair.localCandidateType
+    );
+    const remoteCandidateType = normalizeCandidateType(
+        remoteCandidate?.candidateType ?? activeCandidatePair.remoteCandidateType
+    );
+    const pairCandidateType = normalizeCandidateType(activeCandidatePair.candidateType);
+    const pairRelayProtocol = normalizeRelayProtocol(activeCandidatePair.relayProtocol);
+    const usesTurn =
+        localCandidateType === 'relay' ||
+        remoteCandidateType === 'relay' ||
+        pairCandidateType === 'relay' ||
+        pairRelayProtocol !== undefined;
     const relayProtocol = normalizeRelayProtocol(
         localCandidateType === 'relay'
             ? localCandidate?.relayProtocol
             : remoteCandidateType === 'relay'
               ? remoteCandidate?.relayProtocol
-              : undefined
+              : activeCandidatePair.relayProtocol
     );
     const candidateType = usesTurn
         ? 'relay'
-        : localCandidateType ?? remoteCandidateType ?? 'unknown';
+        : localCandidateType ?? remoteCandidateType ?? pairCandidateType;
+
+    if (!candidateType) {
+        return null;
+    }
 
     return {
         sessionId,
@@ -325,6 +430,11 @@ const isConnectTicketDisconnectReason = (reason: string): boolean => {
         normalized.includes('401') ||
         normalized.includes('expired')
     );
+};
+
+const isScaleWorldSessionEndedReason = (reason: string): boolean => {
+    const normalized = reason.trim().toLowerCase();
+    return normalized.includes('scaleworld session ended');
 };
 
 const parseConnectTicketExpiryMs = (ticket: string): number | null => {
@@ -367,6 +477,33 @@ const showExpiredConnectionGuidance = () => {
     }, 0);
 };
 
+const showSessionEndedGuidance = () => {
+    window.setTimeout(() => {
+        const disconnectOverlay = document.getElementById('disconnectOverlay');
+        if (disconnectOverlay) {
+            disconnectOverlay.classList.remove('clickableState');
+            disconnectOverlay.addEventListener(
+                'click',
+                (event) => {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                },
+                { capture: true }
+            );
+        }
+
+        const disconnectOverlayText = document.getElementById('disconnectButton');
+        if (disconnectOverlayText) {
+            disconnectOverlayText.innerHTML = SESSION_ENDED_GUIDANCE;
+        }
+
+        const errorOverlayText = document.getElementById('errorOverlayInner');
+        if (errorOverlayText) {
+            errorOverlayText.innerHTML = SESSION_ENDED_GUIDANCE;
+        }
+    }, 0);
+};
+
 document.body.onload = function() {
     Logger.InitLogging(LogLevel.Warning, true);
 
@@ -381,12 +518,14 @@ document.body.onload = function() {
         pageHashParams.get(RECONNECT_REGION_PARAM),
         pageHashParams.get(RECONNECT_INSTANCE_ID_PARAM),
         pageHashParams.get(RECONNECT_SESSION_ID_PARAM),
+        pageHashParams.get(RECONNECT_SESSION_REQUEST_ID_PARAM),
         pageHashParams.get(RECONNECT_SESSION_MANAGER_ENV_PARAM)
     );
     const reconnectContextFromQuery = parseReconnectContext(
         pageUrl.searchParams.get(RECONNECT_REGION_PARAM),
         pageUrl.searchParams.get(RECONNECT_INSTANCE_ID_PARAM),
         pageUrl.searchParams.get(RECONNECT_SESSION_ID_PARAM),
+        pageUrl.searchParams.get(RECONNECT_SESSION_REQUEST_ID_PARAM),
         pageUrl.searchParams.get(RECONNECT_SESSION_MANAGER_ENV_PARAM)
     );
 
@@ -493,6 +632,19 @@ document.body.onload = function() {
             if (!parsed.searchParams.get('ct')) {
                 parsed.searchParams.set('ct', connectTicket);
             }
+            if (reconnectContext) {
+                parsed.searchParams.set(RECONNECT_REGION_PARAM, reconnectContext.region);
+                parsed.searchParams.set(RECONNECT_INSTANCE_ID_PARAM, reconnectContext.instanceId);
+                if (reconnectContext.sessionId) {
+                    parsed.searchParams.set(RECONNECT_SESSION_ID_PARAM, reconnectContext.sessionId);
+                }
+                if (reconnectContext.sessionRequestId) {
+                    parsed.searchParams.set(
+                        RECONNECT_SESSION_REQUEST_ID_PARAM,
+                        reconnectContext.sessionRequestId
+                    );
+                }
+            }
 
             return parsed.toString();
         });
@@ -501,10 +653,13 @@ document.body.onload = function() {
         config.setFlagEnabled(Flags.AutoConnect, true);
     }
 
-    const activeSessionId = reconnectContext?.sessionId?.trim() ?? '';
+    const sessionNetworkPathCorrelationId =
+        reconnectContext?.sessionId?.trim() ||
+        reconnectContext?.sessionRequestId?.trim() ||
+        '';
     let lastConfirmedSessionNetworkPathSignature = '';
     let pendingSessionNetworkPathSignature = '';
-    if (activeSessionId) {
+    if (sessionNetworkPathCorrelationId) {
         stream.addEventListener('statsReceived', (event) => {
             const aggregatedStats = (event as Event & {
                 data?: { aggregatedStats?: AggregatedStatsLike };
@@ -513,7 +668,10 @@ document.body.onload = function() {
                 return;
             }
 
-            const report = deriveSessionNetworkPathReport(activeSessionId, aggregatedStats);
+            const report = deriveSessionNetworkPathReport(
+                sessionNetworkPathCorrelationId,
+                aggregatedStats
+            );
             if (!report) {
                 return;
             }
@@ -558,6 +716,16 @@ document.body.onload = function() {
     stream.addEventListener('webRtcDisconnected', (event) => {
         const eventData = (event as { data?: { eventString?: string } }).data;
         const reason = eventData?.eventString ?? '';
+        if (isScaleWorldSessionEndedReason(reason)) {
+            removeSessionStorage(connectTicketStorageKey);
+            removeSessionStorage(reconnectContextStorageKey);
+            showSessionEndedGuidance();
+            window.setTimeout(() => {
+                window.close();
+            }, 0);
+            return;
+        }
+
         const isConnectTicketDisconnect =
             isConnectTicketDisconnectReason(reason) ||
             (connectTicketExpiresAtMs !== null && Date.now() >= connectTicketExpiresAtMs);

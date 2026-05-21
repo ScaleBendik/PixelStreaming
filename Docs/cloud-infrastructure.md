@@ -1,6 +1,6 @@
-﻿# ScaleWorld Cloud Infrastructure (Source of Truth)
+# ScaleWorld Cloud Infrastructure (Source of Truth)
 
-Last updated: 2026-03-30
+Last updated: 2026-05-15
 Owner: ScaleWorld Platform
 
 ## Purpose
@@ -91,22 +91,42 @@ Current SSM SecureString parameters used by streamer startup:
 - `/pixelstreaming/connect-ticket/signing-key`
 - `/pixelstreaming/prod/connect-ticket/signing-key`
 
+Target SSM SecureString parameters for instance-agent bootstrap secrets:
+
+- `/pixelstreaming/dev/instance-agent-bootstrap-shared-secret`
+- `/pixelstreaming/stage/instance-agent-bootstrap-shared-secret`
+- `/pixelstreaming/prod/instance-agent-bootstrap-shared-secret`
+
+The instance-agent bootstrap secret must be separate from the connect-ticket signing key. The same secret value is copied only between one environment's Azure Key Vault secret and that same environment's AWS SSM parameter. Do not share the value between Dev, Stage, and Prod.
+
 Current SSM String parameter used for prod streamer release pinning:
 
 - `/pixelstreaming/prod/git-target-ref`
 
-Current SSM String parameter used for the stage/candidate nonprod streamer release pinning:
+Current SSM String parameters used for dev/stage streamer release pinning:
+
+- `/pixelstreaming/dev/git-target-ref`
+- `/pixelstreaming/stage/git-target-ref`
+
+Legacy compatibility fallback during the lane split migration. Do not use this as a canonical promotion target:
 
 - `/pixelstreaming/nonprod/git-target-ref`
 
-Current Azure Key Vault secret used by the API workload in each environment:
+Current Azure Key Vault secret used by the API workload for connect tickets:
 
 - `kv-scaleworld-dev` -> `connect-ticket-signing-key`
 - `kv-scaleworld-stage` -> `connect-ticket-signing-key`
 - `kv-scaleworld-prod` -> `connect-ticket-signing-key`
 
+Target Azure Key Vault secret used by the API workload for instance-agent bootstrap:
+
+- `kv-scaleworld-dev` -> `instance-agent-bootstrap-shared-secret`
+- `kv-scaleworld-stage` -> `instance-agent-bootstrap-shared-secret`
+- `kv-scaleworld-prod` -> `instance-agent-bootstrap-shared-secret`
+
 Current note:
 - `dev` and `stage` intentionally still share the same active connect-ticket signer on the streamer side
+- instance-agent bootstrap secrets should not share that connect-ticket signer; use separate `instance-agent-bootstrap-shared-secret` values per environment
 - prod lane is now live for normal Session Manager traffic
 - prod API startup requires `kv-scaleworld-prod/connect-ticket-signing-key` to be populated with the real prod signing key and that value must match streamer-side SSM `/pixelstreaming/prod/connect-ticket/signing-key`
 - streamer startup is now lane-aware through `SCALEWORLD_STREAMING_LANE=nonprod|prod`
@@ -115,12 +135,41 @@ Current note:
   - fallback env `SCALEWORLD_DEPLOYMENT_TRACK=dev|stage|prod`
 - if the instance tag resolves successfully, that value overrides stale inherited machine `SCALEWORLD_DEPLOYMENT_TRACK`
 - current intended deployment-track model:
-  - `Gold` -> tag `ScaleWorldDeploymentTrack=dev`
-  - normal nonprod fleet -> default `stage`
-  - prod fleet -> default `prod`
+  - dev fleet and any remaining Gold instance -> tag `ScaleWorldDeploymentTrack=dev`
+  - stage fleet -> tag `ScaleWorldDeploymentTrack=stage`
+  - prod fleet -> tag `ScaleWorldDeploymentTrack=prod`
 - current bootstrap defaults are:
   - `nonprod` -> SSM `/pixelstreaming/connect-ticket/signing-key`, issuer `scaleworld-dev-connect-ticket`
   - `prod` -> SSM `/pixelstreaming/prod/connect-ticket/signing-key`, issuer `scaleworld-prod-connect-ticket`
+- lane-wide instance-agent control-plane targeting now uses a paired API URL + environment model:
+  - `INSTANCE_AGENT_API_BASE_URL=<absolute-http(s)-url>` remains available as an explicit per-instance override
+  - `INSTANCE_AGENT_CONTROL_PLANE_ENV=dev|stage|prod` remains available as an explicit per-instance override
+  - nonprod deployment-track parameters:
+    - dev API URL: `/pixelstreaming/dev/instance-agent-api-base-url`
+    - dev control-plane env: `/pixelstreaming/dev/instance-agent-control-plane-env`
+    - stage API URL: `/pixelstreaming/stage/instance-agent-api-base-url`
+    - stage control-plane env: `/pixelstreaming/stage/instance-agent-control-plane-env`
+    - legacy fallback API URL: `/pixelstreaming/nonprod/instance-agent-api-base-url`
+    - legacy fallback control-plane env: `/pixelstreaming/nonprod/instance-agent-control-plane-env`
+  - normal prod lane parameters:
+    - API URL: `/pixelstreaming/prod/instance-agent-api-base-url`
+    - control-plane env: `/pixelstreaming/prod/instance-agent-control-plane-env`
+  - startup resolves the effective control-plane env before loading the bootstrap secret:
+    - a known hosted API URL wins so URL and secret stay paired even if the env parameter is stale
+    - known URL mapping: `scaleaq-dev.net` -> `dev`, `scaleaq-stage.net` -> `stage`, `scaleaq.net` -> `prod`
+    - unknown/custom URLs use the explicit/lane control-plane env parameter
+    - if neither URL nor env is set, startup falls back to deployment-track defaults
+  - the bootstrap secret SSM path is derived from the effective control-plane env when `INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM` is not set:
+    - `dev` -> `/pixelstreaming/dev/instance-agent-bootstrap-shared-secret`
+    - `stage` -> `/pixelstreaming/stage/instance-agent-bootstrap-shared-secret`
+    - `prod` -> `/pixelstreaming/prod/instance-agent-bootstrap-shared-secret`
+  - startup refuses a prod control-plane env on the nonprod streaming lane and refuses non-prod envs on the prod streaming lane
+  - `INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_PARAM=<ssm-path>` remains available as an explicit emergency override
+  - `INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF=true` to make Wilbur fail bootstrap instead of falling back when IMDS identity proof is unavailable
+  - if no explicit override or lane parameter is present, startup still falls back to deployment-track defaults:
+    - `dev` -> `https://scaleworld.api.scaleaq-dev.net`
+    - `stage` -> `https://scaleworld.api.scaleaq-stage.net`
+    - `prod` -> `https://scaleworld.api.scaleaq.net`
 - TURN credentials still default to the current shared SSM paths for all lanes
 - cloud startup now enables Wilbur reverse-proxy mode by default
   - `ENABLE_REVERSE_PROXY=true`
@@ -128,26 +177,30 @@ Current note:
   - this matches the current ALB/X-Forwarded-For path and avoids `express-rate-limit` proxy warnings
 - repo/bootstrap sync policy now supports:
   - `SCALEWORLD_GIT_SYNC_MODE=upstream|pinned|off`
-  - default `nonprod` behavior: `pinned` through deployment track `stage`
+  - default `nonprod` behavior: `pinned` through deployment track `dev` or `stage`
   - default `prod` behavior: `pinned`
   - deployment-track defaults:
-    - `dev` -> `upstream`
-    - `stage` -> `pinned` with `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/nonprod/git-target-ref`
+    - `dev` -> `pinned` with `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/dev/git-target-ref;/pixelstreaming/nonprod/git-target-ref`
+    - `stage` -> `pinned` with `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/stage/git-target-ref;/pixelstreaming/nonprod/git-target-ref`
     - `prod` -> `pinned` with `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref`
   - `SCALEWORLD_GIT_TARGET_REF=<tag-or-commit>` or `SCALEWORLD_GIT_TARGET_REF_PARAM=<ssm-parameter-name>` is required for `pinned`
   - boot-time repo sync now defaults on for any sync mode except `off`
   - recommended prod launch-template setting:
     - `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref`
-  - recommended Gold instance tag setting:
+  - recommended dev warm-pool launch-template / provisioning tag setting:
     - `ScaleWorldDeploymentTrack=dev`
-  - recommended stage-like nonprod launch-template / provisioning tag setting:
+  - recommended stage launch-template / provisioning tag setting:
     - `ScaleWorldDeploymentTrack=stage`
   - note:
-    - explicit machine env vars such as `SCALEWORLD_GIT_SYNC_MODE` or `SCALEWORLD_GIT_TARGET_REF_PARAM` still override the derived track defaults if they were manually set on the box
+    - explicit machine env vars such as `SCALEWORLD_GIT_TARGET_REF_PARAM`, `INSTANCE_AGENT_API_BASE_URL`, or `INSTANCE_AGENT_API_BASE_URL_PARAM` still override the derived defaults if they were manually set on the box
+    - `SCALEWORLD_GIT_SYNC_MODE=upstream` is not accepted for `stage` or `prod`; startup forces those deployment tracks back to `pinned` so the environment-specific SSM target ref remains authoritative
   - normal prod boot through `start_streamer_stack.bat` now applies pinned repo sync before the stack launch
   - if the AMI repo/build baseline is behind the promoted prod tag, first boot may spend several minutes in repo reset + `BuildScripts/build-all.bat` before Wilbur starts
 
 TURN server cert materials were previously managed via SSM as well (`/turn/*` pattern).
+The canonical instance-agent bootstrap trust runbook is `../../scaleworld-server-manager-web/docs/instance-agent-bootstrap-trust-runbook-2026-05-05.md`.
+
+Screenshot bundle retention is currently three days. Keep the S3 lifecycle rule for `PixelStreamingScreenshots/*`, the streamer default `INSTANCE_AGENT_SCREENSHOT_ARTIFACT_RETENTION_DAYS`, and the Server Manager API `UserSessionArtifacts:ScreenshotRetentionDays` setting aligned so user-facing download availability does not outlive the object.
 
 ### IAM
 
@@ -162,18 +215,43 @@ Streamer/TURN instance role must currently support:
   - `ScaleWorldSessionRelayProtocol`
   - `ScaleWorldSessionCandidateType`
 
-Normal serving stage/prod instance role should keep:
+Normal serving dev/stage/prod instance roles should keep read-only SSM access for their active lane plus the temporary legacy fallback while the AMI/bootstrap migration is in progress:
 
 - `ssm:GetParameter` on:
-  - `/pixelstreaming/nonprod/git-target-ref`
+  - `/pixelstreaming/dev/git-target-ref`
+  - `/pixelstreaming/stage/git-target-ref`
   - `/pixelstreaming/prod/git-target-ref`
+  - `/pixelstreaming/nonprod/git-target-ref` (temporary fallback only)
+  - `/pixelstreaming/nonprod/instance-agent-api-base-url` (temporary fallback only)
+  - `/pixelstreaming/nonprod/instance-agent-control-plane-env` (temporary fallback only)
+  - `/pixelstreaming/stage/instance-agent-api-base-url`
+  - `/pixelstreaming/stage/instance-agent-control-plane-env`
+  - `/pixelstreaming/prod/instance-agent-api-base-url`
+  - `/pixelstreaming/prod/instance-agent-control-plane-env`
 
-Gold/promotion operator context must also support:
+Gold/stage-prod promotion operator context must also support:
 
-- `ssm:GetParameter` on `/pixelstreaming/nonprod/git-target-ref`
+- `ssm:GetParameter` on `/pixelstreaming/stage/git-target-ref`
 - `ssm:GetParameter` on `/pixelstreaming/prod/git-target-ref`
-- `ssm:PutParameter` on `/pixelstreaming/nonprod/git-target-ref`
+- `ssm:GetParameter` on `/pixelstreaming/stage/instance-agent-api-base-url`
+- `ssm:GetParameter` on `/pixelstreaming/stage/instance-agent-control-plane-env`
+- `ssm:GetParameter` on `/pixelstreaming/prod/instance-agent-api-base-url`
+- `ssm:GetParameter` on `/pixelstreaming/prod/instance-agent-control-plane-env`
+- `ssm:PutParameter` on `/pixelstreaming/stage/git-target-ref`
 - `ssm:PutParameter` on `/pixelstreaming/prod/git-target-ref`
+- `ssm:PutParameter` on `/pixelstreaming/stage/instance-agent-api-base-url`
+- `ssm:PutParameter` on `/pixelstreaming/stage/instance-agent-control-plane-env`
+- `ssm:PutParameter` on `/pixelstreaming/prod/instance-agent-api-base-url`
+- `ssm:PutParameter` on `/pixelstreaming/prod/instance-agent-control-plane-env`
+- `ssm:DeleteParameter` on `/pixelstreaming/stage/instance-agent-api-base-url`
+- `ssm:DeleteParameter` on `/pixelstreaming/stage/instance-agent-control-plane-env`
+- `ssm:DeleteParameter` on `/pixelstreaming/prod/instance-agent-api-base-url`
+- `ssm:DeleteParameter` on `/pixelstreaming/prod/instance-agent-control-plane-env`
+
+Workstation/manual dev-pool target updates may additionally need:
+
+- `ssm:GetParameter` on `/pixelstreaming/dev/git-target-ref`
+- `ssm:PutParameter` on `/pixelstreaming/dev/git-target-ref`
 
 Current hardening note:
 
@@ -276,6 +354,7 @@ Current lane selection:
 Recovery flow:
 
 - watchdog restart command points to `start_streamer_stack.bat --recovery`
+- recovery-mode stack launches keep watchdog supervision enabled even if Wilbur or Unreal startup fails
 - Wilbur startup reloads TURN credentials and connect-ticket signing key from SSM
 
 ### Runtime Status Ownership (Implemented)
@@ -488,4 +567,5 @@ Note:
 - 2026-03-20: Added SSM-backed prod streamer promotion flow, `BuildScripts/` operator entrypoints, runtime-status publish ordering fixes, and provisioning-heartbeat visibility during repo/bootstrap work.
 - 2026-03-21: Added helper-based lane fallback from instance tag `ScaleWorldLane` (with temporary `ScaleWorldlane` compatibility), switched prod promotion ledger writes to a local untracked file, fixed annotated-tag pinned-sync resolution, added a stale-HEAD guard to prod promotion, and validated a dark-launch prod instance booting successfully in the prod lane after pinned catch-up.
 - 2026-03-22: Added a manual dark-connect helper (`mint-prod-dark-connect-ticket.ps1`) and validated end-to-end prod dark connect through manual ALB routing plus a prod-shaped ticket against the current promoted prod ref.
+- 2026-05-15: Hardened stage/prod streamer startup so stale machine-level `SCALEWORLD_GIT_SYNC_MODE=upstream` cannot bypass the stage/prod SSM target refs.
 

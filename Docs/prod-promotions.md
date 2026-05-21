@@ -3,7 +3,7 @@
 This document is the current reference for how prod streamer code is promoted.
 
 Stage/candidate promotion now exists as a separate first step:
-- Gold validation can promote the tested checkout to `/pixelstreaming/nonprod/git-target-ref`
+- Gold validation can promote the tested checkout to `/pixelstreaming/stage/git-target-ref`
 - prod promotion can then promote that already-tested stage candidate to `/pixelstreaming/prod/git-target-ref`
 
 ## Current Model
@@ -20,7 +20,7 @@ Current prod model:
 
 Current promotion path details:
 
-1. `Promote Gold checkout to stage` writes `/pixelstreaming/nonprod/git-target-ref`
+1. `Promote Gold checkout to stage` writes `/pixelstreaming/stage/git-target-ref`
 2. `Promote stage ref to prod` copies that validated stage ref into `/pixelstreaming/prod/git-target-ref`
 3. the stage-to-prod action is currently orchestrated by the API through SSM on the running Gold instance, not directly on prod serving instances
 
@@ -71,7 +71,7 @@ What the script does:
 7. append a local entry to `Docs/prod-promotions.local.md`
 
 The same script also supports the stage/candidate path when called with:
-- `-TargetRefParameterName /pixelstreaming/nonprod/git-target-ref`
+- `-TargetRefParameterName /pixelstreaming/stage/git-target-ref`
 - `-TagPrefix pixelstreaming-stage`
 - `-LedgerPath Docs/stage-promotions.local.md`
 
@@ -201,7 +201,7 @@ The helper:
 1. reads the prod signing key from SSM
 2. resolves `RouteKey` from the instance tag when present
 3. falls back to instance id when no explicit route key exists
-4. prints the full dark-connect URL and raw token
+4. prints the full dark-connect URL, while raw token output is suppressed unless `-ShowRawToken` is passed
 
 ## Reference Ledger Format
 
