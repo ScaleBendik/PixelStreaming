@@ -565,6 +565,55 @@ function Wait-ForRuntimeStatusValidation {
     }
 }
 
+function Get-UpdateTagValue {
+    param(
+        [hashtable]$Tags,
+        [string]$Key
+    )
+
+    $value = [string]$Tags[$Key]
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return ''
+    }
+
+    return $value.Trim()
+}
+
+function Get-UpdateTargetType {
+    param(
+        [hashtable]$Tags,
+        [string]$TargetZipKey,
+        [string]$TargetRuntimeManifestKey
+    )
+
+    $targetType = (Get-UpdateTagValue -Tags $Tags -Key 'ScaleWorldUpdateTargetType').ToLowerInvariant()
+    if (-not [string]::IsNullOrWhiteSpace($targetType)) {
+        return $targetType
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($TargetRuntimeManifestKey)) {
+        return 'pixelstreaming_runtime'
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($TargetZipKey)) {
+        return 'unreal_zip'
+    }
+
+    return 'unreal_zip'
+}
+
+function Get-ActiveRuntimeStackLauncher {
+    param([string]$InstallBasePath)
+
+    $activeRuntimeRoot = Join-Path $InstallBasePath 'PixelStreamingRuntime'
+    $launcher = Join-Path $activeRuntimeRoot 'SignallingWebServer\platform_scripts\cmd\start_streamer_stack.bat'
+    if (Test-Path -LiteralPath $launcher) {
+        return $launcher
+    }
+
+    return $null
+}
+
 $detectionDeadline = (Get-Date).AddSeconds([Math]::Max($DetectionTimeoutSeconds, 1))
 $attempt = 0
 $awsCli = $null
@@ -612,8 +661,49 @@ if ($currentUpdateState -in @('succeeded', 'failed', 'stopping')) {
     exit 11
 }
 
-$targetZipKey = [string]$instanceTags['ScaleWorldTargetZipKey']
-if ([string]::IsNullOrWhiteSpace($targetZipKey)) {
+$targetZipKey = Get-UpdateTagValue -Tags $instanceTags -Key 'ScaleWorldTargetZipKey'
+$targetRuntimeManifestKey = Get-UpdateTagValue -Tags $instanceTags -Key 'ScaleWorldTargetRuntimeManifestKey'
+$targetRuntimeArtifactKey = Get-UpdateTagValue -Tags $instanceTags -Key 'ScaleWorldTargetRuntimeArtifactKey'
+$targetRuntimeBundleId = Get-UpdateTagValue -Tags $instanceTags -Key 'ScaleWorldTargetRuntimeBundleId'
+$targetRuntimeSourceCommit = Get-UpdateTagValue -Tags $instanceTags -Key 'ScaleWorldTargetRuntimeSourceCommit'
+$targetRuntimeContractVersion = Get-UpdateTagValue -Tags $instanceTags -Key 'ScaleWorldTargetRuntimeContractVersion'
+$updateTargetType = Get-UpdateTargetType -Tags $instanceTags -TargetZipKey $targetZipKey -TargetRuntimeManifestKey $targetRuntimeManifestKey
+$pixelStreamingRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+$updateScript = Join-Path $pixelStreamingRoot 'SWupdate.ps1'
+$stackLauncher = Join-Path $PSScriptRoot '..\cmd\start_streamer_stack.bat'
+$streamerHealthPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\streamer-health.json'
+$repoSyncScript = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
+$publishCurrentBuildScript = Join-Path $PSScriptRoot 'publish_current_build_tags.ps1'
+$runtimeInstallerScript = Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.ps1'
+$installBasePath = if ($env:SCALEWORLD_INSTALL_BASE) { $env:SCALEWORLD_INSTALL_BASE } else { 'C:\PixelStreaming' }
+$runtimeArtifactBucket = if ($env:SCALEWORLD_RUNTIME_ARTIFACT_BUCKET) { $env:SCALEWORLD_RUNTIME_ARTIFACT_BUCKET } else { 'scaleworlddepot' }
+$activeInstallPath = Join-Path $installBasePath 'WindowsNoEditor'
+$currentReleaseStatePath = Join-Path $installBasePath 'state\current-release.json'
+$pendingReleaseStatePath = Join-Path $installBasePath 'state\pending-release.json'
+$runtimeInstallResultPath = Join-Path $installBasePath 'state\runtime-install-result.json'
+$script:UpdateModeTracePath = Join-Path $installBasePath 'state\update-mode-trace.log'
+$prepareUpdateStdOutPath = Join-Path $installBasePath 'state\update-prepare.stdout.log'
+$prepareUpdateStdErrPath = Join-Path $installBasePath 'state\update-prepare.stderr.log'
+$prepareUpdateProcess = $null
+$showVisiblePrepareWindow = Get-VisiblePrepareWindowEnabled
+
+$prepareDataDrive = if ($env:STACK_PREPARE_DATA_DRIVE) { [System.Boolean]::Parse($env:STACK_PREPARE_DATA_DRIVE) } else { $true }
+$requireDataDrive = if ($env:STACK_REQUIRE_DATA_DRIVE) { [System.Boolean]::Parse($env:STACK_REQUIRE_DATA_DRIVE) } else { $false }
+$dataDiskNumber = if ($env:SCALEWORLD_DATA_DISK_NUMBER) { [int]$env:SCALEWORLD_DATA_DISK_NUMBER } else { 1 }
+
+if ($updateTargetType -ne 'unreal_zip' -and $updateTargetType -ne 'pixelstreaming_runtime') {
+    Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
+        ScaleWorldUpdateState = 'failed'
+        ScaleWorldUpdatePhase = ''
+        ScaleWorldUpdateResultReason = "unsupported_update_target_type:$updateTargetType"
+        ScaleWorldUpdateCompletedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    }
+    Schedule-DelayedStop -DelaySeconds $FailureStopDelaySeconds
+    Write-UpdateModeLog "Update maintenance mode requested unsupported target type '$updateTargetType'." 'ERROR'
+    exit 11
+}
+
+if ($updateTargetType -eq 'unreal_zip' -and [string]::IsNullOrWhiteSpace($targetZipKey)) {
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldUpdateState = 'failed'
         ScaleWorldUpdatePhase = ''
@@ -625,37 +715,33 @@ if ([string]::IsNullOrWhiteSpace($targetZipKey)) {
     exit 11
 }
 
-$zipFileName = Split-Path -Leaf $targetZipKey
+if ($updateTargetType -eq 'pixelstreaming_runtime' -and [string]::IsNullOrWhiteSpace($targetRuntimeManifestKey)) {
+    Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
+        ScaleWorldUpdateState = 'failed'
+        ScaleWorldUpdatePhase = ''
+        ScaleWorldUpdateResultReason = 'missing_runtime_manifest'
+        ScaleWorldUpdateCompletedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    }
+    Schedule-DelayedStop -DelaySeconds $FailureStopDelaySeconds
+    Write-UpdateModeLog 'PixelStreaming runtime update was requested without ScaleWorldTargetRuntimeManifestKey.' 'ERROR'
+    exit 11
+}
+
+$zipFileName = if ($targetZipKey) { Split-Path -Leaf $targetZipKey } else { '' }
+$initialPhase = if ($updateTargetType -eq 'pixelstreaming_runtime') { 'installing_runtime' } else { 'syncing_repo' }
 Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
     ScaleWorldUpdateState = 'running'
-    ScaleWorldUpdatePhase = 'syncing_repo'
+    ScaleWorldUpdatePhase = $initialPhase
     ScaleWorldUpdateResultReason = ''
     ScaleWorldUpdateCompletedAtUtc = ''
 }
 
-$pixelStreamingRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
-$updateScript = Join-Path $pixelStreamingRoot 'SWupdate.ps1'
-$stackLauncher = Join-Path $PSScriptRoot '..\cmd\start_streamer_stack.bat'
-$streamerHealthPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\streamer-health.json'
-$repoSyncScript = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
-$publishCurrentBuildScript = Join-Path $PSScriptRoot 'publish_current_build_tags.ps1'
-$installBasePath = if ($env:SCALEWORLD_INSTALL_BASE) { $env:SCALEWORLD_INSTALL_BASE } else { 'C:\PixelStreaming' }
-$activeInstallPath = Join-Path $installBasePath 'WindowsNoEditor'
-$currentReleaseStatePath = Join-Path $installBasePath 'state\current-release.json'
-$pendingReleaseStatePath = Join-Path $installBasePath 'state\pending-release.json'
-$script:UpdateModeTracePath = Join-Path $installBasePath 'state\update-mode-trace.log'
-$prepareUpdateStdOutPath = Join-Path $installBasePath 'state\update-prepare.stdout.log'
-$prepareUpdateStdErrPath = Join-Path $installBasePath 'state\update-prepare.stderr.log'
-$prepareUpdateProcess = $null
-$showVisiblePrepareWindow = Get-VisiblePrepareWindowEnabled
-
-$prepareDataDrive = if ($env:STACK_PREPARE_DATA_DRIVE) { [System.Boolean]::Parse($env:STACK_PREPARE_DATA_DRIVE) } else { $true }
-$requireDataDrive = if ($env:STACK_REQUIRE_DATA_DRIVE) { [System.Boolean]::Parse($env:STACK_REQUIRE_DATA_DRIVE) } else { $false }
-$dataDiskNumber = if ($env:SCALEWORLD_DATA_DISK_NUMBER) { [int]$env:SCALEWORLD_DATA_DISK_NUMBER } else { 1 }
-
 try {
     Write-UpdateModeTrace -Step 'update_mode_started' -Data @{
+        TargetType = $updateTargetType
         TargetZipKey = $targetZipKey
+        TargetRuntimeManifestKey = $targetRuntimeManifestKey
+        TargetRuntimeBundleId = $targetRuntimeBundleId
         CurrentRelease = Get-ReleaseStateSnapshot -Path $currentReleaseStatePath
         PendingRelease = Get-ReleaseStateSnapshot -Path $pendingReleaseStatePath
         ActiveInstall = Get-ActiveInstallTargetSnapshot -Path $activeInstallPath
@@ -677,6 +763,124 @@ try {
         } else {
             Write-UpdateModeLog "Data drive script not found at '$dataDriveScript'. Continuing without prepared data drive." 'WARN'
         }
+    }
+
+    if ($updateTargetType -eq 'pixelstreaming_runtime') {
+        if (-not (Test-Path -LiteralPath $runtimeInstallerScript)) {
+            throw "PixelStreaming runtime installer not found at '$runtimeInstallerScript'."
+        }
+
+        if (Test-Path -LiteralPath $runtimeInstallResultPath) {
+            Remove-Item -LiteralPath $runtimeInstallResultPath -Force
+        }
+
+        Set-UpdatePhase -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Phase 'installing_runtime'
+        Write-UpdateModeLog "Installing PixelStreaming runtime artifact '$targetRuntimeManifestKey'."
+        Write-UpdateModeTrace -Step 'before_runtime_install' -Data @{
+            TargetRuntimeManifestKey = $targetRuntimeManifestKey
+            TargetRuntimeBundleId = $targetRuntimeBundleId
+        }
+
+        & powershell.exe `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File $runtimeInstallerScript `
+            -BucketName $runtimeArtifactBucket `
+            -ManifestS3Key $targetRuntimeManifestKey `
+            -Region $identity.Region `
+            -InstallRoot $installBasePath `
+            -ResultPath $runtimeInstallResultPath `
+            -Activate
+        if ($LASTEXITCODE -ne 0) {
+            throw "install_pixelstreaming_runtime.ps1 exited with code $LASTEXITCODE."
+        }
+
+        $installResult = Get-Content -LiteralPath $runtimeInstallResultPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        $installedBundleId = if (-not [string]::IsNullOrWhiteSpace($targetRuntimeBundleId)) { $targetRuntimeBundleId } else { [string]$installResult.BundleId }
+        $installedArtifactKey = if (-not [string]::IsNullOrWhiteSpace($targetRuntimeArtifactKey)) { $targetRuntimeArtifactKey } else { [string]$installResult.RuntimeZipKey }
+        $installedSourceCommit = if (-not [string]::IsNullOrWhiteSpace($targetRuntimeSourceCommit)) { $targetRuntimeSourceCommit } else { [string]$installResult.SourceCommit }
+        $installedContractVersion = if (-not [string]::IsNullOrWhiteSpace($targetRuntimeContractVersion)) { $targetRuntimeContractVersion } else { [string]$installResult.ContractVersion }
+        $activeRuntimeRoot = [string]$installResult.ActiveRoot
+        $runtimeStreamerHealthPath = if (-not [string]::IsNullOrWhiteSpace($activeRuntimeRoot)) {
+            Join-Path $activeRuntimeRoot 'SignallingWebServer\state\streamer-health.json'
+        } else {
+            $streamerHealthPath
+        }
+
+        $runtimeStackLauncher = Get-ActiveRuntimeStackLauncher -InstallBasePath $installBasePath
+        if ([string]::IsNullOrWhiteSpace($runtimeStackLauncher)) {
+            throw "Active PixelStreaming runtime launcher was not found under '$installBasePath\PixelStreamingRuntime'."
+        }
+
+        Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
+            ScaleWorldUpdateState = 'validating'
+            ScaleWorldUpdatePhase = 'validating'
+            ScaleWorldUpdateResultReason = ''
+            ScaleWorldUpdateCompletedAtUtc = ''
+        }
+
+        if (Test-Path -LiteralPath $runtimeStreamerHealthPath) {
+            Remove-Item -LiteralPath $runtimeStreamerHealthPath -Force
+        }
+
+        Write-UpdateModeLog "Launching validation stack for PixelStreaming runtime '$installedBundleId'."
+        $validationStartedAtUtc = (Get-Date).ToUniversalTime()
+        Start-Process -FilePath $runtimeStackLauncher -ArgumentList '--validation' -WindowStyle Hidden | Out-Null
+
+        Write-UpdateModeLog "Waiting up to $ValidationTimeoutSeconds seconds for streamer validation."
+        $validated = Wait-ForStreamerValidation -HealthPath $runtimeStreamerHealthPath -TimeoutSeconds $ValidationTimeoutSeconds -StableSeconds $ValidationStableSeconds
+        if (-not $validated) {
+            throw "PixelStreaming runtime artifact failed validation within $ValidationTimeoutSeconds seconds."
+        }
+
+        Write-UpdateModeLog "Waiting up to $RuntimeStatusValidationTimeoutSeconds seconds for EC2 runtime status validation."
+        $runtimeStatusValidated = Wait-ForRuntimeStatusValidation `
+            -AwsCli $awsCli `
+            -Region $identity.Region `
+            -InstanceId $identity.InstanceId `
+            -ValidationStartedAtUtc $validationStartedAtUtc `
+            -TimeoutSeconds $RuntimeStatusValidationTimeoutSeconds
+        if (-not $runtimeStatusValidated.Success) {
+            throw "EC2 runtime status validation did not reach ready within $RuntimeStatusValidationTimeoutSeconds seconds. Last observed: $($runtimeStatusValidated.Summary)"
+        }
+
+        $completionTime = (Get-Date).ToUniversalTime().ToString('o')
+        $successTags = @{
+            ScaleWorldUpdateState = 'succeeded'
+            ScaleWorldUpdatePhase = ''
+            ScaleWorldUpdateResultReason = 'validated_runtime_artifact'
+            ScaleWorldUpdateCompletedAtUtc = $completionTime
+            ScaleWorldLastUpdatedAtUtc = $completionTime
+            ScaleWorldPixelStreamingRuntimeManifestKey = $targetRuntimeManifestKey
+        }
+        if (-not [string]::IsNullOrWhiteSpace($installedBundleId)) {
+            $successTags['ScaleWorldPixelStreamingRuntimeBundleId'] = $installedBundleId
+            $successTags['ScaleWorldPixelStreamingVersion'] = $installedBundleId
+        }
+        if (-not [string]::IsNullOrWhiteSpace($installedArtifactKey)) {
+            $successTags['ScaleWorldPixelStreamingRuntimeArtifactKey'] = $installedArtifactKey
+        }
+        if (-not [string]::IsNullOrWhiteSpace($installedSourceCommit)) {
+            $successTags['ScaleWorldPixelStreamingRuntimeSourceCommit'] = $installedSourceCommit
+        }
+        if (-not [string]::IsNullOrWhiteSpace($installedContractVersion)) {
+            $successTags['ScaleWorldPixelStreamingRuntimeContractVersion'] = $installedContractVersion
+        }
+
+        Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags $successTags
+        Write-UpdateModeTrace -Step 'after_runtime_validation' -Data @{
+            TargetRuntimeManifestKey = $targetRuntimeManifestKey
+            RuntimeStatusSummary = $runtimeStatusValidated.Summary
+            InstalledBundleId = $installedBundleId
+            InstalledArtifactKey = $installedArtifactKey
+        }
+
+        Write-UpdateModeLog "PixelStreaming runtime '$installedBundleId' validated successfully. Requesting instance stop and leaving Fleet command tags for API reconciliation."
+        & $awsCli ec2 stop-instances --region $identity.Region --instance-ids $identity.InstanceId *> $null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to request instance stop after runtime validation."
+        }
+        exit 10
     }
 
     if (-not (Test-Path -LiteralPath $repoSyncScript)) {

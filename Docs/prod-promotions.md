@@ -1,6 +1,8 @@
 # Prod Streamer Promotions
 
-This document is the current reference for how prod streamer code is promoted.
+This document is the current reference for the legacy Git-ref prod streamer promotion path.
+
+2026-05-21 release-train direction: normal PixelStreaming code promotion should move to immutable prebuilt runtime artifacts under `s3://scaleworlddepot/PixelStreamingRuntime/`. See `pixelstreaming-runtime-artifact-contract.md`. The runtime install/update path exists, but the Git-ref path below remains compatibility and break-glass until release-candidate orchestration is added and existing instances have the updated bootstrap/updater scripts.
 
 Stage/candidate promotion now exists as a separate first step:
 - Gold validation can promote the tested checkout to `/pixelstreaming/stage/git-target-ref`
@@ -17,6 +19,14 @@ Current prod model:
 4. update the SSM parameter:
    - `/pixelstreaming/prod/git-target-ref`
 5. prod instances in `pinned` mode resolve that parameter at startup
+
+Target prod model:
+1. build and validate a PixelStreaming runtime bundle on a clean release runner
+2. publish `PixelStreamingRuntime/<bundleId>/manifest.json` and `runtime.zip`
+3. capture a Release Candidate Manifest referencing the runtime manifest, Unreal build, API/web versions, validation evidence, and rollback predecessor
+4. promote that candidate from Dev to Stage to Prod
+5. converge stopped/provisioned capacity through runtime artifact install/activate
+6. refresh AMI/launch template only when the base image changes, not for every PixelStreaming runtime change
 
 Current promotion path details:
 

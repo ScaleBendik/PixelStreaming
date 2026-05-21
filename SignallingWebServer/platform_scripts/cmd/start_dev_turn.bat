@@ -1,7 +1,9 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 
-set "ROOT=C:\PixelStreaming\PixelStreaming\SignallingWebServer"
+set "SCRIPT_DIR=%~dp0"
+for %%I in ("%SCRIPT_DIR%\..\..") do set "ROOT=%%~fI"
+if defined SCALEWORLD_WILBUR_ROOT set "ROOT=%SCALEWORLD_WILBUR_ROOT%"
 set "REGION=eu-north-1"
 if not defined STREAMING_LANE_TAG_RETRY_COUNT set "STREAMING_LANE_TAG_RETRY_COUNT=12"
 if not defined STREAMING_LANE_TAG_RETRY_DELAY_SECONDS set "STREAMING_LANE_TAG_RETRY_DELAY_SECONDS=5"

@@ -1,6 +1,6 @@
 # ScaleWorld Cloud Infrastructure (Source of Truth)
 
-Last updated: 2026-05-15
+Last updated: 2026-05-21
 Owner: ScaleWorld Platform
 
 ## Purpose
@@ -112,6 +112,15 @@ Legacy compatibility fallback during the lane split migration. Do not use this a
 
 - `/pixelstreaming/nonprod/git-target-ref`
 
+Planned replacement for normal PixelStreaming code promotion:
+
+- immutable runtime manifests under `s3://scaleworlddepot/PixelStreamingRuntime/`
+- canonical contract: `pixelstreaming-runtime-artifact-contract.md`
+- Fleet update mode can now install and validate `pixelstreaming_runtime` manifests from stopped instances
+- provisioning mode can now install a runtime manifest when launch/provisioning tags include `ScaleWorldTargetRuntimeManifestKey`
+- release candidates should point at runtime manifest keys instead of promoted Git refs once the candidate workflow is added
+- Git target refs remain compatibility and break-glass inputs during migration
+
 Current Azure Key Vault secret used by the API workload for connect tickets:
 
 - `kv-scaleworld-dev` -> `connect-ticket-signing-key`
@@ -207,9 +216,15 @@ Screenshot bundle retention is currently three days. Keep the S3 lifecycle rule 
 Streamer/TURN instance role must currently support:
 
 - SSM parameter retrieval with decryption in `eu-north-1`
+- `s3:GetObject` for approved Unreal update artifacts and, after runtime-artifact rollout, `s3://scaleworlddepot/PixelStreamingRuntime/*`
 - `ec2:CreateTags` for the approved runtime/session tag keys on self:
   - `ScaleWorldRuntime*`
   - `ScaleWorldPixelStreamingVersion`
+  - `ScaleWorldPixelStreamingRuntimeBundleId`
+  - `ScaleWorldPixelStreamingRuntimeManifestKey`
+  - `ScaleWorldPixelStreamingRuntimeArtifactKey`
+  - `ScaleWorldPixelStreamingRuntimeSourceCommit`
+  - `ScaleWorldPixelStreamingRuntimeContractVersion`
   - `ScaleWorldSessionNetworkPathSessionId`
   - `ScaleWorldSessionTurnUsed`
   - `ScaleWorldSessionRelayProtocol`
@@ -444,9 +459,10 @@ Manual and maintenance-mode helpers:
 `start_streamer_stack.bat` now checks instance maintenance tags before normal startup.
 
 - If `ScaleWorldMaintenanceMode=update`, the instance runs the update path first instead of launching Wilbur/Unreal for user traffic.
-- If `ScaleWorldMaintenanceMode=provisioning`, the instance runs a bounded provisioning bootstrap first. That bootstrap waits for fresh-launch prerequisites, syncs the PixelStreaming repo if upstream changed, runs `BuildScripts/build-all.bat` when needed, and then continues into normal Wilbur/Unreal startup. This keeps normal restarts fast while making new launches self-healing even if the AMI repo is behind or Windows networking is not ready at the first scheduler tick.
+- If `ScaleWorldMaintenanceMode=provisioning`, the instance runs a bounded provisioning bootstrap first. That bootstrap waits for fresh-launch prerequisites, syncs the PixelStreaming repo if upstream changed, runs `BuildScripts/build-all.bat` when needed, installs the tagged PixelStreaming runtime artifact when `ScaleWorldTargetRuntimeManifestKey` is present, and then continues into normal Wilbur/Unreal startup. This keeps normal restarts fast while making new launches self-healing even if the AMI repo is behind or Windows networking is not ready at the first scheduler tick.
+- If `C:\PixelStreaming\PixelStreamingRuntime` points at an installed runtime bundle, normal startup delegates to that active runtime and skips boot-time Git sync.
 
-During maintenance-mode updates, `invoke_update_mode.ps1` also syncs the PixelStreaming repo before running `SWupdate.ps1`:
+During Unreal maintenance-mode updates, `invoke_update_mode.ps1` also syncs the PixelStreaming repo before running `SWupdate.ps1`:
 
 1. `git fetch --prune`
 2. compare `HEAD` with the configured upstream branch
@@ -457,6 +473,10 @@ During maintenance-mode updates, `invoke_update_mode.ps1` also syncs the PixelSt
 If tracked local changes exist in the repo, the maintenance update fails fast instead of overwriting instance-local edits.
 
 Prerequisite: the instance must have a valid PixelStreaming git checkout and Git installed so update mode can fetch/pull before building.
+
+During PixelStreaming runtime maintenance-mode updates, `invoke_update_mode.ps1` does not build on the serving instance. It downloads the selected runtime manifest, verifies and installs the ZIP through `install_pixelstreaming_runtime.ps1`, switches the active runtime junction, launches validation from the active runtime root, publishes runtime identity tags, and stops for API reconciliation.
+
+Migration prerequisite: current live/stopped instances must first receive this bootstrap/updater code through the legacy repo-sweep/git-ref path or a refreshed base AMI. After that one-time bootstrap rollout, small PixelStreaming runtime changes should use runtime manifests instead of AMI bakes.
 
 Provisioning mode uses the same shared repo-sync helper:
 
@@ -568,4 +588,5 @@ Note:
 - 2026-03-21: Added helper-based lane fallback from instance tag `ScaleWorldLane` (with temporary `ScaleWorldlane` compatibility), switched prod promotion ledger writes to a local untracked file, fixed annotated-tag pinned-sync resolution, added a stale-HEAD guard to prod promotion, and validated a dark-launch prod instance booting successfully in the prod lane after pinned catch-up.
 - 2026-03-22: Added a manual dark-connect helper (`mint-prod-dark-connect-ticket.ps1`) and validated end-to-end prod dark connect through manual ALB routing plus a prod-shaped ticket against the current promoted prod ref.
 - 2026-05-15: Hardened stage/prod streamer startup so stale machine-level `SCALEWORLD_GIT_SYNC_MODE=upstream` cannot bypass the stage/prod SSM target refs.
+- 2026-05-21: Added the immutable PixelStreaming runtime artifact direction, S3 manifest/ZIP contract, Fleet runtime update install path, provisioning tag hook, and migration note that existing instances need a one-time bootstrap update before runtime artifact jobs can run.
 

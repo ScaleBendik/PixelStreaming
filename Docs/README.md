@@ -1,6 +1,6 @@
 # PixelStreaming Documentation
 
-Last updated: 2026-05-07
+Last updated: 2026-05-21
 
 This directory mixes upstream Pixel Streaming reference documentation with ScaleWorld operational docs for the customized streamer runtime.
 
@@ -14,6 +14,7 @@ Use these first for the Server Manager integration:
 | Instance-agent bootstrap trust and secret separation | `../../scaleworld-server-manager-web/docs/instance-agent-bootstrap-trust-runbook-2026-05-05.md` |
 | Prod streamer promotion process | `prod-promotions.md` |
 | Unreal ZIP update artifact contract | `s3-build-archive-contract.md` |
+| PixelStreaming runtime artifact contract | `pixelstreaming-runtime-artifact-contract.md` |
 | Runtime watchdog and startup recovery | `watchdog-runbook.md` |
 | TURN server notes | `turnserverdoc.md` |
 | Security guidelines | `Security-Guidelines.md` |

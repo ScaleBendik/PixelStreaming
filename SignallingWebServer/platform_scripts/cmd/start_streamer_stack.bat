@@ -3,10 +3,13 @@ setlocal EnableExtensions EnableDelayedExpansion
 
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%\..\..\..") do set "PIXELSTREAMING_ROOT=%%~fI"
+if not defined SCALEWORLD_INSTALL_BASE set "SCALEWORLD_INSTALL_BASE=C:\PixelStreaming"
+for %%I in ("%SCALEWORLD_INSTALL_BASE%\PixelStreamingRuntime") do set "SCALEWORLD_ACTIVE_RUNTIME_ROOT=%%~fI"
 set "UPDATE_SCRIPT=%PIXELSTREAMING_ROOT%\SWupdate.ps1"
 set "DATA_DRIVE_SCRIPT=%SCRIPT_DIR%..\powershell\ensure_data_drive.ps1"
 set "UPDATE_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_update_mode.ps1"
 set "PROVISIONING_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_provisioning_mode.ps1"
+set "ACTIVE_RUNTIME_LAUNCHER_RESOLVER=%SCRIPT_DIR%..\powershell\resolve_active_runtime_launcher.ps1"
 set "STACK_MODE=normal"
 set "STACK_START_WATCHDOG=true"
 set "STACK_START_UNREAL=true"
@@ -60,7 +63,9 @@ if not defined SCALEWORLD_GIT_TARGET_REF_PARAM (
   )
 )
 if not defined STACK_ENABLE_BOOT_GIT_SYNC (
-  if /i "%SCALEWORLD_GIT_SYNC_MODE%"=="off" (
+  if /i "%PIXELSTREAMING_ROOT%"=="%SCALEWORLD_ACTIVE_RUNTIME_ROOT%" (
+    set "STACK_ENABLE_BOOT_GIT_SYNC=false"
+  ) else if /i "%SCALEWORLD_GIT_SYNC_MODE%"=="off" (
     set "STACK_ENABLE_BOOT_GIT_SYNC=false"
   ) else (
     set "STACK_ENABLE_BOOT_GIT_SYNC=true"
@@ -81,6 +86,8 @@ if /i "%~1"=="--recovery" (
 if /i "%~1"=="--validation" (
   set "STACK_MODE=validation"
   set "STACK_ENABLE_UPDATE_MODE=false"
+  set "STACK_ENABLE_PROVISIONING_MODE=false"
+  set "STACK_ENABLE_BOOT_GIT_SYNC=false"
   set "STACK_RUN_UNREAL_UPDATE_CHECK=false"
   shift
 )
@@ -103,16 +110,6 @@ if not defined WATCHDOG_TERMINATE_MATCHED_PROCESSES set "WATCHDOG_TERMINATE_MATC
 
 if /i "%STACK_MODE%"=="recovery" set "STACK_RUN_UNREAL_UPDATE_CHECK=false"
 set "STACK_LAUNCH_EXIT=0"
-
-if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_BOOT_GIT_SYNC%"=="true" (
-  call :sync_repo_before_stack
-  set "STACK_SYNC_EXIT=!errorlevel!"
-  if "!STACK_SYNC_EXIT!"=="42" (
-    echo Repo sync launched a fresh stack from the updated checkout. Exiting this pre-update launcher.
-    exit /b 0
-  )
-  if not "!STACK_SYNC_EXIT!"=="0" exit /b !STACK_SYNC_EXIT!
-)
 
 if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_UPDATE_MODE%"=="true" (
   if exist "%UPDATE_MODE_SCRIPT%" (
@@ -148,6 +145,22 @@ if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_PROVISIONING_MODE%"=="
   ) else (
     echo WARNING: Provisioning mode script not found at "%PROVISIONING_MODE_SCRIPT%". Continuing with normal startup.
   )
+)
+
+if /i "%STACK_MODE%"=="normal" (
+  call :delegate_to_active_runtime_if_available %*
+  set "ACTIVE_RUNTIME_DELEGATE_EXIT=!errorlevel!"
+  if not "!ACTIVE_RUNTIME_DELEGATE_EXIT!"=="0" exit /b !ACTIVE_RUNTIME_DELEGATE_EXIT!
+)
+
+if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_BOOT_GIT_SYNC%"=="true" (
+  call :sync_repo_before_stack
+  set "STACK_SYNC_EXIT=!errorlevel!"
+  if "!STACK_SYNC_EXIT!"=="42" (
+    echo Repo sync launched a fresh stack from the updated checkout. Exiting this pre-update launcher.
+    exit /b 0
+  )
+  if not "!STACK_SYNC_EXIT!"=="0" exit /b !STACK_SYNC_EXIT!
 )
 
 if /i "%STACK_RUN_UNREAL_UPDATE_CHECK%"=="true" (
@@ -218,6 +231,26 @@ if not "%STACK_LAUNCH_EXIT%"=="0" (
 
 echo Stack launch completed.
 exit /b 0
+
+:delegate_to_active_runtime_if_available
+set "ACTIVE_RUNTIME_LAUNCHER="
+
+if not exist "%ACTIVE_RUNTIME_LAUNCHER_RESOLVER%" exit /b 0
+
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%ACTIVE_RUNTIME_LAUNCHER_RESOLVER%" -CurrentRoot "%PIXELSTREAMING_ROOT%"`) do (
+  set "ACTIVE_RUNTIME_LAUNCHER=%%I"
+)
+
+if not defined ACTIVE_RUNTIME_LAUNCHER exit /b 0
+if not exist "%ACTIVE_RUNTIME_LAUNCHER%" (
+  echo WARNING: Active PixelStreaming runtime launcher resolved to "%ACTIVE_RUNTIME_LAUNCHER%", but the file was not found. Continuing with bootstrap checkout.
+  exit /b 0
+)
+
+echo Delegating normal startup to active PixelStreaming runtime "%ACTIVE_RUNTIME_LAUNCHER%".
+set "STACK_ENABLE_BOOT_GIT_SYNC=false"
+call "%ACTIVE_RUNTIME_LAUNCHER%" %*
+exit /b %errorlevel%
 
 :sync_repo_before_stack
 set "REPO_SYNC_SCRIPT=%SCRIPT_DIR%..\powershell\ensure_repo_current.ps1"

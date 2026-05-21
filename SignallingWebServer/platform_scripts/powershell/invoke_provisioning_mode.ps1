@@ -66,6 +66,67 @@ function Get-InstanceTags {
     return $map
 }
 
+function Get-ProvisioningTagValue {
+    param(
+        [hashtable]$Tags,
+        [string]$Key
+    )
+
+    $value = [string]$Tags[$Key]
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return ''
+    }
+
+    return $value.Trim()
+}
+
+function Add-OptionalEc2TagArgument {
+    param(
+        [System.Collections.Generic.List[string]]$TagArguments,
+        [string]$Key,
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return
+    }
+
+    $normalizedValue = $Value.Trim()
+    if ($normalizedValue.Length -gt 256) {
+        $normalizedValue = $normalizedValue.Substring(0, 256)
+    }
+
+    $TagArguments.Add("Key=$Key,Value=$normalizedValue")
+}
+
+function Set-ProvisioningRuntimeIdentityTags {
+    param(
+        [string]$AwsCli,
+        [string]$Region,
+        [string]$InstanceId,
+        [string]$ManifestKey,
+        [pscustomobject]$InstallResult
+    )
+
+    $tagArguments = [System.Collections.Generic.List[string]]::new()
+    Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldPixelStreamingRuntimeManifestKey' -Value $ManifestKey
+    Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldPixelStreamingRuntimeBundleId' -Value ([string]$InstallResult.BundleId)
+    Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldPixelStreamingRuntimeArtifactKey' -Value ([string]$InstallResult.RuntimeZipKey)
+    Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldPixelStreamingRuntimeSourceCommit' -Value ([string]$InstallResult.SourceCommit)
+    Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldPixelStreamingRuntimeContractVersion' -Value ([string]$InstallResult.ContractVersion)
+    Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldPixelStreamingVersion' -Value ([string]$InstallResult.BundleId)
+    Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldLastUpdatedAtUtc' -Value ((Get-Date).ToUniversalTime().ToString('o'))
+
+    if ($tagArguments.Count -eq 0) {
+        return
+    }
+
+    & $AwsCli ec2 create-tags --region $Region --resources $InstanceId --tags $tagArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to publish PixelStreaming runtime identity tags for $InstanceId."
+    }
+}
+
 function Test-FatalBootstrapError {
     param([string]$Message)
 
@@ -76,6 +137,7 @@ function Test-FatalBootstrapError {
         'is not a git repository',
         'Tracked local changes are present',
         'ensure_repo_current.ps1 was not found',
+        'install_pixelstreaming_runtime.ps1 was not found',
         'Pinned git sync mode requires SCALEWORLD_GIT_TARGET_REF',
         'Unsupported git sync mode'
     )
@@ -190,6 +252,9 @@ function Stop-ProvisioningHeartbeat {
 
 $pixelStreamingRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $repoSyncScript = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
+$runtimeInstallerScript = Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.ps1'
+$installBasePath = if ($env:SCALEWORLD_INSTALL_BASE) { $env:SCALEWORLD_INSTALL_BASE } else { 'C:\PixelStreaming' }
+$runtimeArtifactBucket = if ($env:SCALEWORLD_RUNTIME_ARTIFACT_BUCKET) { $env:SCALEWORLD_RUNTIME_ARTIFACT_BUCKET } else { 'scaleworlddepot' }
 $bootstrapDeadline = (Get-Date).AddSeconds([Math]::Max($BootstrapTimeoutSeconds, 1))
 $detectionDeadline = (Get-Date).AddSeconds([Math]::Max($DetectionTimeoutSeconds, 1))
 $attempt = 0
@@ -203,6 +268,7 @@ while ($true) {
         $identity = Get-InstanceIdentity
         $instanceTags = Get-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId
         $maintenanceMode = ([string]$instanceTags['ScaleWorldMaintenanceMode']).Trim().ToLowerInvariant()
+        $targetRuntimeManifestKey = Get-ProvisioningTagValue -Tags $instanceTags -Key 'ScaleWorldTargetRuntimeManifestKey'
 
         if ($maintenanceMode -ne 'provisioning') {
             Write-ProvisioningLog 'No provisioning maintenance mode requested. Continuing with normal startup.'
@@ -231,6 +297,41 @@ while ($true) {
                 -BuildingUpdatePhase 'provisioning_repo_sync'
             if ($LASTEXITCODE -ne 0) {
                 throw "ensure_repo_current.ps1 exited with code $LASTEXITCODE."
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($targetRuntimeManifestKey)) {
+                if (-not (Test-Path -LiteralPath $runtimeInstallerScript)) {
+                    throw "install_pixelstreaming_runtime.ps1 was not found at '$runtimeInstallerScript'."
+                }
+
+                $runtimeInstallResultPath = Join-Path $installBasePath 'state\provisioning-runtime-install-result.json'
+                if (Test-Path -LiteralPath $runtimeInstallResultPath) {
+                    Remove-Item -LiteralPath $runtimeInstallResultPath -Force
+                }
+
+                Write-ProvisioningLog "Installing PixelStreaming runtime artifact '$targetRuntimeManifestKey' before first startup."
+                Set-ProvisioningHeartbeatState -Context $heartbeatContext -Status 'updating_infra' -Reason 'installing_pixelstreaming_runtime'
+                & powershell.exe `
+                    -NoProfile `
+                    -ExecutionPolicy Bypass `
+                    -File $runtimeInstallerScript `
+                    -BucketName $runtimeArtifactBucket `
+                    -ManifestS3Key $targetRuntimeManifestKey `
+                    -Region $identity.Region `
+                    -InstallRoot $installBasePath `
+                    -ResultPath $runtimeInstallResultPath `
+                    -Activate
+                if ($LASTEXITCODE -ne 0) {
+                    throw "install_pixelstreaming_runtime.ps1 exited with code $LASTEXITCODE."
+                }
+
+                $installResult = Get-Content -LiteralPath $runtimeInstallResultPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                Set-ProvisioningRuntimeIdentityTags `
+                    -AwsCli $awsCli `
+                    -Region $identity.Region `
+                    -InstanceId $identity.InstanceId `
+                    -ManifestKey $targetRuntimeManifestKey `
+                    -InstallResult $installResult
             }
         } finally {
             Stop-ProvisioningHeartbeat -Context $heartbeatContext

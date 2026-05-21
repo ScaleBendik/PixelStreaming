@@ -12,3 +12,4 @@ common/types/*
 .nx/cache
 .nx/workspace-data
 Docs/*-promotions.local.md
+BuildArtifacts/
