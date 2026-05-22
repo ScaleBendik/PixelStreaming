@@ -13,3 +13,4 @@ common/types/*
 .nx/workspace-data
 Docs/*-promotions.local.md
 BuildArtifacts/
+SignallingWebServer/state/
