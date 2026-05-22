@@ -1,6 +1,6 @@
 # ScaleWorld Cloud Infrastructure (Source of Truth)
 
-Last updated: 2026-05-21
+Last updated: 2026-05-22
 Owner: ScaleWorld Platform
 
 ## Purpose
@@ -118,7 +118,7 @@ Planned replacement for normal PixelStreaming code promotion:
 - canonical contract: `pixelstreaming-runtime-artifact-contract.md`
 - Fleet update mode can now install and validate `pixelstreaming_runtime` manifests from stopped instances
 - provisioning mode can now install a runtime manifest when launch/provisioning tags include `ScaleWorldTargetRuntimeManifestKey`
-- release candidates should point at runtime manifest keys instead of promoted Git refs once the candidate workflow is added
+- release candidates point at runtime manifest keys instead of promoted Git refs; the API candidate store exists, while capture UI, promotion orchestration, validation gates, and capacity convergence remain in progress
 - Git target refs remain compatibility and break-glass inputs during migration
 - delivery mode is explicit:
   - Dev defaults to `git_ref` so `/pixelstreaming/dev/git-target-ref` remains the fast iteration path
@@ -272,6 +272,12 @@ Workstation/manual dev-pool target updates may additionally need:
 
 - `ssm:GetParameter` on `/pixelstreaming/dev/git-target-ref`
 - `ssm:PutParameter` on `/pixelstreaming/dev/git-target-ref`
+
+Workstation/manual runtime artifact publishing needs:
+
+- `s3:PutObject` on `arn:aws:s3:::scaleworlddepot/PixelStreamingRuntime/*`
+- `s3:GetObject` on `arn:aws:s3:::scaleworlddepot/PixelStreamingRuntime/*`
+- optional `s3:ListBucket` on `arn:aws:s3:::scaleworlddepot` constrained to the `PixelStreamingRuntime/` prefix so `BuildScripts\publish-runtime-artifact.ps1` can select the next bundle id without falling back to local-only names
 
 Current hardening note:
 
@@ -600,4 +606,5 @@ Note:
 - 2026-03-22: Added a manual dark-connect helper (`mint-prod-dark-connect-ticket.ps1`) and validated end-to-end prod dark connect through manual ALB routing plus a prod-shaped ticket against the current promoted prod ref.
 - 2026-05-15: Hardened stage/prod streamer startup so stale machine-level `SCALEWORLD_GIT_SYNC_MODE=upstream` cannot bypass the stage/prod SSM target refs.
 - 2026-05-21: Added the immutable PixelStreaming runtime artifact direction, S3 manifest/ZIP contract, Fleet runtime update install path, provisioning tag hook, explicit git-ref/runtime-artifact delivery mode split, and migration note that existing instances need a one-time bootstrap update before runtime artifact jobs can run.
+- 2026-05-22: Added release-candidate store status, runtime-artifact publisher IAM, and clarified that Git target refs are now Dev/bootstrap/break-glass migration paths rather than the long-term Stage/Prod release object.
 

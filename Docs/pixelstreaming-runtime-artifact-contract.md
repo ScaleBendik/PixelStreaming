@@ -1,6 +1,7 @@
 # PixelStreaming Runtime Artifact Contract
 
 Date: 2026-05-21
+Last updated: 2026-05-22
 Status: active foundation
 
 ## Intent
@@ -92,6 +93,7 @@ BuildScripts/package-runtime-artifact.ps1
 BuildScripts/package-runtime-artifact.bat
 BuildScripts/publish-runtime-artifact.ps1
 BuildScripts/publish-runtime-artifact.bat
+BuildScripts/publish-runtime-artifact-shortcut.bat
 ```
 
 Default behavior:
@@ -130,6 +132,22 @@ The publish wrapper selects the next bundle id for the current date, using the
 S3 manifests under `PixelStreamingRuntime/`. If S3 listing is not allowed, it
 prints a warning, falls back to local names, and probes the selected manifest key
 before publishing.
+
+Shortcut wrapper:
+
+```text
+BuildScripts\publish-runtime-artifact-shortcut.bat
+```
+
+This wrapper starts PowerShell with `-NoExit`, so it is suitable for a desktop shortcut when an operator wants the publish window to remain open after completion or failure.
+
+`BuildScripts\publish-target-ref.ps1` and `BuildScripts\publish-target-ref-shortcut.bat` remain available for the Dev fast path and one-time bootstrap migration through Git target refs.
+
+Minimum workstation/publisher IAM:
+
+1. `s3:PutObject` and `s3:GetObject` on `arn:aws:s3:::scaleworlddepot/PixelStreamingRuntime/*`
+2. optional but recommended `s3:ListBucket` on `arn:aws:s3:::scaleworlddepot` constrained to `PixelStreamingRuntime/*`
+3. `ssm:GetParameter` and `ssm:PutParameter` on `/pixelstreaming/*/git-target-ref` while the Git-ref migration path remains in use
 
 ## Windows Install Layout
 
@@ -241,3 +259,11 @@ These are separate from the existing Unreal build tag `ScaleWorldCurrentBuild` a
 Release candidates should reference the PixelStreaming runtime manifest key, not a promoted Git ref, as the deployable runtime object.
 
 Gold or a dev streamer may build and validate a runtime artifact, but the source of truth after publish is the immutable manifest plus its release-candidate record.
+
+Current branch state:
+
+1. Server Manager API exposes `GET /admin/fleet/release-candidates`, `POST /admin/fleet/release-candidates/capture`, and `PUT /admin/fleet/release-candidates/current/{target}`.
+2. The candidate store has independent Dev, Stage, and Prod current pointers under the `release-candidates/` Blob prefix.
+3. Candidates are captured from a source target but can be promoted across targets; this avoids carrying over overly strict tuple semantics.
+4. The Release page reads candidate state in the Dev/Stage/Prod Release Train cards.
+5. Candidate capture UI, API-owned manifest checksum verification, Stage/Prod promotion orchestration, capacity convergence, and rollback controls are still follow-up work.

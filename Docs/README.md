@@ -1,6 +1,6 @@
 # PixelStreaming Documentation
 
-Last updated: 2026-05-21
+Last updated: 2026-05-22
 
 This directory mixes upstream Pixel Streaming reference documentation with ScaleWorld operational docs for the customized streamer runtime.
 
@@ -15,6 +15,7 @@ Use these first for the Server Manager integration:
 | Prod streamer promotion process | `prod-promotions.md` |
 | Unreal ZIP update artifact contract | `s3-build-archive-contract.md` |
 | PixelStreaming runtime artifact contract | `pixelstreaming-runtime-artifact-contract.md` |
+| Release Train current state | `../../scaleworld-server-manager-web/docs/release-train-current-state-2026-05-22.md` |
 | Runtime watchdog and startup recovery | `watchdog-runbook.md` |
 | TURN server notes | `turnserverdoc.md` |
 | Security guidelines | `Security-Guidelines.md` |
@@ -29,7 +30,9 @@ Use these first for the Server Manager integration:
 4. The in-house watchdog can restart Wilbur, Unreal, or the full stack and publishes `ScaleWorldRuntimeStatus*` tags.
 5. The instance agent is currently embedded in Wilbur. It bootstraps to the API, sends heartbeats/runtime events, consumes desired state and commands, and registers diagnostic/screenshot artifacts. Desired-state writes are normally driven by SQL-backed session, warm-pool, and operational controls rather than ad hoc server-card UI toggles.
 6. Diagnostic bundles and screenshot bundles are uploaded to S3 through AWS CLI and registered with the API for SQL-backed analytics/downloads.
-7. The long-term backlog still tracks splitting the instance agent into a separate service once current warm-pool behavior is stable.
+7. Runtime artifact delivery is active: runtime bundles are published under `PixelStreamingRuntime/<bundleId>/`, installed into versioned runtime roots, and activated through `C:\PixelStreaming\PixelStreamingRuntime`.
+8. `git_ref` delivery remains the Dev fast path and the bootstrap/break-glass migration path. Stage/Prod default to `auto` so an installed active runtime artifact wins when present.
+9. The long-term backlog still tracks splitting the instance agent into a separate service once current warm-pool behavior is stable.
 
 ## Upstream Pixel Streaming Docs
 
