@@ -90,6 +90,8 @@ Initial local packager:
 ```text
 BuildScripts/package-runtime-artifact.ps1
 BuildScripts/package-runtime-artifact.bat
+BuildScripts/publish-runtime-artifact.ps1
+BuildScripts/publish-runtime-artifact.bat
 ```
 
 Default behavior:
@@ -115,6 +117,18 @@ Example publish package:
 ```powershell
 BuildScripts\package-runtime-artifact.ps1 -BundleId pixelstreaming-runtime-20260521-001 -Publish
 ```
+
+Preferred publish package:
+
+```powershell
+BuildScripts\publish-runtime-artifact.ps1
+```
+
+The publish wrapper selects the next bundle id for the current date, using the
+`pixelstreaming-runtime-YYYYMMDD-NNN` convention. It checks local
+`BuildArtifacts\PixelStreamingRuntime` folders and, when allowed by IAM, existing
+S3 manifests under `PixelStreamingRuntime/`. If S3 listing is not allowed, it
+falls back to local names and probes the selected manifest key before publishing.
 
 ## Windows Install Layout
 
