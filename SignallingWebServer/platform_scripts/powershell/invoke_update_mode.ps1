@@ -671,6 +671,30 @@ function Get-ActiveRuntimeStackLauncher {
     return $null
 }
 
+function Start-ValidationStack {
+    param(
+        [string]$LauncherPath,
+        [switch]$RuntimeArtifact
+    )
+
+    $previousDeliveryMode = $env:SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE
+    if ($RuntimeArtifact) {
+        $env:SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE = 'runtime_artifact'
+    }
+
+    try {
+        Start-Process -FilePath $LauncherPath -ArgumentList '--validation' -WindowStyle Hidden | Out-Null
+    } finally {
+        if ($RuntimeArtifact) {
+            if ($null -eq $previousDeliveryMode) {
+                Remove-Item Env:\SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE -ErrorAction SilentlyContinue
+            } else {
+                $env:SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE = $previousDeliveryMode
+            }
+        }
+    }
+}
+
 $detectionDeadline = (Get-Date).AddSeconds([Math]::Max($DetectionTimeoutSeconds, 1))
 $attempt = 0
 $awsCli = $null
@@ -906,7 +930,7 @@ try {
 
         Write-UpdateModeLog "Launching validation stack for PixelStreaming runtime '$installedBundleId'."
         $validationStartedAtUtc = (Get-Date).ToUniversalTime()
-        Start-Process -FilePath $runtimeStackLauncher -ArgumentList '--validation' -WindowStyle Hidden | Out-Null
+        Start-ValidationStack -LauncherPath $runtimeStackLauncher -RuntimeArtifact
 
         Write-UpdateModeLog "Waiting up to $ValidationTimeoutSeconds seconds for streamer validation."
         $validated = Wait-ForStreamerValidation -HealthPath $runtimeStreamerHealthPath -TimeoutSeconds $ValidationTimeoutSeconds -StableSeconds $ValidationStableSeconds
@@ -1279,7 +1303,7 @@ try {
     $validationTargetLabel = if ($hasRuntimePayload) { "$zipFileName + $installedBundleId" } else { $zipFileName }
     Write-UpdateModeLog "Launching validation stack for '$validationTargetLabel'."
     $validationStartedAtUtc = (Get-Date).ToUniversalTime()
-    Start-Process -FilePath $validationStackLauncher -ArgumentList '--validation' -WindowStyle Hidden | Out-Null
+    Start-ValidationStack -LauncherPath $validationStackLauncher -RuntimeArtifact:$hasRuntimePayload
 
     Write-UpdateModeLog "Waiting up to $ValidationTimeoutSeconds seconds for streamer validation."
     $validated = Wait-ForStreamerValidation -HealthPath $validationHealthPath -TimeoutSeconds $ValidationTimeoutSeconds -StableSeconds $ValidationStableSeconds
