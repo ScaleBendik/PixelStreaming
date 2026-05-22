@@ -144,7 +144,11 @@ if exist node\ (
   %TAR% -xf node.zip
   ren "%NODE_NAME%\" "node"
   del node.zip
-  set INSTALL_DEPS=1
+  if exist "%SCRIPT_DIR%..\..\..\node_modules\" (
+    echo Root node_modules found...skipping dependency install after NodeJS download.
+  ) else (
+    set INSTALL_DEPS=1
+  )
 )
 
 rem NOTE: We want to use our NodeJS (not system NodeJS!) to build the web frontend files.

@@ -125,6 +125,13 @@ function Set-ProvisioningRuntimeIdentityTags {
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to publish PixelStreaming runtime identity tags for $InstanceId."
     }
+
+    $deliveryTagArguments = [System.Collections.Generic.List[string]]::new()
+    Add-OptionalEc2TagArgument -TagArguments $deliveryTagArguments -Key 'ScaleWorldPixelStreamingDeliveryMode' -Value 'runtime_artifact'
+    & $AwsCli ec2 create-tags --region $Region --resources $InstanceId --tags $deliveryTagArguments
+    if ($LASTEXITCODE -ne 0) {
+        Write-ProvisioningLog "Published PixelStreaming runtime identity tags for $InstanceId, but failed to publish delivery mode tag." 'WARN'
+    }
 }
 
 function Test-FatalBootstrapError {

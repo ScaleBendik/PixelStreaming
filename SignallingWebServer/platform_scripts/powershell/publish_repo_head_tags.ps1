@@ -100,6 +100,42 @@ function Publish-TagPayload {
     }
 }
 
+function Remove-TagKeys {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$TagKeys
+    )
+
+    if ($TagKeys.Count -eq 0) {
+        return $null
+    }
+
+    $tagPayload = $TagKeys | ForEach-Object {
+        @{
+            Key = $_
+        }
+    }
+    $tagPayloadPath = [System.IO.Path]::GetTempFileName()
+    try {
+        [System.IO.File]::WriteAllText(
+            $tagPayloadPath,
+            (ConvertTo-Json -InputObject @($tagPayload) -Compress -Depth 4),
+            (New-Object System.Text.UTF8Encoding($false))
+        )
+
+        $tagArgs = @(
+            'ec2', 'delete-tags',
+            '--region', $Region,
+            '--resources', $InstanceId,
+            '--tags', ("file://{0}" -f $tagPayloadPath)
+        )
+
+        return Invoke-AwsCliCapture -AwsCli $AwsCliPath -Arguments $tagArgs
+    } finally {
+        Remove-Item -LiteralPath $tagPayloadPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 try {
     $normalizedHead = Normalize-TagValue $CurrentRepoHead
     if ([string]::IsNullOrWhiteSpace($normalizedHead)) {
@@ -121,6 +157,35 @@ try {
         }
 
         throw $headResult.Combined
+    }
+
+    $deliveryModeResult = Publish-TagPayload -TagPayload @(
+        @{
+            Key = 'ScaleWorldPixelStreamingDeliveryMode'
+            Value = 'git_ref'
+        }
+    )
+    if ($deliveryModeResult.ExitCode -ne 0) {
+        if ([string]::IsNullOrWhiteSpace($deliveryModeResult.Combined)) {
+            Write-RepoHeadTagLog "Published repo head '$normalizedHead', but failed to publish PixelStreaming delivery mode 'git_ref' for instance '$InstanceId'. AWS CLI exited with code $($deliveryModeResult.ExitCode)." 'WARN'
+        } else {
+            Write-RepoHeadTagLog "Published repo head '$normalizedHead', but failed to publish PixelStreaming delivery mode 'git_ref' for instance '$InstanceId'. $($deliveryModeResult.Combined)" 'WARN'
+        }
+    }
+
+    $clearRuntimeIdentityResult = Remove-TagKeys -TagKeys @(
+        'ScaleWorldPixelStreamingRuntimeBundleId',
+        'ScaleWorldPixelStreamingRuntimeManifestKey',
+        'ScaleWorldPixelStreamingRuntimeArtifactKey',
+        'ScaleWorldPixelStreamingRuntimeSourceCommit',
+        'ScaleWorldPixelStreamingRuntimeContractVersion'
+    )
+    if ($clearRuntimeIdentityResult -and $clearRuntimeIdentityResult.ExitCode -ne 0) {
+        if ([string]::IsNullOrWhiteSpace($clearRuntimeIdentityResult.Combined)) {
+            Write-RepoHeadTagLog "Published repo head '$normalizedHead', but failed to clear stale PixelStreaming runtime artifact identity tags for instance '$InstanceId'. AWS CLI exited with code $($clearRuntimeIdentityResult.ExitCode)." 'WARN'
+        } else {
+            Write-RepoHeadTagLog "Published repo head '$normalizedHead', but failed to clear stale PixelStreaming runtime artifact identity tags for instance '$InstanceId'. $($clearRuntimeIdentityResult.Combined)" 'WARN'
+        }
     }
 
     $normalizedVersion = Normalize-TagValue $CurrentVersion

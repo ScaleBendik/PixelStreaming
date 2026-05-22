@@ -107,6 +107,23 @@ function Remove-DirectoryBestEffort {
     }
 }
 
+function Expand-RuntimeZipArchive {
+    param(
+        [string]$SourcePath,
+        [string]$DestinationPath
+    )
+
+    if (-not (Test-Path -LiteralPath $SourcePath)) {
+        throw "Runtime ZIP '$SourcePath' was not found."
+    }
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+    Write-Host "Extracting runtime ZIP to '$DestinationPath'..."
+    [System.IO.Compression.ZipFile]::ExtractToDirectory(
+        [System.IO.Path]::GetFullPath($SourcePath),
+        [System.IO.Path]::GetFullPath($DestinationPath))
+}
+
 function Read-RuntimeManifest {
     param([string]$Path)
 
@@ -239,7 +256,7 @@ if ((Test-Path -LiteralPath $bundleRoot) -and -not $ForceReinstall) {
         throw "Runtime ZIP checksum mismatch. Expected '$($manifest.RuntimeZipSha256)', got '$actualSha256'."
     }
 
-    Expand-Archive -LiteralPath $runtimeZipPath -DestinationPath $stagingRoot -Force
+    Expand-RuntimeZipArchive -SourcePath $runtimeZipPath -DestinationPath $stagingRoot
     Copy-Item -LiteralPath $manifestPath -Destination (Join-Path $stagingRoot "manifest.json") -Force
 
     if (Test-Path -LiteralPath $bundleRoot) {

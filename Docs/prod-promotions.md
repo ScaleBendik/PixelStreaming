@@ -28,6 +28,11 @@ Target prod model:
 5. converge stopped/provisioned capacity through runtime artifact install/activate
 6. refresh AMI/launch template only when the base image changes, not for every PixelStreaming runtime change
 
+Delivery-mode note:
+- Dev keeps `git_ref` as the default so small code changes can still be tested by moving `/pixelstreaming/dev/git-target-ref`.
+- Runtime artifact update/provisioning success marks instances with `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact`.
+- Stage/Prod default to `auto`, so they use the active runtime artifact after installation and keep git-ref fallback only for migration and break-glass.
+
 Current promotion path details:
 
 1. `Promote Gold checkout to stage` writes `/pixelstreaming/stage/git-target-ref`

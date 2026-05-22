@@ -198,6 +198,22 @@ function Set-InstanceTags {
     }
 }
 
+function TrySet-InstanceTags {
+    param(
+        [string]$AwsCli,
+        [string]$Region,
+        [string]$InstanceId,
+        [hashtable]$Tags,
+        [string]$FailureContext
+    )
+
+    try {
+        Set-InstanceTags -AwsCli $AwsCli -Region $Region -InstanceId $InstanceId -Tags $Tags
+    } catch {
+        Write-UpdateModeLog "$FailureContext $($_.Exception.Message)" 'WARN'
+    }
+}
+
 function Schedule-DelayedStop {
     param(
         [int]$DelaySeconds
@@ -868,6 +884,12 @@ try {
         }
 
         Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags $successTags
+        TrySet-InstanceTags `
+            -AwsCli $awsCli `
+            -Region $identity.Region `
+            -InstanceId $identity.InstanceId `
+            -Tags @{ ScaleWorldPixelStreamingDeliveryMode = 'runtime_artifact' } `
+            -FailureContext 'Runtime artifact update succeeded, but delivery mode tag publication failed.'
         Write-UpdateModeTrace -Step 'after_runtime_validation' -Data @{
             TargetRuntimeManifestKey = $targetRuntimeManifestKey
             RuntimeStatusSummary = $runtimeStatusValidated.Summary

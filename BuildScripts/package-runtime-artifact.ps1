@@ -172,6 +172,34 @@ function Copy-FileContent {
     }
 }
 
+function New-RuntimeZipArchive {
+    param(
+        [string]$SourceDirectory,
+        [string]$DestinationPath
+    )
+
+    if (-not (Test-Path -LiteralPath $SourceDirectory)) {
+        throw "Runtime ZIP source directory '$SourceDirectory' was not found."
+    }
+
+    $destinationDirectory = Split-Path -Parent $DestinationPath
+    if (-not [string]::IsNullOrWhiteSpace($destinationDirectory)) {
+        New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
+    }
+
+    if (Test-Path -LiteralPath $DestinationPath) {
+        Remove-Item -LiteralPath $DestinationPath -Force
+    }
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+    Write-Host "Creating runtime ZIP from '$SourceDirectory'..."
+    [System.IO.Compression.ZipFile]::CreateFromDirectory(
+        [System.IO.Path]::GetFullPath($SourceDirectory),
+        [System.IO.Path]::GetFullPath($DestinationPath),
+        [System.IO.Compression.CompressionLevel]::Fastest,
+        $false)
+}
+
 function Copy-OptionalFile {
     param(
         [string]$RelativePath,
@@ -418,13 +446,14 @@ $embeddedMetadata = [ordered]@{
 
 $temporaryRuntimeZipPath = Join-Path ([System.IO.Path]::GetTempPath()) "scaleworld-pixelstreaming-runtime-$bundleId-$([guid]::NewGuid().ToString('N')).zip"
 try {
-    Compress-Archive -Path (Join-Path $stageRoot "*") -DestinationPath $temporaryRuntimeZipPath -Force
+    New-RuntimeZipArchive -SourceDirectory $stageRoot -DestinationPath $temporaryRuntimeZipPath
     Copy-FileContent -Source $temporaryRuntimeZipPath -Destination $runtimeZipPath
 } finally {
     Remove-Item -LiteralPath $temporaryRuntimeZipPath -Force -ErrorAction SilentlyContinue
 }
 $runtimeZipSha256 = (Get-FileHash -LiteralPath $runtimeZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
 $runtimeZipSizeBytes = (Get-Item -LiteralPath $runtimeZipPath).Length
+Write-Host "Wrote runtime ZIP to '$runtimeZipPath' ($runtimeZipSizeBytes bytes)."
 
 $manifest = [ordered]@{
     schemaVersion = 1
@@ -465,8 +494,11 @@ if ($Publish) {
         throw "Refusing to publish a non-promotable runtime artifact. Build from a clean tree with node_modules included."
     }
 
+    Write-Host "Publishing runtime ZIP to s3://$S3Bucket/$runtimeZipKey..."
     Invoke-AwsS3Copy -Source $runtimeZipPath -Destination "s3://$S3Bucket/$runtimeZipKey" -AwsRegion $Region
+    Write-Host "Publishing manifest to s3://$S3Bucket/$manifestKey..."
     Invoke-AwsS3Copy -Source $manifestPath -Destination "s3://$S3Bucket/$manifestKey" -AwsRegion $Region
+    Write-Host "Published pixelstreaming runtime artifact '$bundleId'."
 }
 
 [pscustomobject]@{

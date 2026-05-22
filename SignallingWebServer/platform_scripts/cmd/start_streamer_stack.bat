@@ -17,6 +17,8 @@ if not defined STREAMING_LANE_TAG_RETRY_COUNT set "STREAMING_LANE_TAG_RETRY_COUN
 if not defined STREAMING_LANE_TAG_RETRY_DELAY_SECONDS set "STREAMING_LANE_TAG_RETRY_DELAY_SECONDS=5"
 if not defined DEPLOYMENT_TRACK_TAG_RETRY_COUNT set "DEPLOYMENT_TRACK_TAG_RETRY_COUNT=%STREAMING_LANE_TAG_RETRY_COUNT%"
 if not defined DEPLOYMENT_TRACK_TAG_RETRY_DELAY_SECONDS set "DEPLOYMENT_TRACK_TAG_RETRY_DELAY_SECONDS=%STREAMING_LANE_TAG_RETRY_DELAY_SECONDS%"
+if not defined DELIVERY_MODE_TAG_RETRY_COUNT set "DELIVERY_MODE_TAG_RETRY_COUNT=%STREAMING_LANE_TAG_RETRY_COUNT%"
+if not defined DELIVERY_MODE_TAG_RETRY_DELAY_SECONDS set "DELIVERY_MODE_TAG_RETRY_DELAY_SECONDS=%STREAMING_LANE_TAG_RETRY_DELAY_SECONDS%"
 call :resolve_streaming_lane_from_instance_tag
 if errorlevel 1 exit /b 1
 if defined RESOLVED_STREAMING_LANE set "SCALEWORLD_STREAMING_LANE=%RESOLVED_STREAMING_LANE%"
@@ -31,6 +33,20 @@ if not defined SCALEWORLD_DEPLOYMENT_TRACK (
     set "SCALEWORLD_DEPLOYMENT_TRACK=stage"
   )
 )
+if not defined SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE (
+  call :resolve_pixelstreaming_delivery_mode_from_instance_tag
+  if errorlevel 1 exit /b 1
+  if defined RESOLVED_PIXELSTREAMING_DELIVERY_MODE set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=%RESOLVED_PIXELSTREAMING_DELIVERY_MODE%"
+)
+if not defined SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE (
+  if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="dev" (
+    set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=git_ref"
+  ) else (
+    set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=auto"
+  )
+)
+call :normalize_pixelstreaming_delivery_mode
+if errorlevel 1 exit /b 1
 if not defined SCALEWORLD_GIT_SYNC_MODE (
   if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
     set "SCALEWORLD_GIT_SYNC_MODE=pinned"
@@ -62,8 +78,17 @@ if not defined SCALEWORLD_GIT_TARGET_REF_PARAM (
     set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/nonprod/git-target-ref"
   )
 )
+if not defined STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION (
+  if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="git_ref" (
+    set "STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION=false"
+  ) else (
+    set "STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION=true"
+  )
+)
 if not defined STACK_ENABLE_BOOT_GIT_SYNC (
   if /i "%PIXELSTREAMING_ROOT%"=="%SCALEWORLD_ACTIVE_RUNTIME_ROOT%" (
+    set "STACK_ENABLE_BOOT_GIT_SYNC=false"
+  ) else if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="runtime_artifact" (
     set "STACK_ENABLE_BOOT_GIT_SYNC=false"
   ) else if /i "%SCALEWORLD_GIT_SYNC_MODE%"=="off" (
     set "STACK_ENABLE_BOOT_GIT_SYNC=false"
@@ -88,6 +113,7 @@ if /i "%~1"=="--validation" (
   set "STACK_ENABLE_UPDATE_MODE=false"
   set "STACK_ENABLE_PROVISIONING_MODE=false"
   set "STACK_ENABLE_BOOT_GIT_SYNC=false"
+  set "STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION=false"
   set "STACK_RUN_UNREAL_UPDATE_CHECK=false"
   shift
 )
@@ -147,7 +173,9 @@ if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_PROVISIONING_MODE%"=="
   )
 )
 
-if /i "%STACK_MODE%"=="normal" (
+echo PixelStreaming delivery mode "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%" for %SCALEWORLD_STREAMING_LANE%/%SCALEWORLD_DEPLOYMENT_TRACK% startup.
+
+if /i "%STACK_MODE%"=="normal" if /i "%STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION%"=="true" (
   call :delegate_to_active_runtime_if_available %*
   set "ACTIVE_RUNTIME_DELEGATE_EXIT=!errorlevel!"
   if not "!ACTIVE_RUNTIME_DELEGATE_EXIT!"=="0" exit /b !ACTIVE_RUNTIME_DELEGATE_EXIT!
@@ -235,14 +263,30 @@ exit /b 0
 :delegate_to_active_runtime_if_available
 set "ACTIVE_RUNTIME_LAUNCHER="
 
-if not exist "%ACTIVE_RUNTIME_LAUNCHER_RESOLVER%" exit /b 0
+if not exist "%ACTIVE_RUNTIME_LAUNCHER_RESOLVER%" (
+  if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="runtime_artifact" (
+    echo ERROR: PixelStreaming delivery mode runtime_artifact requires active runtime resolver "%ACTIVE_RUNTIME_LAUNCHER_RESOLVER%".
+    exit /b 1
+  )
+  exit /b 0
+)
 
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%ACTIVE_RUNTIME_LAUNCHER_RESOLVER%" -CurrentRoot "%PIXELSTREAMING_ROOT%"`) do (
   set "ACTIVE_RUNTIME_LAUNCHER=%%I"
 )
 
-if not defined ACTIVE_RUNTIME_LAUNCHER exit /b 0
+if not defined ACTIVE_RUNTIME_LAUNCHER (
+  if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="runtime_artifact" (
+    echo ERROR: PixelStreaming delivery mode runtime_artifact requires an installed active runtime under "%SCALEWORLD_ACTIVE_RUNTIME_ROOT%".
+    exit /b 1
+  )
+  exit /b 0
+)
 if not exist "%ACTIVE_RUNTIME_LAUNCHER%" (
+  if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="runtime_artifact" (
+    echo ERROR: Active PixelStreaming runtime launcher resolved to "%ACTIVE_RUNTIME_LAUNCHER%", but the file was not found.
+    exit /b 1
+  )
   echo WARNING: Active PixelStreaming runtime launcher resolved to "%ACTIVE_RUNTIME_LAUNCHER%", but the file was not found. Continuing with bootstrap checkout.
   exit /b 0
 )
@@ -341,6 +385,73 @@ echo WARNING: ScaleWorldDeploymentTrack instance tag lookup failed on attempt %D
 echo WARNING: Retrying in %DEPLOYMENT_TRACK_TAG_RETRY_DELAY_SECONDS% seconds before failing startup.
 timeout /t %DEPLOYMENT_TRACK_TAG_RETRY_DELAY_SECONDS% /nobreak >nul
 goto resolve_deployment_track_retry
+
+:resolve_pixelstreaming_delivery_mode_from_instance_tag
+set "RESOLVED_PIXELSTREAMING_DELIVERY_MODE="
+set "RESOLVE_DELIVERY_MODE_EXIT=0"
+set /a DELIVERY_MODE_TAG_ATTEMPT=0
+set "RESOLVE_DELIVERY_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\resolve_pixelstreaming_delivery_mode_from_instance_tag.ps1"
+if not exist "%RESOLVE_DELIVERY_MODE_SCRIPT%" exit /b 0
+
+:resolve_delivery_mode_retry
+set /a DELIVERY_MODE_TAG_ATTEMPT+=1
+set "RESOLVED_PIXELSTREAMING_DELIVERY_MODE="
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%RESOLVE_DELIVERY_MODE_SCRIPT%"`) do (
+  set "RESOLVED_PIXELSTREAMING_DELIVERY_MODE=%%I"
+)
+set "RESOLVE_DELIVERY_MODE_EXIT=%errorlevel%"
+
+if defined RESOLVED_PIXELSTREAMING_DELIVERY_MODE exit /b 0
+if "%RESOLVE_DELIVERY_MODE_EXIT%"=="0" (
+  if %DELIVERY_MODE_TAG_ATTEMPT% geq %DELIVERY_MODE_TAG_RETRY_COUNT% exit /b 0
+  echo WARNING: Failed to resolve ScaleWorldPixelStreamingDeliveryMode instance tag on attempt %DELIVERY_MODE_TAG_ATTEMPT% of %DELIVERY_MODE_TAG_RETRY_COUNT%.
+  echo WARNING: Retrying in %DELIVERY_MODE_TAG_RETRY_DELAY_SECONDS% seconds before falling back to default delivery mode.
+  timeout /t %DELIVERY_MODE_TAG_RETRY_DELAY_SECONDS% /nobreak >nul
+  goto resolve_delivery_mode_retry
+)
+
+if %DELIVERY_MODE_TAG_ATTEMPT% geq %DELIVERY_MODE_TAG_RETRY_COUNT% (
+  echo ERROR: ScaleWorldPixelStreamingDeliveryMode instance tag resolution failed after %DELIVERY_MODE_TAG_RETRY_COUNT% attempts.
+  echo ERROR: Refusing to continue with an inferred default delivery mode after a real tag lookup failure.
+  exit /b 1
+)
+
+echo WARNING: ScaleWorldPixelStreamingDeliveryMode instance tag lookup failed on attempt %DELIVERY_MODE_TAG_ATTEMPT% of %DELIVERY_MODE_TAG_RETRY_COUNT%.
+echo WARNING: Retrying in %DELIVERY_MODE_TAG_RETRY_DELAY_SECONDS% seconds before failing startup.
+timeout /t %DELIVERY_MODE_TAG_RETRY_DELAY_SECONDS% /nobreak >nul
+goto resolve_delivery_mode_retry
+
+:normalize_pixelstreaming_delivery_mode
+if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="git_ref" (
+  set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=git_ref"
+  exit /b 0
+)
+if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="git-ref" (
+  set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=git_ref"
+  exit /b 0
+)
+if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="git" (
+  set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=git_ref"
+  exit /b 0
+)
+if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="runtime_artifact" (
+  set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=runtime_artifact"
+  exit /b 0
+)
+if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="runtime-artifact" (
+  set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=runtime_artifact"
+  exit /b 0
+)
+if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="artifact" (
+  set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=runtime_artifact"
+  exit /b 0
+)
+if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="auto" (
+  set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=auto"
+  exit /b 0
+)
+echo ERROR: Unsupported PixelStreaming delivery mode "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%". Use git_ref, runtime_artifact, or auto.
+exit /b 1
 
 :launch_unreal_if_needed
 if exist "%SCRIPT_DIR%start_unreal.bat" (

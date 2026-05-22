@@ -120,6 +120,10 @@ Planned replacement for normal PixelStreaming code promotion:
 - provisioning mode can now install a runtime manifest when launch/provisioning tags include `ScaleWorldTargetRuntimeManifestKey`
 - release candidates should point at runtime manifest keys instead of promoted Git refs once the candidate workflow is added
 - Git target refs remain compatibility and break-glass inputs during migration
+- delivery mode is explicit:
+  - Dev defaults to `git_ref` so `/pixelstreaming/dev/git-target-ref` remains the fast iteration path
+  - Stage/Prod default to `auto` so active runtime artifacts win when installed, with pinned git-ref fallback during migration
+  - `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact` forces artifact startup and fails closed if no active runtime is installed
 
 Current Azure Key Vault secret used by the API workload for connect tickets:
 
@@ -220,6 +224,7 @@ Streamer/TURN instance role must currently support:
 - `ec2:CreateTags` for the approved runtime/session tag keys on self:
   - `ScaleWorldRuntime*`
   - `ScaleWorldPixelStreamingVersion`
+  - `ScaleWorldPixelStreamingDeliveryMode`
   - `ScaleWorldPixelStreamingRuntimeBundleId`
   - `ScaleWorldPixelStreamingRuntimeManifestKey`
   - `ScaleWorldPixelStreamingRuntimeArtifactKey`
@@ -460,7 +465,9 @@ Manual and maintenance-mode helpers:
 
 - If `ScaleWorldMaintenanceMode=update`, the instance runs the update path first instead of launching Wilbur/Unreal for user traffic.
 - If `ScaleWorldMaintenanceMode=provisioning`, the instance runs a bounded provisioning bootstrap first. That bootstrap waits for fresh-launch prerequisites, syncs the PixelStreaming repo if upstream changed, runs `BuildScripts/build-all.bat` when needed, installs the tagged PixelStreaming runtime artifact when `ScaleWorldTargetRuntimeManifestKey` is present, and then continues into normal Wilbur/Unreal startup. This keeps normal restarts fast while making new launches self-healing even if the AMI repo is behind or Windows networking is not ready at the first scheduler tick.
-- If `C:\PixelStreaming\PixelStreamingRuntime` points at an installed runtime bundle, normal startup delegates to that active runtime and skips boot-time Git sync.
+- If delivery mode is `runtime_artifact`, startup requires `C:\PixelStreaming\PixelStreamingRuntime` to point at an installed runtime bundle.
+- If delivery mode is `auto`, startup delegates to that active runtime when present and otherwise falls back to pinned git-ref sync.
+- If delivery mode is `git_ref`, startup ignores installed runtime artifacts and follows the deployment-track target ref. This is the Dev default.
 
 During Unreal maintenance-mode updates, `invoke_update_mode.ps1` also syncs the PixelStreaming repo before running `SWupdate.ps1`:
 
@@ -588,5 +595,5 @@ Note:
 - 2026-03-21: Added helper-based lane fallback from instance tag `ScaleWorldLane` (with temporary `ScaleWorldlane` compatibility), switched prod promotion ledger writes to a local untracked file, fixed annotated-tag pinned-sync resolution, added a stale-HEAD guard to prod promotion, and validated a dark-launch prod instance booting successfully in the prod lane after pinned catch-up.
 - 2026-03-22: Added a manual dark-connect helper (`mint-prod-dark-connect-ticket.ps1`) and validated end-to-end prod dark connect through manual ALB routing plus a prod-shaped ticket against the current promoted prod ref.
 - 2026-05-15: Hardened stage/prod streamer startup so stale machine-level `SCALEWORLD_GIT_SYNC_MODE=upstream` cannot bypass the stage/prod SSM target refs.
-- 2026-05-21: Added the immutable PixelStreaming runtime artifact direction, S3 manifest/ZIP contract, Fleet runtime update install path, provisioning tag hook, and migration note that existing instances need a one-time bootstrap update before runtime artifact jobs can run.
+- 2026-05-21: Added the immutable PixelStreaming runtime artifact direction, S3 manifest/ZIP contract, Fleet runtime update install path, provisioning tag hook, explicit git-ref/runtime-artifact delivery mode split, and migration note that existing instances need a one-time bootstrap update before runtime artifact jobs can run.
 

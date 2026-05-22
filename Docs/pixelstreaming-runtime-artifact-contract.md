@@ -155,6 +155,22 @@ SignallingWebServer/platform_scripts/powershell/install_pixelstreaming_runtime.p
 
 Fleet update mode now uses this installer for `pixelstreaming_runtime` targets. Provisioning mode also uses it when the instance is launched with a `ScaleWorldTargetRuntimeManifestKey` tag. Release-candidate orchestration still needs to decide which manifest to stamp for each target.
 
+## Delivery Modes
+
+Startup has an explicit PixelStreaming delivery mode:
+
+```text
+SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=git_ref|runtime_artifact|auto
+ScaleWorldPixelStreamingDeliveryMode=git_ref|runtime_artifact|auto
+```
+
+`ScaleWorldPixelStreamingDeliveryMode` is the EC2 tag override and wins when the env var is not set. Defaults are:
+
+1. `dev` deployment track -> `git_ref`, preserving the fast `/pixelstreaming/dev/git-target-ref` startup sync loop for iteration.
+2. `stage` and `prod` deployment tracks -> `auto`, delegating to an installed active runtime artifact when one exists and falling back to pinned git-ref compatibility while migration is in progress.
+
+Explicit `runtime_artifact` fails closed when no active runtime is installed. Git-ref startup publishes `ScaleWorldPixelStreamingDeliveryMode=git_ref` and clears stale runtime artifact identity tags. Runtime artifact update/provisioning success publishes `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact`.
+
 Per instance:
 
 1. enter update maintenance mode
@@ -177,6 +193,7 @@ Migration note: existing instances only gain this path after their bootstrap che
 Planned EC2 tags:
 
 ```text
+ScaleWorldPixelStreamingDeliveryMode
 ScaleWorldPixelStreamingRuntimeBundleId
 ScaleWorldPixelStreamingRuntimeManifestKey
 ScaleWorldPixelStreamingRuntimeArtifactKey

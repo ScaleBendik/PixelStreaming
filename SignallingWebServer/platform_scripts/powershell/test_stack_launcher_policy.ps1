@@ -53,6 +53,7 @@ $cmdRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\cmd')
 $stackLauncherPath = Join-Path $cmdRoot 'start_streamer_stack.bat'
 $stackRecycleLauncherPath = Join-Path $cmdRoot 'start_stack_recycle.bat'
 $startDevTurnPath = Join-Path $cmdRoot 'start_dev_turn.bat'
+$commonCmdPath = Join-Path $cmdRoot 'common.bat'
 $stackRecycleScriptPath = Join-Path $PSScriptRoot 'invoke_stack_recycle.ps1'
 $unrealLauncherPath = Join-Path $PSScriptRoot 'start_scaleworld.ps1'
 $watchdogPath = Join-Path $PSScriptRoot 'watchdog.ps1'
@@ -61,10 +62,13 @@ $connectTicketAuthPath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\
 $connectTicketRuntimeStatePath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\src\connect-ticket-runtime-state.ts')
 $instanceAgentPath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\src\instance-agent.ts')
 $repoSyncPath = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
+$repoHeadPublisherPath = Join-Path $PSScriptRoot 'publish_repo_head_tags.ps1'
+$runtimeInstallerPath = Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.ps1'
 
 $stackLauncher = [System.IO.File]::ReadAllText($stackLauncherPath)
 $stackRecycleLauncher = [System.IO.File]::ReadAllText($stackRecycleLauncherPath)
 $startDevTurn = [System.IO.File]::ReadAllText($startDevTurnPath)
+$commonCmd = [System.IO.File]::ReadAllText($commonCmdPath)
 $stackRecycleScript = [System.IO.File]::ReadAllText($stackRecycleScriptPath)
 $unrealLauncher = [System.IO.File]::ReadAllText($unrealLauncherPath)
 $watchdog = [System.IO.File]::ReadAllText($watchdogPath)
@@ -73,6 +77,8 @@ $connectTicketAuth = [System.IO.File]::ReadAllText($connectTicketAuthPath)
 $connectTicketRuntimeState = [System.IO.File]::ReadAllText($connectTicketRuntimeStatePath)
 $instanceAgent = [System.IO.File]::ReadAllText($instanceAgentPath)
 $repoSync = [System.IO.File]::ReadAllText($repoSyncPath)
+$repoHeadPublisher = [System.IO.File]::ReadAllText($repoHeadPublisherPath)
+$runtimeInstaller = [System.IO.File]::ReadAllText($runtimeInstallerPath)
 
 Assert-DoesNotContainText `
     -Content $stackLauncher `
@@ -93,6 +99,47 @@ Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'set "STACK_LAUNCH_EXIT=0"' `
     -Message 'Stack launcher must track component startup failures instead of exiting before watchdog scheduling.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=git_ref"' `
+    -Message 'Dev startup must keep the fast git-target-ref delivery path as the default.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=auto"' `
+    -Message 'Stage/Prod startup should preserve runtime-artifact delegation while retaining git-ref fallback during migration.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'if /i "%STACK_MODE%"=="normal" if /i "%STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION%"=="true"' `
+    -Message 'Active runtime delegation must be gated by delivery mode so Dev git-ref sync can ignore installed artifacts.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'PixelStreaming delivery mode runtime_artifact requires an installed active runtime' `
+    -Message 'Explicit runtime-artifact mode must fail closed when the active runtime is missing.'
+
+Assert-ContainsText `
+    -Content $commonCmd `
+    -Expected 'Root node_modules found...skipping dependency install after NodeJS download.' `
+    -Message 'Runtime artifact startup must not run npm install just because portable Node was missing.'
+
+Assert-ContainsText `
+    -Content $runtimeInstaller `
+    -Expected '[System.IO.Compression.ZipFile]::ExtractToDirectory' `
+    -Message 'Runtime artifact installer should use the faster .NET ZIP extraction path.'
+
+Assert-ContainsText `
+    -Content $repoHeadPublisher `
+    -Expected "Key = 'ScaleWorldPixelStreamingDeliveryMode'" `
+    -Message 'Git-ref startup must publish its delivery mode for Fleet status.'
+
+Assert-ContainsText `
+    -Content $repoHeadPublisher `
+    -Expected "'ScaleWorldPixelStreamingRuntimeBundleId'" `
+    -Message 'Git-ref startup must clear stale runtime artifact identity tags.'
+
 Assert-ContainsText `
     -Content $stackLauncher `
     -Expected '-LauncherGraceSeconds %SCALEWORLD_RUNTIME_PROCESS_WAIT_SECONDS%' `
