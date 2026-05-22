@@ -394,6 +394,43 @@ function Get-LogTail {
     }
 }
 
+function Invoke-RuntimeInstallerProcess {
+    param(
+        [string[]]$Arguments,
+        [string]$StdOutPath,
+        [string]$StdErrPath,
+        [string]$FailureContext
+    )
+
+    foreach ($path in @($StdOutPath, $StdErrPath)) {
+        if (-not [string]::IsNullOrWhiteSpace($path) -and (Test-Path -LiteralPath $path)) {
+            Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $process = Start-Process `
+        -FilePath 'powershell.exe' `
+        -ArgumentList $Arguments `
+        -WindowStyle Hidden `
+        -Wait `
+        -PassThru `
+        -RedirectStandardOutput $StdOutPath `
+        -RedirectStandardError $StdErrPath
+
+    $exitCode = $process.ExitCode
+    if ($exitCode -ne 0) {
+        $stdOutTail = Get-LogTail -Path $StdOutPath -Tail 80
+        $stdErrTail = Get-LogTail -Path $StdErrPath -Tail 80
+        $detail = @($stdErrTail, $stdOutTail) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
+        $exitCodeText = if ($null -eq $exitCode) { 'unknown' } else { [string]$exitCode }
+        if (-not [string]::IsNullOrWhiteSpace($detail)) {
+            throw "$FailureContext exited with code $exitCodeText. Last output: $detail"
+        }
+
+        throw "$FailureContext exited with code $exitCodeText."
+    }
+}
+
 function ConvertTo-EncodedPowerShellCommand {
     param([string]$Script)
 
@@ -704,6 +741,8 @@ $runtimeInstallResultPath = Join-Path $installBasePath 'state\runtime-install-re
 $script:UpdateModeTracePath = Join-Path $installBasePath 'state\update-mode-trace.log'
 $runtimePrepareStdOutPath = Join-Path $installBasePath 'state\runtime-prepare.stdout.log'
 $runtimePrepareStdErrPath = Join-Path $installBasePath 'state\runtime-prepare.stderr.log'
+$runtimeInstallStdOutPath = Join-Path $installBasePath 'state\runtime-install.stdout.log'
+$runtimeInstallStdErrPath = Join-Path $installBasePath 'state\runtime-install.stderr.log'
 $prepareUpdateStdOutPath = Join-Path $installBasePath 'state\update-prepare.stdout.log'
 $prepareUpdateStdErrPath = Join-Path $installBasePath 'state\update-prepare.stderr.log'
 $runtimePrepareProcess = $null
@@ -820,19 +859,22 @@ try {
             TargetRuntimeBundleId = $targetRuntimeBundleId
         }
 
-        & powershell.exe `
-            -NoProfile `
-            -ExecutionPolicy Bypass `
-            -File $runtimeInstallerScript `
-            -BucketName $runtimeArtifactBucket `
-            -ManifestS3Key $targetRuntimeManifestKey `
-            -Region $identity.Region `
-            -InstallRoot $installBasePath `
-            -ResultPath $runtimeInstallResultPath `
-            -Activate
-        if ($LASTEXITCODE -ne 0) {
-            throw "install_pixelstreaming_runtime.ps1 exited with code $LASTEXITCODE."
-        }
+        $runtimeInstallArgs = @(
+            '-NoProfile',
+            '-ExecutionPolicy', 'Bypass',
+            '-File', $runtimeInstallerScript,
+            '-BucketName', $runtimeArtifactBucket,
+            '-ManifestS3Key', $targetRuntimeManifestKey,
+            '-Region', $identity.Region,
+            '-InstallRoot', $installBasePath,
+            '-ResultPath', $runtimeInstallResultPath,
+            '-Activate'
+        )
+        Invoke-RuntimeInstallerProcess `
+            -Arguments $runtimeInstallArgs `
+            -StdOutPath $runtimeInstallStdOutPath `
+            -StdErrPath $runtimeInstallStdErrPath `
+            -FailureContext 'install_pixelstreaming_runtime.ps1'
 
         $installResult = Get-Content -LiteralPath $runtimeInstallResultPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
         $installedBundleId = if (-not [string]::IsNullOrWhiteSpace($targetRuntimeBundleId)) { $targetRuntimeBundleId } else { [string]$installResult.BundleId }
@@ -1133,19 +1175,22 @@ try {
             TargetRuntimeBundleId = $targetRuntimeBundleId
         }
 
-        & powershell.exe `
-            -NoProfile `
-            -ExecutionPolicy Bypass `
-            -File $runtimeInstallerScript `
-            -BucketName $runtimeArtifactBucket `
-            -ManifestS3Key $targetRuntimeManifestKey `
-            -Region $identity.Region `
-            -InstallRoot $installBasePath `
-            -ResultPath $runtimeInstallResultPath `
-            -Activate
-        if ($LASTEXITCODE -ne 0) {
-            throw "install_pixelstreaming_runtime.ps1 activation exited with code $LASTEXITCODE."
-        }
+        $runtimeInstallArgs = @(
+            '-NoProfile',
+            '-ExecutionPolicy', 'Bypass',
+            '-File', $runtimeInstallerScript,
+            '-BucketName', $runtimeArtifactBucket,
+            '-ManifestS3Key', $targetRuntimeManifestKey,
+            '-Region', $identity.Region,
+            '-InstallRoot', $installBasePath,
+            '-ResultPath', $runtimeInstallResultPath,
+            '-Activate'
+        )
+        Invoke-RuntimeInstallerProcess `
+            -Arguments $runtimeInstallArgs `
+            -StdOutPath $runtimeInstallStdOutPath `
+            -StdErrPath $runtimeInstallStdErrPath `
+            -FailureContext 'install_pixelstreaming_runtime.ps1 activation'
 
         $installResult = Get-Content -LiteralPath $runtimeInstallResultPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
         $installedBundleId = if (-not [string]::IsNullOrWhiteSpace($targetRuntimeBundleId)) { $targetRuntimeBundleId } else { [string]$installResult.BundleId }
@@ -1320,6 +1365,8 @@ try {
         ActiveInstall = Get-ActiveInstallTargetSnapshot -Path $activeInstallPath
         RuntimePrepareStdOutExists = (Test-Path -LiteralPath $runtimePrepareStdOutPath)
         RuntimePrepareStdErrExists = (Test-Path -LiteralPath $runtimePrepareStdErrPath)
+        RuntimeInstallStdOutExists = (Test-Path -LiteralPath $runtimeInstallStdOutPath)
+        RuntimeInstallStdErrExists = (Test-Path -LiteralPath $runtimeInstallStdErrPath)
         PrepareStdOutExists = (Test-Path -LiteralPath $prepareUpdateStdOutPath)
         PrepareStdErrExists = (Test-Path -LiteralPath $prepareUpdateStdErrPath)
     }

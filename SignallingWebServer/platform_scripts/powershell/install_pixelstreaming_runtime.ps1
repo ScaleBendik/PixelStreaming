@@ -12,6 +12,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+trap {
+    Write-Error "Runtime installer failed: $($_.Exception.Message)"
+    if ($_.ScriptStackTrace) {
+        Write-Error $_.ScriptStackTrace
+    }
+    exit 1
+}
+
 function Normalize-Optional {
     param([string]$Value)
 
@@ -51,9 +59,28 @@ function Invoke-AwsS3Copy {
         throw "AWS CLI was not found."
     }
 
+    Write-Host "Copying '$Source' to '$Destination'..."
     & $aws.Source s3 cp $Source $Destination --region $AwsRegion
     if ($LASTEXITCODE -ne 0) {
         throw "aws s3 cp failed for '$Source'."
+    }
+}
+
+function Test-RuntimeZipChecksum {
+    param(
+        [string]$Path,
+        [string]$ExpectedSha256
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $false
+    }
+
+    try {
+        $actualSha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+        return $actualSha256 -eq $ExpectedSha256
+    } catch {
+        return $false
     }
 }
 
@@ -239,6 +266,9 @@ if ((Test-Path -LiteralPath $bundleRoot) -and -not $ForceReinstall) {
 
     $runtimeZipPath = if ($runtimeZipPathOverride) {
         [System.IO.Path]::GetFullPath($runtimeZipPathOverride)
+    } elseif (Test-RuntimeZipChecksum -Path $downloadedRuntimeZipPath -ExpectedSha256 $manifest.RuntimeZipSha256) {
+        Write-Host "Using existing runtime ZIP '$downloadedRuntimeZipPath' because its checksum already matches the manifest."
+        $downloadedRuntimeZipPath
     } else {
         Invoke-AwsS3Copy `
             -Source "s3://$BucketName/$($manifest.RuntimeZipKey)" `
