@@ -172,6 +172,29 @@ function Copy-FileContent {
     }
 }
 
+function Get-RuntimeArchiveTool {
+    $sevenZipCandidates = @("7z.exe", "7za.exe")
+    foreach ($candidate in $sevenZipCandidates) {
+        $command = Get-Command $candidate -ErrorAction SilentlyContinue
+        if ($command) {
+            return [pscustomobject]@{
+                Kind = "7zip"
+                Path = $command.Source
+            }
+        }
+    }
+
+    $tar = Get-Command tar.exe -ErrorAction SilentlyContinue
+    if ($tar) {
+        return [pscustomobject]@{
+            Kind = "tar"
+            Path = $tar.Source
+        }
+    }
+
+    return $null
+}
+
 function New-RuntimeZipArchive {
     param(
         [string]$SourceDirectory,
@@ -191,11 +214,48 @@ function New-RuntimeZipArchive {
         Remove-Item -LiteralPath $DestinationPath -Force
     }
 
+    $sourceFullPath = [System.IO.Path]::GetFullPath($SourceDirectory)
+    $destinationFullPath = [System.IO.Path]::GetFullPath($DestinationPath)
+    $archiveTool = Get-RuntimeArchiveTool
+
+    if ($archiveTool -and $archiveTool.Kind -eq "7zip") {
+        Write-Host "Creating runtime ZIP with 7-Zip from '$SourceDirectory'..."
+        Push-Location $sourceFullPath
+        try {
+            Invoke-External -FilePath $archiveTool.Path -Arguments @(
+                "a",
+                "-tzip",
+                "-mx=1",
+                "-mmt=on",
+                "-bd",
+                "-bb0",
+                $destinationFullPath,
+                ".")
+        } finally {
+            Pop-Location
+        }
+
+        return
+    }
+
+    if ($archiveTool -and $archiveTool.Kind -eq "tar") {
+        Write-Host "Creating runtime ZIP with tar.exe from '$SourceDirectory'..."
+        Invoke-External -FilePath $archiveTool.Path -Arguments @(
+            "-a",
+            "-cf",
+            $destinationFullPath,
+            "-C",
+            $sourceFullPath,
+            ".")
+
+        return
+    }
+
     Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
-    Write-Host "Creating runtime ZIP from '$SourceDirectory'..."
+    Write-Host "Creating runtime ZIP with .NET from '$SourceDirectory'..."
     [System.IO.Compression.ZipFile]::CreateFromDirectory(
-        [System.IO.Path]::GetFullPath($SourceDirectory),
-        [System.IO.Path]::GetFullPath($DestinationPath),
+        $sourceFullPath,
+        $destinationFullPath,
         [System.IO.Compression.CompressionLevel]::Fastest,
         $false)
 }
