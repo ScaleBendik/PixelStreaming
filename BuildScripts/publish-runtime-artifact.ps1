@@ -46,6 +46,48 @@ function Get-AwsCliPath {
     return $null
 }
 
+function Invoke-NativeCommandCapture {
+    param(
+        [string]$FilePath,
+        [string[]]$Arguments
+    )
+
+    $stdoutPath = [System.IO.Path]::GetTempFileName()
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+
+    try {
+        $process = Start-Process `
+            -FilePath $FilePath `
+            -ArgumentList $Arguments `
+            -NoNewWindow `
+            -Wait `
+            -PassThru `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath
+
+        $stdout = if (Test-Path -LiteralPath $stdoutPath) {
+            (Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue | Out-String).Trim()
+        } else {
+            ""
+        }
+        $stderr = if (Test-Path -LiteralPath $stderrPath) {
+            (Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue | Out-String).Trim()
+        } else {
+            ""
+        }
+
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            StdOut = $stdout
+            StdErr = $stderr
+            Combined = (@($stdout, $stderr) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join [Environment]::NewLine
+        }
+    } finally {
+        Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Get-LocalBundleIds {
     param(
         [string]$Root,
@@ -80,22 +122,27 @@ function Get-S3BundleIds {
 
     $normalizedPrefix = $normalizedPrefix.Trim("/")
     $bundleKeyPrefix = "$normalizedPrefix/$BundlePrefixValue-$BuildDate-"
-    $output = & $AwsCli s3api list-objects-v2 `
-        --bucket $Bucket `
-        --prefix $bundleKeyPrefix `
-        --region $AwsRegion `
-        --query "Contents[].Key" `
-        --output json 2>&1
+    $result = Invoke-NativeCommandCapture -FilePath $AwsCli -Arguments @(
+        "s3api",
+        "list-objects-v2",
+        "--bucket",
+        $Bucket,
+        "--prefix",
+        $bundleKeyPrefix,
+        "--region",
+        $AwsRegion,
+        "--query",
+        "Contents[].Key",
+        "--output",
+        "json")
 
-    if ($LASTEXITCODE -ne 0) {
-        $message = ($output | Out-String).Trim()
-        Write-Warning "Could not list existing runtime artifacts in s3://$Bucket/$bundleKeyPrefix. Falling back to local artifact names. AWS output: $message"
-        $global:LASTEXITCODE = 0
+    if ($result.ExitCode -ne 0) {
+        Write-Warning "Could not list existing runtime artifacts in s3://$Bucket/$bundleKeyPrefix. Falling back to local artifact names. AWS output: $($result.Combined)"
         return @()
     }
 
     $keys = @()
-    $json = ($output | Out-String).Trim()
+    $json = $result.StdOut.Trim()
     if (-not [string]::IsNullOrWhiteSpace($json)) {
         $keys = @($json | ConvertFrom-Json -ErrorAction Stop)
     }
@@ -122,22 +169,25 @@ function Test-S3ManifestExists {
 
     $normalizedPrefix = $normalizedPrefix.Trim("/")
     $manifestKey = "$normalizedPrefix/$BundleId/manifest.json"
-    $output = & $AwsCli s3api head-object `
-        --bucket $Bucket `
-        --key $manifestKey `
-        --region $AwsRegion 2>&1
+    $result = Invoke-NativeCommandCapture -FilePath $AwsCli -Arguments @(
+        "s3api",
+        "head-object",
+        "--bucket",
+        $Bucket,
+        "--key",
+        $manifestKey,
+        "--region",
+        $AwsRegion)
 
-    if ($LASTEXITCODE -eq 0) {
+    if ($result.ExitCode -eq 0) {
         return $true
     }
 
-    $message = ($output | Out-String).Trim()
-    $global:LASTEXITCODE = 0
-    if ($message -match '404|Not Found|NoSuchKey') {
+    if ($result.Combined -match '404|Not Found|NoSuchKey') {
         return $false
     }
 
-    Write-Warning "Could not verify whether s3://$Bucket/$manifestKey exists. Continuing with the locally selected bundle id. AWS output: $message"
+    Write-Warning "Could not verify whether s3://$Bucket/$manifestKey exists. Continuing with the locally selected bundle id. AWS output: $($result.Combined)"
     return $null
 }
 

@@ -128,7 +128,8 @@ The publish wrapper selects the next bundle id for the current date, using the
 `pixelstreaming-runtime-YYYYMMDD-NNN` convention. It checks local
 `BuildArtifacts\PixelStreamingRuntime` folders and, when allowed by IAM, existing
 S3 manifests under `PixelStreamingRuntime/`. If S3 listing is not allowed, it
-falls back to local names and probes the selected manifest key before publishing.
+prints a warning, falls back to local names, and probes the selected manifest key
+before publishing.
 
 ## Windows Install Layout
 
