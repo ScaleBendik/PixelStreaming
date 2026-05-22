@@ -60,8 +60,16 @@ function Invoke-AwsS3Copy {
     }
 
     Write-Host "Copying '$Source' to '$Destination'..."
-    & $aws.Source s3 cp $Source $Destination --region $AwsRegion
-    if ($LASTEXITCODE -ne 0) {
+    $output = & $aws.Source s3 cp $Source $Destination --region $AwsRegion --only-show-errors --no-progress 2>&1
+    $exitCode = $LASTEXITCODE
+    foreach ($line in @($output)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$line)) {
+            Write-Host ([string]$line)
+        }
+    }
+
+    $global:LASTEXITCODE = 0
+    if ($exitCode -ne 0) {
         throw "aws s3 cp failed for '$Source'."
     }
 }
