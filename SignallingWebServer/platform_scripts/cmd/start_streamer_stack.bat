@@ -10,6 +10,7 @@ set "DATA_DRIVE_SCRIPT=%SCRIPT_DIR%..\powershell\ensure_data_drive.ps1"
 set "UPDATE_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_update_mode.ps1"
 set "PROVISIONING_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_provisioning_mode.ps1"
 set "ACTIVE_RUNTIME_LAUNCHER_RESOLVER=%SCRIPT_DIR%..\powershell\resolve_active_runtime_launcher.ps1"
+set "NORMALIZE_DELIVERY_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\normalize_pixelstreaming_delivery_mode.ps1"
 set "STACK_MODE=normal"
 set "STACK_START_WATCHDOG=true"
 set "STACK_START_UNREAL=true"
@@ -45,8 +46,16 @@ if not defined SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE (
     set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=auto"
   )
 )
-call :normalize_pixelstreaming_delivery_mode
-if errorlevel 1 exit /b 1
+if not exist "%NORMALIZE_DELIVERY_MODE_SCRIPT%" (
+  echo ERROR: PixelStreaming delivery mode normalizer not found at "%NORMALIZE_DELIVERY_MODE_SCRIPT%".
+  exit /b 1
+)
+set "NORMALIZED_PIXELSTREAMING_DELIVERY_MODE="
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%NORMALIZE_DELIVERY_MODE_SCRIPT%" -Value "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"`) do (
+  set "NORMALIZED_PIXELSTREAMING_DELIVERY_MODE=%%I"
+)
+if not defined NORMALIZED_PIXELSTREAMING_DELIVERY_MODE exit /b 1
+set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=%NORMALIZED_PIXELSTREAMING_DELIVERY_MODE%"
 if not defined SCALEWORLD_GIT_SYNC_MODE (
   if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
     set "SCALEWORLD_GIT_SYNC_MODE=pinned"
@@ -420,38 +429,6 @@ echo WARNING: ScaleWorldPixelStreamingDeliveryMode instance tag lookup failed on
 echo WARNING: Retrying in %DELIVERY_MODE_TAG_RETRY_DELAY_SECONDS% seconds before failing startup.
 timeout /t %DELIVERY_MODE_TAG_RETRY_DELAY_SECONDS% /nobreak >nul
 goto resolve_delivery_mode_retry
-
-:normalize_pixelstreaming_delivery_mode
-if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="git_ref" (
-  set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=git_ref"
-  exit /b 0
-)
-if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="git-ref" (
-  set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=git_ref"
-  exit /b 0
-)
-if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="git" (
-  set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=git_ref"
-  exit /b 0
-)
-if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="runtime_artifact" (
-  set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=runtime_artifact"
-  exit /b 0
-)
-if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="runtime-artifact" (
-  set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=runtime_artifact"
-  exit /b 0
-)
-if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="artifact" (
-  set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=runtime_artifact"
-  exit /b 0
-)
-if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="auto" (
-  set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=auto"
-  exit /b 0
-)
-echo ERROR: Unsupported PixelStreaming delivery mode "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%". Use git_ref, runtime_artifact, or auto.
-exit /b 1
 
 :launch_unreal_if_needed
 if exist "%SCRIPT_DIR%start_unreal.bat" (
