@@ -237,7 +237,11 @@ if (-not $manifestS3Key -and -not $manifestPath) {
 $installRootFull = [System.IO.Path]::GetFullPath($InstallRoot)
 $releasesRoot = Join-Path $installRootFull "runtime-releases"
 $scratchRoot = Join-Path $installRootFull "state\runtime-updates"
-$stagingParentRoot = Join-Path ([System.IO.Path]::GetTempPath()) "scaleworld-pixelstreaming-runtime-installs"
+$stagingParentRoot = if ($env:SCALEWORLD_RUNTIME_STAGING_ROOT) {
+    [System.IO.Path]::GetFullPath($env:SCALEWORLD_RUNTIME_STAGING_ROOT)
+} else {
+    Join-Path $installRootFull "rt-stage"
+}
 $activeRoot = Join-Path $installRootFull "PixelStreamingRuntime"
 
 New-Item -ItemType Directory -Path $releasesRoot -Force | Out-Null
