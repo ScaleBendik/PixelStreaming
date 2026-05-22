@@ -607,6 +607,10 @@ function Get-UpdateTargetType {
         return $targetType
     }
 
+    if (-not [string]::IsNullOrWhiteSpace($TargetRuntimeManifestKey) -and -not [string]::IsNullOrWhiteSpace($TargetZipKey)) {
+        return 'combined_runtime_unreal'
+    }
+
     if (-not [string]::IsNullOrWhiteSpace($TargetRuntimeManifestKey)) {
         return 'pixelstreaming_runtime'
     }
@@ -698,16 +702,29 @@ $currentReleaseStatePath = Join-Path $installBasePath 'state\current-release.jso
 $pendingReleaseStatePath = Join-Path $installBasePath 'state\pending-release.json'
 $runtimeInstallResultPath = Join-Path $installBasePath 'state\runtime-install-result.json'
 $script:UpdateModeTracePath = Join-Path $installBasePath 'state\update-mode-trace.log'
+$runtimePrepareStdOutPath = Join-Path $installBasePath 'state\runtime-prepare.stdout.log'
+$runtimePrepareStdErrPath = Join-Path $installBasePath 'state\runtime-prepare.stderr.log'
 $prepareUpdateStdOutPath = Join-Path $installBasePath 'state\update-prepare.stdout.log'
 $prepareUpdateStdErrPath = Join-Path $installBasePath 'state\update-prepare.stderr.log'
+$runtimePrepareProcess = $null
 $prepareUpdateProcess = $null
+$installResult = $null
+$installedBundleId = ''
+$installedArtifactKey = ''
+$installedSourceCommit = ''
+$installedContractVersion = ''
+$runtimeStackLauncher = $null
+$runtimeStreamerHealthPath = $null
 $showVisiblePrepareWindow = Get-VisiblePrepareWindowEnabled
 
 $prepareDataDrive = if ($env:STACK_PREPARE_DATA_DRIVE) { [System.Boolean]::Parse($env:STACK_PREPARE_DATA_DRIVE) } else { $true }
 $requireDataDrive = if ($env:STACK_REQUIRE_DATA_DRIVE) { [System.Boolean]::Parse($env:STACK_REQUIRE_DATA_DRIVE) } else { $false }
 $dataDiskNumber = if ($env:SCALEWORLD_DATA_DISK_NUMBER) { [int]$env:SCALEWORLD_DATA_DISK_NUMBER } else { 1 }
 
-if ($updateTargetType -ne 'unreal_zip' -and $updateTargetType -ne 'pixelstreaming_runtime') {
+$hasUnrealPayload = $updateTargetType -eq 'unreal_zip' -or $updateTargetType -eq 'combined_runtime_unreal'
+$hasRuntimePayload = $updateTargetType -eq 'pixelstreaming_runtime' -or $updateTargetType -eq 'combined_runtime_unreal'
+
+if (-not $hasUnrealPayload -and -not $hasRuntimePayload) {
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldUpdateState = 'failed'
         ScaleWorldUpdatePhase = ''
@@ -719,7 +736,7 @@ if ($updateTargetType -ne 'unreal_zip' -and $updateTargetType -ne 'pixelstreamin
     exit 11
 }
 
-if ($updateTargetType -eq 'unreal_zip' -and [string]::IsNullOrWhiteSpace($targetZipKey)) {
+if ($hasUnrealPayload -and [string]::IsNullOrWhiteSpace($targetZipKey)) {
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldUpdateState = 'failed'
         ScaleWorldUpdatePhase = ''
@@ -731,7 +748,7 @@ if ($updateTargetType -eq 'unreal_zip' -and [string]::IsNullOrWhiteSpace($target
     exit 11
 }
 
-if ($updateTargetType -eq 'pixelstreaming_runtime' -and [string]::IsNullOrWhiteSpace($targetRuntimeManifestKey)) {
+if ($hasRuntimePayload -and [string]::IsNullOrWhiteSpace($targetRuntimeManifestKey)) {
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldUpdateState = 'failed'
         ScaleWorldUpdatePhase = ''
@@ -744,7 +761,13 @@ if ($updateTargetType -eq 'pixelstreaming_runtime' -and [string]::IsNullOrWhiteS
 }
 
 $zipFileName = if ($targetZipKey) { Split-Path -Leaf $targetZipKey } else { '' }
-$initialPhase = if ($updateTargetType -eq 'pixelstreaming_runtime') { 'installing_runtime' } else { 'syncing_repo' }
+$initialPhase = if ($updateTargetType -eq 'pixelstreaming_runtime') {
+    'installing_runtime'
+} elseif ($updateTargetType -eq 'combined_runtime_unreal') {
+    'preparing_payloads'
+} else {
+    'syncing_repo'
+}
 Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
     ScaleWorldUpdateState = 'running'
     ScaleWorldUpdatePhase = $initialPhase
@@ -781,7 +804,7 @@ try {
         }
     }
 
-    if ($updateTargetType -eq 'pixelstreaming_runtime') {
+    if ($hasRuntimePayload -and -not $hasUnrealPayload) {
         if (-not (Test-Path -LiteralPath $runtimeInstallerScript)) {
             throw "PixelStreaming runtime installer not found at '$runtimeInstallerScript'."
         }
@@ -905,6 +928,43 @@ try {
         exit 10
     }
 
+    if ($hasRuntimePayload) {
+        if (-not (Test-Path -LiteralPath $runtimeInstallerScript)) {
+            throw "PixelStreaming runtime installer not found at '$runtimeInstallerScript'."
+        }
+
+        foreach ($path in @($runtimeInstallResultPath, $runtimePrepareStdOutPath, $runtimePrepareStdErrPath)) {
+            if (Test-Path -LiteralPath $path) {
+                Remove-Item -LiteralPath $path -Force
+            }
+        }
+
+        Set-UpdatePhase -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Phase 'preparing_payloads'
+        Write-UpdateModeLog "Preparing PixelStreaming runtime artifact '$targetRuntimeManifestKey' in parallel with Unreal update preparation."
+        Write-UpdateModeTrace -Step 'before_runtime_prepare' -Data @{
+            TargetRuntimeManifestKey = $targetRuntimeManifestKey
+            TargetRuntimeBundleId = $targetRuntimeBundleId
+        }
+
+        $runtimePrepareArgs = @(
+            '-NoProfile',
+            '-ExecutionPolicy', 'Bypass',
+            '-File', $runtimeInstallerScript,
+            '-BucketName', $runtimeArtifactBucket,
+            '-ManifestS3Key', $targetRuntimeManifestKey,
+            '-Region', $identity.Region,
+            '-InstallRoot', $installBasePath,
+            '-ResultPath', $runtimeInstallResultPath
+        )
+        $runtimePrepareProcess = Start-Process `
+            -FilePath 'powershell.exe' `
+            -ArgumentList $runtimePrepareArgs `
+            -WindowStyle Hidden `
+            -PassThru `
+            -RedirectStandardOutput $runtimePrepareStdOutPath `
+            -RedirectStandardError $runtimePrepareStdErrPath
+    }
+
     if (-not (Test-Path -LiteralPath $repoSyncScript)) {
         throw "Repo sync helper not found at '$repoSyncScript'."
     }
@@ -1022,6 +1082,39 @@ try {
 
         throw "SWupdate preparation failed with exit code $prepareExitCodeText."
     }
+
+    if ($runtimePrepareProcess) {
+        Write-UpdateModeLog "Waiting for PixelStreaming runtime artifact preparation for '$targetRuntimeManifestKey' to finish."
+        $runtimePrepareProcess.WaitForExit()
+        try {
+            $runtimePrepareProcess.Refresh()
+        } catch {
+        }
+
+        $runtimePrepareExitCode = $runtimePrepareProcess.ExitCode
+        if ($runtimePrepareExitCode -ne 0) {
+            $stdOutTail = Get-LogTail -Path $runtimePrepareStdOutPath
+            $stdErrTail = Get-LogTail -Path $runtimePrepareStdErrPath
+            $detail = @($stdErrTail, $stdOutTail) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
+            $runtimePrepareExitCodeText = if ($null -eq $runtimePrepareExitCode) { 'unknown' } else { [string]$runtimePrepareExitCode }
+            if (-not [string]::IsNullOrWhiteSpace($detail)) {
+                throw "PixelStreaming runtime preparation failed with exit code $runtimePrepareExitCodeText. Last output: $detail"
+            }
+
+            throw "PixelStreaming runtime preparation failed with exit code $runtimePrepareExitCodeText."
+        }
+
+        if (-not (Test-Path -LiteralPath $runtimeInstallResultPath)) {
+            throw "PixelStreaming runtime preparation completed without writing '$runtimeInstallResultPath'."
+        }
+
+        $runtimePrepareProcess = $null
+        Write-UpdateModeTrace -Step 'runtime_prepare_completed' -Data @{
+            TargetRuntimeManifestKey = $targetRuntimeManifestKey
+            RuntimePrepareExitCode = $runtimePrepareExitCode
+        }
+    }
+
     $prepareUpdateProcess = $null
     Write-UpdateModeTrace -Step 'prepare_release_completed' -Data @{
         TargetZipKey = $targetZipKey
@@ -1030,6 +1123,51 @@ try {
         CurrentRelease = Get-ReleaseStateSnapshot -Path $currentReleaseStatePath
         PrepareStdOutExists = (Test-Path -LiteralPath $prepareUpdateStdOutPath)
         PrepareStdErrExists = (Test-Path -LiteralPath $prepareUpdateStdErrPath)
+    }
+
+    if ($hasRuntimePayload) {
+        Set-UpdatePhase -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Phase 'activating_runtime'
+        Write-UpdateModeLog "Activating PixelStreaming runtime artifact '$targetRuntimeManifestKey'."
+        Write-UpdateModeTrace -Step 'before_runtime_activation' -Data @{
+            TargetRuntimeManifestKey = $targetRuntimeManifestKey
+            TargetRuntimeBundleId = $targetRuntimeBundleId
+        }
+
+        & powershell.exe `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File $runtimeInstallerScript `
+            -BucketName $runtimeArtifactBucket `
+            -ManifestS3Key $targetRuntimeManifestKey `
+            -Region $identity.Region `
+            -InstallRoot $installBasePath `
+            -ResultPath $runtimeInstallResultPath `
+            -Activate
+        if ($LASTEXITCODE -ne 0) {
+            throw "install_pixelstreaming_runtime.ps1 activation exited with code $LASTEXITCODE."
+        }
+
+        $installResult = Get-Content -LiteralPath $runtimeInstallResultPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        $installedBundleId = if (-not [string]::IsNullOrWhiteSpace($targetRuntimeBundleId)) { $targetRuntimeBundleId } else { [string]$installResult.BundleId }
+        $installedArtifactKey = if (-not [string]::IsNullOrWhiteSpace($targetRuntimeArtifactKey)) { $targetRuntimeArtifactKey } else { [string]$installResult.RuntimeZipKey }
+        $installedSourceCommit = if (-not [string]::IsNullOrWhiteSpace($targetRuntimeSourceCommit)) { $targetRuntimeSourceCommit } else { [string]$installResult.SourceCommit }
+        $installedContractVersion = if (-not [string]::IsNullOrWhiteSpace($targetRuntimeContractVersion)) { $targetRuntimeContractVersion } else { [string]$installResult.ContractVersion }
+        $activeRuntimeRoot = [string]$installResult.ActiveRoot
+        $runtimeStreamerHealthPath = if (-not [string]::IsNullOrWhiteSpace($activeRuntimeRoot)) {
+            Join-Path $activeRuntimeRoot 'SignallingWebServer\state\streamer-health.json'
+        } else {
+            $streamerHealthPath
+        }
+
+        $runtimeStackLauncher = Get-ActiveRuntimeStackLauncher -InstallBasePath $installBasePath
+        if ([string]::IsNullOrWhiteSpace($runtimeStackLauncher)) {
+            throw "Active PixelStreaming runtime launcher was not found under '$installBasePath\PixelStreamingRuntime'."
+        }
+        Write-UpdateModeTrace -Step 'after_runtime_activation' -Data @{
+            TargetRuntimeManifestKey = $targetRuntimeManifestKey
+            InstalledBundleId = $installedBundleId
+            InstalledArtifactKey = $installedArtifactKey
+        }
     }
 
     if (Test-Path -LiteralPath $pendingReleaseStatePath) {
@@ -1074,20 +1212,32 @@ try {
         ScaleWorldUpdateCompletedAtUtc = ''
     }
 
-    if (-not (Test-Path -LiteralPath $stackLauncher)) {
-        throw "Validation stack launcher not found at '$stackLauncher'."
+    $validationStackLauncher = if ($hasRuntimePayload -and -not [string]::IsNullOrWhiteSpace($runtimeStackLauncher)) {
+        $runtimeStackLauncher
+    } else {
+        $stackLauncher
+    }
+    $validationHealthPath = if ($hasRuntimePayload -and -not [string]::IsNullOrWhiteSpace($runtimeStreamerHealthPath)) {
+        $runtimeStreamerHealthPath
+    } else {
+        $streamerHealthPath
     }
 
-    if (Test-Path -LiteralPath $streamerHealthPath) {
-        Remove-Item -LiteralPath $streamerHealthPath -Force
+    if (-not (Test-Path -LiteralPath $validationStackLauncher)) {
+        throw "Validation stack launcher not found at '$validationStackLauncher'."
     }
 
-    Write-UpdateModeLog "Launching validation stack for '$zipFileName'."
+    if (Test-Path -LiteralPath $validationHealthPath) {
+        Remove-Item -LiteralPath $validationHealthPath -Force
+    }
+
+    $validationTargetLabel = if ($hasRuntimePayload) { "$zipFileName + $installedBundleId" } else { $zipFileName }
+    Write-UpdateModeLog "Launching validation stack for '$validationTargetLabel'."
     $validationStartedAtUtc = (Get-Date).ToUniversalTime()
-    Start-Process -FilePath $stackLauncher -ArgumentList '--validation' -WindowStyle Hidden | Out-Null
+    Start-Process -FilePath $validationStackLauncher -ArgumentList '--validation' -WindowStyle Hidden | Out-Null
 
     Write-UpdateModeLog "Waiting up to $ValidationTimeoutSeconds seconds for streamer validation."
-    $validated = Wait-ForStreamerValidation -HealthPath $streamerHealthPath -TimeoutSeconds $ValidationTimeoutSeconds -StableSeconds $ValidationStableSeconds
+    $validated = Wait-ForStreamerValidation -HealthPath $validationHealthPath -TimeoutSeconds $ValidationTimeoutSeconds -StableSeconds $ValidationStableSeconds
     if (-not $validated) {
         throw "Updated build failed validation within $ValidationTimeoutSeconds seconds."
     }
@@ -1132,6 +1282,24 @@ try {
         $successTags.ScaleWorldCurrentBuild = $zipFileName
         $successTags.ScaleWorldLastUpdatedAtUtc = $completionTime
     }
+    if ($hasRuntimePayload) {
+        $successTags.ScaleWorldLastUpdatedAtUtc = $completionTime
+        $successTags.ScaleWorldPixelStreamingDeliveryMode = 'runtime_artifact'
+        $successTags.ScaleWorldPixelStreamingRuntimeManifestKey = $targetRuntimeManifestKey
+        if (-not [string]::IsNullOrWhiteSpace($installedBundleId)) {
+            $successTags.ScaleWorldPixelStreamingRuntimeBundleId = $installedBundleId
+            $successTags.ScaleWorldPixelStreamingVersion = $installedBundleId
+        }
+        if (-not [string]::IsNullOrWhiteSpace($installedArtifactKey)) {
+            $successTags.ScaleWorldPixelStreamingRuntimeArtifactKey = $installedArtifactKey
+        }
+        if (-not [string]::IsNullOrWhiteSpace($installedSourceCommit)) {
+            $successTags.ScaleWorldPixelStreamingRuntimeSourceCommit = $installedSourceCommit
+        }
+        if (-not [string]::IsNullOrWhiteSpace($installedContractVersion)) {
+            $successTags.ScaleWorldPixelStreamingRuntimeContractVersion = $installedContractVersion
+        }
+    }
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags $successTags
     Write-UpdateModeLog "Update validated successfully for '$zipFileName'. Requesting instance stop and leaving Fleet command tags for API reconciliation."
     & $awsCli ec2 stop-instances --region $identity.Region --instance-ids $identity.InstanceId *> $null
@@ -1140,14 +1308,18 @@ try {
     }
     exit 10
 } catch {
+    Stop-ProcessIfRunning -Process $runtimePrepareProcess
     Stop-ProcessIfRunning -Process $prepareUpdateProcess
     $reason = $_.Exception.Message
     Write-UpdateModeTrace -Step 'update_failed' -Data @{
         TargetZipKey = $targetZipKey
+        TargetRuntimeManifestKey = $targetRuntimeManifestKey
         Reason = $reason
         CurrentRelease = Get-ReleaseStateSnapshot -Path $currentReleaseStatePath
         PendingRelease = Get-ReleaseStateSnapshot -Path $pendingReleaseStatePath
         ActiveInstall = Get-ActiveInstallTargetSnapshot -Path $activeInstallPath
+        RuntimePrepareStdOutExists = (Test-Path -LiteralPath $runtimePrepareStdOutPath)
+        RuntimePrepareStdErrExists = (Test-Path -LiteralPath $runtimePrepareStdErrPath)
         PrepareStdOutExists = (Test-Path -LiteralPath $prepareUpdateStdOutPath)
         PrepareStdErrExists = (Test-Path -LiteralPath $prepareUpdateStdErrPath)
     }
