@@ -483,7 +483,11 @@ Prerequisite: the instance must have a valid PixelStreaming git checkout and Git
 
 During PixelStreaming runtime maintenance-mode updates, `invoke_update_mode.ps1` does not build on the serving instance. It downloads the selected runtime manifest, verifies and installs the ZIP through `install_pixelstreaming_runtime.ps1`, switches the active runtime junction, launches validation from the active runtime root, publishes runtime identity tags, and stops for API reconciliation.
 
+Combined Unreal ZIP plus PixelStreaming runtime updates use `ScaleWorldUpdateTargetType=combined_runtime_unreal`. The instance prepares the runtime artifact in the background while the Unreal payload is prepared, fails before activation if either prepare step fails, activates the runtime artifact, activates the Unreal release, validates once from the active runtime launcher, publishes both `ScaleWorldCurrentBuild` and the runtime identity tags, and then stops for API reconciliation.
+
 Migration prerequisite: current live/stopped instances must first receive this bootstrap/updater code through the legacy repo-sweep/git-ref path or a refreshed base AMI. After that one-time bootstrap rollout, small PixelStreaming runtime changes should use runtime manifests instead of AMI bakes.
+
+Current limitation: combined activation is not transactional. If activation or validation fails after one payload has already been activated, the instance remains in failed update maintenance state and should be inspected or repaired manually. Runtime rollback and updater capability gating are planned follow-ups.
 
 Provisioning mode uses the same shared repo-sync helper:
 

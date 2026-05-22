@@ -170,6 +170,22 @@ SignallingWebServer/platform_scripts/powershell/install_pixelstreaming_runtime.p
 
 Fleet update mode now uses this installer for `pixelstreaming_runtime` targets. Provisioning mode also uses it when the instance is launched with a `ScaleWorldTargetRuntimeManifestKey` tag. Release-candidate orchestration still needs to decide which manifest to stamp for each target.
 
+Fleet update target types:
+
+1. `unreal_zip`
+   - requires `ScaleWorldTargetZipKey`
+   - updates the Unreal payload only
+2. `pixelstreaming_runtime`
+   - requires `ScaleWorldTargetRuntimeManifestKey`
+   - installs, activates, validates, and tags only the PixelStreaming runtime artifact
+3. `combined_runtime_unreal`
+   - requires both `ScaleWorldTargetZipKey` and `ScaleWorldTargetRuntimeManifestKey`
+   - prepares the runtime artifact and Unreal payload in the same maintenance run
+   - activates both payloads and validates once from the active runtime launcher
+   - publishes both `ScaleWorldCurrentBuild` and PixelStreaming runtime identity tags
+
+Combined updates are intended for changes where the PixelStreaming runtime and Unreal ZIP should be validated as one serving pair. They are not a replacement for the fast Dev `git_ref` path while iterating on PixelStreaming code.
+
 ## Delivery Modes
 
 Startup has an explicit PixelStreaming delivery mode:
@@ -198,6 +214,8 @@ Per instance:
 8. start stack from the active runtime root in validation mode
 9. validate streamer health and EC2 runtime readiness
 10. publish runtime identity tags
+
+For combined updates, the runtime prepare step runs before activation and in parallel with the Unreal prepare work where possible. If either prepare step fails, activation is not attempted. If activation or validation fails after one payload has already been activated, the instance stays in failed update maintenance state for manual inspection. Runtime rollback to a previous installed bundle is still a planned follow-up.
 
 Rollback should switch the active pointer back to the previous installed bundle and restart, not reset a Git checkout.
 
