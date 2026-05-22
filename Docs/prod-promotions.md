@@ -2,7 +2,7 @@
 
 This document is the current reference for the legacy Git-ref prod streamer promotion path.
 
-2026-05-22 release-train direction: normal PixelStreaming code promotion should move to immutable prebuilt runtime artifacts under `s3://scaleworlddepot/PixelStreamingRuntime/`. See `pixelstreaming-runtime-artifact-contract.md` and `../../scaleworld-server-manager-web/docs/release-train-current-state-2026-05-22.md`. The runtime install/update path and initial release-candidate API/store exist, but the Git-ref path below remains compatibility and break-glass until candidate promotion orchestration, capacity convergence, rollback, and updater capability gates are complete.
+2026-05-22 release-train direction: normal PixelStreaming code promotion should move to immutable prebuilt runtime artifacts under `s3://scaleworlddepot/PixelStreamingRuntime/`. See `pixelstreaming-runtime-artifact-contract.md` and `../../scaleworld-server-manager-web/docs/release-train-current-state-2026-05-22.md`. The runtime install/update path, release-candidate API/store, manifest-backed candidate capture, and first Release page capture/pin actions exist, but the Git-ref path below remains compatibility and break-glass until candidate promotion orchestration, capacity convergence, rollback, and updater capability gates are complete.
 
 Stage/candidate promotion now exists as a separate first step:
 - Gold validation can promote the tested checkout to `/pixelstreaming/stage/git-target-ref`
@@ -43,7 +43,7 @@ Current release-candidate state:
 
 1. Server Manager API can store release candidates and independent current Dev/Stage/Prod pointers.
 2. Candidates can carry PixelStreaming runtime manifest identity, Unreal build id, API/web version placeholders, validation snapshot placeholders, and rollback predecessor id.
-3. Candidates are not yet the full Prod promotion workflow. There is no candidate capture/promote UI, no API-owned manifest verification gate, and no automatic Prod capacity convergence from candidate state.
+3. Candidates are not yet the full Prod promotion workflow. The Release page can capture/pin candidate pointers and the API verifies manifest metadata at capture time, but there is no validation-evidence UI, no idempotent promotion workflow, no rollback workflow, and no automatic Prod capacity convergence from candidate state.
 4. Until those gaps are closed, this Git-ref document remains the legacy operational fallback for Prod streamer promotion.
 
 Operational note:
