@@ -121,6 +121,11 @@ Assert-ContainsText `
     -Message 'Explicit runtime-artifact mode must fail closed when the active runtime is missing.'
 
 Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'Using deployment-track default delivery mode.' `
+    -Message 'Missing optional delivery-mode tags must fall back immediately instead of adding retry delay to normal startup.'
+
+Assert-ContainsText `
     -Content $commonCmd `
     -Expected 'Root node_modules found...skipping dependency install after NodeJS download.' `
     -Message 'Runtime artifact startup must not run npm install just because portable Node was missing.'

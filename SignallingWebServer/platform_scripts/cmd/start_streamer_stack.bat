@@ -412,11 +412,8 @@ set "RESOLVE_DELIVERY_MODE_EXIT=%errorlevel%"
 
 if defined RESOLVED_PIXELSTREAMING_DELIVERY_MODE exit /b 0
 if "%RESOLVE_DELIVERY_MODE_EXIT%"=="0" (
-  if %DELIVERY_MODE_TAG_ATTEMPT% geq %DELIVERY_MODE_TAG_RETRY_COUNT% exit /b 0
-  echo WARNING: Failed to resolve ScaleWorldPixelStreamingDeliveryMode instance tag on attempt %DELIVERY_MODE_TAG_ATTEMPT% of %DELIVERY_MODE_TAG_RETRY_COUNT%.
-  echo WARNING: Retrying in %DELIVERY_MODE_TAG_RETRY_DELAY_SECONDS% seconds before falling back to default delivery mode.
-  timeout /t %DELIVERY_MODE_TAG_RETRY_DELAY_SECONDS% /nobreak >nul
-  goto resolve_delivery_mode_retry
+  echo ScaleWorldPixelStreamingDeliveryMode instance tag is not set. Using deployment-track default delivery mode.
+  exit /b 0
 )
 
 if %DELIVERY_MODE_TAG_ATTEMPT% geq %DELIVERY_MODE_TAG_RETRY_COUNT% (
