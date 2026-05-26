@@ -64,6 +64,7 @@ $instanceAgentPath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\s
 $repoSyncPath = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
 $repoHeadPublisherPath = Join-Path $PSScriptRoot 'publish_repo_head_tags.ps1'
 $runtimeInstallerPath = Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.ps1'
+$updateModePath = Join-Path $PSScriptRoot 'invoke_update_mode.ps1'
 
 $stackLauncher = [System.IO.File]::ReadAllText($stackLauncherPath)
 $stackRecycleLauncher = [System.IO.File]::ReadAllText($stackRecycleLauncherPath)
@@ -79,6 +80,7 @@ $instanceAgent = [System.IO.File]::ReadAllText($instanceAgentPath)
 $repoSync = [System.IO.File]::ReadAllText($repoSyncPath)
 $repoHeadPublisher = [System.IO.File]::ReadAllText($repoHeadPublisherPath)
 $runtimeInstaller = [System.IO.File]::ReadAllText($runtimeInstallerPath)
+$updateMode = [System.IO.File]::ReadAllText($updateModePath)
 
 Assert-DoesNotContainText `
     -Content $stackLauncher `
@@ -119,6 +121,26 @@ Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'PixelStreaming delivery mode runtime_artifact requires an installed active runtime' `
     -Message 'Explicit runtime-artifact mode must fail closed when the active runtime is missing.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'set "WILBUR_COMMANDLINE_PATTERN=%PIXELSTREAMING_ROOT%\SignallingWebServer"' `
+    -Message 'Validation mode must scope Wilbur detection to the runtime being validated.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'set "WILBUR_LAUNCHER_PATTERN=%SCRIPT_DIR%start_dev_turn.bat"' `
+    -Message 'Validation mode must scope Wilbur launcher detection to the runtime being validated.'
+
+Assert-ContainsText `
+    -Content $updateMode `
+    -Expected 'function Stop-ExistingStreamerStackForValidation' `
+    -Message 'Update mode must stop the previous streamer stack before runtime-artifact validation.'
+
+Assert-ContainsText `
+    -Content $updateMode `
+    -Expected 'Stop-ExistingStreamerStackForValidation' `
+    -Message 'Runtime-artifact validation must not be blocked by a pre-existing git-ref stack.'
 
 Assert-ContainsText `
     -Content $stackLauncher `

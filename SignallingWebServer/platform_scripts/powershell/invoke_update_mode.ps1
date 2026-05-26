@@ -521,6 +521,105 @@ function Stop-ProcessIfRunning {
     }
 }
 
+function Get-ValidationProcessMatches {
+    param(
+        [string]$NamePattern,
+        [string[]]$CommandLinePatterns = @()
+    )
+
+    $resolvedCommandLinePatterns = @(
+        $CommandLinePatterns | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_)
+        }
+    )
+
+    return @(
+        Get-CimInstance Win32_Process | Where-Object {
+            if ([int]$_.ProcessId -eq $PID) {
+                return $false
+            }
+
+            if (-not ([string]$_.Name -like $NamePattern)) {
+                return $false
+            }
+
+            if ($resolvedCommandLinePatterns.Count -eq 0) {
+                return $true
+            }
+
+            $commandLine = [string]$_.CommandLine
+            foreach ($pattern in $resolvedCommandLinePatterns) {
+                if ($commandLine -like $pattern) {
+                    return $true
+                }
+            }
+
+            return $false
+        }
+    )
+}
+
+function Stop-ValidationProcessMatches {
+    param(
+        [string]$Label,
+        [string]$NamePattern,
+        [string[]]$CommandLinePatterns = @()
+    )
+
+    $matches = @(Get-ValidationProcessMatches -NamePattern $NamePattern -CommandLinePatterns $CommandLinePatterns)
+    foreach ($match in $matches) {
+        try {
+            Write-UpdateModeLog "Stopping existing $Label process $($match.Name) (PID=$($match.ProcessId)) before validation."
+            Stop-Process -Id $match.ProcessId -Force -ErrorAction Stop
+        } catch {
+            $remaining = Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $match.ProcessId) -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($remaining) {
+                Write-UpdateModeLog "Failed to stop existing $Label process $($match.Name) (PID=$($match.ProcessId)): $($_.Exception.Message)" 'WARN'
+            }
+        }
+    }
+}
+
+function Wait-ForValidationProcessAbsence {
+    param(
+        [string]$Label,
+        [string]$NamePattern,
+        [string[]]$CommandLinePatterns = @(),
+        [int]$TimeoutSeconds = 15
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $matches = @(Get-ValidationProcessMatches -NamePattern $NamePattern -CommandLinePatterns $CommandLinePatterns)
+        if ($matches.Count -eq 0) {
+            return $true
+        }
+
+        Start-Sleep -Milliseconds 500
+    }
+
+    $remaining = @(Get-ValidationProcessMatches -NamePattern $NamePattern -CommandLinePatterns $CommandLinePatterns)
+    if ($remaining.Count -gt 0) {
+        $summary = ($remaining | ForEach-Object { "$($_.Name) PID=$($_.ProcessId)" }) -join ', '
+        Write-UpdateModeLog "Existing $Label processes still running before validation: $summary" 'WARN'
+    }
+
+    return $remaining.Count -eq 0
+}
+
+function Stop-ExistingStreamerStackForValidation {
+    Stop-ValidationProcessMatches -Label 'watchdog' -NamePattern 'powershell.exe' -CommandLinePatterns @('*watchdog.ps1*')
+    Stop-ValidationProcessMatches -Label 'watchdog-launcher' -NamePattern 'cmd.exe' -CommandLinePatterns @('*start_watchdog.bat*')
+    Stop-ValidationProcessMatches -Label 'wilbur' -NamePattern 'node.exe' -CommandLinePatterns @('*index.js*')
+    Stop-ValidationProcessMatches -Label 'wilbur-launcher' -NamePattern 'cmd.exe' -CommandLinePatterns @('*start_dev_turn.bat*')
+    Stop-ValidationProcessMatches -Label 'unreal-wrapper' -NamePattern 'powershell.exe' -CommandLinePatterns @('*start_scaleworld.ps1*')
+    Stop-ValidationProcessMatches -Label 'unreal-launcher' -NamePattern 'cmd.exe' -CommandLinePatterns @('*start_unreal.bat*')
+    Stop-ValidationProcessMatches -Label 'unreal' -NamePattern 'ScaleWorld*.exe'
+
+    [void](Wait-ForValidationProcessAbsence -Label 'wilbur' -NamePattern 'node.exe' -CommandLinePatterns @('*index.js*') -TimeoutSeconds 15)
+    [void](Wait-ForValidationProcessAbsence -Label 'unreal' -NamePattern 'ScaleWorld*.exe' -TimeoutSeconds 20)
+}
+
 function Get-StreamerHealthSnapshot {
     param(
         [string]$Path
@@ -928,6 +1027,8 @@ try {
             Remove-Item -LiteralPath $runtimeStreamerHealthPath -Force
         }
 
+        Stop-ExistingStreamerStackForValidation
+
         Write-UpdateModeLog "Launching validation stack for PixelStreaming runtime '$installedBundleId'."
         $validationStartedAtUtc = (Get-Date).ToUniversalTime()
         Start-ValidationStack -LauncherPath $runtimeStackLauncher -RuntimeArtifact
@@ -1314,6 +1415,10 @@ try {
 
     if (Test-Path -LiteralPath $validationHealthPath) {
         Remove-Item -LiteralPath $validationHealthPath -Force
+    }
+
+    if ($hasRuntimePayload) {
+        Stop-ExistingStreamerStackForValidation
     }
 
     $validationTargetLabel = if ($hasRuntimePayload) { "$zipFileName + $installedBundleId" } else { $zipFileName }
