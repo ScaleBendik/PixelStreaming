@@ -163,6 +163,10 @@ try {
         @{
             Key = 'ScaleWorldPixelStreamingDeliveryMode'
             Value = 'git_ref'
+        },
+        @{
+            Key = 'ScaleWorldPixelStreamingUpdateCapabilities'
+            Value = 'pixelstreaming_runtime,combined_runtime_unreal'
         }
     )
     if ($deliveryModeResult.ExitCode -ne 0) {

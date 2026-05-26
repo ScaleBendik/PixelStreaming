@@ -1058,6 +1058,7 @@ try {
             ScaleWorldUpdateCompletedAtUtc = $completionTime
             ScaleWorldLastUpdatedAtUtc = $completionTime
             ScaleWorldPixelStreamingRuntimeManifestKey = $targetRuntimeManifestKey
+            ScaleWorldPixelStreamingUpdateCapabilities = 'pixelstreaming_runtime,combined_runtime_unreal'
         }
         if (-not [string]::IsNullOrWhiteSpace($installedBundleId)) {
             $successTags['ScaleWorldPixelStreamingRuntimeBundleId'] = $installedBundleId
@@ -1476,6 +1477,7 @@ try {
         $successTags.ScaleWorldLastUpdatedAtUtc = $completionTime
         $successTags.ScaleWorldPixelStreamingDeliveryMode = 'runtime_artifact'
         $successTags.ScaleWorldPixelStreamingRuntimeManifestKey = $targetRuntimeManifestKey
+        $successTags.ScaleWorldPixelStreamingUpdateCapabilities = 'pixelstreaming_runtime,combined_runtime_unreal'
         if (-not [string]::IsNullOrWhiteSpace($installedBundleId)) {
             $successTags.ScaleWorldPixelStreamingRuntimeBundleId = $installedBundleId
             $successTags.ScaleWorldPixelStreamingVersion = $installedBundleId

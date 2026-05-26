@@ -115,6 +115,7 @@ function Set-ProvisioningRuntimeIdentityTags {
     Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldPixelStreamingRuntimeSourceCommit' -Value ([string]$InstallResult.SourceCommit)
     Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldPixelStreamingRuntimeContractVersion' -Value ([string]$InstallResult.ContractVersion)
     Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldPixelStreamingVersion' -Value ([string]$InstallResult.BundleId)
+    Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldPixelStreamingUpdateCapabilities' -Value 'pixelstreaming_runtime,combined_runtime_unreal'
     Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldLastUpdatedAtUtc' -Value ((Get-Date).ToUniversalTime().ToString('o'))
 
     if ($tagArguments.Count -eq 0) {
