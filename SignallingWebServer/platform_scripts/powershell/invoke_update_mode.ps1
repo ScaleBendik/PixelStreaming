@@ -6,7 +6,7 @@ param(
     [int]$ValidationTimeoutSeconds = $(if ($env:SCALEWORLD_UPDATE_VALIDATION_TIMEOUT_SECONDS) { [int]$env:SCALEWORLD_UPDATE_VALIDATION_TIMEOUT_SECONDS } else { 2700 }),
     [int]$RuntimeStatusValidationTimeoutSeconds = $(if ($env:SCALEWORLD_UPDATE_RUNTIME_STATUS_VALIDATION_TIMEOUT_SECONDS) { [int]$env:SCALEWORLD_UPDATE_RUNTIME_STATUS_VALIDATION_TIMEOUT_SECONDS } else { 120 }),
     [int]$ValidationStableSeconds = $(if ($env:SCALEWORLD_UPDATE_VALIDATION_STABLE_SECONDS) { [int]$env:SCALEWORLD_UPDATE_VALIDATION_STABLE_SECONDS } else { 15 }),
-    [bool]$AllowUnchanged = $true
+    [bool]$AllowUnchanged = $false
 )
 
 Set-StrictMode -Version Latest
@@ -1132,8 +1132,18 @@ try {
         -and -not [string]::IsNullOrWhiteSpace($preparedReleasePath) `
         -and (Test-Path -LiteralPath $preparedReleasePath)
 
-    if ($null -eq $prepareExitCode -and $hasPreparedReleaseForTarget) {
-        Write-UpdateModeLog "Prepare process did not report an exit code, but prepared release metadata for '$zipFileName' is present. Continuing with activation." 'WARN'
+    $currentReleaseAfterPrepare = Get-CurrentReleaseStateSnapshot -Path $currentReleaseStatePath
+    $currentReleaseZipKeyAfterPrepare = if ($currentReleaseAfterPrepare -and $currentReleaseAfterPrepare.PSObject.Properties.Name -contains 'ZipKey') {
+        [string]$currentReleaseAfterPrepare.ZipKey
+    } else {
+        ''
+    }
+    $currentReleaseAlreadyMatchesTarget = -not [string]::IsNullOrWhiteSpace($currentReleaseZipKeyAfterPrepare) `
+        -and [string]::Equals($currentReleaseZipKeyAfterPrepare.Trim(), $targetZipKey.Trim(), [System.StringComparison]::Ordinal)
+
+    if ($null -eq $prepareExitCode -and ($hasPreparedReleaseForTarget -or $currentReleaseAlreadyMatchesTarget)) {
+        $reason = if ($hasPreparedReleaseForTarget) { 'prepared release metadata' } else { 'current release metadata' }
+        Write-UpdateModeLog "Prepare process did not report an exit code, but $reason for '$zipFileName' is present. Continuing with activation." 'WARN'
         $prepareExitCode = 0
     }
 
@@ -1158,6 +1168,12 @@ try {
         }
 
         $runtimePrepareExitCode = $runtimePrepareProcess.ExitCode
+        $hasRuntimeInstallResult = Test-Path -LiteralPath $runtimeInstallResultPath
+        if ($null -eq $runtimePrepareExitCode -and $hasRuntimeInstallResult) {
+            Write-UpdateModeLog "Runtime prepare process did not report an exit code, but '$runtimeInstallResultPath' is present. Continuing with activation." 'WARN'
+            $runtimePrepareExitCode = 0
+        }
+
         if ($runtimePrepareExitCode -ne 0) {
             $stdOutTail = Get-LogTail -Path $runtimePrepareStdOutPath
             $stdErrTail = Get-LogTail -Path $runtimePrepareStdErrPath
@@ -1170,7 +1186,7 @@ try {
             throw "PixelStreaming runtime preparation failed with exit code $runtimePrepareExitCodeText."
         }
 
-        if (-not (Test-Path -LiteralPath $runtimeInstallResultPath)) {
+        if (-not $hasRuntimeInstallResult) {
             throw "PixelStreaming runtime preparation completed without writing '$runtimeInstallResultPath'."
         }
 
