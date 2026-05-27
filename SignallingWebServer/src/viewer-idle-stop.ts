@@ -455,6 +455,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     let resetInFlight = false;
     let recycleLaunchRequested = false;
     let passiveReconnectRecycleRequested = false;
+    let desiredStateShutdownResumeRequested = false;
 
     if (server.playerRegistry.count() === 0 && currentDesiredState.recycleRequestedToken) {
         if (currentDesiredState.recycleRequestedToken === recoveredRecycleTokenAtStartup) {
@@ -789,6 +790,34 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         void requestStop('command_shutdown_requested');
     };
+    const tryResumeDesiredStateShutdown = (): boolean => {
+        if (
+            !currentDesiredState.shutdownRequested ||
+            desiredStateShutdownResumeRequested ||
+            stopInFlight ||
+            server.playerRegistry.count() > 0 ||
+            !maintenanceStateInitialized ||
+            isMaintenanceActive()
+        ) {
+            return false;
+        }
+
+        clearZeroTimer();
+        clearFirstViewerTimer();
+        clearTransientStatusHeartbeat();
+        desiredStateShutdownResumeRequested = true;
+        log('[idle-stop] Resuming shutdown requested by desired state.');
+        void requestStop(resolveDesiredStateShutdownReason())
+            .then((accepted) => {
+                if (!accepted) {
+                    desiredStateShutdownResumeRequested = false;
+                }
+            })
+            .catch(() => {
+                desiredStateShutdownResumeRequested = false;
+            });
+        return true;
+    };
     const clearAllIdleStopTimers = (): void => {
         clearZeroTimer();
         clearFirstViewerTimer();
@@ -846,6 +875,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     clearAllIdleStopTimers();
                 } else {
                     log('[idle-stop] Maintenance mode cleared. Re-evaluating idle-stop timers.');
+                    if (tryResumeDesiredStateShutdown()) {
+                        return;
+                    }
                     if (!resetInFlight && server.playerRegistry.count() === 0 && shouldResetIntoWarmReady()) {
                         if (hasRecycleLaunchInProgress()) {
                             return;
@@ -860,6 +892,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     }
                 }
             } else if (!currentMaintenanceMode) {
+                if (tryResumeDesiredStateShutdown()) {
+                    return;
+                }
                 if (!resetInFlight && server.playerRegistry.count() === 0 && shouldResetIntoWarmReady()) {
                     if (hasRecycleLaunchInProgress()) {
                         return;
@@ -901,8 +936,12 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             nextDesiredState.policyVersion !== currentDesiredState.policyVersion ||
             nextDesiredState.message !== currentDesiredState.message;
         currentDesiredState = nextDesiredState;
+        if (!currentDesiredState.shutdownRequested) {
+            desiredStateShutdownResumeRequested = false;
+        }
 
         if (!changed) {
+            tryResumeDesiredStateShutdown();
             return;
         }
 
@@ -1012,16 +1051,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
-        if (
-            currentDesiredState.shutdownRequested &&
-            server.playerRegistry.count() === 0 &&
-            maintenanceStateInitialized &&
-            !isMaintenanceActive()
-        ) {
-            clearZeroTimer();
-            clearFirstViewerTimer();
-            clearTransientStatusHeartbeat();
-            void requestStop(resolveDesiredStateShutdownReason());
+        if (tryResumeDesiredStateShutdown()) {
             return;
         }
 
@@ -1463,8 +1493,8 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         );
     };
 
-    const requestStop = async (reason: string): Promise<void> => {
-        if (stopInFlight) return;
+    const requestStop = async (reason: string): Promise<boolean> => {
+        if (stopInFlight) return false;
         resetInFlight = false;
         recycleLaunchRequested = false;
         passiveReconnectRecycleRequested = false;
@@ -1473,13 +1503,13 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         clearReconnectGraceTimer();
         clearResetTimer();
         if (!maintenanceStateInitialized || isMaintenanceActive()) {
-            return;
+            return false;
         }
 
         if (server.playerRegistry.count() > 0) {
             log('[idle-stop] Stop request aborted because viewers are connected.');
             runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
-            return;
+            return false;
         }
 
         if (shouldSuppressNoViewerIdleAutomation()) {
@@ -1491,7 +1521,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             } else {
                 runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
             }
-            return;
+            return false;
         }
 
         stopInFlight = true;
@@ -1578,6 +1608,8 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         } finally {
             stopInFlight = false;
         }
+
+        return true;
     };
 
     const onViewerAdded = (playerId?: string): void => {
@@ -1781,6 +1813,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         ensureFirstViewerWindow();
         tryResumeActiveRecycleCommand();
         tryResumeActiveShutdownCommand();
+        tryResumeDesiredStateShutdown();
     }
 
     if (desiredStatePath.length > 0 && desiredStateRefreshMs > 0) {
@@ -1793,4 +1826,5 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
     tryResumeActiveRecycleCommand();
     tryResumeActiveShutdownCommand();
+    tryResumeDesiredStateShutdown();
 }
