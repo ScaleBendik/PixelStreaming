@@ -43,10 +43,42 @@ function Get-InstanceIdentity {
     }
 }
 
-$awsCli = Get-AwsCliPath
-$identity = Get-InstanceIdentity
+function Invoke-LocalShutdownFallback {
+    Write-StopLog 'Falling back to local OS shutdown.' 'WARN'
+    & shutdown.exe /s /t 0 /f
+    if ($LASTEXITCODE -ne 0) {
+        Write-StopLog "shutdown.exe exited with code $LASTEXITCODE; trying Stop-Computer." 'WARN'
+        Stop-Computer -Force
+    }
+}
 
-Write-StopLog "Scheduled instance stop in $DelaySeconds seconds for $($identity.InstanceId)."
+$awsCli = $null
+$identity = $null
+try {
+    $awsCli = Get-AwsCliPath
+    $identity = Get-InstanceIdentity
+} catch {
+    Write-StopLog "Unable to initialize AWS stop request: $($_.Exception.Message)" 'WARN'
+}
+
+if ($identity) {
+    Write-StopLog "Scheduled instance stop in $DelaySeconds seconds for $($identity.InstanceId)."
+} else {
+    Write-StopLog "Scheduled local shutdown fallback in $DelaySeconds seconds."
+}
 Start-Sleep -Seconds $DelaySeconds
-& $awsCli ec2 stop-instances --region $identity.Region --instance-ids $identity.InstanceId *> $null
-Write-StopLog "Issued stop for $($identity.InstanceId)."
+if ($awsCli -and $identity) {
+    try {
+        & $awsCli ec2 stop-instances --region $identity.Region --instance-ids $identity.InstanceId *> $null
+        if ($LASTEXITCODE -ne 0) {
+            throw "AWS CLI exited with code $LASTEXITCODE."
+        }
+
+        Write-StopLog "Issued stop for $($identity.InstanceId)."
+        exit 0
+    } catch {
+        Write-StopLog "Failed to issue EC2 stop request: $($_.Exception.Message)" 'WARN'
+    }
+}
+
+Invoke-LocalShutdownFallback

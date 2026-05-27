@@ -235,6 +235,29 @@ function Schedule-DelayedStop {
     Write-UpdateModeLog "Scheduled delayed instance stop in $DelaySeconds seconds."
 }
 
+function Request-InstanceStop {
+    param(
+        [string]$AwsCli,
+        [string]$Region,
+        [string]$InstanceId,
+        [int]$FallbackDelaySeconds = 15
+    )
+
+    try {
+        & $AwsCli ec2 stop-instances --region $Region --instance-ids $InstanceId *> $null
+        if ($LASTEXITCODE -ne 0) {
+            throw "AWS CLI exited with code $LASTEXITCODE."
+        }
+
+        Write-UpdateModeLog "Issued EC2 stop request for $InstanceId."
+        return $true
+    } catch {
+        Write-UpdateModeLog "Failed to request EC2 stop for ${InstanceId}: $($_.Exception.Message). Scheduling delayed stop fallback." 'WARN'
+        Schedule-DelayedStop -DelaySeconds $FallbackDelaySeconds
+        return $false
+    }
+}
+
 function Set-UpdatePhase {
     param(
         [string]$AwsCli,
@@ -887,37 +910,37 @@ $hasUnrealPayload = $updateTargetType -eq 'unreal_zip' -or $updateTargetType -eq
 $hasRuntimePayload = $updateTargetType -eq 'pixelstreaming_runtime' -or $updateTargetType -eq 'combined_runtime_unreal'
 
 if (-not $hasUnrealPayload -and -not $hasRuntimePayload) {
-    Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
+    Schedule-DelayedStop -DelaySeconds $FailureStopDelaySeconds
+    TrySet-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldUpdateState = 'failed'
         ScaleWorldUpdatePhase = ''
         ScaleWorldUpdateResultReason = "unsupported_update_target_type:$updateTargetType"
         ScaleWorldUpdateCompletedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-    }
-    Schedule-DelayedStop -DelaySeconds $FailureStopDelaySeconds
+    } -FailureContext "Failed to publish unsupported update target failure state."
     Write-UpdateModeLog "Update maintenance mode requested unsupported target type '$updateTargetType'." 'ERROR'
     exit 11
 }
 
 if ($hasUnrealPayload -and [string]::IsNullOrWhiteSpace($targetZipKey)) {
-    Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
+    Schedule-DelayedStop -DelaySeconds $FailureStopDelaySeconds
+    TrySet-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldUpdateState = 'failed'
         ScaleWorldUpdatePhase = ''
         ScaleWorldUpdateResultReason = 'missing_target_zip'
         ScaleWorldUpdateCompletedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-    }
-    Schedule-DelayedStop -DelaySeconds $FailureStopDelaySeconds
+    } -FailureContext "Failed to publish missing target zip failure state."
     Write-UpdateModeLog 'Update maintenance mode was requested without ScaleWorldTargetZipKey.' 'ERROR'
     exit 11
 }
 
 if ($hasRuntimePayload -and [string]::IsNullOrWhiteSpace($targetRuntimeManifestKey)) {
-    Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
+    Schedule-DelayedStop -DelaySeconds $FailureStopDelaySeconds
+    TrySet-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldUpdateState = 'failed'
         ScaleWorldUpdatePhase = ''
         ScaleWorldUpdateResultReason = 'missing_runtime_manifest'
         ScaleWorldUpdateCompletedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-    }
-    Schedule-DelayedStop -DelaySeconds $FailureStopDelaySeconds
+    } -FailureContext "Failed to publish missing runtime manifest failure state."
     Write-UpdateModeLog 'PixelStreaming runtime update was requested without ScaleWorldTargetRuntimeManifestKey.' 'ERROR'
     exit 11
 }
@@ -1089,10 +1112,7 @@ try {
         }
 
         Write-UpdateModeLog "PixelStreaming runtime '$installedBundleId' validated successfully. Requesting instance stop and leaving Fleet command tags for API reconciliation."
-        & $awsCli ec2 stop-instances --region $identity.Region --instance-ids $identity.InstanceId *> $null
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to request instance stop after runtime validation."
-        }
+        Request-InstanceStop -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId | Out-Null
         exit 10
     }
 
@@ -1494,10 +1514,7 @@ try {
     }
     Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags $successTags
     Write-UpdateModeLog "Update validated successfully for '$zipFileName'. Requesting instance stop and leaving Fleet command tags for API reconciliation."
-    & $awsCli ec2 stop-instances --region $identity.Region --instance-ids $identity.InstanceId *> $null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to request instance stop after validation."
-    }
+    Request-InstanceStop -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId | Out-Null
     exit 10
 } catch {
     Stop-ProcessIfRunning -Process $runtimePrepareProcess
@@ -1517,13 +1534,13 @@ try {
         PrepareStdOutExists = (Test-Path -LiteralPath $prepareUpdateStdOutPath)
         PrepareStdErrExists = (Test-Path -LiteralPath $prepareUpdateStdErrPath)
     }
-    Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
+    Schedule-DelayedStop -DelaySeconds $FailureStopDelaySeconds
+    TrySet-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldUpdateState = 'failed'
         ScaleWorldUpdatePhase = ''
         ScaleWorldUpdateResultReason = $reason
         ScaleWorldUpdateCompletedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-    }
-    Schedule-DelayedStop -DelaySeconds $FailureStopDelaySeconds
+    } -FailureContext "Failed to publish update failure state."
     Write-UpdateModeLog "Update failed: $reason" 'ERROR'
     exit 11
 } finally {
