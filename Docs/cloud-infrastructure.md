@@ -118,7 +118,7 @@ Planned replacement for normal PixelStreaming code promotion:
 - canonical contract: `pixelstreaming-runtime-artifact-contract.md`
 - Fleet update mode can now install and validate `pixelstreaming_runtime` manifests from stopped instances
 - provisioning mode can now install a runtime manifest when launch/provisioning tags include `ScaleWorldTargetRuntimeManifestKey`
-- release candidates point at runtime manifest keys instead of promoted Git refs; the API candidate store and first Release page capture/pin actions exist, while validation evidence, idempotent promotion orchestration, rollback, and capacity convergence remain in progress
+- release candidates point at runtime manifest keys instead of promoted Git refs; the API candidate store and first Release page capture/pin actions exist, while validation evidence, idempotent promotion orchestration, shared/SQL candidate storage, rollback, and capacity convergence remain in progress
 - Git target refs remain compatibility and break-glass inputs during migration
 - delivery mode is explicit:
   - Dev defaults to `git_ref` so `/pixelstreaming/dev/git-target-ref` remains the fast iteration path
@@ -538,16 +538,16 @@ Archive contract and naming rules are documented in:
 - prod is now live, but the prod API Key Vault signer and streamer-side prod SSM signer must remain aligned
 - the Windows runtime still relies on the current shared autologon/admin access pattern
 
-### In Progress / Planned
+### Completed Baseline And Remaining Work
 
-- Replace direct streamer-IP connect path with HTTPS/ticketed connect path.
-- Enforce owner-only (or admin-policy) connect authorization in signalling.
+- HTTPS/ticketed connect is the normal Session Manager path.
+- Owner/admin connect authorization is enforced through API-issued connect tickets and Wilbur ticket validation.
 - Remove legacy crash tooling once watchdog recovery is validated in dev.
 - Move to short-lived TURN credentials per session/user (API-issued).
 
-## AWS Prerequisites Before HTTPS + Ticket Implementation
+## AWS HTTPS/Ticketing Runtime Prerequisites
 
-Configure these before code rollout:
+Keep these verified before routing live traffic or changing streamer topology:
 
 1. Route53 stream domain plan:
    - choose domain pattern for HTTPS stream entrypoint.
@@ -580,12 +580,11 @@ Note:
 
 ## Open Work Items (Summary)
 
-- HTTPS ingress migration from direct streamer IP access
-- Live prod cutover onto ticketed connect on the isolated prod lane
-- Complete separate nonprod/prod streamer pools and control-plane selection
+- Keep HTTPS/ticketed ingress healthy while removing any leftover direct-IP operational shortcuts
+- Complete Dev/Stage/Prod deployment-track separation inside the nonprod/prod streamer pools and control-plane selection
 - Nonprod rename from dev-shaped issuer/key contract to proper nonprod contract
 - Env-specific streamer SSM parameter names for TURN credentials and connect-ticket signing key
-- Prod API/control-plane cutover onto the isolated prod lane
+- Keep Prod API/control-plane isolated on the prod lane and verify launch-template tags include `ScaleWorldDeploymentTrack=prod`
 - Runtime access hardening for Windows autologon vs human admin access
 - Dedicated TURN sizing/failover hardening
 - Short-lived TURN credentials from API

@@ -272,7 +272,9 @@ Current branch state:
 
 1. Server Manager API exposes `GET /admin/fleet/release-candidates`, `POST /admin/fleet/release-candidates/capture`, and `PUT /admin/fleet/release-candidates/current/{target}`.
 2. The candidate store has independent Dev, Stage, and Prod current pointers under the `release-candidates/` Blob prefix.
-3. Candidates are captured from a source target but can be promoted across targets; this avoids carrying over overly strict tuple semantics.
+3. Candidates are captured from a source target. Current pinning is conservative: Dev pins Dev-sourced candidates, Stage pins Stage-sourced candidates, and Prod pins only the candidate currently pinned on Stage in the same backing store.
 4. Candidate capture resolves the runtime manifest through the API-owned runtime artifact catalog and rejects missing manifests or mismatched requested artifact key, bundle id, source commit, contract version, or runtime ZIP SHA256.
 5. The Release page reads candidate state in the Dev/Stage/Prod Release Train cards, can capture/pin Dev or Stage candidates from the latest listed runtime artifact, and can pin the current Stage candidate as current Prod.
-6. Candidate validation evidence, idempotent Stage/Prod promotion orchestration, capacity convergence, rollback controls, and full runtime ZIP re-hashing are still follow-up work.
+6. Candidate validation evidence, idempotent Stage/Prod promotion orchestration, shared/SQL candidate storage, capacity convergence, rollback controls, and full runtime ZIP re-hashing are still follow-up work.
+
+Current storage caveat: the Blob release-candidate store uses the environment runtime Blob container. Stage and Prod therefore use separate candidate stores in committed config, even though the blob names are the same. Do not rely on artifact-backed Stage-to-Prod promotion until the Stage candidate and current Stage pointer are available to the Prod API through an explicit copy/import step or a shared/SQL store.

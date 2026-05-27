@@ -2,7 +2,7 @@
 
 This document is the current reference for the legacy Git-ref prod streamer promotion path.
 
-2026-05-27 release-train direction: normal PixelStreaming code promotion should move to immutable prebuilt runtime artifacts under `s3://scaleworlddepot/PixelStreamingRuntime/`. See `pixelstreaming-runtime-artifact-contract.md` and `../../scaleworld-server-manager-web/docs/release-train-current-state-2026-05-22.md`. The runtime install/update path, release-candidate API/store, manifest-backed candidate capture, first Release page capture/pin actions, and coarse updater capability gates exist. The Git-ref path below remains compatibility and break-glass until candidate promotion orchestration, capacity convergence, rollback, and Prod bootstrap/capability rollout are complete.
+2026-05-27 release-train direction: normal PixelStreaming code promotion should move to immutable prebuilt runtime artifacts under `s3://scaleworlddepot/PixelStreamingRuntime/`. See `pixelstreaming-runtime-artifact-contract.md` and `../../scaleworld-server-manager-web/docs/release-train-current-state-2026-05-22.md`. The runtime install/update path, release-candidate API/store, manifest-backed candidate capture, first Release page capture/pin actions, and coarse updater capability gates exist. The Git-ref path below remains compatibility and break-glass until candidate promotion orchestration, shared/SQL candidate storage, capacity convergence, rollback, and Prod bootstrap/capability rollout are complete.
 
 Stage/candidate promotion now exists as a separate first step:
 - Gold validation can promote the tested checkout to `/pixelstreaming/stage/git-target-ref`
@@ -44,8 +44,10 @@ Current release-candidate state:
 
 1. Server Manager API can store release candidates and independent current Dev/Stage/Prod pointers.
 2. Candidates can carry PixelStreaming runtime manifest identity, Unreal build id, API/web version placeholders, validation snapshot placeholders, and rollback predecessor id.
-3. Candidates are not yet the full Prod promotion workflow. The Release page can capture/pin candidate pointers and the API verifies manifest metadata at capture time, but there is no validation-evidence UI, no idempotent promotion workflow, no rollback workflow, and no automatic Prod capacity convergence from candidate state.
-4. Until those gaps are closed, this Git-ref document remains the legacy operational fallback for Prod streamer promotion.
+3. Pinning is conservative today: Dev pins Dev-sourced candidates, Stage pins Stage-sourced candidates, and Prod pins only the current Stage candidate visible in the same candidate store.
+4. Stage and Prod committed API config use different runtime Blob containers for release candidates. Until candidates move to a shared promotion store or SQL, artifact-backed Prod pinning requires an explicit copy/import of the Stage candidate and current Stage pointer into the Prod store.
+5. Candidates are not yet the full Prod promotion workflow. The Release page can capture/pin candidate pointers and the API verifies manifest metadata at capture time, but there is no validation-evidence UI, no idempotent promotion workflow, no rollback workflow, and no automatic Prod capacity convergence from candidate state.
+6. Until those gaps are closed, this Git-ref document remains the legacy operational fallback for Prod streamer promotion.
 
 Operational note:
 - the actual gold-instance promotion script now writes to `Docs/prod-promotions.local.md`
