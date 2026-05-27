@@ -1,6 +1,6 @@
 # PixelStreaming Documentation
 
-Last updated: 2026-05-22
+Last updated: 2026-05-27
 
 This directory mixes upstream Pixel Streaming reference documentation with ScaleWorld operational docs for the customized streamer runtime.
 
@@ -32,7 +32,8 @@ Use these first for the Server Manager integration:
 6. Diagnostic bundles and screenshot bundles are uploaded to S3 through AWS CLI and registered with the API for SQL-backed analytics/downloads.
 7. Runtime artifact delivery is active: runtime bundles are published under `PixelStreamingRuntime/<bundleId>/`, installed into versioned runtime roots, and activated through `C:\PixelStreaming\PixelStreamingRuntime`.
 8. `git_ref` delivery remains the Dev fast path and the bootstrap/break-glass migration path. Stage/Prod default to `auto` so an installed active runtime artifact wins when present.
-9. The long-term backlog still tracks splitting the instance agent into a separate service once current warm-pool behavior is stable.
+9. Bootstrapped instances publish `ScaleWorldPixelStreamingUpdateCapabilities=pixelstreaming_runtime,combined_runtime_unreal`; Server Manager uses that tag to gate runtime-artifact and combined update jobs.
+10. The long-term backlog still tracks splitting the instance agent into a separate service once current warm-pool behavior is stable.
 
 ## Upstream Pixel Streaming Docs
 

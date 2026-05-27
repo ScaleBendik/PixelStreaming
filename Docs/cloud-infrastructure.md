@@ -1,6 +1,6 @@
 # ScaleWorld Cloud Infrastructure (Source of Truth)
 
-Last updated: 2026-05-22
+Last updated: 2026-05-27
 Owner: ScaleWorld Platform
 
 ## Purpose
@@ -491,9 +491,9 @@ During PixelStreaming runtime maintenance-mode updates, `invoke_update_mode.ps1`
 
 Combined Unreal ZIP plus PixelStreaming runtime updates use `ScaleWorldUpdateTargetType=combined_runtime_unreal`. The instance prepares the runtime artifact in the background while the Unreal payload is prepared, fails before activation if either prepare step fails, activates the runtime artifact, activates the Unreal release, validates once from the active runtime launcher, publishes both `ScaleWorldCurrentBuild` and the runtime identity tags, and then stops for API reconciliation.
 
-Migration prerequisite: current live/stopped instances must first receive this bootstrap/updater code through the legacy repo-sweep/git-ref path or a refreshed base AMI. After that one-time bootstrap rollout, small PixelStreaming runtime changes should use runtime manifests instead of AMI bakes.
+Migration prerequisite: current live/stopped instances must first receive this bootstrap/updater code through the legacy repo-sweep/git-ref path or a refreshed base AMI. After that one-time bootstrap rollout, they publish `ScaleWorldPixelStreamingUpdateCapabilities=pixelstreaming_runtime,combined_runtime_unreal`, and small PixelStreaming runtime changes should use runtime manifests instead of AMI bakes.
 
-Current limitation: combined activation is not transactional. If activation or validation fails after one payload has already been activated, the instance remains in failed update maintenance state and should be inspected or repaired manually. Runtime rollback and updater capability gating are planned follow-ups.
+Current limitation: combined activation is not transactional. If activation or validation fails after one payload has already been activated, the instance remains in failed update maintenance state and should be inspected or repaired manually. Runtime rollback and a versioned updater compatibility contract are planned follow-ups.
 
 Provisioning mode uses the same shared repo-sync helper:
 
@@ -607,4 +607,5 @@ Note:
 - 2026-05-15: Hardened stage/prod streamer startup so stale machine-level `SCALEWORLD_GIT_SYNC_MODE=upstream` cannot bypass the stage/prod SSM target refs.
 - 2026-05-21: Added the immutable PixelStreaming runtime artifact direction, S3 manifest/ZIP contract, Fleet runtime update install path, provisioning tag hook, explicit git-ref/runtime-artifact delivery mode split, and migration note that existing instances need a one-time bootstrap update before runtime artifact jobs can run.
 - 2026-05-22: Added release-candidate store status, runtime-artifact publisher IAM, first manifest-backed Release page candidate capture/pin actions, and clarified that Git target refs are now Dev/bootstrap/break-glass migration paths rather than the long-term Stage/Prod release object.
+- 2026-05-27: Documented the runtime update capability tag used by Server Manager to gate runtime-artifact and combined update jobs, and narrowed the remaining update follow-up to a versioned updater compatibility contract plus rollback semantics.
 

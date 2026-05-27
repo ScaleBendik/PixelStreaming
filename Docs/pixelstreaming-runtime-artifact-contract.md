@@ -1,7 +1,7 @@
 # PixelStreaming Runtime Artifact Contract
 
 Date: 2026-05-21
-Last updated: 2026-05-22
+Last updated: 2026-05-27
 Status: active foundation
 
 ## Intent
@@ -238,6 +238,14 @@ For combined updates, the runtime prepare step runs before activation and in par
 Rollback should switch the active pointer back to the previous installed bundle and restart, not reset a Git checkout.
 
 Migration note: existing instances only gain this path after their bootstrap checkout or base AMI contains the updated updater/provisioning scripts. Use the legacy repo-sweep/git-ref path once to deploy the bootstrap, then use runtime artifacts for subsequent PixelStreaming changes.
+
+Bootstrap readiness tag:
+
+```text
+ScaleWorldPixelStreamingUpdateCapabilities=pixelstreaming_runtime,combined_runtime_unreal
+```
+
+The updater publishes this capability tag after the stable bootstrap/updater path is present. Server Manager API and web use it as the coarse compatibility gate for runtime-artifact and combined update jobs. A versioned updater contract is still a planned follow-up.
 
 ## Runtime Identity Tags
 

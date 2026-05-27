@@ -2,7 +2,7 @@
 
 This document is the current reference for the legacy Git-ref prod streamer promotion path.
 
-2026-05-22 release-train direction: normal PixelStreaming code promotion should move to immutable prebuilt runtime artifacts under `s3://scaleworlddepot/PixelStreamingRuntime/`. See `pixelstreaming-runtime-artifact-contract.md` and `../../scaleworld-server-manager-web/docs/release-train-current-state-2026-05-22.md`. The runtime install/update path, release-candidate API/store, manifest-backed candidate capture, and first Release page capture/pin actions exist, but the Git-ref path below remains compatibility and break-glass until candidate promotion orchestration, capacity convergence, rollback, and updater capability gates are complete.
+2026-05-27 release-train direction: normal PixelStreaming code promotion should move to immutable prebuilt runtime artifacts under `s3://scaleworlddepot/PixelStreamingRuntime/`. See `pixelstreaming-runtime-artifact-contract.md` and `../../scaleworld-server-manager-web/docs/release-train-current-state-2026-05-22.md`. The runtime install/update path, release-candidate API/store, manifest-backed candidate capture, first Release page capture/pin actions, and coarse updater capability gates exist. The Git-ref path below remains compatibility and break-glass until candidate promotion orchestration, capacity convergence, rollback, and Prod bootstrap/capability rollout are complete.
 
 Stage/candidate promotion now exists as a separate first step:
 - Gold validation can promote the tested checkout to `/pixelstreaming/stage/git-target-ref`
@@ -31,6 +31,7 @@ Target prod model:
 Delivery-mode note:
 - Dev keeps `git_ref` as the default so small code changes can still be tested by moving `/pixelstreaming/dev/git-target-ref`.
 - Runtime artifact update/provisioning success marks instances with `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact`.
+- Instances that have completed the bootstrap migration publish `ScaleWorldPixelStreamingUpdateCapabilities=pixelstreaming_runtime,combined_runtime_unreal`; Server Manager API/web block runtime-artifact and combined jobs when the tag is missing.
 - Stage/Prod default to `auto`, so they use the active runtime artifact after installation and keep git-ref fallback only for migration and break-glass.
 
 Current promotion path details:
