@@ -5,6 +5,10 @@ param(
     [string]$ParameterName,
     [string]$Region = "eu-north-1",
     [switch]$UseHeadSha,
+    [switch]$CreateTag,
+    [string]$DateStamp,
+    [switch]$SkipFetchTags,
+    [switch]$AllowDirty,
     [switch]$DryRun,
     [switch]$Force
 )
@@ -102,6 +106,83 @@ function Try-Invoke-GitCapture {
     }
 }
 
+function Get-NormalizedDateStamp {
+    param([string]$ExplicitDateStamp)
+
+    $normalized = Normalize-Optional $ExplicitDateStamp
+    if ($normalized) {
+        if ($normalized -notmatch '^\d{8}$') {
+            throw "DateStamp '$normalized' must use yyyyMMdd format."
+        }
+
+        return $normalized
+    }
+
+    return Get-Date -Format "yyyyMMdd"
+}
+
+function Get-NextTargetTagName {
+    param(
+        [string]$DeploymentTrack,
+        [string]$ExplicitDateStamp
+    )
+
+    $datePart = Get-NormalizedDateStamp -ExplicitDateStamp $ExplicitDateStamp
+    $tagBase = "pixelstreaming-$DeploymentTrack-$datePart"
+    $existingTagsText = Invoke-GitCapture -Arguments @("tag", "--list", "$tagBase*")
+    $existingTags = @()
+    if (-not [string]::IsNullOrWhiteSpace($existingTagsText)) {
+        $existingTags = $existingTagsText -split "(`r`n|`n|`r)" | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_)
+        }
+    }
+
+    $pattern = "^$([regex]::Escape($tagBase))([a-z])$"
+    $maxIndex = -1
+    foreach ($tag in $existingTags) {
+        $match = [regex]::Match($tag.Trim(), $pattern)
+        if (-not $match.Success) {
+            continue
+        }
+
+        $suffix = $match.Groups[1].Value
+        $index = [int][char]$suffix - [int][char]'a'
+        if ($index -gt $maxIndex) {
+            $maxIndex = $index
+        }
+    }
+
+    $nextIndex = $maxIndex + 1
+    if ($nextIndex -gt 25) {
+        throw "All tag suffixes for '$tagBase' are already used."
+    }
+
+    $nextSuffix = [char]([int][char]'a' + $nextIndex)
+    return "$tagBase$nextSuffix"
+}
+
+function Confirm-ProdTargetRefUpdate {
+    param(
+        [string]$TargetRefValue,
+        [switch]$WillCreateTag
+    )
+
+    if ($WillCreateTag) {
+        Write-Warning "This will create and push '$TargetRefValue', then update the prod PixelStreaming git-target-ref SSM parameter."
+        $tagConfirmation = Read-Host "Type the exact tag name to continue"
+        if ($tagConfirmation -cne $TargetRefValue) {
+            throw "Prod target ref update cancelled."
+        }
+    } else {
+        Write-Warning "This will update the prod PixelStreaming git-target-ref SSM parameter to '$TargetRefValue'."
+    }
+
+    $confirmation = Read-Host "Type PROD to update prod"
+    if ($confirmation -cne "PROD") {
+        throw "Prod target ref update cancelled."
+    }
+}
+
 function Get-DefaultParameterName {
     param([string]$DeploymentTrack)
 
@@ -137,11 +218,6 @@ function Resolve-TargetRef {
     return Invoke-GitCapture -Arguments @("rev-parse", "HEAD")
 }
 
-$targetRefValue = Resolve-TargetRef -ExplicitTargetRef $TargetRef -PreferHeadSha:$UseHeadSha
-if ($targetRefValue -notmatch '^[A-Za-z0-9._/\-]+$') {
-    throw "Target ref '$targetRefValue' contains unsupported characters. Use a branch, tag, or commit-like ref."
-}
-
 $parameterNameValue = Normalize-Optional $ParameterName
 if (-not $parameterNameValue) {
     $parameterNameValue = Get-DefaultParameterName -DeploymentTrack $Track
@@ -154,6 +230,30 @@ if ($parameterNameValue -notmatch '^/pixelstreaming/.+/git-target-ref$') {
 $currentCommit = Invoke-GitCapture -Arguments @("rev-parse", "HEAD")
 $currentBranch = Invoke-GitCapture -Arguments @("branch", "--show-current")
 $workingTreeStatus = Invoke-GitCapture -Arguments @("status", "--porcelain")
+
+if ($CreateTag) {
+    if (Normalize-Optional $TargetRef) {
+        throw "Do not pass TargetRef when CreateTag is set. The script generates the next git target tag automatically."
+    }
+
+    if ($UseHeadSha) {
+        throw "UseHeadSha cannot be combined with CreateTag."
+    }
+
+    if (-not $SkipFetchTags -and -not $DryRun) {
+        Write-Host "Fetching tags from origin before selecting the next target ref..."
+        Invoke-GitCapture -Arguments @("fetch", "origin", "--tags", "--prune") | Out-Null
+    }
+
+    $targetRefValue = Get-NextTargetTagName -DeploymentTrack $Track -ExplicitDateStamp $DateStamp
+} else {
+    $targetRefValue = Resolve-TargetRef -ExplicitTargetRef $TargetRef -PreferHeadSha:$UseHeadSha
+}
+
+if ($targetRefValue -notmatch '^[A-Za-z0-9._/\-]+$') {
+    throw "Target ref '$targetRefValue' contains unsupported characters. Use a branch, tag, or commit-like ref."
+}
+
 Write-Host "PixelStreaming repo: $repoRootPath"
 Write-Host "Current commit: $currentCommit"
 Write-Host "Selected target ref: $targetRefValue" -ForegroundColor Cyan
@@ -161,10 +261,14 @@ Write-Host "Target parameter: $parameterNameValue"
 Write-Host "AWS region: $Region"
 
 if (-not [string]::IsNullOrWhiteSpace($workingTreeStatus)) {
+    if ($CreateTag -and -not $AllowDirty) {
+        throw "The PixelStreaming working tree has uncommitted changes. Commit or stash them before creating a new target tag, or pass -AllowDirty."
+    }
+
     Write-Warning "The PixelStreaming working tree has uncommitted changes. Startup sync can only fetch committed code."
 }
 
-if (-not [string]::IsNullOrWhiteSpace($currentBranch) -and $targetRefValue -eq $currentBranch) {
+if (-not $CreateTag -and -not [string]::IsNullOrWhiteSpace($currentBranch) -and $targetRefValue -eq $currentBranch) {
     $upstream = Try-Invoke-GitCapture -Arguments @("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
     if ([string]::IsNullOrWhiteSpace($upstream)) {
         Write-Warning "Current branch '$currentBranch' has no configured upstream. Hosted instances may not be able to fetch it."
@@ -180,15 +284,26 @@ if (-not [string]::IsNullOrWhiteSpace($currentBranch) -and $targetRefValue -eq $
 }
 
 if ($DryRun) {
-    Write-Host "Dry run only. SSM was not updated." -ForegroundColor Yellow
+    if ($CreateTag) {
+        Write-Host "Dry run only. The tag was not created or pushed, and SSM was not updated." -ForegroundColor Yellow
+    } else {
+        Write-Host "Dry run only. SSM was not updated." -ForegroundColor Yellow
+    }
+
     return
 }
 
 if ($Track -eq "prod" -and -not $Force) {
-    $confirmation = Read-Host "Type PROD to update the prod PixelStreaming target ref"
-    if ($confirmation -cne "PROD") {
-        throw "Prod target ref update cancelled."
-    }
+    Confirm-ProdTargetRefUpdate -TargetRefValue $targetRefValue -WillCreateTag:$CreateTag
+}
+
+if ($CreateTag) {
+    Write-Host "Creating git tag '$targetRefValue' at $currentCommit..."
+    Invoke-GitCapture -Arguments @("tag", $targetRefValue, $currentCommit) | Out-Null
+
+    Write-Host "Pushing git tag '$targetRefValue' to origin..."
+    Invoke-GitCapture -Arguments @("push", "origin", "refs/tags/$targetRefValue") | Out-Null
+    Write-Host "Pushed git tag '$targetRefValue'." -ForegroundColor Green
 }
 
 $aws = Get-AwsCliPath
