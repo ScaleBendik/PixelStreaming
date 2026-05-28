@@ -1080,6 +1080,7 @@ try {
             ScaleWorldUpdateResultReason = 'validated_runtime_artifact'
             ScaleWorldUpdateCompletedAtUtc = $completionTime
             ScaleWorldLastUpdatedAtUtc = $completionTime
+            ScaleWorldPixelStreamingDeliveryMode = 'runtime_artifact'
             ScaleWorldPixelStreamingRuntimeManifestKey = $targetRuntimeManifestKey
             ScaleWorldPixelStreamingUpdateCapabilities = 'pixelstreaming_runtime,combined_runtime_unreal'
         }
@@ -1098,12 +1099,6 @@ try {
         }
 
         Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags $successTags
-        TrySet-InstanceTags `
-            -AwsCli $awsCli `
-            -Region $identity.Region `
-            -InstanceId $identity.InstanceId `
-            -Tags @{ ScaleWorldPixelStreamingDeliveryMode = 'runtime_artifact' } `
-            -FailureContext 'Runtime artifact update succeeded, but delivery mode tag publication failed.'
         Write-UpdateModeTrace -Step 'after_runtime_validation' -Data @{
             TargetRuntimeManifestKey = $targetRuntimeManifestKey
             RuntimeStatusSummary = $runtimeStatusValidated.Summary
