@@ -118,8 +118,8 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $stackLauncher `
-    -Expected 'if /i "%STACK_MODE%"=="normal" if /i "%STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION%"=="true"' `
-    -Message 'Active runtime delegation must be gated by delivery mode so Dev git-ref sync can ignore installed artifacts.'
+    -Expected 'if /i not "%STACK_MODE%"=="validation" if /i "%STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION%"=="true"' `
+    -Message 'Active runtime delegation must run for normal and recovery starts so bootstrap-root watchdog recovery cannot bypass the active runtime.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
@@ -152,9 +152,29 @@ Assert-ContainsText `
     -Message 'Superseded root cleanup helper must enumerate old-root processes before active-runtime handoff.'
 
 Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected '-AllRoots -WaitSeconds 3' `
+    -Message 'Active-runtime stack launches must sweep stale supervisors from any non-active PixelStreaming root.'
+
+Assert-ContainsText `
+    -Content $stopSupersededRoot `
+    -Expected '[switch]$AllRoots' `
+    -Message 'Superseded root cleanup helper must support active-runtime all-root cleanup.'
+
+Assert-ContainsText `
+    -Content $stopSupersededRoot `
+    -Expected '$activeRootTargetPath' `
+    -Message 'All-root cleanup must preserve processes launched through the active runtime junction target.'
+
+Assert-ContainsText `
     -Content $stopSupersededRoot `
     -Expected 'start_watchdog.bat' `
     -Message 'Superseded root cleanup helper must retire old-root watchdog launchers.'
+
+Assert-ContainsText `
+    -Content $stopSupersededRoot `
+    -Expected "-or (Test-CommandLineContainsPath -CommandLine `$commandLine -Path `$currentWatchdogLauncher)" `
+    -Message 'Superseded root cleanup helper must retire delayed PowerShell watchdog launchers before they start a stale root.'
 
 Assert-ContainsText `
     -Content $stopSupersededRoot `

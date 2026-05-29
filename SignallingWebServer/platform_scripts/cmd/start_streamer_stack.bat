@@ -184,7 +184,7 @@ if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_PROVISIONING_MODE%"=="
 
 echo PixelStreaming delivery mode "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%" for %SCALEWORLD_STREAMING_LANE%/%SCALEWORLD_DEPLOYMENT_TRACK% startup.
 
-if /i "%STACK_MODE%"=="normal" if /i "%STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION%"=="true" (
+if /i not "%STACK_MODE%"=="validation" if /i "%STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION%"=="true" (
   set "ACTIVE_RUNTIME_DELEGATED=false"
   call :delegate_to_active_runtime_if_available %*
   set "ACTIVE_RUNTIME_DELEGATE_EXIT=!errorlevel!"
@@ -203,6 +203,10 @@ if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_BOOT_GIT_SYNC%"=="true
 )
 
 if not defined WATCHDOG_RESTART_COMMAND set "WATCHDOG_RESTART_COMMAND=""%SCRIPT_DIR%start_streamer_stack.bat"" --recovery"
+
+if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="runtime_artifact" (
+  call :stop_superseded_runtime_roots_before_stack_launch
+)
 
 if /i "%STACK_RUN_UNREAL_UPDATE_CHECK%"=="true" (
   if exist "%UPDATE_SCRIPT%" (
@@ -319,6 +323,16 @@ exit /b %errorlevel%
 if exist "%STOP_SUPERSEDED_ROOT_SCRIPT%" (
   powershell -NoProfile -ExecutionPolicy Bypass -File "%STOP_SUPERSEDED_ROOT_SCRIPT%" -CurrentRoot "%PIXELSTREAMING_ROOT%" -ActiveRoot "%SCALEWORLD_ACTIVE_RUNTIME_ROOT%"
   if errorlevel 1 echo WARNING: Superseded PixelStreaming root cleanup failed before active-runtime handoff.
+) else (
+  echo WARNING: Superseded PixelStreaming root cleanup script not found at "%STOP_SUPERSEDED_ROOT_SCRIPT%".
+)
+exit /b 0
+
+:stop_superseded_runtime_roots_before_stack_launch
+if /i not "%PIXELSTREAMING_ROOT%"=="%SCALEWORLD_ACTIVE_RUNTIME_ROOT%" exit /b 0
+if exist "%STOP_SUPERSEDED_ROOT_SCRIPT%" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%STOP_SUPERSEDED_ROOT_SCRIPT%" -CurrentRoot "%PIXELSTREAMING_ROOT%" -ActiveRoot "%SCALEWORLD_ACTIVE_RUNTIME_ROOT%" -InstallRoot "%SCALEWORLD_INSTALL_BASE%" -AllRoots -WaitSeconds 3
+  if errorlevel 1 echo WARNING: Superseded PixelStreaming root cleanup failed before active-runtime stack launch.
 ) else (
   echo WARNING: Superseded PixelStreaming root cleanup script not found at "%STOP_SUPERSEDED_ROOT_SCRIPT%".
 )

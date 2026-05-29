@@ -3,6 +3,8 @@ param(
     [string]$CurrentRoot,
     [Parameter(Mandatory = $true)]
     [string]$ActiveRoot,
+    [string]$InstallRoot = $(if ($env:SCALEWORLD_INSTALL_BASE) { $env:SCALEWORLD_INSTALL_BASE } else { '' }),
+    [switch]$AllRoots,
     [int]$WaitSeconds = 10
 )
 
@@ -38,13 +40,21 @@ function Test-CommandLineContainsPath {
 function Get-SupersededProcessMatches {
     param(
         [string]$CurrentRootPath,
-        [string]$ActiveRootPath
+        [string]$ActiveRootPath,
+        [string]$ActiveRootTargetPath,
+        [string]$InstallRootPath,
+        [bool]$IncludeAllRoots
     )
 
     $currentSignallingRoot = Join-Path $CurrentRootPath 'SignallingWebServer'
     $currentWatchdogScript = Join-Path $currentSignallingRoot 'platform_scripts\powershell\watchdog.ps1'
     $currentWatchdogLauncher = Join-Path $currentSignallingRoot 'platform_scripts\cmd\start_watchdog.bat'
     $currentWilburLauncher = Join-Path $currentSignallingRoot 'platform_scripts\cmd\start_dev_turn.bat'
+    $knownScriptFragments = @(
+        'platform_scripts\powershell\watchdog.ps1',
+        'platform_scripts\cmd\start_watchdog.bat',
+        'platform_scripts\cmd\start_dev_turn.bat'
+    )
 
     $processes = try {
         @(Get-CimInstance Win32_Process)
@@ -63,16 +73,49 @@ function Get-SupersededProcessMatches {
         if (Test-CommandLineContainsPath -CommandLine $commandLine -Path $ActiveRootPath) {
             return $false
         }
-
-        $isCurrentRootProcess =
-            Test-CommandLineContainsPath -CommandLine $commandLine -Path $CurrentRootPath
-        if (-not $isCurrentRootProcess) {
+        if (Test-CommandLineContainsPath -CommandLine $commandLine -Path $ActiveRootTargetPath) {
             return $false
         }
 
+        if ($IncludeAllRoots) {
+            if (-not (Test-CommandLineContainsPath -CommandLine $commandLine -Path $InstallRootPath)) {
+                return $false
+            }
+        } else {
+            $isCurrentRootProcess =
+                Test-CommandLineContainsPath -CommandLine $commandLine -Path $CurrentRootPath
+            if (-not $isCurrentRootProcess) {
+                return $false
+            }
+        }
+
         $name = [string]$_.Name
+        if ($IncludeAllRoots) {
+            if ($name.Equals('powershell.exe', [System.StringComparison]::OrdinalIgnoreCase) `
+                -and ((Test-CommandLineContainsPath -CommandLine $commandLine -Path 'watchdog.ps1') `
+                    -or (Test-CommandLineContainsPath -CommandLine $commandLine -Path 'start_watchdog.bat'))) {
+                return $true
+            }
+
+            if ($name.Equals('cmd.exe', [System.StringComparison]::OrdinalIgnoreCase)) {
+                foreach ($fragment in $knownScriptFragments) {
+                    if (Test-CommandLineContainsPath -CommandLine $commandLine -Path $fragment) {
+                        return $true
+                    }
+                }
+            }
+
+            if ($name.Equals('node.exe', [System.StringComparison]::OrdinalIgnoreCase) `
+                -and (Test-CommandLineContainsPath -CommandLine $commandLine -Path 'index.js')) {
+                return $true
+            }
+
+            return $false
+        }
+
         if ($name.Equals('powershell.exe', [System.StringComparison]::OrdinalIgnoreCase) `
-            -and (Test-CommandLineContainsPath -CommandLine $commandLine -Path $currentWatchdogScript)) {
+            -and ((Test-CommandLineContainsPath -CommandLine $commandLine -Path $currentWatchdogScript) `
+                -or (Test-CommandLineContainsPath -CommandLine $commandLine -Path $currentWatchdogLauncher))) {
             return $true
         }
 
@@ -93,15 +136,33 @@ function Get-SupersededProcessMatches {
 
 $currentRootPath = Normalize-PathForMatch $CurrentRoot
 $activeRootPath = Normalize-PathForMatch $ActiveRoot
+$installRootPath = Normalize-PathForMatch $InstallRoot
 if (-not $currentRootPath -or -not $activeRootPath) {
     exit 0
 }
 
-if ([string]::Equals($currentRootPath, $activeRootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+if ($AllRoots -and -not $installRootPath) {
     exit 0
 }
 
-$matches = @(Get-SupersededProcessMatches -CurrentRootPath $currentRootPath -ActiveRootPath $activeRootPath)
+$activeRootTargetPath = $null
+try {
+    if (Test-Path -LiteralPath $activeRootPath) {
+        $activeItem = Get-Item -LiteralPath $activeRootPath -Force
+        $activeTarget = @($activeItem.Target | Select-Object -First 1)[0]
+        if (-not [string]::IsNullOrWhiteSpace($activeTarget)) {
+            $activeRootTargetPath = Normalize-PathForMatch ([string]$activeTarget)
+        }
+    }
+} catch {
+    $activeRootTargetPath = $null
+}
+
+if (-not $AllRoots -and [string]::Equals($currentRootPath, $activeRootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+    exit 0
+}
+
+$matches = @(Get-SupersededProcessMatches -CurrentRootPath $currentRootPath -ActiveRootPath $activeRootPath -ActiveRootTargetPath $activeRootTargetPath -InstallRootPath $installRootPath -IncludeAllRoots:$AllRoots)
 if ($matches.Count -eq 0) {
     if ($script:SupersededProcessEnumerationFailed) {
         exit 1
@@ -126,7 +187,7 @@ if ($stopped.Count -gt 0) {
 
 $deadline = (Get-Date).AddSeconds([Math]::Max($WaitSeconds, 0))
 while ((Get-Date) -lt $deadline) {
-    $remaining = @(Get-SupersededProcessMatches -CurrentRootPath $currentRootPath -ActiveRootPath $activeRootPath)
+    $remaining = @(Get-SupersededProcessMatches -CurrentRootPath $currentRootPath -ActiveRootPath $activeRootPath -ActiveRootTargetPath $activeRootTargetPath -InstallRootPath $installRootPath -IncludeAllRoots:$AllRoots)
     if ($remaining.Count -eq 0) {
         if ($script:SupersededProcessEnumerationFailed) {
             exit 1
@@ -138,7 +199,7 @@ while ((Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 500
 }
 
-$remainingSummary = (@(Get-SupersededProcessMatches -CurrentRootPath $currentRootPath -ActiveRootPath $activeRootPath) |
+$remainingSummary = (@(Get-SupersededProcessMatches -CurrentRootPath $currentRootPath -ActiveRootPath $activeRootPath -ActiveRootTargetPath $activeRootTargetPath -InstallRootPath $installRootPath -IncludeAllRoots:$AllRoots) |
     ForEach-Object { "$($_.Name) PID=$($_.ProcessId)" }) -join ', '
 if (-not [string]::IsNullOrWhiteSpace($remainingSummary)) {
     Write-Warning "Superseded PixelStreaming root processes are still running after cleanup wait: $remainingSummary"
