@@ -141,6 +141,21 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $stackLauncher `
+    -Expected '$watchdogScript = [System.IO.Path]::GetFullPath((Join-Path $scriptDir ''..\powershell\watchdog.ps1''))' `
+    -Message 'Watchdog duplicate detection must be scoped to the current launcher root.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected '$watchdogLauncher = [System.IO.Path]::GetFullPath((Join-Path $scriptDir ''start_watchdog.bat''))' `
+    -Message 'Watchdog launcher duplicate detection must be scoped to the current launcher root.'
+
+Assert-DoesNotContainText `
+    -Content $stackLauncher `
+    -Unexpected "CommandLine -like '*watchdog.ps1*'" `
+    -Message 'Watchdog duplicate detection must not treat another PixelStreaming root as equivalent.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
     -Expected 'PixelStreaming delivery mode runtime_artifact requires an installed active runtime' `
     -Message 'Explicit runtime-artifact mode must fail closed when the active runtime is missing.'
 

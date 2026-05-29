@@ -257,7 +257,7 @@ if /i "%STACK_START_UNREAL%"=="true" if /i not "%STACK_LAUNCH_UNREAL_BEFORE_WILB
 )
 if /i "%STACK_START_WATCHDOG%"=="true" (
   if exist "%SCRIPT_DIR%start_watchdog.bat" (
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$currentPid = $PID; $watchdog = Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $currentPid -and (($_.Name -ieq 'powershell.exe' -and $_.CommandLine -like '*watchdog.ps1*') -or ($_.Name -ieq 'cmd.exe' -and $_.CommandLine -like '*start_watchdog.bat*')) } | Select-Object -First 1; if ($watchdog) { exit 0 } else { exit 1 }"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$currentPid = $PID; $scriptDir = [System.IO.Path]::GetFullPath('%SCRIPT_DIR%'); $watchdogScript = [System.IO.Path]::GetFullPath((Join-Path $scriptDir '..\powershell\watchdog.ps1')); $watchdogLauncher = [System.IO.Path]::GetFullPath((Join-Path $scriptDir 'start_watchdog.bat')); $watchdog = Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $currentPid -and (($_.Name -ieq 'powershell.exe' -and $_.CommandLine -like ('*' + $watchdogScript + '*')) -or ($_.Name -ieq 'cmd.exe' -and $_.CommandLine -like ('*' + $watchdogLauncher + '*'))) } | Select-Object -First 1; if ($watchdog) { exit 0 } else { exit 1 }"
     if errorlevel 1 (
       echo Scheduling watchdog start in %STACK_WATCHDOG_START_DELAY_SECONDS% seconds...
       start "ScaleWorld Watchdog" powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds %STACK_WATCHDOG_START_DELAY_SECONDS%; & '%SCRIPT_DIR%start_watchdog.bat'"
