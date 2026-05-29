@@ -168,6 +168,11 @@ Assert-ContainsText `
     -Message 'Git-ref startup must clear stale runtime artifact identity tags.'
 
 Assert-ContainsText `
+    -Content $repoHeadPublisher `
+    -Expected "preserved runtime artifact delivery tags" `
+    -Message 'Repo-head publishing must not overwrite runtime-artifact delivery identity after an artifact update.'
+
+Assert-ContainsText `
     -Content $stackLauncher `
     -Expected '-LauncherGraceSeconds %SCALEWORLD_RUNTIME_PROCESS_WAIT_SECONDS%' `
     -Message 'Launcher freshness detection must use the same window as the strict Unreal runtime wait.'

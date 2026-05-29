@@ -136,6 +136,50 @@ function Remove-TagKeys {
     }
 }
 
+function Get-InstanceTagValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TagKey
+    )
+
+    $tagArgs = @(
+        'ec2', 'describe-tags',
+        '--region', $Region,
+        '--filters',
+        "Name=resource-id,Values=$InstanceId",
+        "Name=key,Values=$TagKey",
+        '--query', 'Tags[0].Value',
+        '--output', 'text'
+    )
+
+    $result = Invoke-AwsCliCapture -AwsCli $AwsCliPath -Arguments $tagArgs
+    if ($result.ExitCode -ne 0) {
+        return [pscustomobject]@{
+            Succeeded = $false
+            Value = $null
+            Error = $result.Combined
+        }
+    }
+
+    $value = $result.StdOut
+    if ([string]::IsNullOrWhiteSpace($value) -or [string]::Equals($value.Trim(), 'None', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $value = $null
+    }
+
+    return [pscustomobject]@{
+        Succeeded = $true
+        Value = $value
+        Error = $null
+    }
+}
+
+function Test-RuntimeArtifactDeliveryMode {
+    param([string]$Value)
+
+    return [string]::Equals($Value, 'runtime_artifact', [System.StringComparison]::OrdinalIgnoreCase) `
+        -or [string]::Equals($Value, 'runtime-artifact', [System.StringComparison]::OrdinalIgnoreCase)
+}
+
 try {
     $normalizedHead = Normalize-TagValue $CurrentRepoHead
     if ([string]::IsNullOrWhiteSpace($normalizedHead)) {
@@ -157,6 +201,15 @@ try {
         }
 
         throw $headResult.Combined
+    }
+
+    $currentDeliveryMode = Get-InstanceTagValue -TagKey 'ScaleWorldPixelStreamingDeliveryMode'
+    if ($currentDeliveryMode.Succeeded -and (Test-RuntimeArtifactDeliveryMode -Value $currentDeliveryMode.Value)) {
+        Write-RepoHeadTagLog "Published repo head '$normalizedHead' and preserved runtime artifact delivery tags for instance '$InstanceId'."
+        exit 0
+    }
+    if (-not $currentDeliveryMode.Succeeded) {
+        Write-RepoHeadTagLog "Published repo head '$normalizedHead', but could not read current PixelStreaming delivery mode before publishing git-ref identity. Continuing with git-ref tag publish. $($currentDeliveryMode.Error)" 'WARN'
     }
 
     $deliveryModeResult = Publish-TagPayload -TagPayload @(
