@@ -204,9 +204,7 @@ if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_BOOT_GIT_SYNC%"=="true
 
 if not defined WATCHDOG_RESTART_COMMAND set "WATCHDOG_RESTART_COMMAND=""%SCRIPT_DIR%start_streamer_stack.bat"" --recovery"
 
-if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="runtime_artifact" (
-  call :stop_superseded_runtime_roots_before_stack_launch
-)
+call :stop_superseded_runtime_roots_before_stack_launch
 
 if /i "%STACK_RUN_UNREAL_UPDATE_CHECK%"=="true" (
   if exist "%UPDATE_SCRIPT%" (

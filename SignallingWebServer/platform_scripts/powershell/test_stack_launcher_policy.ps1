@@ -53,6 +53,7 @@ $cmdRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\cmd')
 $stackLauncherPath = Join-Path $cmdRoot 'start_streamer_stack.bat'
 $stackRecycleLauncherPath = Join-Path $cmdRoot 'start_stack_recycle.bat'
 $startDevTurnPath = Join-Path $cmdRoot 'start_dev_turn.bat'
+$startWatchdogPath = Join-Path $cmdRoot 'start_watchdog.bat'
 $commonCmdPath = Join-Path $cmdRoot 'common.bat'
 $stackRecycleScriptPath = Join-Path $PSScriptRoot 'invoke_stack_recycle.ps1'
 $unrealLauncherPath = Join-Path $PSScriptRoot 'start_scaleworld.ps1'
@@ -71,6 +72,7 @@ $stopSupersededRootPath = Join-Path $PSScriptRoot 'stop_superseded_root_processe
 $stackLauncher = [System.IO.File]::ReadAllText($stackLauncherPath)
 $stackRecycleLauncher = [System.IO.File]::ReadAllText($stackRecycleLauncherPath)
 $startDevTurn = [System.IO.File]::ReadAllText($startDevTurnPath)
+$startWatchdog = [System.IO.File]::ReadAllText($startWatchdogPath)
 $commonCmd = [System.IO.File]::ReadAllText($commonCmdPath)
 $stackRecycleScript = [System.IO.File]::ReadAllText($stackRecycleScriptPath)
 $unrealLauncher = [System.IO.File]::ReadAllText($unrealLauncherPath)
@@ -157,6 +159,16 @@ Assert-ContainsText `
     -Message 'Active-runtime stack launches must sweep stale supervisors from any non-active PixelStreaming root.'
 
 Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'call :stop_superseded_runtime_roots_before_stack_launch' `
+    -Message 'Active-runtime cleanup must run for auto and explicit runtime-artifact launches.'
+
+Assert-MatchesText `
+    -Content $stackLauncher `
+    -Pattern 'if not defined WATCHDOG_RESTART_COMMAND set "WATCHDOG_RESTART_COMMAND=.*?\r?\n\r?\ncall :stop_superseded_runtime_roots_before_stack_launch' `
+    -Message 'Active-runtime cleanup must not be gated on exact runtime_artifact mode because stage auto mode also delegates to the active runtime.'
+
+Assert-ContainsText `
     -Content $stopSupersededRoot `
     -Expected '[switch]$AllRoots' `
     -Message 'Superseded root cleanup helper must support active-runtime all-root cleanup.'
@@ -198,8 +210,58 @@ Assert-DoesNotContainText `
 
 Assert-ContainsText `
     -Content $watchdog `
-    -Expected 'Global\ScaleWorldWatchdog-' `
-    -Message 'Watchdog must use a per-root mutex so delayed starts cannot create duplicate supervisors.'
+    -Expected "Global\ScaleWorldWatchdog" `
+    -Message 'Watchdog must use an instance-global mutex so bootstrap and active runtime roots cannot run concurrent supervisors.'
+
+Assert-DoesNotContainText `
+    -Content $watchdog `
+    -Unexpected 'ScaleWorldWatchdog-$watchdogMutexHash' `
+    -Message 'Watchdog mutex must not be root-scoped; root-scoped mutexes allow bootstrap and active runtime supervisors to coexist.'
+
+Assert-ContainsText `
+    -Content $startWatchdog `
+    -Expected 'set "WATCHDOG_WILBUR_RESTART_COMMAND=%WATCHDOG_RESTART_COMMAND%"' `
+    -Message 'Default Wilbur recovery must use stack recovery so bootstrap-root watchdogs cannot bypass active-runtime delegation.'
+
+Assert-DoesNotContainText `
+    -Content $startWatchdog `
+    -Unexpected 'set "WATCHDOG_WILBUR_RESTART_COMMAND=""%SCRIPT_DIR%start_dev_turn.bat"""' `
+    -Message 'Default Wilbur recovery must not directly launch the current root because bootstrap roots can bypass active-runtime delegation.'
+
+Assert-ContainsText `
+    -Content $startWatchdog `
+    -Expected 'set "WATCHDOG_UNREAL_RESTART_COMMAND=%WATCHDOG_RESTART_COMMAND%"' `
+    -Message 'Default Unreal recovery must use stack recovery so bootstrap-root watchdogs cannot bypass active-runtime delegation.'
+
+Assert-DoesNotContainText `
+    -Content $startWatchdog `
+    -Unexpected 'set "WATCHDOG_UNREAL_RESTART_COMMAND=""%SCRIPT_DIR%start_unreal.bat"""' `
+    -Message 'Default Unreal recovery must not directly launch the current root because bootstrap roots can bypass active-runtime delegation.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected 'Invoke-ActiveRuntimeSupersededRootCleanup -Force' `
+    -Message 'Active-runtime watchdog startup must proactively retire stale non-active root supervisors.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected 'Invoke-ActiveRuntimeSupersededRootCleanup' `
+    -Message 'Active-runtime watchdog must periodically retire stale non-active root supervisors after startup ordering races.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected '-AllRoots -WaitSeconds 1' `
+    -Message 'Active-runtime watchdog cleanup must use all-root cleanup without blocking the health loop for long.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected '$cleanupIntervalSeconds = 15' `
+    -Message 'Active-runtime watchdog cleanup must run frequently enough to retire old per-root supervisors from already-deployed artifacts.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected 'Test-CurrentRootIsActiveRuntime' `
+    -Message 'Superseded root cleanup must only run from the active runtime watchdog, not from bootstrap or legacy roots.'
 
 Assert-ContainsText `
     -Content $stackLauncher `

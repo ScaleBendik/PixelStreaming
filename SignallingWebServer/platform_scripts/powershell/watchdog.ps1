@@ -49,6 +49,8 @@ $script:LastMaintenanceModeReadAtUtc = [DateTimeOffset]::MinValue
 $script:MaintenanceModeCache = $null
 $script:LastMaintenanceModeReadFailure = $null
 $script:LastLoggedMaintenanceMode = '__uninitialized__'
+$script:LastSupersededRootCleanupAtUtc = [DateTimeOffset]::MinValue
+$script:LastSupersededRootCleanupFailure = $null
 $script:SignallingWebServerRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $defaultLogPath = Join-Path $script:SignallingWebServerRoot 'logs\scaleworld-watchdog.log'
 $resolvedLogPath = if ([string]::IsNullOrWhiteSpace($LogPath)) { $defaultLogPath } elseif ([System.IO.Path]::IsPathRooted($LogPath)) { $LogPath } else { Join-Path $script:SignallingWebServerRoot $LogPath }
@@ -57,16 +59,12 @@ if (-not (Test-Path $logDir)) {
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 }
 
-$watchdogRootForMutex = ([string]$script:SignallingWebServerRoot).ToLowerInvariant()
-$watchdogMutexHashBytes = [System.Security.Cryptography.SHA256]::Create().ComputeHash(
-    [System.Text.Encoding]::UTF8.GetBytes($watchdogRootForMutex))
-$watchdogMutexHash = ([System.BitConverter]::ToString($watchdogMutexHashBytes) -replace '-', '').Substring(0, 16)
-$watchdogMutexName = "Global\ScaleWorldWatchdog-$watchdogMutexHash"
+$watchdogMutexName = 'Global\ScaleWorldWatchdog'
 $script:WatchdogMutex = $null
 try {
     $script:WatchdogMutex = [System.Threading.Mutex]::new($false, $watchdogMutexName)
 } catch {
-    $watchdogMutexName = "Local\ScaleWorldWatchdog-$watchdogMutexHash"
+    $watchdogMutexName = 'Local\ScaleWorldWatchdog'
     $script:WatchdogMutex = [System.Threading.Mutex]::new($false, $watchdogMutexName)
 }
 
@@ -79,7 +77,7 @@ try {
 
 if (-not $watchdogMutexAcquired) {
     $timestamp = [DateTimeOffset]::UtcNow.ToString('o')
-    Add-Content -LiteralPath $resolvedLogPath -Value "[$timestamp] [INFO] [watchdog] Another watchdog is already running for root '$script:SignallingWebServerRoot'. Exiting duplicate supervisor."
+    Add-Content -LiteralPath $resolvedLogPath -Value "[$timestamp] [INFO] [watchdog] Another watchdog is already running for this instance. Exiting duplicate supervisor for root '$script:SignallingWebServerRoot'."
     exit 0
 }
 
@@ -174,6 +172,116 @@ function Write-WatchdogLog {
     $line = "[$timestamp] [$Level] [watchdog] $Message"
     Write-Host $line
     Add-Content -Path $resolvedLogPath -Value $line
+}
+
+function Get-NormalizedPathForComparison {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $null
+    }
+
+    try {
+        return ([System.IO.Path]::GetFullPath($Path.Trim()) -replace '[\\/]+$', '')
+    } catch {
+        return ($Path.Trim() -replace '[\\/]+$', '')
+    }
+}
+
+function Get-ActiveRuntimeRootCandidates {
+    param([string]$ActiveRoot)
+
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    $normalizedActiveRoot = Get-NormalizedPathForComparison -Path $ActiveRoot
+    if (-not [string]::IsNullOrWhiteSpace($normalizedActiveRoot)) {
+        $candidates.Add($normalizedActiveRoot) | Out-Null
+    }
+
+    try {
+        $activeRootItem = Get-Item -LiteralPath $ActiveRoot -ErrorAction Stop
+        if ($activeRootItem.PSObject.Properties.Name -contains 'Target') {
+            foreach ($target in @($activeRootItem.Target)) {
+                $normalizedTarget = Get-NormalizedPathForComparison -Path ([string]$target)
+                if (-not [string]::IsNullOrWhiteSpace($normalizedTarget)) {
+                    $candidates.Add($normalizedTarget) | Out-Null
+                }
+            }
+        }
+    } catch {
+        # The junction target is only an extra guard. The active junction path above is sufficient for normal launches.
+    }
+
+    return @($candidates | Select-Object -Unique)
+}
+
+function Test-CurrentRootIsActiveRuntime {
+    param(
+        [string]$CurrentRoot,
+        [string]$ActiveRoot
+    )
+
+    $normalizedCurrentRoot = Get-NormalizedPathForComparison -Path $CurrentRoot
+    if ([string]::IsNullOrWhiteSpace($normalizedCurrentRoot)) {
+        return $false
+    }
+
+    foreach ($candidate in (Get-ActiveRuntimeRootCandidates -ActiveRoot $ActiveRoot)) {
+        if ($normalizedCurrentRoot.Equals($candidate, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Invoke-ActiveRuntimeSupersededRootCleanup {
+    param([switch]$Force)
+
+    if ($dryRunValue) {
+        return
+    }
+
+    $installRoot = if ([string]::IsNullOrWhiteSpace($env:SCALEWORLD_INSTALL_BASE)) {
+        'C:\PixelStreaming'
+    } else {
+        $env:SCALEWORLD_INSTALL_BASE
+    }
+    $activeRoot = Join-Path $installRoot 'PixelStreamingRuntime'
+    $currentRoot = Split-Path -Parent ([string]$script:SignallingWebServerRoot)
+    if (-not (Test-CurrentRootIsActiveRuntime -CurrentRoot $currentRoot -ActiveRoot $activeRoot)) {
+        return
+    }
+
+    $cleanupIntervalSeconds = 15
+    $nowUtc = [DateTimeOffset]::UtcNow
+    if (-not $Force -and ($nowUtc - $script:LastSupersededRootCleanupAtUtc).TotalSeconds -lt $cleanupIntervalSeconds) {
+        return
+    }
+
+    $script:LastSupersededRootCleanupAtUtc = $nowUtc
+    $cleanupScript = Join-Path $script:SignallingWebServerRoot 'platform_scripts\powershell\stop_superseded_root_processes.ps1'
+    if (-not (Test-Path -LiteralPath $cleanupScript)) {
+        return
+    }
+
+    try {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $cleanupScript -CurrentRoot $currentRoot -ActiveRoot $activeRoot -InstallRoot $installRoot -AllRoots -WaitSeconds 1
+        $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+        if ($exitCode -ne 0) {
+            throw "Superseded root cleanup exited with code $exitCode."
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($script:LastSupersededRootCleanupFailure)) {
+            Write-WatchdogLog 'Superseded root cleanup recovered.'
+            $script:LastSupersededRootCleanupFailure = $null
+        }
+    } catch {
+        $failure = $_.Exception.Message
+        if ($script:LastSupersededRootCleanupFailure -ne $failure) {
+            Write-WatchdogLog "Superseded root cleanup failed: $failure" 'WARN'
+            $script:LastSupersededRootCleanupFailure = $failure
+        }
+    }
 }
 
 function Get-ImdsToken {
@@ -827,23 +935,25 @@ $updateRecoveryRestartCount = 0
 
 Write-WatchdogLog ('Starting watchdog. Poll={0}s threshold={1} restartCooldown={2}s postRestartGrace={3}s processStartupGrace={4}s launcherGrace={5}s dryRun={6} runtimeStatus={7} streamerHealth={8} streamerHealthPath={9} streamerHealthMaxStale={10}s streamerHealthStartupGrace={11}s provisioningStreamerHealthStartupGrace={12}s provisioningConnectTimeout={13}s provisioningMaxRecoveryRestarts={14}s updateStreamerHealthStartupGrace={15}s updateConnectTimeout={16}s updateMaxRecoveryRestarts={17}s maintenanceRefresh={18}s unrealCpuConfirm={19} unrealCpuMinDelta={20}s unrealCpuConfirmWindow={21}s' -f $pollIntervalSecondsValue, $failureThresholdValue, $restartCooldownSecondsValue, $postRestartGraceSecondsValue, $processStartupGraceSecondsValue, $launcherGraceSecondsValue, $dryRunValue, $runtimeStatusEnabledValue, $streamerHealthEnabledValue, $resolvedStreamerHealthPath, $streamerHealthMaxStaleSecondsValue, $streamerHealthStartupGraceSecondsValue, $provisioningStreamerHealthStartupGraceSecondsValue, $provisioningStreamerConnectTimeoutSecondsValue, $provisioningMaxRecoveryRestartsValue, $updateStreamerHealthStartupGraceSecondsValue, $updateStreamerConnectTimeoutSecondsValue, $updateMaxRecoveryRestartsValue, $maintenanceModeRefreshSecondsValue, $unrealCpuStallConfirmEnabledValue, $unrealCpuStallMinDeltaSecondsValue, $unrealCpuStallConfirmSecondsValue)
 Write-WatchdogLog ('Rules: {0}' -f (($rules | ForEach-Object { if ([string]::IsNullOrWhiteSpace($_.CommandLinePattern)) { $_.ProcessName } else { '{0} [{1}]' -f $_.ProcessName, $_.CommandLinePattern } }) -join ', '))
+Invoke-ActiveRuntimeSupersededRootCleanup -Force
 
 while ($true) {
     try {
-    $processStartupGraceActive = $processStartupGraceSecondsValue -gt 0 -and (([DateTimeOffset]::UtcNow - $watchdogStartedAtUtc).TotalSeconds -lt $processStartupGraceSecondsValue)
-    $snapshot = @(Get-ProcessSnapshot)
-    $ruleMatches = @{}
-    $failedRules = @()
-    $launcherWaits = [System.Collections.Generic.List[object]]::new()
-    $currentMaintenanceMode = Get-MaintenanceMode
-    $isProvisioningMaintenance = -not [string]::IsNullOrWhiteSpace($currentMaintenanceMode) -and $currentMaintenanceMode.Equals('provisioning', [System.StringComparison]::OrdinalIgnoreCase)
-    $isUpdateMaintenance = -not [string]::IsNullOrWhiteSpace($currentMaintenanceMode) -and $currentMaintenanceMode.Equals('update', [System.StringComparison]::OrdinalIgnoreCase)
-    if (-not $isProvisioningMaintenance) {
-        $provisioningRecoveryRestartCount = 0
-    }
-    if (-not $isUpdateMaintenance) {
-        $updateRecoveryRestartCount = 0
-    }
+        Invoke-ActiveRuntimeSupersededRootCleanup
+        $processStartupGraceActive = $processStartupGraceSecondsValue -gt 0 -and (([DateTimeOffset]::UtcNow - $watchdogStartedAtUtc).TotalSeconds -lt $processStartupGraceSecondsValue)
+        $snapshot = @(Get-ProcessSnapshot)
+        $ruleMatches = @{}
+        $failedRules = @()
+        $launcherWaits = [System.Collections.Generic.List[object]]::new()
+        $currentMaintenanceMode = Get-MaintenanceMode
+        $isProvisioningMaintenance = -not [string]::IsNullOrWhiteSpace($currentMaintenanceMode) -and $currentMaintenanceMode.Equals('provisioning', [System.StringComparison]::OrdinalIgnoreCase)
+        $isUpdateMaintenance = -not [string]::IsNullOrWhiteSpace($currentMaintenanceMode) -and $currentMaintenanceMode.Equals('update', [System.StringComparison]::OrdinalIgnoreCase)
+        if (-not $isProvisioningMaintenance) {
+            $provisioningRecoveryRestartCount = 0
+        }
+        if (-not $isUpdateMaintenance) {
+            $updateRecoveryRestartCount = 0
+        }
 
     foreach ($rule in $rules) {
         $matches = Find-MatchingProcesses -Snapshot $snapshot -Rule $rule
