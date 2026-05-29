@@ -140,7 +140,6 @@ if not defined STACK_WILBUR_READY_PORT (
 )
 if not defined STACK_WILBUR_READY_TIMEOUT_SECONDS set "STACK_WILBUR_READY_TIMEOUT_SECONDS=60"
 if not defined STACK_RUN_UNREAL_UPDATE_CHECK set "STACK_RUN_UNREAL_UPDATE_CHECK=false"
-if not defined WATCHDOG_RESTART_COMMAND set "WATCHDOG_RESTART_COMMAND=""%SCRIPT_DIR%start_streamer_stack.bat"" --recovery"
 if not defined WATCHDOG_TERMINATE_MATCHED_PROCESSES set "WATCHDOG_TERMINATE_MATCHED_PROCESSES=true"
 
 if /i "%STACK_MODE%"=="recovery" set "STACK_RUN_UNREAL_UPDATE_CHECK=false"
@@ -185,8 +184,10 @@ if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_PROVISIONING_MODE%"=="
 echo PixelStreaming delivery mode "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%" for %SCALEWORLD_STREAMING_LANE%/%SCALEWORLD_DEPLOYMENT_TRACK% startup.
 
 if /i "%STACK_MODE%"=="normal" if /i "%STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION%"=="true" (
+  set "ACTIVE_RUNTIME_DELEGATED=false"
   call :delegate_to_active_runtime_if_available %*
   set "ACTIVE_RUNTIME_DELEGATE_EXIT=!errorlevel!"
+  if /i "!ACTIVE_RUNTIME_DELEGATED!"=="true" exit /b !ACTIVE_RUNTIME_DELEGATE_EXIT!
   if not "!ACTIVE_RUNTIME_DELEGATE_EXIT!"=="0" exit /b !ACTIVE_RUNTIME_DELEGATE_EXIT!
 )
 
@@ -199,6 +200,8 @@ if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_BOOT_GIT_SYNC%"=="true
   )
   if not "!STACK_SYNC_EXIT!"=="0" exit /b !STACK_SYNC_EXIT!
 )
+
+if not defined WATCHDOG_RESTART_COMMAND set "WATCHDOG_RESTART_COMMAND=""%SCRIPT_DIR%start_streamer_stack.bat"" --recovery"
 
 if /i "%STACK_RUN_UNREAL_UPDATE_CHECK%"=="true" (
   if exist "%UPDATE_SCRIPT%" (
@@ -306,7 +309,12 @@ if not exist "%ACTIVE_RUNTIME_LAUNCHER%" (
 )
 
 echo Delegating normal startup to active PixelStreaming runtime "%ACTIVE_RUNTIME_LAUNCHER%".
+for %%I in ("%ACTIVE_RUNTIME_LAUNCHER%") do set "ACTIVE_RUNTIME_SCRIPT_DIR=%%~dpI"
+set "WATCHDOG_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_streamer_stack.bat"" --recovery"
+set "WATCHDOG_WILBUR_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_dev_turn.bat"""
+set "WATCHDOG_UNREAL_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_unreal.bat"""
 set "STACK_ENABLE_BOOT_GIT_SYNC=false"
+set "ACTIVE_RUNTIME_DELEGATED=true"
 call "%ACTIVE_RUNTIME_LAUNCHER%" %*
 exit /b %errorlevel%
 

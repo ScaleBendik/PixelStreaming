@@ -121,6 +121,26 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $stackLauncher `
+    -Expected 'if /i "!ACTIVE_RUNTIME_DELEGATED!"=="true" exit /b !ACTIVE_RUNTIME_DELEGATE_EXIT!' `
+    -Message 'A successful active runtime delegation must be a terminal handoff so the bootstrap checkout cannot launch a second stack.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'set "WATCHDOG_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_streamer_stack.bat"" --recovery"' `
+    -Message 'Delegated active runtime startup must bind watchdog stack recovery to the active runtime launcher, not the bootstrap checkout.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'set "WATCHDOG_WILBUR_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_dev_turn.bat"""' `
+    -Message 'Delegated active runtime startup must bind Wilbur recovery to the active runtime launcher directory.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'set "WATCHDOG_UNREAL_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_unreal.bat"""' `
+    -Message 'Delegated active runtime startup must bind Unreal recovery to the active runtime launcher directory.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
     -Expected 'PixelStreaming delivery mode runtime_artifact requires an installed active runtime' `
     -Message 'Explicit runtime-artifact mode must fail closed when the active runtime is missing.'
 
@@ -556,6 +576,11 @@ Assert-ContainsText `
     -Content $repoSync `
     -Expected "STACK_ENABLE_BOOT_GIT_SYNC=false" `
     -Message 'Post-sync stack relaunch must disable boot git sync to avoid relaunch loops.'
+
+Assert-ContainsText `
+    -Content $repoSync `
+    -Expected 'set "WATCHDOG_RESTART_COMMAND=" && set "WATCHDOG_WILBUR_RESTART_COMMAND=" && set "WATCHDOG_UNREAL_RESTART_COMMAND="' `
+    -Message 'Post-sync stack relaunch must clear root-bound watchdog restart commands before handing off to the updated checkout.'
 
 Assert-ContainsText `
     -Content $repoSync `

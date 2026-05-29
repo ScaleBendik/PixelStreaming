@@ -433,7 +433,7 @@ function Start-PostRepoSyncStackRelaunch {
         return $false
     }
 
-    $command = 'set "STACK_ENABLE_BOOT_GIT_SYNC=false" && set "STACK_RELAUNCHED_AFTER_BOOT_SYNC=true" && call "{0}"' -f $stackLauncherPath
+    $command = 'set "STACK_ENABLE_BOOT_GIT_SYNC=false" && set "STACK_RELAUNCHED_AFTER_BOOT_SYNC=true" && set "WATCHDOG_RESTART_COMMAND=" && set "WATCHDOG_WILBUR_RESTART_COMMAND=" && set "WATCHDOG_UNREAL_RESTART_COMMAND=" && call "{0}"' -f $stackLauncherPath
     Write-RepoSyncLog "Repo HEAD changed from $InitialHead to $CurrentHead. Launching fresh stack from updated checkout."
     Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $command) -WindowStyle Minimized | Out-Null
     return $true
