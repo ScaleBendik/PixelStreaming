@@ -10,6 +10,7 @@ set "DATA_DRIVE_SCRIPT=%SCRIPT_DIR%..\powershell\ensure_data_drive.ps1"
 set "UPDATE_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_update_mode.ps1"
 set "PROVISIONING_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_provisioning_mode.ps1"
 set "ACTIVE_RUNTIME_LAUNCHER_RESOLVER=%SCRIPT_DIR%..\powershell\resolve_active_runtime_launcher.ps1"
+set "STOP_SUPERSEDED_ROOT_SCRIPT=%SCRIPT_DIR%..\powershell\stop_superseded_root_processes.ps1"
 set "NORMALIZE_DELIVERY_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\normalize_pixelstreaming_delivery_mode.ps1"
 set "STACK_MODE=normal"
 set "STACK_START_WATCHDOG=true"
@@ -217,13 +218,8 @@ if /i "%STACK_RUN_UNREAL_UPDATE_CHECK%"=="true" (
 )
 set "WILBUR_PROCESS_NAME=node.exe"
 if defined WATCHDOG_WILBUR_PROCESS_NAME set "WILBUR_PROCESS_NAME=%WATCHDOG_WILBUR_PROCESS_NAME%"
-if /i "%STACK_MODE%"=="validation" (
-  set "WILBUR_COMMANDLINE_PATTERN=%PIXELSTREAMING_ROOT%\SignallingWebServer"
-  set "WILBUR_LAUNCHER_PATTERN=%SCRIPT_DIR%start_dev_turn.bat"
-) else (
-  set "WILBUR_COMMANDLINE_PATTERN=index.js"
-  set "WILBUR_LAUNCHER_PATTERN=start_dev_turn.bat"
-)
+set "WILBUR_COMMANDLINE_PATTERN=%PIXELSTREAMING_ROOT%\SignallingWebServer"
+set "WILBUR_LAUNCHER_PATTERN=%SCRIPT_DIR%start_dev_turn.bat"
 if defined WATCHDOG_WILBUR_COMMANDLINE_PATTERN set "WILBUR_COMMANDLINE_PATTERN=%WATCHDOG_WILBUR_COMMANDLINE_PATTERN%"
 set "UNREAL_PROCESS_NAME=ScaleWorld.exe"
 if defined SCALEWORLD_EXECUTABLE_NAME set "UNREAL_PROCESS_NAME=%SCALEWORLD_EXECUTABLE_NAME%"
@@ -310,6 +306,7 @@ if not exist "%ACTIVE_RUNTIME_LAUNCHER%" (
 
 echo Delegating normal startup to active PixelStreaming runtime "%ACTIVE_RUNTIME_LAUNCHER%".
 for %%I in ("%ACTIVE_RUNTIME_LAUNCHER%") do set "ACTIVE_RUNTIME_SCRIPT_DIR=%%~dpI"
+call :stop_superseded_root_processes_before_delegation
 set "WATCHDOG_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_streamer_stack.bat"" --recovery"
 set "WATCHDOG_WILBUR_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_dev_turn.bat"""
 set "WATCHDOG_UNREAL_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_unreal.bat"""
@@ -317,6 +314,15 @@ set "STACK_ENABLE_BOOT_GIT_SYNC=false"
 set "ACTIVE_RUNTIME_DELEGATED=true"
 call "%ACTIVE_RUNTIME_LAUNCHER%" %*
 exit /b %errorlevel%
+
+:stop_superseded_root_processes_before_delegation
+if exist "%STOP_SUPERSEDED_ROOT_SCRIPT%" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%STOP_SUPERSEDED_ROOT_SCRIPT%" -CurrentRoot "%PIXELSTREAMING_ROOT%" -ActiveRoot "%SCALEWORLD_ACTIVE_RUNTIME_ROOT%"
+  if errorlevel 1 echo WARNING: Superseded PixelStreaming root cleanup failed before active-runtime handoff.
+) else (
+  echo WARNING: Superseded PixelStreaming root cleanup script not found at "%STOP_SUPERSEDED_ROOT_SCRIPT%".
+)
+exit /b 0
 
 :sync_repo_before_stack
 set "REPO_SYNC_SCRIPT=%SCRIPT_DIR%..\powershell\ensure_repo_current.ps1"

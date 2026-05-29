@@ -66,6 +66,7 @@ $repoHeadPublisherPath = Join-Path $PSScriptRoot 'publish_repo_head_tags.ps1'
 $deliveryModeResolverPath = Join-Path $PSScriptRoot 'resolve_pixelstreaming_delivery_mode_from_instance_tag.ps1'
 $runtimeInstallerPath = Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.ps1'
 $updateModePath = Join-Path $PSScriptRoot 'invoke_update_mode.ps1'
+$stopSupersededRootPath = Join-Path $PSScriptRoot 'stop_superseded_root_processes.ps1'
 
 $stackLauncher = [System.IO.File]::ReadAllText($stackLauncherPath)
 $stackRecycleLauncher = [System.IO.File]::ReadAllText($stackRecycleLauncherPath)
@@ -83,6 +84,7 @@ $repoHeadPublisher = [System.IO.File]::ReadAllText($repoHeadPublisherPath)
 $deliveryModeResolver = [System.IO.File]::ReadAllText($deliveryModeResolverPath)
 $runtimeInstaller = [System.IO.File]::ReadAllText($runtimeInstallerPath)
 $updateMode = [System.IO.File]::ReadAllText($updateModePath)
+$stopSupersededRoot = [System.IO.File]::ReadAllText($stopSupersededRootPath)
 
 Assert-DoesNotContainText `
     -Content $stackLauncher `
@@ -141,6 +143,26 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $stackLauncher `
+    -Expected 'stop_superseded_root_processes.ps1' `
+    -Message 'Delegated active runtime startup must retire superseded bootstrap-root supervisors before handing off.'
+
+Assert-ContainsText `
+    -Content $stopSupersededRoot `
+    -Expected 'Get-SupersededProcessMatches' `
+    -Message 'Superseded root cleanup helper must enumerate old-root processes before active-runtime handoff.'
+
+Assert-ContainsText `
+    -Content $stopSupersededRoot `
+    -Expected 'start_watchdog.bat' `
+    -Message 'Superseded root cleanup helper must retire old-root watchdog launchers.'
+
+Assert-ContainsText `
+    -Content $stopSupersededRoot `
+    -Expected 'start_dev_turn.bat' `
+    -Message 'Superseded root cleanup helper must retire old-root Wilbur launchers.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
     -Expected '$watchdogScript = [System.IO.Path]::GetFullPath((Join-Path $scriptDir ''..\powershell\watchdog.ps1''))' `
     -Message 'Watchdog duplicate detection must be scoped to the current launcher root.'
 
@@ -155,6 +177,11 @@ Assert-DoesNotContainText `
     -Message 'Watchdog duplicate detection must not treat another PixelStreaming root as equivalent.'
 
 Assert-ContainsText `
+    -Content $watchdog `
+    -Expected 'Global\ScaleWorldWatchdog-' `
+    -Message 'Watchdog must use a per-root mutex so delayed starts cannot create duplicate supervisors.'
+
+Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'PixelStreaming delivery mode runtime_artifact requires an installed active runtime' `
     -Message 'Explicit runtime-artifact mode must fail closed when the active runtime is missing.'
@@ -162,12 +189,32 @@ Assert-ContainsText `
 Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'set "WILBUR_COMMANDLINE_PATTERN=%PIXELSTREAMING_ROOT%\SignallingWebServer"' `
-    -Message 'Validation mode must scope Wilbur detection to the runtime being validated.'
+    -Message 'Wilbur detection must be scoped to the runtime root so stale bootstrap-root Wilbur cannot satisfy active-runtime startup.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'set "WILBUR_LAUNCHER_PATTERN=%SCRIPT_DIR%start_dev_turn.bat"' `
-    -Message 'Validation mode must scope Wilbur launcher detection to the runtime being validated.'
+    -Message 'Wilbur launcher detection must be scoped to the runtime root so stale bootstrap-root launchers cannot satisfy active-runtime startup.'
+
+Assert-DoesNotContainText `
+    -Content $stackLauncher `
+    -Unexpected 'set "WILBUR_COMMANDLINE_PATTERN=index.js"' `
+    -Message 'Normal startup must not use broad Wilbur detection across PixelStreaming roots.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected '$currentWilburLauncher = Join-Path $script:SignallingWebServerRoot ''platform_scripts\cmd\start_dev_turn.bat''' `
+    -Message 'Watchdog launcher grace checks must be scoped to the current runtime root.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected 'CommandLinePattern = $currentWilburLauncher' `
+    -Message 'Watchdog must not treat another root''s Wilbur launcher as recovery progress.'
+
+Assert-DoesNotContainText `
+    -Content $watchdog `
+    -Unexpected "else { 'index.js' }" `
+    -Message 'Watchdog must not use broad Wilbur process detection when invoked directly.'
 
 Assert-ContainsText `
     -Content $updateMode `

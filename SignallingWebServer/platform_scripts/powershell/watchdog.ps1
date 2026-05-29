@@ -3,7 +3,7 @@ param(
     [string]$UnrealProcessName = $(if ($env:WATCHDOG_UNREAL_PROCESS_NAME) { $env:WATCHDOG_UNREAL_PROCESS_NAME } elseif ($env:SCALEWORLD_RUNTIME_PROCESS_PATTERN) { $env:SCALEWORLD_RUNTIME_PROCESS_PATTERN } else { 'ScaleWorld-Win64-*' }),
     [string]$UnrealCommandLinePattern = $env:WATCHDOG_UNREAL_COMMANDLINE_PATTERN,
     [string]$WilburProcessName = $(if ($env:WATCHDOG_WILBUR_PROCESS_NAME) { $env:WATCHDOG_WILBUR_PROCESS_NAME } else { 'node.exe' }),
-    [string]$WilburCommandLinePattern = $(if ($env:WATCHDOG_WILBUR_COMMANDLINE_PATTERN) { $env:WATCHDOG_WILBUR_COMMANDLINE_PATTERN } else { 'index.js' }),
+    [string]$WilburCommandLinePattern = $env:WATCHDOG_WILBUR_COMMANDLINE_PATTERN,
     [string]$PollIntervalSeconds = $(if ($env:WATCHDOG_POLL_INTERVAL_SECONDS) { $env:WATCHDOG_POLL_INTERVAL_SECONDS } else { '5' }),
     [string]$FailureThreshold = $(if ($env:WATCHDOG_FAILURE_THRESHOLD) { $env:WATCHDOG_FAILURE_THRESHOLD } else { '3' }),
     [string]$RestartCooldownSeconds = $(if ($env:WATCHDOG_RESTART_COOLDOWN_SECONDS) { $env:WATCHDOG_RESTART_COOLDOWN_SECONDS } else { '5' }),
@@ -55,6 +55,36 @@ $resolvedLogPath = if ([string]::IsNullOrWhiteSpace($LogPath)) { $defaultLogPath
 $logDir = Split-Path -Parent $resolvedLogPath
 if (-not (Test-Path $logDir)) {
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+}
+
+$watchdogRootForMutex = ([string]$script:SignallingWebServerRoot).ToLowerInvariant()
+$watchdogMutexHashBytes = [System.Security.Cryptography.SHA256]::Create().ComputeHash(
+    [System.Text.Encoding]::UTF8.GetBytes($watchdogRootForMutex))
+$watchdogMutexHash = ([System.BitConverter]::ToString($watchdogMutexHashBytes) -replace '-', '').Substring(0, 16)
+$watchdogMutexName = "Global\ScaleWorldWatchdog-$watchdogMutexHash"
+$script:WatchdogMutex = $null
+try {
+    $script:WatchdogMutex = [System.Threading.Mutex]::new($false, $watchdogMutexName)
+} catch {
+    $watchdogMutexName = "Local\ScaleWorldWatchdog-$watchdogMutexHash"
+    $script:WatchdogMutex = [System.Threading.Mutex]::new($false, $watchdogMutexName)
+}
+
+$watchdogMutexAcquired = $false
+try {
+    $watchdogMutexAcquired = $script:WatchdogMutex.WaitOne(0)
+} catch [System.Threading.AbandonedMutexException] {
+    $watchdogMutexAcquired = $true
+}
+
+if (-not $watchdogMutexAcquired) {
+    $timestamp = [DateTimeOffset]::UtcNow.ToString('o')
+    Add-Content -LiteralPath $resolvedLogPath -Value "[$timestamp] [INFO] [watchdog] Another watchdog is already running for root '$script:SignallingWebServerRoot'. Exiting duplicate supervisor."
+    exit 0
+}
+
+if ([string]::IsNullOrWhiteSpace($WilburCommandLinePattern)) {
+    $WilburCommandLinePattern = [string]$script:SignallingWebServerRoot
 }
 
 function ConvertTo-Bool {
@@ -728,23 +758,27 @@ if (-not [string]::IsNullOrWhiteSpace($WilburProcessName)) {
     })
 }
 
+$currentWilburLauncher = Join-Path $script:SignallingWebServerRoot 'platform_scripts\cmd\start_dev_turn.bat'
+$currentUnrealLauncher = Join-Path $script:SignallingWebServerRoot 'platform_scripts\cmd\start_unreal.bat'
+$currentUnrealPowerShellLauncher = Join-Path $script:SignallingWebServerRoot 'platform_scripts\powershell\start_scaleworld.ps1'
+
 $recoveryLauncherRules = @(
     [pscustomobject]@{
         Name = 'wilbur-launcher-cmd'
         ProcessName = 'cmd.exe'
-        CommandLinePattern = 'start_dev_turn.bat'
+        CommandLinePattern = $currentWilburLauncher
         FaultReason = $null
     },
     [pscustomobject]@{
         Name = 'unreal-launcher-cmd'
         ProcessName = 'cmd.exe'
-        CommandLinePattern = 'start_unreal.bat'
+        CommandLinePattern = $currentUnrealLauncher
         FaultReason = $null
     },
     [pscustomobject]@{
         Name = 'unreal-launcher-powershell'
         ProcessName = 'powershell.exe'
-        CommandLinePattern = 'start_scaleworld.ps1'
+        CommandLinePattern = $currentUnrealPowerShellLauncher
         FaultReason = $null
     }
 )
