@@ -62,6 +62,53 @@ function Normalize-DeliveryMode {
     }
 }
 
+function Normalize-TagValue {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value) -or $Value -eq 'None') {
+        return $null
+    }
+
+    return $Value.Trim()
+}
+
+function ConvertTo-TagDictionary {
+    param([object[]]$Rows)
+
+    $tags = @{}
+    foreach ($row in @($Rows)) {
+        if ($null -eq $row) {
+            continue
+        }
+
+        $key = Normalize-TagValue -Value ([string]$row.Key)
+        $value = Normalize-TagValue -Value ([string]$row.Value)
+        if ([string]::IsNullOrWhiteSpace($key) -or [string]::IsNullOrWhiteSpace($value)) {
+            continue
+        }
+
+        $tags[$key] = $value
+    }
+
+    return $tags
+}
+
+function Test-RuntimeArtifactIdentityTags {
+    param([hashtable]$Tags)
+
+    foreach ($tagKey in @(
+        'ScaleWorldPixelStreamingRuntimeBundleId',
+        'ScaleWorldPixelStreamingRuntimeManifestKey',
+        'ScaleWorldPixelStreamingRuntimeArtifactKey'
+    )) {
+        if ($Tags.ContainsKey($tagKey) -and -not [string]::IsNullOrWhiteSpace([string]$Tags[$tagKey])) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 try {
     $aws = Get-AwsCliPath
     if (-not $aws) {
@@ -81,20 +128,32 @@ try {
         exit 2
     }
 
-    $tagValue = & $aws ec2 describe-tags `
+    $tagJson = & $aws ec2 describe-tags `
         --region $region `
-        --filters "Name=resource-id,Values=$instanceId" "Name=key,Values=ScaleWorldPixelStreamingDeliveryMode,ScaleWorldPixelStreamingDeliverymode" `
-        --query 'Tags[0].Value' `
-        --output text
+        --filters "Name=resource-id,Values=$instanceId" "Name=key,Values=ScaleWorldPixelStreamingDeliveryMode,ScaleWorldPixelStreamingDeliverymode,ScaleWorldPixelStreamingRuntimeBundleId,ScaleWorldPixelStreamingRuntimeManifestKey,ScaleWorldPixelStreamingRuntimeArtifactKey" `
+        --query 'Tags[].{Key:Key,Value:Value}' `
+        --output json
 
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Failed to query the ScaleWorldPixelStreamingDeliveryMode instance tag in region '$region'."
         exit 2
     }
 
+    $tagRows = if ([string]::IsNullOrWhiteSpace($tagJson)) { @() } else { @($tagJson | ConvertFrom-Json) }
+    $tags = ConvertTo-TagDictionary -Rows $tagRows
+    $tagValue = if ($tags.ContainsKey('ScaleWorldPixelStreamingDeliveryMode')) {
+        [string]$tags['ScaleWorldPixelStreamingDeliveryMode']
+    } elseif ($tags.ContainsKey('ScaleWorldPixelStreamingDeliverymode')) {
+        [string]$tags['ScaleWorldPixelStreamingDeliverymode']
+    } else {
+        $null
+    }
+
     $deliveryMode = Normalize-DeliveryMode -Value $tagValue
     if ($deliveryMode) {
         Write-Output $deliveryMode
+    } elseif (Test-RuntimeArtifactIdentityTags -Tags $tags) {
+        Write-Output 'runtime_artifact'
     }
     exit 0
 } catch {

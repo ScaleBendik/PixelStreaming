@@ -218,9 +218,9 @@ ScaleWorldPixelStreamingDeliveryMode=git_ref|runtime_artifact|auto
 1. `dev` deployment track -> `git_ref`, preserving the fast `/pixelstreaming/dev/git-target-ref` startup sync loop for iteration.
 2. `stage` and `prod` deployment tracks -> `auto`, delegating to an installed active runtime artifact when one exists and falling back to pinned git-ref compatibility while migration is in progress.
 
-Explicit `runtime_artifact` fails closed when no active runtime is installed. Git-ref startup publishes `ScaleWorldPixelStreamingDeliveryMode=git_ref` and clears stale runtime artifact identity tags only when the instance is not already tagged as runtime-artifact delivered. Runtime artifact update/provisioning success publishes `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact`.
+Explicit `runtime_artifact` fails closed when no active runtime is installed. If the delivery-mode tag is missing but runtime artifact identity tags are present, startup infers `runtime_artifact` instead of falling back to the Dev git-ref default. Git-ref startup publishes `ScaleWorldPixelStreamingDeliveryMode=git_ref` and clears stale runtime artifact identity tags only when git-ref delivery is explicit. Runtime artifact update/provisioning success publishes `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact`.
 
-Runtime-artifact identity is sticky across normal startup. The repo-head publisher may still record repository diagnostics after startup, but when the current instance tag says `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact`, it must not clear runtime identity tags and must not rewrite `ScaleWorldPixelStreamingVersion` to the Git target ref. The displayed version should continue to be the runtime bundle id until an explicit Git-ref delivery update changes the delivery mode.
+Runtime-artifact identity is sticky across normal startup. The repo-head publisher may still record repository diagnostics after startup, but when the current instance tag says `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact` or runtime identity is present without an explicit `git_ref`, it must not clear runtime identity tags and must not rewrite `ScaleWorldPixelStreamingVersion` to the Git target ref. The displayed version should continue to be the runtime bundle id until an explicit Git-ref delivery update changes the delivery mode.
 
 Per instance:
 

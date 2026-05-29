@@ -180,6 +180,44 @@ function Test-RuntimeArtifactDeliveryMode {
         -or [string]::Equals($Value, 'runtime-artifact', [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Test-GitRefDeliveryMode {
+    param([string]$Value)
+
+    return [string]::Equals($Value, 'git_ref', [System.StringComparison]::OrdinalIgnoreCase) `
+        -or [string]::Equals($Value, 'git-ref', [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-RuntimeArtifactIdentityPresent {
+    foreach ($tagKey in @(
+        'ScaleWorldPixelStreamingRuntimeBundleId',
+        'ScaleWorldPixelStreamingRuntimeManifestKey',
+        'ScaleWorldPixelStreamingRuntimeArtifactKey'
+    )) {
+        $tagValue = Get-InstanceTagValue -TagKey $tagKey
+        if (-not $tagValue.Succeeded) {
+            return [pscustomobject]@{
+                Succeeded = $false
+                Present = $true
+                Error = $tagValue.Error
+            }
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($tagValue.Value)) {
+            return [pscustomobject]@{
+                Succeeded = $true
+                Present = $true
+                Error = $null
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        Succeeded = $true
+        Present = $false
+        Error = $null
+    }
+}
+
 try {
     $normalizedHead = Normalize-TagValue $CurrentRepoHead
     if ([string]::IsNullOrWhiteSpace($normalizedHead)) {
@@ -209,7 +247,19 @@ try {
         exit 0
     }
     if (-not $currentDeliveryMode.Succeeded) {
-        Write-RepoHeadTagLog "Published repo head '$normalizedHead', but could not read current PixelStreaming delivery mode before publishing git-ref identity. Continuing with git-ref tag publish. $($currentDeliveryMode.Error)" 'WARN'
+        Write-RepoHeadTagLog "Published repo head '$normalizedHead', but could not read current PixelStreaming delivery mode before publishing git-ref identity. Leaving PixelStreaming delivery identity unchanged. $($currentDeliveryMode.Error)" 'WARN'
+        exit 0
+    }
+
+    $runtimeArtifactIdentity = Test-RuntimeArtifactIdentityPresent
+    if (-not $runtimeArtifactIdentity.Succeeded) {
+        Write-RepoHeadTagLog "Published repo head '$normalizedHead', but could not confirm whether runtime artifact identity tags are present before publishing git-ref identity. Leaving PixelStreaming delivery identity unchanged. $($runtimeArtifactIdentity.Error)" 'WARN'
+        exit 0
+    }
+
+    if ($runtimeArtifactIdentity.Present -and -not (Test-GitRefDeliveryMode -Value $currentDeliveryMode.Value)) {
+        Write-RepoHeadTagLog "Published repo head '$normalizedHead' and preserved runtime artifact-like delivery tags for instance '$InstanceId' because no explicit git-ref delivery mode was present."
+        exit 0
     }
 
     $deliveryModeResult = Publish-TagPayload -TagPayload @(

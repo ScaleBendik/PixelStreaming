@@ -33,7 +33,7 @@ Use these first for the Server Manager integration:
 7. Runtime artifact delivery is active: runtime bundles are published under `PixelStreamingRuntime/<bundleId>/`, installed into versioned runtime roots, and activated through `C:\PixelStreaming\PixelStreamingRuntime`.
 8. `git_ref` delivery remains the Dev fast path and the bootstrap/break-glass migration path. Stage/Prod default to `auto` so an installed active runtime artifact wins when present.
 9. Bootstrapped instances publish `ScaleWorldPixelStreamingUpdateCapabilities=pixelstreaming_runtime,combined_runtime_unreal`; Server Manager uses that tag to gate runtime-artifact and combined update jobs.
-10. Repo-head startup tagging preserves runtime-artifact identity when `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact`, so runtime-artifact server cards keep showing the active bundle id instead of reverting to a Git target ref.
+10. Repo-head startup tagging preserves runtime-artifact identity when `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact` or runtime identity tags are already present without an explicit `git_ref`, so runtime-artifact server cards keep showing the active bundle id instead of reverting to a Git target ref.
 11. The long-term backlog still tracks splitting the instance agent into a separate service once current warm-pool behavior is stable.
 
 ## Upstream Pixel Streaming Docs

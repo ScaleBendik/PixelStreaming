@@ -63,6 +63,7 @@ $connectTicketRuntimeStatePath = Resolve-Path -LiteralPath (Join-Path $PSScriptR
 $instanceAgentPath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\src\instance-agent.ts')
 $repoSyncPath = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
 $repoHeadPublisherPath = Join-Path $PSScriptRoot 'publish_repo_head_tags.ps1'
+$deliveryModeResolverPath = Join-Path $PSScriptRoot 'resolve_pixelstreaming_delivery_mode_from_instance_tag.ps1'
 $runtimeInstallerPath = Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.ps1'
 $updateModePath = Join-Path $PSScriptRoot 'invoke_update_mode.ps1'
 
@@ -79,6 +80,7 @@ $connectTicketRuntimeState = [System.IO.File]::ReadAllText($connectTicketRuntime
 $instanceAgent = [System.IO.File]::ReadAllText($instanceAgentPath)
 $repoSync = [System.IO.File]::ReadAllText($repoSyncPath)
 $repoHeadPublisher = [System.IO.File]::ReadAllText($repoHeadPublisherPath)
+$deliveryModeResolver = [System.IO.File]::ReadAllText($deliveryModeResolverPath)
 $runtimeInstaller = [System.IO.File]::ReadAllText($runtimeInstallerPath)
 $updateMode = [System.IO.File]::ReadAllText($updateModePath)
 
@@ -171,6 +173,21 @@ Assert-ContainsText `
     -Content $repoHeadPublisher `
     -Expected "preserved runtime artifact delivery tags" `
     -Message 'Repo-head publishing must not overwrite runtime-artifact delivery identity after an artifact update.'
+
+Assert-ContainsText `
+    -Content $repoHeadPublisher `
+    -Expected "Leaving PixelStreaming delivery identity unchanged" `
+    -Message 'Repo-head publishing must fail non-destructively when it cannot confirm git-ref delivery.'
+
+Assert-ContainsText `
+    -Content $repoHeadPublisher `
+    -Expected "runtime artifact-like delivery tags" `
+    -Message 'Repo-head publishing must preserve runtime artifact identity unless git-ref delivery is explicit.'
+
+Assert-ContainsText `
+    -Content $deliveryModeResolver `
+    -Expected "ScaleWorldPixelStreamingRuntimeBundleId" `
+    -Message 'Delivery-mode resolution must infer runtime-artifact mode from existing runtime identity tags when the mode tag is absent.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
