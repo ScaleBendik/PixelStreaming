@@ -124,6 +124,7 @@ Planned replacement for normal PixelStreaming code promotion:
   - Dev defaults to `git_ref` so `/pixelstreaming/dev/git-target-ref` remains the fast iteration path
   - Stage/Prod default to `auto` so active runtime artifacts win when installed, with pinned git-ref fallback during migration
   - `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact` forces artifact startup and fails closed if no active runtime is installed
+  - repo-head startup tagging preserves runtime-artifact identity when `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact`, so `ScaleWorldPixelStreamingVersion` remains the active runtime bundle id instead of reverting to the Git target ref
 
 Current Azure Key Vault secret used by the API workload for connect tickets:
 
@@ -475,6 +476,8 @@ Manual and maintenance-mode helpers:
 - If delivery mode is `auto`, startup delegates to that active runtime when present and otherwise falls back to pinned git-ref sync.
 - If delivery mode is `git_ref`, startup ignores installed runtime artifacts and follows the deployment-track target ref. This is the Dev default.
 
+Startup always may publish repo-head diagnostics, but delivery identity is authoritative. When the instance is currently tagged `runtime_artifact`, repo-head publishing must not clear `ScaleWorldPixelStreamingRuntime*` tags and must not replace `ScaleWorldPixelStreamingVersion` with the resolved Git target ref. Runtime artifact update/provisioning is the writer that moves the visible runtime identity to a new bundle.
+
 During Unreal maintenance-mode updates, `invoke_update_mode.ps1` also syncs the PixelStreaming repo before running `SWupdate.ps1`:
 
 1. `git fetch --prune`
@@ -607,4 +610,5 @@ Note:
 - 2026-05-21: Added the immutable PixelStreaming runtime artifact direction, S3 manifest/ZIP contract, Fleet runtime update install path, provisioning tag hook, explicit git-ref/runtime-artifact delivery mode split, and migration note that existing instances need a one-time bootstrap update before runtime artifact jobs can run.
 - 2026-05-22: Added release-candidate store status, runtime-artifact publisher IAM, first manifest-backed Release page candidate capture/pin actions, and clarified that Git target refs are now Dev/bootstrap/break-glass migration paths rather than the long-term Stage/Prod release object.
 - 2026-05-27: Documented the runtime update capability tag used by Server Manager to gate runtime-artifact and combined update jobs, and narrowed the remaining update follow-up to a versioned updater compatibility contract plus rollback semantics.
+- 2026-05-29: Documented that repo-head startup tagging preserves runtime-artifact identity after artifact activation, preventing server cards from showing an old Git target ref for a runtime-artifact instance.
 

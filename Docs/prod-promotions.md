@@ -33,6 +33,7 @@ Delivery-mode note:
 - Runtime artifact update/provisioning success marks instances with `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact`.
 - Instances that have completed the bootstrap migration publish `ScaleWorldPixelStreamingUpdateCapabilities=pixelstreaming_runtime,combined_runtime_unreal`; Server Manager API/web block runtime-artifact and combined jobs when the tag is missing.
 - Stage/Prod default to `auto`, so they use the active runtime artifact after installation and keep git-ref fallback only for migration and break-glass.
+- After an artifact update, startup repo-head tagging must preserve runtime-artifact identity and leave `ScaleWorldPixelStreamingVersion` on the active bundle id unless the instance is explicitly moved back to `git_ref`.
 
 Current promotion path details:
 
