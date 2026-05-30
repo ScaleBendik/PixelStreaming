@@ -507,6 +507,11 @@ Assert-ContainsText `
     -Message 'Watchdog must treat stale streamer health as a hard health fault.'
 
 Assert-ContainsText `
+    -Content $watchdog `
+    -Expected "'streamer health file stale ({0:N0}s)' -f `$healthAgeSeconds" `
+    -Message 'Watchdog must include the stale streamer-health age in fault logs.'
+
+Assert-ContainsText `
     -Content $stackRecycleLauncher `
     -Expected 'start "ScaleWorld Stack Recycle" /min powershell' `
     -Message 'Stack recycle must be launched through cmd start so it survives Wilbur exit.'

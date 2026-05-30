@@ -1091,7 +1091,7 @@ while ($true) {
 
                     if ($healthAgeSeconds -gt $streamerHealthMaxStaleSecondsValue) {
                         $streamerHealthFaultReason = 'streamer_health_file_stale'
-                        $streamerHealthFaultSummary = "streamer health file stale (${healthAgeSeconds:N0}s)"
+                        $streamerHealthFaultSummary = 'streamer health file stale ({0:N0}s)' -f $healthAgeSeconds
                     } elseif (-not $healthy) {
                         $snapshotReason = [string]$streamerHealthSnapshot.reason
                         $snapshotStatus = [string]$streamerHealthSnapshot.status
