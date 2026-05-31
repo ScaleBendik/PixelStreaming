@@ -200,6 +200,105 @@ function Read-RuntimeManifest {
     }
 }
 
+function Get-InstalledRuntimeMarkerPath {
+    param([string]$BundleRoot)
+
+    return Join-Path $BundleRoot ".scaleworld-runtime-installed.json"
+}
+
+function Test-RequiredRuntimeFile {
+    param(
+        [string]$BundleRoot,
+        [string]$RelativePath
+    )
+
+    return Test-Path -LiteralPath (Join-Path $BundleRoot $RelativePath) -PathType Leaf
+}
+
+function Test-InstalledRuntimeBundle {
+    param(
+        [string]$BundleRoot,
+        [object]$ExpectedManifest
+    )
+
+    if (-not (Test-Path -LiteralPath $BundleRoot -PathType Container)) {
+        return $false
+    }
+
+    $markerPath = Get-InstalledRuntimeMarkerPath -BundleRoot $BundleRoot
+    if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
+        Write-Host "Runtime bundle '$($ExpectedManifest.BundleId)' exists without an install completion marker. Reinstalling." -ForegroundColor Yellow
+        return $false
+    }
+
+    $installedManifestPath = Join-Path $BundleRoot "manifest.json"
+    if (-not (Test-Path -LiteralPath $installedManifestPath -PathType Leaf)) {
+        Write-Host "Runtime bundle '$($ExpectedManifest.BundleId)' is missing manifest.json. Reinstalling." -ForegroundColor Yellow
+        return $false
+    }
+
+    try {
+        $installedManifest = Read-RuntimeManifest -Path $installedManifestPath
+        $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
+    } catch {
+        Write-Host "Runtime bundle '$($ExpectedManifest.BundleId)' has unreadable install metadata. Reinstalling." -ForegroundColor Yellow
+        return $false
+    }
+
+    $expectedRuntimeZipSha256 = ($ExpectedManifest.RuntimeZipSha256 -as [string])
+    $installedRuntimeZipSha256 = ($installedManifest.RuntimeZipSha256 -as [string])
+    $markerRuntimeZipSha256 = ($marker.runtimeZipSha256 -as [string])
+
+    if (($installedManifest.BundleId -as [string]) -ne ($ExpectedManifest.BundleId -as [string]) -or
+        ($installedManifest.RuntimeZipKey -as [string]) -ne ($ExpectedManifest.RuntimeZipKey -as [string]) -or
+        $installedRuntimeZipSha256 -ne $expectedRuntimeZipSha256 -or
+        ($marker.bundleId -as [string]) -ne ($ExpectedManifest.BundleId -as [string]) -or
+        ($marker.runtimeZipKey -as [string]) -ne ($ExpectedManifest.RuntimeZipKey -as [string]) -or
+        $markerRuntimeZipSha256 -ne $expectedRuntimeZipSha256) {
+        Write-Host "Runtime bundle '$($ExpectedManifest.BundleId)' metadata does not match the requested manifest. Reinstalling." -ForegroundColor Yellow
+        return $false
+    }
+
+    $requiredFiles = @(
+        "runtime-bundle-metadata.json",
+        "package.json",
+        "SignallingWebServer\config.json",
+        "SignallingWebServer\package.json",
+        "SignallingWebServer\peer_options.player.json",
+        "SignallingWebServer\peer_options.streamer.json",
+        "SignallingWebServer\dist\index.js",
+        "SignallingWebServer\platform_scripts\cmd\start_streamer_stack.bat",
+        "SignallingWebServer\platform_scripts\powershell\watchdog.ps1"
+    )
+
+    foreach ($relativePath in $requiredFiles) {
+        if (-not (Test-RequiredRuntimeFile -BundleRoot $BundleRoot -RelativePath $relativePath)) {
+            Write-Host "Runtime bundle '$($ExpectedManifest.BundleId)' is missing '$relativePath'. Reinstalling." -ForegroundColor Yellow
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Write-InstalledRuntimeMarker {
+    param(
+        [string]$BundleRoot,
+        [object]$Manifest
+    )
+
+    $markerPath = Get-InstalledRuntimeMarkerPath -BundleRoot $BundleRoot
+    $marker = [ordered]@{
+        schemaVersion = 1
+        bundleId = $Manifest.BundleId
+        runtimeZipKey = $Manifest.RuntimeZipKey
+        runtimeZipSha256 = $Manifest.RuntimeZipSha256
+        installedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+    }
+
+    ($marker | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath $markerPath -Encoding ASCII
+}
+
 function Set-ActiveRuntimePointer {
     param(
         [string]$ActiveRoot,
@@ -266,8 +365,8 @@ Assert-ChildPath -Parent $releasesRoot -Child $bundleRoot
 Assert-ChildPath -Parent $stagingParentRoot -Child $stagingRoot
 Assert-ChildPath -Parent $scratchRoot -Child $downloadedRuntimeZipPath
 
-if ((Test-Path -LiteralPath $bundleRoot) -and -not $ForceReinstall) {
-    Write-Host "Runtime bundle '$($manifest.BundleId)' is already installed. Skipping extraction." -ForegroundColor DarkCyan
+if ((-not $ForceReinstall) -and (Test-InstalledRuntimeBundle -BundleRoot $bundleRoot -ExpectedManifest $manifest)) {
+    Write-Host "Runtime bundle '$($manifest.BundleId)' is already installed and verified. Skipping extraction." -ForegroundColor DarkCyan
 } else {
     if (Test-Path -LiteralPath $stagingRoot) {
         Remove-DirectoryBestEffort -Path $stagingRoot
@@ -302,6 +401,7 @@ if ((Test-Path -LiteralPath $bundleRoot) -and -not $ForceReinstall) {
     Copy-Item -LiteralPath $manifestPath -Destination (Join-Path $stagingRoot "manifest.json") -Force
 
     if (Test-Path -LiteralPath $bundleRoot) {
+        Remove-Item -LiteralPath (Get-InstalledRuntimeMarkerPath -BundleRoot $bundleRoot) -Force -ErrorAction SilentlyContinue
         Remove-DirectoryBestEffort -Path $bundleRoot
         if (Test-Path -LiteralPath $bundleRoot) {
             Write-Warning "Runtime bundle root '$bundleRoot' could not be fully removed. Overwriting files in place."
@@ -309,7 +409,12 @@ if ((Test-Path -LiteralPath $bundleRoot) -and -not $ForceReinstall) {
     }
 
     Invoke-Robocopy -Source $stagingRoot -Destination $bundleRoot
+    Write-InstalledRuntimeMarker -BundleRoot $bundleRoot -Manifest $manifest
     Remove-DirectoryBestEffort -Path $stagingRoot
+}
+
+if (-not (Test-InstalledRuntimeBundle -BundleRoot $bundleRoot -ExpectedManifest $manifest)) {
+    throw "Runtime bundle '$($manifest.BundleId)' did not pass installed-bundle validation."
 }
 
 if ($Activate) {
