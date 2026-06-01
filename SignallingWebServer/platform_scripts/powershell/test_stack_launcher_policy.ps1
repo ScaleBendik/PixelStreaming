@@ -372,13 +372,33 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $repoHeadPublisher `
+    -Expected '[switch]$PublishGitRefDeliveryIdentity' `
+    -Message 'Repo-head publishing must require an explicit opt-in before it can publish git-ref delivery identity.'
+
+Assert-MatchesText `
+    -Content $repoHeadPublisher `
+    -Pattern 'if \(-not \$PublishGitRefDeliveryIdentity\) \{.*?without changing PixelStreaming delivery identity.*?exit 0.*?\}\s*\$currentDeliveryMode = Get-InstanceTagValue' `
+    -Message 'Repo-head publishing must publish repo telemetry only by default before reading or changing delivery identity.'
+
+Assert-ContainsText `
+    -Content $repoSync `
+    -Expected '$publishGitRefDeliveryIdentity = Test-ExplicitGitRefDeliveryMode -Value $PixelStreamingDeliveryMode' `
+    -Message 'Repo sync must derive git-ref identity publishing from the explicit PixelStreaming delivery mode.'
+
+Assert-ContainsText `
+    -Content $repoSync `
+    -Expected "`$publishArguments += '-PublishGitRefDeliveryIdentity'" `
+    -Message 'Repo sync must opt in to git-ref delivery identity publishing only when explicitly allowed.'
+
+Assert-ContainsText `
+    -Content $repoHeadPublisher `
     -Expected "Key = 'ScaleWorldPixelStreamingDeliveryMode'" `
-    -Message 'Git-ref startup must publish its delivery mode for Fleet status.'
+    -Message 'Explicit git-ref startup must publish its delivery mode for Fleet status.'
 
 Assert-ContainsText `
     -Content $repoHeadPublisher `
     -Expected "'ScaleWorldPixelStreamingRuntimeBundleId'" `
-    -Message 'Git-ref startup must clear stale runtime artifact identity tags.'
+    -Message 'Explicit git-ref startup must clear stale runtime artifact identity tags.'
 
 Assert-ContainsText `
     -Content $repoHeadPublisher `

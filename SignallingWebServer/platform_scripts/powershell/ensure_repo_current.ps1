@@ -8,7 +8,8 @@ param(
     [string]$BuildingUpdatePhase = '',
     [string]$GitSyncMode = $(if ($env:SCALEWORLD_GIT_SYNC_MODE) { $env:SCALEWORLD_GIT_SYNC_MODE } elseif ($env:SCALEWORLD_STREAMING_LANE -and $env:SCALEWORLD_STREAMING_LANE.Trim().ToLowerInvariant() -eq 'prod') { 'pinned' } else { 'upstream' }),
     [string]$GitTargetRef = $(if ($env:SCALEWORLD_GIT_TARGET_REF) { $env:SCALEWORLD_GIT_TARGET_REF } else { '' }),
-    [string]$GitTargetRefParam = $(if ($env:SCALEWORLD_GIT_TARGET_REF_PARAM) { $env:SCALEWORLD_GIT_TARGET_REF_PARAM } else { '' })
+    [string]$GitTargetRefParam = $(if ($env:SCALEWORLD_GIT_TARGET_REF_PARAM) { $env:SCALEWORLD_GIT_TARGET_REF_PARAM } else { '' }),
+    [string]$PixelStreamingDeliveryMode = $(if ($env:SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE) { $env:SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE } else { '' })
 )
 
 Set-StrictMode -Version Latest
@@ -452,7 +453,8 @@ function Publish-RepoHeadTag {
     param(
         [pscustomobject]$Context,
         [string]$CurrentHead,
-        [string]$CurrentVersion
+        [string]$CurrentVersion,
+        [bool]$PublishGitRefDeliveryIdentity = $false
     )
 
     if ($null -eq $Context) {
@@ -464,7 +466,7 @@ function Publish-RepoHeadTag {
         return
     }
 
-    $publishResult = Invoke-AwsCliCapture -AwsCli 'powershell.exe' -Arguments @(
+    $publishArguments = @(
         '-NoProfile',
         '-ExecutionPolicy',
         'Bypass',
@@ -481,6 +483,11 @@ function Publish-RepoHeadTag {
         '-CurrentVersion',
         $CurrentVersion
     )
+    if ($PublishGitRefDeliveryIdentity) {
+        $publishArguments += '-PublishGitRefDeliveryIdentity'
+    }
+
+    $publishResult = Invoke-AwsCliCapture -AwsCli 'powershell.exe' -Arguments $publishArguments
 
     if ($publishResult.ExitCode -ne 0) {
         if ([string]::IsNullOrWhiteSpace($publishResult.Combined)) {
@@ -512,6 +519,21 @@ function Resolve-PixelStreamingVersionTagValue {
     }
 
     return $normalizedHead.Substring(0, 12)
+}
+
+function Test-ExplicitGitRefDeliveryMode {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $false
+    }
+
+    switch ($Value.Trim().ToLowerInvariant()) {
+        'git_ref' { return $true }
+        'git-ref' { return $true }
+        'git' { return $true }
+        default { return $false }
+    }
 }
 
 function Resolve-ServiceSafeGitRemoteUrl {
@@ -712,6 +734,7 @@ $wilburDistPath = Join-Path $RepoRoot 'SignallingWebServer\dist\index.js'
 $frontendBundlePath = Join-Path $RepoRoot 'SignallingWebServer\www\player.html'
 $gitSyncModeNormalized = Normalize-GitSyncMode -Value $GitSyncMode
 $gitTargetRefNormalized = Resolve-GitTargetRefValue -ExplicitRef $GitTargetRef -TargetRefParam $GitTargetRefParam
+$publishGitRefDeliveryIdentity = Test-ExplicitGitRefDeliveryMode -Value $PixelStreamingDeliveryMode
 $startupRuntimeStatusContext = New-StartupRuntimeStatusContext -CurrentMode $Mode
 $repoHeadTagContext = New-RepoHeadTagContext
 
@@ -1066,7 +1089,7 @@ try {
     }
 
     $currentVersionTagValue = Resolve-PixelStreamingVersionTagValue -SyncMode $gitSyncModeNormalized -TargetRef $gitTargetRefNormalized -CurrentHead $currentHead
-    Publish-RepoHeadTag -Context $repoHeadTagContext -CurrentHead $currentHead -CurrentVersion $currentVersionTagValue
+    Publish-RepoHeadTag -Context $repoHeadTagContext -CurrentHead $currentHead -CurrentVersion $currentVersionTagValue -PublishGitRefDeliveryIdentity $publishGitRefDeliveryIdentity
 
     if (Start-PostRepoSyncStackRelaunch -RepoRootPath $RepoRoot -InitialHead $initialHead -CurrentHead $currentHead -CurrentMode $Mode) {
         exit 42

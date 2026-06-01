@@ -7,6 +7,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$CurrentRepoHead,
     [string]$CurrentVersion = '',
+    [switch]$PublishGitRefDeliveryIdentity,
     [string]$AwsCliPath = $(if ($env:RUNTIME_STATUS_AWS_CLI_PATH) { $env:RUNTIME_STATUS_AWS_CLI_PATH } else { 'aws' })
 )
 
@@ -239,6 +240,11 @@ try {
         }
 
         throw $headResult.Combined
+    }
+
+    if (-not $PublishGitRefDeliveryIdentity) {
+        Write-RepoHeadTagLog "Published repo head '$normalizedHead' for instance '$InstanceId' without changing PixelStreaming delivery identity."
+        exit 0
     }
 
     $currentDeliveryMode = Get-InstanceTagValue -TagKey 'ScaleWorldPixelStreamingDeliveryMode'
