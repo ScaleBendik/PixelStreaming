@@ -88,6 +88,12 @@ if not defined SCALEWORLD_GIT_TARGET_REF_PARAM (
     set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/nonprod/git-target-ref"
   )
 )
+if /i "%PIXELSTREAMING_ROOT%"=="%SCALEWORLD_ACTIVE_RUNTIME_ROOT%" (
+  echo Active PixelStreaming runtime root detected. Skipping repository maintenance preflight in this launcher.
+  set "STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION=false"
+  set "STACK_ENABLE_UPDATE_MODE=false"
+  set "STACK_ENABLE_PROVISIONING_MODE=false"
+)
 if not defined STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION (
   if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="git_ref" (
     set "STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION=false"
@@ -313,6 +319,9 @@ set "WATCHDOG_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_streamer_stack.
 set "WATCHDOG_WILBUR_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_dev_turn.bat"""
 set "WATCHDOG_UNREAL_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_unreal.bat"""
 set "STACK_ENABLE_BOOT_GIT_SYNC=false"
+set "STACK_ENABLE_UPDATE_MODE=false"
+set "STACK_ENABLE_PROVISIONING_MODE=false"
+set "STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION=false"
 set "ACTIVE_RUNTIME_DELEGATED=true"
 call "%ACTIVE_RUNTIME_LAUNCHER%" %*
 exit /b %errorlevel%

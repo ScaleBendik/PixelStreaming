@@ -125,6 +125,11 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $stackLauncher `
+    -Expected 'Active PixelStreaming runtime root detected. Skipping repository maintenance preflight in this launcher.' `
+    -Message 'Active runtime launchers must not re-enter repository update/provisioning preflight after bootstrap-root handoff.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
     -Expected 'if /i "!ACTIVE_RUNTIME_DELEGATED!"=="true" exit /b !ACTIVE_RUNTIME_DELEGATE_EXIT!' `
     -Message 'A successful active runtime delegation must be a terminal handoff so the bootstrap checkout cannot launch a second stack.'
 
@@ -142,6 +147,11 @@ Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'set "WATCHDOG_UNREAL_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_unreal.bat"""' `
     -Message 'Delegated active runtime startup must bind Unreal recovery to the active runtime launcher directory.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'set "STACK_ENABLE_PROVISIONING_MODE=false"' `
+    -Message 'Delegated active runtime startup must suppress provisioning preflight before calling the runtime launcher.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
