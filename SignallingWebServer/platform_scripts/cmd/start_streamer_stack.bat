@@ -10,6 +10,7 @@ set "DATA_DRIVE_SCRIPT=%SCRIPT_DIR%..\powershell\ensure_data_drive.ps1"
 set "UPDATE_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_update_mode.ps1"
 set "PROVISIONING_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_provisioning_mode.ps1"
 set "ACTIVE_RUNTIME_LAUNCHER_RESOLVER=%SCRIPT_DIR%..\powershell\resolve_active_runtime_launcher.ps1"
+set "ACTIVE_RUNTIME_IDENTITY_PUBLISHER=%SCRIPT_DIR%..\powershell\publish_active_runtime_identity_tags.ps1"
 set "STOP_SUPERSEDED_ROOT_SCRIPT=%SCRIPT_DIR%..\powershell\stop_superseded_root_processes.ps1"
 set "NORMALIZE_DELIVERY_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\normalize_pixelstreaming_delivery_mode.ps1"
 set "STACK_MODE=normal"
@@ -90,6 +91,11 @@ if not defined SCALEWORLD_GIT_TARGET_REF_PARAM (
 )
 if /i "%PIXELSTREAMING_ROOT%"=="%SCALEWORLD_ACTIVE_RUNTIME_ROOT%" (
   echo Active PixelStreaming runtime root detected. Skipping repository maintenance preflight in this launcher.
+  if exist "%ACTIVE_RUNTIME_IDENTITY_PUBLISHER%" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%ACTIVE_RUNTIME_IDENTITY_PUBLISHER%" -RuntimeRoot "%PIXELSTREAMING_ROOT%"
+  ) else (
+    echo WARNING: Active runtime identity publisher not found at "%ACTIVE_RUNTIME_IDENTITY_PUBLISHER%".
+  )
   set "STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION=false"
   set "STACK_ENABLE_UPDATE_MODE=false"
   set "STACK_ENABLE_PROVISIONING_MODE=false"

@@ -65,6 +65,7 @@ $instanceAgentPath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\s
 $repoSyncPath = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
 $repoHeadPublisherPath = Join-Path $PSScriptRoot 'publish_repo_head_tags.ps1'
 $deliveryModeResolverPath = Join-Path $PSScriptRoot 'resolve_pixelstreaming_delivery_mode_from_instance_tag.ps1'
+$activeRuntimeIdentityPublisherPath = Join-Path $PSScriptRoot 'publish_active_runtime_identity_tags.ps1'
 $runtimeInstallerPath = Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.ps1'
 $updateModePath = Join-Path $PSScriptRoot 'invoke_update_mode.ps1'
 $stopSupersededRootPath = Join-Path $PSScriptRoot 'stop_superseded_root_processes.ps1'
@@ -84,6 +85,7 @@ $instanceAgent = [System.IO.File]::ReadAllText($instanceAgentPath)
 $repoSync = [System.IO.File]::ReadAllText($repoSyncPath)
 $repoHeadPublisher = [System.IO.File]::ReadAllText($repoHeadPublisherPath)
 $deliveryModeResolver = [System.IO.File]::ReadAllText($deliveryModeResolverPath)
+$activeRuntimeIdentityPublisher = [System.IO.File]::ReadAllText($activeRuntimeIdentityPublisherPath)
 $runtimeInstaller = [System.IO.File]::ReadAllText($runtimeInstallerPath)
 $updateMode = [System.IO.File]::ReadAllText($updateModePath)
 $stopSupersededRoot = [System.IO.File]::ReadAllText($stopSupersededRootPath)
@@ -127,6 +129,16 @@ Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'Active PixelStreaming runtime root detected. Skipping repository maintenance preflight in this launcher.' `
     -Message 'Active runtime launchers must not re-enter repository update/provisioning preflight after bootstrap-root handoff.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'publish_active_runtime_identity_tags.ps1' `
+    -Message 'Active runtime launchers must publish runtime artifact identity from local metadata before Wilbur can publish fallback git-ref tags.'
+
+Assert-MatchesText `
+    -Content $stackLauncher `
+    -Pattern 'publish_active_runtime_identity_tags\.ps1.*?set "STACK_ENABLE_UPDATE_MODE=false".*?set "STACK_ENABLE_PROVISIONING_MODE=false"' `
+    -Message 'Active runtime identity publishing must happen without re-enabling update or provisioning preflight.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
@@ -357,6 +369,31 @@ Assert-ContainsText `
     -Content $repoHeadPublisher `
     -Expected "runtime artifact-like delivery tags" `
     -Message 'Repo-head publishing must preserve runtime artifact identity unless git-ref delivery is explicit.'
+
+Assert-ContainsText `
+    -Content $activeRuntimeIdentityPublisher `
+    -Expected 'runtime-bundle-metadata.json' `
+    -Message 'Active runtime identity publishing must read the immutable runtime bundle metadata from the installed runtime root.'
+
+Assert-ContainsText `
+    -Content $activeRuntimeIdentityPublisher `
+    -Expected 'ScaleWorldPixelStreamingDeliveryMode' `
+    -Message 'Active runtime identity publishing must stamp runtime_artifact delivery mode for fleet display and future launches.'
+
+Assert-ContainsText `
+    -Content $activeRuntimeIdentityPublisher `
+    -Expected 'ScaleWorldPixelStreamingRuntimeBundleId' `
+    -Message 'Active runtime identity publishing must stamp the runtime bundle id.'
+
+Assert-ContainsText `
+    -Content $activeRuntimeIdentityPublisher `
+    -Expected 'ScaleWorldPixelStreamingRuntimeManifestKey' `
+    -Message 'Active runtime identity publishing must stamp the runtime manifest key.'
+
+Assert-DoesNotContainText `
+    -Content $activeRuntimeIdentityPublisher `
+    -Unexpected 'ScaleWorldLastUpdatedAtUtc' `
+    -Message 'Active runtime identity publishing must not rewrite the generic updated timestamp on every startup.'
 
 Assert-ContainsText `
     -Content $deliveryModeResolver `
