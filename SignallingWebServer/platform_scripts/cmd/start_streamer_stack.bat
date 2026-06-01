@@ -91,6 +91,20 @@ if not defined SCALEWORLD_GIT_TARGET_REF_PARAM (
 )
 if /i "%PIXELSTREAMING_ROOT%"=="%SCALEWORLD_ACTIVE_RUNTIME_ROOT%" (
   echo Active PixelStreaming runtime root detected. Skipping repository maintenance preflight in this launcher.
+  set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=runtime_artifact"
+  set "WATCHDOG_RESTART_COMMAND=""%SCRIPT_DIR%start_streamer_stack.bat"" --recovery"
+  set "WATCHDOG_WILBUR_RESTART_COMMAND=""%SCRIPT_DIR%start_dev_turn.bat"""
+  set "WATCHDOG_UNREAL_RESTART_COMMAND=""%SCRIPT_DIR%start_unreal.bat"""
+  set "WATCHDOG_WILBUR_COMMANDLINE_PATTERN=%PIXELSTREAMING_ROOT%\SignallingWebServer"
+  set "WATCHDOG_STREAMER_HEALTH_PATH=%PIXELSTREAMING_ROOT%\SignallingWebServer\state\streamer-health.json"
+  if exist "%WATCHDOG_STREAMER_HEALTH_PATH%" (
+    del /f /q "%WATCHDOG_STREAMER_HEALTH_PATH%" >nul 2>nul
+    if exist "%WATCHDOG_STREAMER_HEALTH_PATH%" (
+      echo WARNING: Failed to remove stale streamer health snapshot at "%WATCHDOG_STREAMER_HEALTH_PATH%".
+    ) else (
+      echo Removed stale streamer health snapshot at "%WATCHDOG_STREAMER_HEALTH_PATH%".
+    )
+  )
   if exist "%ACTIVE_RUNTIME_IDENTITY_PUBLISHER%" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "%ACTIVE_RUNTIME_IDENTITY_PUBLISHER%" -RuntimeRoot "%PIXELSTREAMING_ROOT%"
   ) else (

@@ -135,10 +135,35 @@ Assert-ContainsText `
     -Expected 'publish_active_runtime_identity_tags.ps1' `
     -Message 'Active runtime launchers must publish runtime artifact identity from local metadata before Wilbur can publish fallback git-ref tags.'
 
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'set "WATCHDOG_RESTART_COMMAND=""%SCRIPT_DIR%start_streamer_stack.bat"" --recovery"' `
+    -Message 'Active runtime launchers must overwrite inherited watchdog stack recovery so recovery cannot jump back to the bootstrap checkout.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'set "WATCHDOG_WILBUR_RESTART_COMMAND=""%SCRIPT_DIR%start_dev_turn.bat"""' `
+    -Message 'Active runtime launchers must overwrite inherited Wilbur recovery to the active runtime root.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'set "WATCHDOG_UNREAL_RESTART_COMMAND=""%SCRIPT_DIR%start_unreal.bat"""' `
+    -Message 'Active runtime launchers must overwrite inherited Unreal recovery to the active runtime root.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'set "WATCHDOG_STREAMER_HEALTH_PATH=%PIXELSTREAMING_ROOT%\SignallingWebServer\state\streamer-health.json"' `
+    -Message 'Active runtime launchers must overwrite inherited streamer health paths to the active runtime state file.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'del /f /q "%WATCHDOG_STREAMER_HEALTH_PATH%"' `
+    -Message 'Active runtime launchers must remove stale baked streamer health snapshots before watchdog evaluates runtime freshness.'
+
 Assert-MatchesText `
     -Content $stackLauncher `
-    -Pattern 'publish_active_runtime_identity_tags\.ps1.*?set "STACK_ENABLE_UPDATE_MODE=false".*?set "STACK_ENABLE_PROVISIONING_MODE=false"' `
-    -Message 'Active runtime identity publishing must happen without re-enabling update or provisioning preflight.'
+    -Pattern 'Active PixelStreaming runtime root detected.*?set "WATCHDOG_RESTART_COMMAND=.*?start_streamer_stack\.bat.*?del /f /q "%WATCHDOG_STREAMER_HEALTH_PATH%".*?if exist "%ACTIVE_RUNTIME_IDENTITY_PUBLISHER%".*?set "STACK_ENABLE_UPDATE_MODE=false".*?set "STACK_ENABLE_PROVISIONING_MODE=false"' `
+    -Message 'Active runtime launcher hardening must happen before identity publish and without re-enabling update or provisioning preflight.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
@@ -542,6 +567,22 @@ Assert-ContainsText `
     -Content $watchdog `
     -Expected 'StreamerHealthUnreadyRecoverySeconds' `
     -Message 'Watchdog must expose a bounded streamer-health recovery window.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected 'Provisioning connect timeout is a control-plane readiness deadline, not a' `
+    -Message 'Provisioning watchdog streamer-health grace must not be capped by the external connect timeout.'
+
+Assert-MatchesText `
+    -Content $watchdog `
+    -Pattern 'if \(\$isProvisioningMaintenance\) \{.*?\$effectiveStreamerHealthStartupGraceSeconds = \[Math\]::Max\(.*?\$provisioningStreamerHealthStartupGraceSecondsValue.*?\)\s*\} elseif \(\$isUpdateMaintenance\)' `
+    -Message 'Provisioning watchdog streamer-health grace must honor the provisioning startup grace before update-mode timeout capping.'
+
+Assert-DoesNotContainText `
+    -Content $watchdog `
+    -Unexpected '$provisioningStreamerConnectTimeoutSecondsValue
+            )' `
+    -Message 'Provisioning streamer-health startup grace must not be min-capped by ProvisioningStreamerConnectTimeoutSeconds.'
 
 Assert-ContainsText `
     -Content $watchdog `

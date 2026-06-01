@@ -1028,12 +1028,12 @@ while ($true) {
         $secondsSinceHealthGraceReference = ([DateTimeOffset]::UtcNow - $healthGraceReferenceUtc).TotalSeconds
         $effectiveStreamerHealthStartupGraceSeconds = $streamerHealthStartupGraceSecondsValue
         if ($isProvisioningMaintenance) {
-            $effectiveStreamerHealthStartupGraceSeconds = [Math]::Min(
-                [Math]::Max(
-                    $effectiveStreamerHealthStartupGraceSeconds,
-                    $provisioningStreamerHealthStartupGraceSecondsValue
-                ),
-                $provisioningStreamerConnectTimeoutSecondsValue
+            # Provisioning connect timeout is a control-plane readiness deadline, not a
+            # local watchdog restart deadline. Unreal shader warmup can legitimately
+            # exceed the route/target-health wait while Wilbur and Unreal stay alive.
+            $effectiveStreamerHealthStartupGraceSeconds = [Math]::Max(
+                $effectiveStreamerHealthStartupGraceSeconds,
+                $provisioningStreamerHealthStartupGraceSecondsValue
             )
         } elseif ($isUpdateMaintenance) {
             $effectiveStreamerHealthStartupGraceSeconds = [Math]::Min(
