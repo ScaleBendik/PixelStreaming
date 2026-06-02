@@ -28,6 +28,8 @@ param(
     [string]$StreamerHealthStartupGraceSeconds = $(if ($env:WATCHDOG_STREAMER_HEALTH_STARTUP_GRACE_SECONDS) { $env:WATCHDOG_STREAMER_HEALTH_STARTUP_GRACE_SECONDS } else { '120' }),
     [string]$StreamerHealthUnreadyRecoverySeconds = $(if ($env:WATCHDOG_STREAMER_HEALTH_UNREADY_RECOVERY_SECONDS) { $env:WATCHDOG_STREAMER_HEALTH_UNREADY_RECOVERY_SECONDS } else { '180' }),
     [string]$ProvisioningStreamerHealthStartupGraceSeconds = $(if ($env:WATCHDOG_PROVISIONING_STREAMER_HEALTH_STARTUP_GRACE_SECONDS) { $env:WATCHDOG_PROVISIONING_STREAMER_HEALTH_STARTUP_GRACE_SECONDS } else { '3600' }),
+    [string]$ProvisioningAssetWarmupStallGraceSeconds = $(if ($env:WATCHDOG_PROVISIONING_ASSET_WARMUP_STALL_GRACE_SECONDS) { $env:WATCHDOG_PROVISIONING_ASSET_WARMUP_STALL_GRACE_SECONDS } else { '1800' }),
+    [string]$ProvisioningAssetWarmupStallCpuConfirmSeconds = $(if ($env:WATCHDOG_PROVISIONING_ASSET_WARMUP_STALL_CPU_CONFIRM_SECONDS) { $env:WATCHDOG_PROVISIONING_ASSET_WARMUP_STALL_CPU_CONFIRM_SECONDS } else { '120' }),
     [string]$ProvisioningStreamerConnectTimeoutSeconds = $(if ($env:WATCHDOG_PROVISIONING_STREAMER_CONNECT_TIMEOUT_SECONDS) { $env:WATCHDOG_PROVISIONING_STREAMER_CONNECT_TIMEOUT_SECONDS } else { '960' }),
     [string]$ProvisioningMaxRecoveryRestarts = $(if ($env:WATCHDOG_PROVISIONING_MAX_RECOVERY_RESTARTS) { $env:WATCHDOG_PROVISIONING_MAX_RECOVERY_RESTARTS } else { '1' }),
     [string]$UpdateStreamerHealthStartupGraceSeconds = $(if ($env:WATCHDOG_UPDATE_STREAMER_HEALTH_STARTUP_GRACE_SECONDS) { $env:WATCHDOG_UPDATE_STREAMER_HEALTH_STARTUP_GRACE_SECONDS } else { '3600' }),
@@ -144,6 +146,43 @@ function ConvertTo-NonNegativeDouble {
     }
 
     return $parsed
+}
+
+function Get-ObjectPropertyValue {
+    param(
+        [object]$Object,
+        [string]$Name
+    )
+
+    if ($null -eq $Object) {
+        return $null
+    }
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        return $null
+    }
+
+    return $property.Value
+}
+
+function ConvertTo-UtcDateTimeOffset {
+    param([object]$Value)
+
+    $text = [string]$Value
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return $null
+    }
+
+    try {
+        return [DateTimeOffset]::Parse(
+            $text,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::RoundtripKind
+        )
+    } catch {
+        return $null
+    }
 }
 
 function Normalize-TagValue {
@@ -836,6 +875,8 @@ $streamerHealthMaxStaleSecondsValue = ConvertTo-PositiveInt -Value $StreamerHeal
 $streamerHealthStartupGraceSecondsValue = ConvertTo-PositiveInt -Value $StreamerHealthStartupGraceSeconds -Default 120 -Name 'StreamerHealthStartupGraceSeconds'
 $streamerHealthUnreadyRecoverySecondsValue = ConvertTo-PositiveInt -Value $StreamerHealthUnreadyRecoverySeconds -Default 180 -Name 'StreamerHealthUnreadyRecoverySeconds'
 $provisioningStreamerHealthStartupGraceSecondsValue = ConvertTo-PositiveInt -Value $ProvisioningStreamerHealthStartupGraceSeconds -Default 3600 -Name 'ProvisioningStreamerHealthStartupGraceSeconds'
+$provisioningAssetWarmupStallGraceSecondsValue = ConvertTo-PositiveInt -Value $ProvisioningAssetWarmupStallGraceSeconds -Default 1800 -Name 'ProvisioningAssetWarmupStallGraceSeconds'
+$provisioningAssetWarmupStallCpuConfirmSecondsValue = ConvertTo-PositiveInt -Value $ProvisioningAssetWarmupStallCpuConfirmSeconds -Default 120 -Name 'ProvisioningAssetWarmupStallCpuConfirmSeconds'
 $provisioningStreamerConnectTimeoutSecondsValue = ConvertTo-PositiveInt -Value $ProvisioningStreamerConnectTimeoutSeconds -Default 960 -Name 'ProvisioningStreamerConnectTimeoutSeconds'
 $provisioningMaxRecoveryRestartsValue = ConvertTo-PositiveInt -Value $ProvisioningMaxRecoveryRestarts -Default 1 -Name 'ProvisioningMaxRecoveryRestarts'
 $updateStreamerHealthStartupGraceSecondsValue = ConvertTo-PositiveInt -Value $UpdateStreamerHealthStartupGraceSeconds -Default 3600 -Name 'UpdateStreamerHealthStartupGraceSeconds'
@@ -933,7 +974,7 @@ $unrealCpuStallAccumulatedSeconds = 0.0
 $provisioningRecoveryRestartCount = 0
 $updateRecoveryRestartCount = 0
 
-Write-WatchdogLog ('Starting watchdog. Poll={0}s threshold={1} restartCooldown={2}s postRestartGrace={3}s processStartupGrace={4}s launcherGrace={5}s dryRun={6} runtimeStatus={7} streamerHealth={8} streamerHealthPath={9} streamerHealthMaxStale={10}s streamerHealthStartupGrace={11}s provisioningStreamerHealthStartupGrace={12}s provisioningConnectTimeout={13}s provisioningMaxRecoveryRestarts={14}s updateStreamerHealthStartupGrace={15}s updateConnectTimeout={16}s updateMaxRecoveryRestarts={17}s maintenanceRefresh={18}s unrealCpuConfirm={19} unrealCpuMinDelta={20}s unrealCpuConfirmWindow={21}s' -f $pollIntervalSecondsValue, $failureThresholdValue, $restartCooldownSecondsValue, $postRestartGraceSecondsValue, $processStartupGraceSecondsValue, $launcherGraceSecondsValue, $dryRunValue, $runtimeStatusEnabledValue, $streamerHealthEnabledValue, $resolvedStreamerHealthPath, $streamerHealthMaxStaleSecondsValue, $streamerHealthStartupGraceSecondsValue, $provisioningStreamerHealthStartupGraceSecondsValue, $provisioningStreamerConnectTimeoutSecondsValue, $provisioningMaxRecoveryRestartsValue, $updateStreamerHealthStartupGraceSecondsValue, $updateStreamerConnectTimeoutSecondsValue, $updateMaxRecoveryRestartsValue, $maintenanceModeRefreshSecondsValue, $unrealCpuStallConfirmEnabledValue, $unrealCpuStallMinDeltaSecondsValue, $unrealCpuStallConfirmSecondsValue)
+Write-WatchdogLog ('Starting watchdog. Poll={0}s threshold={1} restartCooldown={2}s postRestartGrace={3}s processStartupGrace={4}s launcherGrace={5}s dryRun={6} runtimeStatus={7} streamerHealth={8} streamerHealthPath={9} streamerHealthMaxStale={10}s streamerHealthStartupGrace={11}s provisioningStreamerHealthStartupGrace={12}s provisioningAssetWarmupStallGrace={13}s provisioningAssetWarmupStallCpuConfirm={14}s provisioningConnectTimeout={15}s provisioningMaxRecoveryRestarts={16}s updateStreamerHealthStartupGrace={17}s updateConnectTimeout={18}s updateMaxRecoveryRestarts={19}s maintenanceRefresh={20}s unrealCpuConfirm={21} unrealCpuMinDelta={22}s unrealCpuConfirmWindow={23}s' -f $pollIntervalSecondsValue, $failureThresholdValue, $restartCooldownSecondsValue, $postRestartGraceSecondsValue, $processStartupGraceSecondsValue, $launcherGraceSecondsValue, $dryRunValue, $runtimeStatusEnabledValue, $streamerHealthEnabledValue, $resolvedStreamerHealthPath, $streamerHealthMaxStaleSecondsValue, $streamerHealthStartupGraceSecondsValue, $provisioningStreamerHealthStartupGraceSecondsValue, $provisioningAssetWarmupStallGraceSecondsValue, $provisioningAssetWarmupStallCpuConfirmSecondsValue, $provisioningStreamerConnectTimeoutSecondsValue, $provisioningMaxRecoveryRestartsValue, $updateStreamerHealthStartupGraceSecondsValue, $updateStreamerConnectTimeoutSecondsValue, $updateMaxRecoveryRestartsValue, $maintenanceModeRefreshSecondsValue, $unrealCpuStallConfirmEnabledValue, $unrealCpuStallMinDeltaSecondsValue, $unrealCpuStallConfirmSecondsValue)
 Write-WatchdogLog ('Rules: {0}' -f (($rules | ForEach-Object { if ([string]::IsNullOrWhiteSpace($_.CommandLinePattern)) { $_.ProcessName } else { '{0} [{1}]' -f $_.ProcessName, $_.CommandLinePattern } }) -join ', '))
 Invoke-ActiveRuntimeSupersededRootCleanup -Force
 
@@ -1045,13 +1086,25 @@ while ($true) {
             )
         }
 
-        if ($secondsSinceHealthGraceReference -lt $effectiveStreamerHealthStartupGraceSeconds) {
+        $fullStreamerHealthChecksActive = $secondsSinceHealthGraceReference -ge $effectiveStreamerHealthStartupGraceSeconds
+        # Keep the long provisioning grace for general startup, but allow one earlier
+        # recovery for the specific warmup state we have observed getting stuck.
+        $provisioningAssetWarmupStallProbeActive =
+            $isProvisioningMaintenance -and
+            -not $fullStreamerHealthChecksActive -and
+            $provisioningAssetWarmupStallGraceSecondsValue -gt 0 -and
+            $secondsSinceHealthGraceReference -ge $provisioningAssetWarmupStallGraceSecondsValue
+
+        if (-not $fullStreamerHealthChecksActive -and -not $provisioningAssetWarmupStallProbeActive) {
             $streamerHealthFailureCount = 0
             $streamerHealthFirstFaultAtUtc = [DateTimeOffset]::MinValue
         } else {
             $streamerHealthResult = Read-StreamerHealthSnapshot -Path $resolvedStreamerHealthPath
             $streamerHealthFaultReason = $null
             $streamerHealthFaultSummary = $null
+            $streamerHealthSnapshotStatus = ''
+            $streamerHealthSnapshotReason = ''
+            $streamerHealthStatusAtUtc = $null
 
             if ($streamerHealthResult.State -eq 'missing') {
                 $streamerHealthFaultReason = 'streamer_health_missing'
@@ -1062,18 +1115,13 @@ while ($true) {
             } else {
                 $streamerHealthSnapshot = $streamerHealthResult.Snapshot
                 $updatedAtUtc = $null
-                $updatedAtText = [string]$streamerHealthSnapshot.updatedAtUtc
+                $updatedAtText = [string](Get-ObjectPropertyValue -Object $streamerHealthSnapshot -Name 'updatedAtUtc')
                 if ([string]::IsNullOrWhiteSpace($updatedAtText)) {
                     $streamerHealthFaultReason = 'streamer_health_missing_timestamp'
                     $streamerHealthFaultSummary = 'streamer health file missing updatedAtUtc timestamp'
                 } else {
-                    try {
-                        $updatedAtUtc = [DateTimeOffset]::Parse(
-                            $updatedAtText,
-                            [System.Globalization.CultureInfo]::InvariantCulture,
-                            [System.Globalization.DateTimeStyles]::RoundtripKind
-                        )
-                    } catch {
+                    $updatedAtUtc = ConvertTo-UtcDateTimeOffset -Value $updatedAtText
+                    if ($null -eq $updatedAtUtc) {
                         $streamerHealthFaultReason = 'streamer_health_missing_timestamp'
                         $streamerHealthFaultSummary = 'streamer health file missing updatedAtUtc timestamp'
                     }
@@ -1081,10 +1129,13 @@ while ($true) {
                     if ($streamerHealthFaultReason) {
                         # timestamp parse failed
                     } else {
+                    $streamerHealthStatusAtUtc = ConvertTo-UtcDateTimeOffset -Value (
+                        Get-ObjectPropertyValue -Object $streamerHealthSnapshot -Name 'statusAtUtc'
+                    )
                     $healthAgeSeconds = ([DateTimeOffset]::UtcNow - $updatedAtUtc).TotalSeconds
                     $healthy = $false
                     try {
-                        $healthy = [bool]$streamerHealthSnapshot.healthy
+                        $healthy = [bool](Get-ObjectPropertyValue -Object $streamerHealthSnapshot -Name 'healthy')
                     } catch {
                         $healthy = $false
                     }
@@ -1093,18 +1144,37 @@ while ($true) {
                         $streamerHealthFaultReason = 'streamer_health_file_stale'
                         $streamerHealthFaultSummary = 'streamer health file stale ({0:N0}s)' -f $healthAgeSeconds
                     } elseif (-not $healthy) {
-                        $snapshotReason = [string]$streamerHealthSnapshot.reason
-                        $snapshotStatus = [string]$streamerHealthSnapshot.status
-                        if ([string]::IsNullOrWhiteSpace($snapshotReason)) {
-                            $snapshotReason = 'streamer_unhealthy'
+                        $streamerHealthSnapshotReason = [string](Get-ObjectPropertyValue -Object $streamerHealthSnapshot -Name 'reason')
+                        $streamerHealthSnapshotStatus = [string](Get-ObjectPropertyValue -Object $streamerHealthSnapshot -Name 'status')
+                        if ([string]::IsNullOrWhiteSpace($streamerHealthSnapshotReason)) {
+                            $streamerHealthSnapshotReason = 'streamer_unhealthy'
                         }
-                        if ([string]::IsNullOrWhiteSpace($snapshotStatus)) {
-                            $snapshotStatus = 'unknown'
+                        if ([string]::IsNullOrWhiteSpace($streamerHealthSnapshotStatus)) {
+                            $streamerHealthSnapshotStatus = 'unknown'
                         }
-                        $streamerHealthFaultReason = $snapshotReason
-                        $streamerHealthFaultSummary = "streamer health unhealthy (status=$snapshotStatus reason=$snapshotReason)"
+                        $streamerHealthFaultReason = $streamerHealthSnapshotReason
+                        $streamerHealthFaultSummary = "streamer health unhealthy (status=$streamerHealthSnapshotStatus reason=$streamerHealthSnapshotReason)"
                     }
                     }
+                }
+            }
+
+            $isProvisioningAssetWarmupEarlyRecovery = $false
+            $provisioningAssetWarmupAgeSeconds = $null
+            if ($streamerHealthFaultReason -and $provisioningAssetWarmupStallProbeActive -and -not $fullStreamerHealthChecksActive) {
+                $isInitialAssetWarmup =
+                    $streamerHealthSnapshotStatus.Equals('warming_up_assets', [System.StringComparison]::OrdinalIgnoreCase) -and
+                    $streamerHealthSnapshotReason.Equals('initial_unreal_asset_warmup', [System.StringComparison]::OrdinalIgnoreCase)
+                if ($isInitialAssetWarmup -and $streamerHealthStatusAtUtc) {
+                    $provisioningAssetWarmupAgeSeconds = ([DateTimeOffset]::UtcNow - $streamerHealthStatusAtUtc).TotalSeconds
+                    $isProvisioningAssetWarmupEarlyRecovery =
+                        $unrealCpuStallConfirmEnabledValue -and
+                        $provisioningAssetWarmupAgeSeconds -ge $provisioningAssetWarmupStallGraceSecondsValue
+                }
+
+                if (-not $isProvisioningAssetWarmupEarlyRecovery) {
+                    $streamerHealthFaultReason = $null
+                    $streamerHealthFaultSummary = $null
                 }
             }
 
@@ -1131,12 +1201,30 @@ while ($true) {
                     $streamerHealthUnreadyRecoveryElapsed =
                         $streamerHealthUnreadyRecoverySecondsValue -gt 0 -and
                         $streamerHealthFaultDurationSeconds -ge $streamerHealthUnreadyRecoverySecondsValue
+                    $provisioningAssetWarmupStallCpuConfirmed =
+                        $isProvisioningAssetWarmupEarlyRecovery -and
+                        $unrealCpuStallConfirmEnabledValue -and
+                        $unrealCpuStallAccumulatedSeconds -ge $provisioningAssetWarmupStallCpuConfirmSecondsValue
+                    if ($isProvisioningAssetWarmupEarlyRecovery -and $provisioningAssetWarmupAgeSeconds -ne $null) {
+                        $streamerHealthSummaryWithCpu = '{0}; provisioning asset warmup age {1:N0}/{2}s' -f $streamerHealthSummaryWithCpu, $provisioningAssetWarmupAgeSeconds, $provisioningAssetWarmupStallGraceSecondsValue
+                    }
 
-                    if (
-                        -not $unrealCpuStallConfirmEnabledValue -or
-                        $unrealCpuStallConfirmed -or
-                        $isHardStreamerHealthFault -or
-                        $streamerHealthUnreadyRecoveryElapsed
+                    if ($isProvisioningAssetWarmupEarlyRecovery -and $provisioningAssetWarmupStallCpuConfirmed) {
+                        $failedRules += [pscustomobject]@{
+                            Name = 'streamer-health'
+                            ProcessName = 'streamer-health'
+                            CommandLinePattern = $null
+                            FaultReason = $streamerHealthFaultReason
+                            Summary = $streamerHealthSummaryWithCpu
+                        }
+                    } elseif (
+                        -not $isProvisioningAssetWarmupEarlyRecovery -and
+                        (
+                            -not $unrealCpuStallConfirmEnabledValue -or
+                            $unrealCpuStallConfirmed -or
+                            $isHardStreamerHealthFault -or
+                            $streamerHealthUnreadyRecoveryElapsed
+                        )
                     ) {
                         $failedRules += [pscustomobject]@{
                             Name = 'streamer-health'
@@ -1147,7 +1235,9 @@ while ($true) {
                         }
                     } else {
                         $pendingFaultSignature = $streamerHealthFaultReason
-                        if ($streamerHealthUnreadyRecoverySecondsValue -gt 0) {
+                        if ($isProvisioningAssetWarmupEarlyRecovery) {
+                            $pendingFaultSummary = '{0}; provisioning asset warmup guard awaiting {1:N0}/{2}s Unreal CPU stall confirmation' -f $streamerHealthSummaryWithCpu, $unrealCpuStallAccumulatedSeconds, $provisioningAssetWarmupStallCpuConfirmSecondsValue
+                        } elseif ($streamerHealthUnreadyRecoverySecondsValue -gt 0) {
                             $pendingFaultSummary = '{0}; awaiting CPU stall confirmation or {1:N0}/{2}s continuous unhealthy runtime' -f $streamerHealthSummaryWithCpu, $streamerHealthFaultDurationSeconds, $streamerHealthUnreadyRecoverySecondsValue
                         } else {
                             $pendingFaultSummary = '{0}; awaiting CPU stall confirmation' -f $streamerHealthSummaryWithCpu

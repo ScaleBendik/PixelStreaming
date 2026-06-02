@@ -598,6 +598,48 @@ Assert-MatchesText `
     -Pattern 'if \(\$isProvisioningMaintenance\) \{.*?\$effectiveStreamerHealthStartupGraceSeconds = \[Math\]::Max\(.*?\$provisioningStreamerHealthStartupGraceSecondsValue.*?\)\s*\} elseif \(\$isUpdateMaintenance\)' `
     -Message 'Provisioning watchdog streamer-health grace must honor the provisioning startup grace before update-mode timeout capping.'
 
+Assert-ContainsText `
+    -Content $startWatchdog `
+    -Expected 'WATCHDOG_PROVISIONING_ASSET_WARMUP_STALL_GRACE_SECONDS=1800' `
+    -Message 'Provisioning asset warmup stall recovery must default to a conservative 30 minute guard.'
+
+Assert-ContainsText `
+    -Content $startWatchdog `
+    -Expected 'WATCHDOG_PROVISIONING_ASSET_WARMUP_STALL_CPU_CONFIRM_SECONDS=120' `
+    -Message 'Provisioning asset warmup stall recovery must require an extended Unreal CPU stall confirmation.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected '$provisioningAssetWarmupStallProbeActive =' `
+    -Message 'Watchdog must keep the provisioning warmup stall guard separate from normal streamer health startup grace.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected '$streamerHealthSnapshotStatus.Equals(''warming_up_assets''' `
+    -Message 'Early provisioning warmup recovery must only apply to explicit asset warmup status.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected '$streamerHealthSnapshotReason.Equals(''initial_unreal_asset_warmup''' `
+    -Message 'Early provisioning warmup recovery must only apply to the initial Unreal asset warmup reason.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected '$unrealCpuStallAccumulatedSeconds -ge $provisioningAssetWarmupStallCpuConfirmSecondsValue' `
+    -Message 'Early provisioning warmup recovery must require the extended CPU-stall confirmation window.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected '$unrealCpuStallConfirmEnabledValue -and
+                        $provisioningAssetWarmupAgeSeconds -ge $provisioningAssetWarmupStallGraceSecondsValue' `
+    -Message 'Early provisioning warmup recovery must be disabled when CPU stall confirmation is disabled.'
+
+Assert-DoesNotContainText `
+    -Content $watchdog `
+    -Unexpected '-not $unrealCpuStallConfirmEnabledValue -or
+                        $isProvisioningAssetWarmupEarlyRecovery' `
+    -Message 'Early provisioning warmup recovery must not trigger merely because CPU stall confirmation is disabled.'
+
 Assert-DoesNotContainText `
     -Content $watchdog `
     -Unexpected '$provisioningStreamerConnectTimeoutSecondsValue
