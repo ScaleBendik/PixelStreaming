@@ -1204,14 +1204,6 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
-        if (!hasSeenManagedSessionViewer) {
-            runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
-            log(
-                '[idle-stop] Warm-held viewer disconnect ignored for passive recycle because no managed session viewer was observed.'
-            );
-            return;
-        }
-
         clearZeroTimer();
         clearFirstViewerTimer();
         clearTransientStatusHeartbeat();
@@ -1242,6 +1234,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             if (shouldSuppressNoViewerIdleAutomation()) {
                 if (!hasSeenManagedSessionViewer) {
                     runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+                    log(
+                        '[idle-stop] Warm-held reconnect grace expired without managed session evidence. Restoring derived status without passive recycle.'
+                    );
                     return;
                 }
 
@@ -1273,7 +1268,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }, delayMs);
 
         log(
-            `[idle-stop] Viewer reconnect window active for ${delayMs} ms; warm hold will recycle when grace expires unless an explicit teardown command arrives first.`
+            hasSeenManagedSessionViewer
+                ? `[idle-stop] Viewer reconnect window active for ${delayMs} ms; warm hold will recycle when grace expires unless an explicit teardown command arrives first.`
+                : `[idle-stop] Viewer reconnect window active for ${delayMs} ms; warm hold will restore ready without passive recycle if no managed session evidence appears.`
         );
     };
 
