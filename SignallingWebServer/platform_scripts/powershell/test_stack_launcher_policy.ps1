@@ -68,6 +68,7 @@ $deliveryModeResolverPath = Join-Path $PSScriptRoot 'resolve_pixelstreaming_deli
 $activeRuntimeIdentityPublisherPath = Join-Path $PSScriptRoot 'publish_active_runtime_identity_tags.ps1'
 $runtimeInstallerPath = Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.ps1'
 $updateModePath = Join-Path $PSScriptRoot 'invoke_update_mode.ps1'
+$provisioningModePath = Join-Path $PSScriptRoot 'invoke_provisioning_mode.ps1'
 $stopSupersededRootPath = Join-Path $PSScriptRoot 'stop_superseded_root_processes.ps1'
 
 $stackLauncher = [System.IO.File]::ReadAllText($stackLauncherPath)
@@ -88,6 +89,7 @@ $deliveryModeResolver = [System.IO.File]::ReadAllText($deliveryModeResolverPath)
 $activeRuntimeIdentityPublisher = [System.IO.File]::ReadAllText($activeRuntimeIdentityPublisherPath)
 $runtimeInstaller = [System.IO.File]::ReadAllText($runtimeInstallerPath)
 $updateMode = [System.IO.File]::ReadAllText($updateModePath)
+$provisioningMode = [System.IO.File]::ReadAllText($provisioningModePath)
 $stopSupersededRoot = [System.IO.File]::ReadAllText($stopSupersededRootPath)
 
 Assert-DoesNotContainText `
@@ -354,6 +356,46 @@ Assert-ContainsText `
     -Content $updateMode `
     -Expected 'Stop-ExistingStreamerStackForValidation' `
     -Message 'Runtime-artifact validation must not be blocked by a pre-existing git-ref stack.'
+
+Assert-ContainsText `
+    -Content $provisioningMode `
+    -Expected 'function Set-ProvisioningInstanceTags' `
+    -Message 'Provisioning runtime identity tags must use a JSON tag payload helper instead of AWS CLI shorthand.'
+
+Assert-ContainsText `
+    -Content $provisioningMode `
+    -Expected '--tags ("file://{0}" -f $tagPayloadPath)' `
+    -Message 'Provisioning runtime identity tags must pass JSON tag payload files so comma-delimited capability values remain strings.'
+
+Assert-DoesNotContainText `
+    -Content $provisioningMode `
+    -Unexpected 'Key=$Key,Value=$normalizedValue' `
+    -Message 'Provisioning must not use AWS CLI tag shorthand because comma-delimited values are parsed as lists.'
+
+Assert-ContainsText `
+    -Content $provisioningMode `
+    -Expected "ScaleWorldPixelStreamingUpdateCapabilities = 'pixelstreaming_runtime,combined_runtime_unreal'" `
+    -Message 'Provisioning must still publish combined runtime capabilities as a single tag value.'
+
+Assert-ContainsText `
+    -Content $provisioningMode `
+    -Expected '-PassThru' `
+    -Message 'Provisioning heartbeat startup must keep the child process handle for deterministic cleanup.'
+
+Assert-ContainsText `
+    -Content $provisioningMode `
+    -Expected 'Stop-Process -Id $heartbeatProcess.Id -Force' `
+    -Message 'Provisioning heartbeat cleanup must force-stop stale heartbeat children that miss the stop file.'
+
+Assert-ContainsText `
+    -Content $provisioningMode `
+    -Expected 'Clear-ProvisioningUpdatePhaseTag' `
+    -Message 'Provisioning bootstrap success must clear stale ScaleWorldUpdatePhase state.'
+
+Assert-ContainsText `
+    -Content $provisioningMode `
+    -Expected "Remove-ProvisioningInstanceTags -AwsCli `$AwsCli -Region `$Region -InstanceId `$InstanceId -Keys @('ScaleWorldUpdatePhase')" `
+    -Message 'Provisioning update phase cleanup must remove only the stale update phase tag.'
 
 Assert-ContainsText `
     -Content $stackLauncher `

@@ -80,15 +80,13 @@ function Get-ProvisioningTagValue {
     return $value.Trim()
 }
 
-function Add-OptionalEc2TagArgument {
+function Normalize-ProvisioningTagValue {
     param(
-        [System.Collections.Generic.List[string]]$TagArguments,
-        [string]$Key,
         [string]$Value
     )
 
     if ([string]::IsNullOrWhiteSpace($Value)) {
-        return
+        return ''
     }
 
     $normalizedValue = $Value.Trim()
@@ -96,7 +94,95 @@ function Add-OptionalEc2TagArgument {
         $normalizedValue = $normalizedValue.Substring(0, 256)
     }
 
-    $TagArguments.Add("Key=$Key,Value=$normalizedValue")
+    return $normalizedValue
+}
+
+function Set-ProvisioningInstanceTags {
+    param(
+        [string]$AwsCli,
+        [string]$Region,
+        [string]$InstanceId,
+        [hashtable]$Tags
+    )
+
+    if (-not $Tags -or $Tags.Count -eq 0) {
+        return
+    }
+
+    $tagPayload = foreach ($key in $Tags.Keys) {
+        $normalizedValue = Normalize-ProvisioningTagValue ([string]$Tags[$key])
+        if ([string]::IsNullOrWhiteSpace($normalizedValue)) {
+            continue
+        }
+
+        @{
+            Key = [string]$key
+            Value = $normalizedValue
+        }
+    }
+
+    if ($null -eq $tagPayload -or @($tagPayload).Count -eq 0) {
+        return
+    }
+
+    $tagPayloadPath = [System.IO.Path]::GetTempFileName()
+    try {
+        [System.IO.File]::WriteAllText(
+            $tagPayloadPath,
+            (ConvertTo-Json -InputObject @($tagPayload) -Compress -Depth 4),
+            (New-Object System.Text.UTF8Encoding($false))
+        )
+
+        & $AwsCli ec2 create-tags --region $Region --resources $InstanceId --tags ("file://{0}" -f $tagPayloadPath)
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to set EC2 tags for $InstanceId."
+        }
+    } finally {
+        Remove-Item -LiteralPath $tagPayloadPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Remove-ProvisioningInstanceTags {
+    param(
+        [string]$AwsCli,
+        [string]$Region,
+        [string]$InstanceId,
+        [string[]]$Keys
+    )
+
+    if (-not $Keys -or $Keys.Count -eq 0) {
+        return
+    }
+
+    $tagPayload = foreach ($key in $Keys) {
+        if ([string]::IsNullOrWhiteSpace($key)) {
+            continue
+        }
+
+        @{
+            Key = $key.Trim()
+        }
+    }
+
+    if ($null -eq $tagPayload -or @($tagPayload).Count -eq 0) {
+        return
+    }
+
+    $tagPayloadPath = [System.IO.Path]::GetTempFileName()
+    try {
+        [System.IO.File]::WriteAllText(
+            $tagPayloadPath,
+            (ConvertTo-Json -InputObject @($tagPayload) -Compress -Depth 4),
+            (New-Object System.Text.UTF8Encoding($false))
+        )
+
+        & $AwsCli ec2 delete-tags --region $Region --resources $InstanceId --tags ("file://{0}" -f $tagPayloadPath)
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to delete EC2 tags for $InstanceId."
+        }
+    } finally {
+        Remove-Item -LiteralPath $tagPayloadPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Set-ProvisioningRuntimeIdentityTags {
@@ -108,30 +194,30 @@ function Set-ProvisioningRuntimeIdentityTags {
         [pscustomobject]$InstallResult
     )
 
-    $tagArguments = [System.Collections.Generic.List[string]]::new()
-    Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldPixelStreamingRuntimeManifestKey' -Value $ManifestKey
-    Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldPixelStreamingRuntimeBundleId' -Value ([string]$InstallResult.BundleId)
-    Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldPixelStreamingRuntimeArtifactKey' -Value ([string]$InstallResult.RuntimeZipKey)
-    Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldPixelStreamingRuntimeSourceCommit' -Value ([string]$InstallResult.SourceCommit)
-    Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldPixelStreamingRuntimeContractVersion' -Value ([string]$InstallResult.ContractVersion)
-    Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldPixelStreamingVersion' -Value ([string]$InstallResult.BundleId)
-    Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldPixelStreamingUpdateCapabilities' -Value 'pixelstreaming_runtime,combined_runtime_unreal'
-    Add-OptionalEc2TagArgument -TagArguments $tagArguments -Key 'ScaleWorldLastUpdatedAtUtc' -Value ((Get-Date).ToUniversalTime().ToString('o'))
-
-    if ($tagArguments.Count -eq 0) {
-        return
+    Set-ProvisioningInstanceTags -AwsCli $AwsCli -Region $Region -InstanceId $InstanceId -Tags @{
+        ScaleWorldPixelStreamingRuntimeManifestKey = $ManifestKey
+        ScaleWorldPixelStreamingRuntimeBundleId = ([string]$InstallResult.BundleId)
+        ScaleWorldPixelStreamingRuntimeArtifactKey = ([string]$InstallResult.RuntimeZipKey)
+        ScaleWorldPixelStreamingRuntimeSourceCommit = ([string]$InstallResult.SourceCommit)
+        ScaleWorldPixelStreamingRuntimeContractVersion = ([string]$InstallResult.ContractVersion)
+        ScaleWorldPixelStreamingVersion = ([string]$InstallResult.BundleId)
+        ScaleWorldPixelStreamingUpdateCapabilities = 'pixelstreaming_runtime,combined_runtime_unreal'
+        ScaleWorldPixelStreamingDeliveryMode = 'runtime_artifact'
+        ScaleWorldLastUpdatedAtUtc = ((Get-Date).ToUniversalTime().ToString('o'))
     }
+}
 
-    & $AwsCli ec2 create-tags --region $Region --resources $InstanceId --tags $tagArguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to publish PixelStreaming runtime identity tags for $InstanceId."
-    }
+function Clear-ProvisioningUpdatePhaseTag {
+    param(
+        [string]$AwsCli,
+        [string]$Region,
+        [string]$InstanceId
+    )
 
-    $deliveryTagArguments = [System.Collections.Generic.List[string]]::new()
-    Add-OptionalEc2TagArgument -TagArguments $deliveryTagArguments -Key 'ScaleWorldPixelStreamingDeliveryMode' -Value 'runtime_artifact'
-    & $AwsCli ec2 create-tags --region $Region --resources $InstanceId --tags $deliveryTagArguments
-    if ($LASTEXITCODE -ne 0) {
-        Write-ProvisioningLog "Published PixelStreaming runtime identity tags for $InstanceId, but failed to publish delivery mode tag." 'WARN'
+    try {
+        Remove-ProvisioningInstanceTags -AwsCli $AwsCli -Region $Region -InstanceId $InstanceId -Keys @('ScaleWorldUpdatePhase')
+    } catch {
+        Write-ProvisioningLog "Provisioning bootstrap completed, but failed to clear ScaleWorldUpdatePhase: $($_.Exception.Message)" 'WARN'
     }
 }
 
@@ -184,6 +270,7 @@ function New-ProvisioningHeartbeatContext {
         StateFilePath = $stateFilePath
         StopFilePath = $stopFilePath
         Source = 'startup-script'
+        Process = $null
     }
 }
 
@@ -238,7 +325,7 @@ function Start-ProvisioningHeartbeat {
         }
     }) -join ' '
 
-    Start-Process -FilePath 'powershell' -WindowStyle Hidden -ArgumentList $heartbeatArgumentString | Out-Null
+    $Context.Process = Start-Process -FilePath 'powershell' -WindowStyle Hidden -ArgumentList $heartbeatArgumentString -PassThru
 }
 
 function Stop-ProvisioningHeartbeat {
@@ -253,7 +340,23 @@ function Stop-ProvisioningHeartbeat {
     } catch {
     }
 
-    Start-Sleep -Milliseconds 250
+    $heartbeatProcess = $Context.Process
+    if ($heartbeatProcess) {
+        try {
+            if (-not $heartbeatProcess.HasExited -and -not $heartbeatProcess.WaitForExit(5000)) {
+                Stop-Process -Id $heartbeatProcess.Id -Force -ErrorAction SilentlyContinue
+                $heartbeatProcess.WaitForExit(2000) | Out-Null
+            }
+        } catch {
+            try {
+                Stop-Process -Id $heartbeatProcess.Id -Force -ErrorAction SilentlyContinue
+            } catch {
+            }
+        }
+    } else {
+        Start-Sleep -Milliseconds 250
+    }
+
     Remove-Item -LiteralPath $Context.StateFilePath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $Context.StopFilePath -Force -ErrorAction SilentlyContinue
 }
@@ -345,6 +448,7 @@ while ($true) {
             Stop-ProvisioningHeartbeat -Context $heartbeatContext
         }
 
+        Clear-ProvisioningUpdatePhaseTag -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId
         Write-ProvisioningLog 'Provisioning bootstrap completed. Continuing with normal startup.'
         exit 0
     } catch {
