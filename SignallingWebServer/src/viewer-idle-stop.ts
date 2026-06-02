@@ -217,14 +217,15 @@ async function captureShutdownSessionArtifacts(
 
     if (!command) {
         log(
-            `[idle-stop] Capturing shutdown screenshot artifact '${trigger}' without an active shutdown command; API correlation will use instance and event time.`
+            `[idle-stop] Capturing shutdown artifacts '${trigger}' without an active shutdown command; API correlation will use instance and event time.`
         );
+        const instanceTimeMetadata = {
+            ...captureMetadata,
+            correlation: 'instance_time'
+        };
         try {
             await withTimeout(
-                instanceAgentClient.captureSessionScreenshotArtifact(trigger, null, {
-                    ...captureMetadata,
-                    correlation: 'instance_time'
-                }),
+                instanceAgentClient.captureSessionScreenshotArtifact(trigger, null, instanceTimeMetadata),
                 screenshotTimeoutMs,
                 `Timed out after ${screenshotTimeoutMs} ms.`
             );
@@ -232,6 +233,19 @@ async function captureShutdownSessionArtifacts(
             const message = error instanceof Error ? error.message : String(error);
             log(
                 `[idle-stop] Screenshot artifact capture '${trigger}' without shutdown command failed: ${message}`
+            );
+        }
+
+        try {
+            await withTimeout(
+                instanceAgentClient.captureSessionLogArtifact(trigger, null, instanceTimeMetadata),
+                logTimeoutMs,
+                `Timed out after ${logTimeoutMs} ms.`
+            );
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            log(
+                `[idle-stop] Diagnostic artifact capture '${trigger}' without shutdown command failed: ${message}`
             );
         }
         return;
