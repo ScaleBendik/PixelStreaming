@@ -344,6 +344,21 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $watchdog `
+    -Expected 'function Get-WilburCommandLinePatterns' `
+    -Message 'Watchdog must normalize Wilbur command-line matching through a dedicated helper so runtime-artifact path aliases stay scoped.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected '$script:SignallingWebServerRoot.IndexOf(''\runtime-releases\''' `
+    -Message 'Runtime-artifact watchdogs must accept their resolved runtime-release root when the configured Wilbur matcher uses the stable PixelStreamingRuntime path.'
+
+Assert-ContainsText `
+    -Content $watchdog `
+    -Expected 'CommandLinePatterns = Get-WilburCommandLinePatterns -Pattern $WilburCommandLinePattern' `
+    -Message 'Wilbur process detection must accept only the configured active-runtime root and the current runtime-release root alias.'
+
+Assert-ContainsText `
+    -Content $watchdog `
     -Expected 'CommandLinePattern = $currentWilburLauncher' `
     -Message 'Watchdog must not treat another root''s Wilbur launcher as recovery progress.'
 

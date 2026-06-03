@@ -616,16 +616,70 @@ function Find-MatchingProcesses {
                 return $false
             }
 
-            if ([string]::IsNullOrWhiteSpace($Rule.CommandLinePattern)) {
+            $patterns = @()
+            if ($Rule.PSObject.Properties.Name -contains 'CommandLinePatterns') {
+                $patterns = @(
+                    $Rule.CommandLinePatterns |
+                        Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+                        ForEach-Object { ([string]$_).Trim() }
+                )
+            } elseif (-not [string]::IsNullOrWhiteSpace($Rule.CommandLinePattern)) {
+                $patterns = @(([string]$Rule.CommandLinePattern).Trim())
+            }
+
+            if ($patterns.Count -eq 0) {
                 return $true
             }
 
             $commandLine = [string]($_.CommandLine)
-            return $commandLine.IndexOf($Rule.CommandLinePattern, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+            foreach ($pattern in $patterns) {
+                if ($commandLine.IndexOf($pattern, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                    return $true
+                }
+            }
+
+            return $false
         }
     )
 
     return ,$matches
+}
+
+function Get-CommandLinePatterns {
+    param([string]$Pattern)
+
+    if ([string]::IsNullOrWhiteSpace($Pattern)) {
+        return @()
+    }
+
+    return @(($Pattern).Trim())
+}
+
+function Get-WilburCommandLinePatterns {
+    param([string]$Pattern)
+
+    $patterns = [System.Collections.Generic.List[string]]::new()
+    if (-not [string]::IsNullOrWhiteSpace($Pattern)) {
+        $patterns.Add(($Pattern).Trim())
+    }
+
+    if ($script:SignallingWebServerRoot.IndexOf('\runtime-releases\', [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        $runtimeReleaseRoot = ([string]$script:SignallingWebServerRoot).Trim()
+        $alreadyIncluded = $false
+        foreach ($existing in $patterns) {
+            if ([string]::Equals($existing, $runtimeReleaseRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $alreadyIncluded = $true
+                break
+            }
+        }
+
+        if (-not $alreadyIncluded) {
+            $patterns.Add($runtimeReleaseRoot)
+        }
+    }
+
+    $result = $patterns.ToArray()
+    return ,$result
 }
 
 function Get-FreshLauncherMatchesForRule {
@@ -895,6 +949,7 @@ if (-not [string]::IsNullOrWhiteSpace($UnrealProcessName)) {
         Name = 'unreal'
         ProcessName = $UnrealProcessName
         CommandLinePattern = $UnrealCommandLinePattern
+        CommandLinePatterns = Get-CommandLinePatterns -Pattern $UnrealCommandLinePattern
         FaultReason = 'unreal_process_missing'
     })
 }
@@ -903,6 +958,7 @@ if (-not [string]::IsNullOrWhiteSpace($WilburProcessName)) {
         Name = 'wilbur'
         ProcessName = $WilburProcessName
         CommandLinePattern = $WilburCommandLinePattern
+        CommandLinePatterns = Get-WilburCommandLinePatterns -Pattern $WilburCommandLinePattern
         FaultReason = 'wilbur_process_missing'
     })
 }
