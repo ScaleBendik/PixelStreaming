@@ -121,6 +121,7 @@ export interface SessionLogArtifactCaptureContext {
 
 export interface SessionLogArtifactManagerOptions extends SessionLogArtifactRuntimeOptions {
     registerArtifact: (request: SessionLogArtifactRegistrationRequest) => Promise<void>;
+    getCurrentInstanceIdentity?: () => Promise<{ instanceId: string; region: string }>;
     logger?: (message: string) => void;
 }
 
@@ -163,6 +164,10 @@ function normalizeOptionalText(value: unknown): string | undefined {
 
     const normalized = value.trim();
     return normalized.length > 0 ? normalized : undefined;
+}
+
+function stringEqualsIgnoreCase(left: string, right: string): boolean {
+    return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
 }
 
 function normalizeGuidText(value: unknown): string | undefined {
@@ -890,6 +895,51 @@ export function createSessionLogArtifactManager(
         writeJsonAtomic(path.join(queuePath, `${record.id}.json`), record);
     };
 
+    const resolveQueueRecordIdentityMismatch = async (
+        record: ArtifactQueueRecord
+    ): Promise<string | null> => {
+        if (!options.getCurrentInstanceIdentity) {
+            return null;
+        }
+
+        const identity = await options.getCurrentInstanceIdentity();
+        const currentInstanceId = normalizeOptionalText(identity.instanceId);
+        const currentRegion = normalizeOptionalText(identity.region);
+        const recordInstanceId = normalizeOptionalText(record.request.instanceId);
+        const recordRegion = normalizeOptionalText(record.request.region);
+        if (
+            currentInstanceId &&
+            recordInstanceId &&
+            !stringEqualsIgnoreCase(currentInstanceId, recordInstanceId)
+        ) {
+            return `queue record belongs to instance ${recordInstanceId}, current instance is ${currentInstanceId}`;
+        }
+
+        if (currentRegion && recordRegion && !stringEqualsIgnoreCase(currentRegion, recordRegion)) {
+            return `queue record belongs to region ${recordRegion}, current region is ${currentRegion}`;
+        }
+
+        return null;
+    };
+
+    const discardQueueRecord = (record: ArtifactQueueRecord, reason: string): void => {
+        try {
+            fs.unlinkSync(path.join(queuePath, `${record.id}.json`));
+        } catch {
+            // best effort
+        }
+
+        try {
+            if (fs.existsSync(record.localPath)) {
+                fs.unlinkSync(record.localPath);
+            }
+        } catch {
+            // best effort
+        }
+
+        log(`[session-artifacts] Discarded stale queue record ${record.id}: ${reason}.`);
+    };
+
     const cleanSessionLogs = (reason: string): void => {
         if (!cleanupSessionLogsAfterUpload) {
             return;
@@ -1015,6 +1065,13 @@ export function createSessionLogArtifactManager(
             }
 
             try {
+                const discardReason = await resolveQueueRecordIdentityMismatch(record);
+                if (discardReason) {
+                    discardQueueRecord(record, discardReason);
+                    processed += 1;
+                    continue;
+                }
+
                 if (record.status === 'pending_upload') {
                     await uploadRecord(record);
                 }

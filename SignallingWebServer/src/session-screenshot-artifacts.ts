@@ -121,6 +121,7 @@ export interface SessionScreenshotArtifactCaptureContext {
 
 export interface SessionScreenshotArtifactManagerOptions extends SessionScreenshotArtifactRuntimeOptions {
     registerArtifact: (request: SessionScreenshotArtifactRegistrationRequest) => Promise<void>;
+    getCurrentInstanceIdentity?: () => Promise<{ instanceId: string; region: string }>;
     logger?: (message: string) => void;
 }
 
@@ -183,6 +184,10 @@ function normalizeOptionalText(value: unknown): string | undefined {
     if (typeof value !== 'string') return undefined;
     const normalized = value.trim();
     return normalized.length > 0 ? normalized : undefined;
+}
+
+function stringEqualsIgnoreCase(left: string, right: string): boolean {
+    return left.localeCompare(right, undefined, { sensitivity: 'accent' }) === 0;
 }
 
 function normalizeGuidText(value: unknown): string | undefined {
@@ -595,6 +600,33 @@ export function createSessionScreenshotArtifactManager(
         writeJsonAtomic(path.join(queuePath, `${record.id}.json`), record);
     };
 
+    const resolveQueueRecordIdentityMismatch = async (
+        record: ArtifactQueueRecord
+    ): Promise<string | null> => {
+        if (!options.getCurrentInstanceIdentity) {
+            return null;
+        }
+
+        const identity = await options.getCurrentInstanceIdentity();
+        const currentInstanceId = normalizeOptionalText(identity.instanceId);
+        const currentRegion = normalizeOptionalText(identity.region);
+        const recordInstanceId = normalizeOptionalText(record.request.instanceId);
+        const recordRegion = normalizeOptionalText(record.request.region);
+        if (
+            currentInstanceId &&
+            recordInstanceId &&
+            !stringEqualsIgnoreCase(currentInstanceId, recordInstanceId)
+        ) {
+            return `queue record belongs to instance ${recordInstanceId}, current instance is ${currentInstanceId}`;
+        }
+
+        if (currentRegion && recordRegion && !stringEqualsIgnoreCase(currentRegion, recordRegion)) {
+            return `queue record belongs to region ${recordRegion}, current region is ${currentRegion}`;
+        }
+
+        return null;
+    };
+
     const cleanScreenshotSourceFolder = (reason: string): void => {
         const discovered = listScreenshotFiles(sourceFolder, MAX_DISCOVERED_SCREENSHOTS);
         let removed = 0;
@@ -615,7 +647,7 @@ export function createSessionScreenshotArtifactManager(
         }
     };
 
-    const cleanupRegisteredSourceFiles = (record: ArtifactQueueRecord): void => {
+    const cleanupRecordSourceFiles = (record: ArtifactQueueRecord, reason: string): void => {
         if (!Array.isArray(record.sourceFiles) || record.sourceFiles.length === 0) {
             return;
         }
@@ -659,9 +691,27 @@ export function createSessionScreenshotArtifactManager(
 
         if (removed > 0 || skipped > 0 || failed > 0) {
             log(
-                `[screenshot-artifacts] Registered artifact source cleanup removed ${removed} file(s) from ${sourceFolder}${skipped > 0 ? ` (skipped=${skipped})` : ''}${failed > 0 ? ` (failed=${failed})` : ''}.`
+                `[screenshot-artifacts] ${reason} source cleanup removed ${removed} file(s) from ${sourceFolder}${skipped > 0 ? ` (skipped=${skipped})` : ''}${failed > 0 ? ` (failed=${failed})` : ''}.`
             );
         }
+    };
+
+    const discardQueueRecord = (record: ArtifactQueueRecord, reason: string): void => {
+        cleanupRecordSourceFiles(record, 'Stale queue record');
+
+        try {
+            fs.unlinkSync(path.join(queuePath, `${record.id}.json`));
+        } catch {
+            // best effort
+        }
+
+        try {
+            if (fs.existsSync(record.localPath)) fs.unlinkSync(record.localPath);
+        } catch {
+            // best effort
+        }
+
+        log(`[screenshot-artifacts] Discarded stale queue record ${record.id}: ${reason}.`);
     };
 
     const uploadRecord = async (record: ArtifactQueueRecord): Promise<void> => {
@@ -715,7 +765,7 @@ export function createSessionScreenshotArtifactManager(
         } catch {
             // best effort
         }
-        cleanupRegisteredSourceFiles(record);
+        cleanupRecordSourceFiles(record, 'Registered artifact');
         const skippedByMaxFiles = Number.parseInt(record.request.metadata.skippedByMaxFiles ?? '0', 10);
         const skippedByMaxBytes = Number.parseInt(record.request.metadata.skippedByMaxBytes ?? '0', 10);
         const hasSkippedSourceFiles = skippedByMaxFiles > 0 || skippedByMaxBytes > 0;
@@ -741,6 +791,13 @@ export function createSessionScreenshotArtifactManager(
             const record = readQueueRecord(filePath);
             if (!record) continue;
             try {
+                const discardReason = await resolveQueueRecordIdentityMismatch(record);
+                if (discardReason) {
+                    discardQueueRecord(record, discardReason);
+                    processed += 1;
+                    continue;
+                }
+
                 if (record.status === 'pending_upload') await uploadRecord(record);
                 if (record.status === 'pending_registration') await registerRecord(record);
                 processed += 1;
@@ -880,9 +937,7 @@ export function createSessionScreenshotArtifactManager(
             }
             if (selectedFiles.length === 0) {
                 clearActiveSessionSnapshot(activeSessionStatePath);
-                if (changedFiles.length === 0) {
-                    cleanScreenshotSourceFolder('Post-session empty');
-                }
+                cleanScreenshotSourceFolder('Post-session empty');
                 log(
                     `[screenshot-artifacts] No screenshots found for ${
                         sessionRequestId
@@ -1026,6 +1081,8 @@ export function createSessionScreenshotArtifactManager(
             };
             updateRecord(record);
             clearActiveSessionSnapshot(activeSessionStatePath);
+            cleanupRecordSourceFiles(record, 'Captured artifact');
+            cleanScreenshotSourceFolder('Post-capture');
             log(
                 `[screenshot-artifacts] Captured screenshot bundle ${localPath} (${archive.length} bytes, screenshots=${selectedScreenshots.length}, skippedByMaxFiles=${skippedByMaxFiles}, skippedByMaxBytes=${skippedByMaxBytes}).`
             );

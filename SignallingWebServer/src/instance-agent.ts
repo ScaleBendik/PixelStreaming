@@ -1027,6 +1027,7 @@ export function wireInstanceAgent(
         ...(options.sessionLogArtifacts ?? {}),
         desiredStatePath,
         registerArtifact,
+        getCurrentInstanceIdentity: resolveBootstrapIdentity,
         logger: log
     });
     artifactManager?.cleanStartupLogs({
@@ -1042,6 +1043,7 @@ export function wireInstanceAgent(
             runtimeSnapshot.version ??
             options.sessionScreenshotArtifacts?.runtimeVersion,
         registerArtifact,
+        getCurrentInstanceIdentity: resolveBootstrapIdentity,
         logger: log
     });
     screenshotArtifactManager?.cleanStartupScreenshots({
