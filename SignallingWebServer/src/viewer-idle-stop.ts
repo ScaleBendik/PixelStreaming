@@ -625,6 +625,8 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     const hasRecycleLaunchMarker = (): boolean =>
         recycleMarkerPath.length > 0 && fs.existsSync(recycleMarkerPath);
     const hasRecycleLaunchInProgress = (): boolean => recycleLaunchRequested || hasRecycleLaunchMarker();
+    const isRecoveredRecycleTokenStillInProgress = (token: string | null | undefined): boolean =>
+        token === recoveredRecycleTokenAtStartup && hasRecycleLaunchMarker();
     const canHoldWarmReadyWithoutShutdown = (): boolean =>
         currentDesiredState.warmHoldEnabled &&
         !currentDesiredState.drainEnabled &&
@@ -966,13 +968,18 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     null,
                     currentDesiredState.updatedAtUtc
                 );
-                if (currentDesiredState.recycleRequestedToken === recoveredRecycleTokenAtStartup) {
+                if (isRecoveredRecycleTokenStillInProgress(currentDesiredState.recycleRequestedToken)) {
                     pendingImmediateRecycleToken = null;
                     log(
                         `[idle-stop] Ignoring recovered recycle request token ${currentDesiredState.recycleRequestedToken} because this process started after that recycle was already launched.`
                     );
                 } else {
                     pendingImmediateRecycleToken = currentDesiredState.recycleRequestedToken;
+                    if (currentDesiredState.recycleRequestedToken === recoveredRecycleTokenAtStartup) {
+                        log(
+                            `[idle-stop] Recovered recycle request token ${currentDesiredState.recycleRequestedToken} is active again after its recycle marker cleared.`
+                        );
+                    }
                     if (hasRecycleLaunchInProgress()) {
                         log(
                             `[idle-stop] Recycle request token ${currentDesiredState.recycleRequestedToken} matches an in-progress recycle. Waiting for recycle completion before reuse.`

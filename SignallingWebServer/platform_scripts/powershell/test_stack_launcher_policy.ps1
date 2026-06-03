@@ -998,6 +998,16 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $viewerIdleStop `
+    -Expected 'isRecoveredRecycleTokenStillInProgress' `
+    -Message 'Viewer idle stop must scope recovered recycle suppression to the live recycle marker.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected 'token === recoveredRecycleTokenAtStartup && hasRecycleLaunchMarker()' `
+    -Message 'Viewer idle stop must only suppress a recovered recycle token while its recycle marker still exists.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
     -Expected 'Treating it as already launched and waiting for instance-agent completion' `
     -Message 'Viewer idle stop must not re-arm a token from an already launched recycle.'
 
@@ -1005,6 +1015,11 @@ Assert-ContainsText `
     -Content $viewerIdleStop `
     -Expected 'Ignoring recovered recycle request token' `
     -Message 'Viewer idle stop must ignore stale recovered recycle tokens after startup refreshes.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected 'is active again after its recycle marker cleared' `
+    -Message 'Viewer idle stop must re-arm a recovered recycle token if the API reintroduces it after marker cleanup.'
 
 Assert-ContainsText `
     -Content $viewerIdleStop `
