@@ -214,6 +214,93 @@ function TrySet-InstanceTags {
     }
 }
 
+function Get-ObjectPropertyValue {
+    param(
+        [object]$InputObject,
+        [string]$Name
+    )
+
+    if ($null -eq $InputObject) {
+        return ''
+    }
+
+    $property = $InputObject.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        return ''
+    }
+
+    return ([string]$property.Value).Trim()
+}
+
+function Invoke-BootstrapCheckoutAlignment {
+    param(
+        [string]$RepoRoot,
+        [string]$SourceCommit,
+        [string]$SourceRef = ''
+    )
+
+    $targetCommit = ([string]$SourceCommit).Trim()
+    if ([string]::IsNullOrWhiteSpace($targetCommit)) {
+        throw 'Bootstrap checkout alignment requires a runtime artifact source commit.'
+    }
+
+    if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot '.git') -PathType Container)) {
+        throw "Bootstrap root '$RepoRoot' is not a git repository."
+    }
+
+    $git = Get-Command git -ErrorAction SilentlyContinue
+    if (-not $git) {
+        throw "Git ('git') was not found."
+    }
+
+    Write-UpdateModeLog "Aligning bootstrap checkout at '$RepoRoot' to runtime artifact source commit '$targetCommit'."
+    $sourceRefValue = ([string]$SourceRef).Trim()
+    if (-not [string]::IsNullOrWhiteSpace($sourceRefValue) -and -not [string]::Equals($sourceRefValue, 'HEAD', [System.StringComparison]::OrdinalIgnoreCase)) {
+        & $git.Source -C $RepoRoot fetch origin $sourceRefValue
+        if ($LASTEXITCODE -ne 0) {
+            Write-UpdateModeLog "Bootstrap source ref fetch '$sourceRefValue' failed. Continuing with general origin fetch before checking out the artifact commit." 'WARN'
+            $global:LASTEXITCODE = 0
+        }
+    }
+
+    & $git.Source -C $RepoRoot fetch --tags --prune origin
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Bootstrap checkout alignment failed while fetching origin.'
+    }
+
+    & $git.Source -C $RepoRoot checkout --force $targetCommit
+    if ($LASTEXITCODE -ne 0) {
+        throw "Bootstrap checkout alignment failed while checking out '$targetCommit'."
+    }
+
+    $head = ((& $git.Source -C $RepoRoot rev-parse HEAD) | Select-Object -First 1)
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace([string]$head)) {
+        throw 'Bootstrap checkout alignment failed while verifying HEAD.'
+    }
+
+    $headValue = ([string]$head).Trim()
+    if (-not [string]::Equals($headValue, $targetCommit, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Bootstrap checkout alignment ended at '$headValue' instead of '$targetCommit'."
+    }
+
+    $requiredFiles = @(
+        'SignallingWebServer\platform_scripts\cmd\start_streamer_stack.bat',
+        'SignallingWebServer\platform_scripts\powershell\invoke_provisioning_mode.ps1',
+        'SignallingWebServer\platform_scripts\powershell\invoke_update_mode.ps1',
+        'SignallingWebServer\platform_scripts\powershell\install_pixelstreaming_runtime.ps1',
+        'SignallingWebServer\platform_scripts\powershell\watchdog.ps1'
+    )
+
+    foreach ($relativePath in $requiredFiles) {
+        $candidate = Join-Path $RepoRoot $relativePath
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            throw "Bootstrap checkout '$targetCommit' does not contain required bootstrap file '$relativePath'."
+        }
+    }
+
+    Write-UpdateModeLog "Bootstrap checkout aligned to runtime artifact source commit '$targetCommit'."
+}
+
 function Schedule-DelayedStop {
     param(
         [int]$DelaySeconds
@@ -897,6 +984,7 @@ $installResult = $null
 $installedBundleId = ''
 $installedArtifactKey = ''
 $installedSourceCommit = ''
+$installedSourceRef = ''
 $installedContractVersion = ''
 $runtimeStackLauncher = $null
 $runtimeStreamerHealthPath = $null
@@ -1005,6 +1093,9 @@ try {
             TargetRuntimeBundleId = $targetRuntimeBundleId
         }
 
+        Write-UpdateModeLog 'Stopping existing streamer stack before PixelStreaming runtime activation.'
+        Stop-ExistingStreamerStackForValidation
+
         $runtimeInstallArgs = @(
             '-NoProfile',
             '-ExecutionPolicy', 'Bypass',
@@ -1025,7 +1116,8 @@ try {
         $installResult = Get-Content -LiteralPath $runtimeInstallResultPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
         $installedBundleId = if (-not [string]::IsNullOrWhiteSpace($targetRuntimeBundleId)) { $targetRuntimeBundleId } else { [string]$installResult.BundleId }
         $installedArtifactKey = if (-not [string]::IsNullOrWhiteSpace($targetRuntimeArtifactKey)) { $targetRuntimeArtifactKey } else { [string]$installResult.RuntimeZipKey }
-        $installedSourceCommit = if (-not [string]::IsNullOrWhiteSpace($targetRuntimeSourceCommit)) { $targetRuntimeSourceCommit } else { [string]$installResult.SourceCommit }
+        $installedSourceCommit = Get-ObjectPropertyValue -InputObject $installResult -Name 'SourceCommit'
+        $installedSourceRef = Get-ObjectPropertyValue -InputObject $installResult -Name 'SourceRef'
         $installedContractVersion = if (-not [string]::IsNullOrWhiteSpace($targetRuntimeContractVersion)) { $targetRuntimeContractVersion } else { [string]$installResult.ContractVersion }
         $activeRuntimeRoot = [string]$installResult.ActiveRoot
         $runtimeStreamerHealthPath = if (-not [string]::IsNullOrWhiteSpace($activeRuntimeRoot)) {
@@ -1072,6 +1164,9 @@ try {
         if (-not $runtimeStatusValidated.Success) {
             throw "EC2 runtime status validation did not reach ready within $RuntimeStatusValidationTimeoutSeconds seconds. Last observed: $($runtimeStatusValidated.Summary)"
         }
+
+        Set-UpdatePhase -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Phase 'syncing_bootstrap'
+        Invoke-BootstrapCheckoutAlignment -RepoRoot $pixelStreamingRoot -SourceCommit $installedSourceCommit -SourceRef $installedSourceRef
 
         $completionTime = (Get-Date).ToUniversalTime().ToString('o')
         $successTags = @{
@@ -1332,6 +1427,9 @@ try {
             TargetRuntimeBundleId = $targetRuntimeBundleId
         }
 
+        Write-UpdateModeLog 'Stopping existing streamer stack before PixelStreaming runtime activation.'
+        Stop-ExistingStreamerStackForValidation
+
         $runtimeInstallArgs = @(
             '-NoProfile',
             '-ExecutionPolicy', 'Bypass',
@@ -1352,7 +1450,8 @@ try {
         $installResult = Get-Content -LiteralPath $runtimeInstallResultPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
         $installedBundleId = if (-not [string]::IsNullOrWhiteSpace($targetRuntimeBundleId)) { $targetRuntimeBundleId } else { [string]$installResult.BundleId }
         $installedArtifactKey = if (-not [string]::IsNullOrWhiteSpace($targetRuntimeArtifactKey)) { $targetRuntimeArtifactKey } else { [string]$installResult.RuntimeZipKey }
-        $installedSourceCommit = if (-not [string]::IsNullOrWhiteSpace($targetRuntimeSourceCommit)) { $targetRuntimeSourceCommit } else { [string]$installResult.SourceCommit }
+        $installedSourceCommit = Get-ObjectPropertyValue -InputObject $installResult -Name 'SourceCommit'
+        $installedSourceRef = Get-ObjectPropertyValue -InputObject $installResult -Name 'SourceRef'
         $installedContractVersion = if (-not [string]::IsNullOrWhiteSpace($targetRuntimeContractVersion)) { $targetRuntimeContractVersion } else { [string]$installResult.ContractVersion }
         $activeRuntimeRoot = [string]$installResult.ActiveRoot
         $runtimeStreamerHealthPath = if (-not [string]::IsNullOrWhiteSpace($activeRuntimeRoot)) {
@@ -1474,6 +1573,11 @@ try {
 
     if (-not [string]::Equals($activatedZipKey.Trim(), $targetZipKey.Trim(), [System.StringComparison]::Ordinal)) {
         throw "Validated runtime is still reporting zip '$activatedZipKey' instead of requested update '$targetZipKey'."
+    }
+
+    if ($hasRuntimePayload) {
+        Set-UpdatePhase -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Phase 'syncing_bootstrap'
+        Invoke-BootstrapCheckoutAlignment -RepoRoot $pixelStreamingRoot -SourceCommit $installedSourceCommit -SourceRef $installedSourceRef
     }
 
     $completionTime = (Get-Date).ToUniversalTime().ToString('o')

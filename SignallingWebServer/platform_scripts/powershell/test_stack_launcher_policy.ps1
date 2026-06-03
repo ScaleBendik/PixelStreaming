@@ -73,6 +73,8 @@ $provisioningModePath = Join-Path $PSScriptRoot 'invoke_provisioning_mode.ps1'
 $stopSupersededRootPath = Join-Path $PSScriptRoot 'stop_superseded_root_processes.ps1'
 $prepareForBakePath = Join-Path $buildScriptsRoot 'prepare-for-ami-bake.ps1'
 $prepareScaleWorldS4ForBakePath = Join-Path $buildScriptsRoot 'prepare-scaleworld-s4-for-ami-bake.bat'
+$prepareScaleWorldS4ForBakeViaSsmPath = Join-Path $buildScriptsRoot 'prepare-scaleworld-s4-for-ami-bake-via-ssm.bat'
+$prepareScaleWorldS4ForBakeViaSsmScriptPath = Join-Path $buildScriptsRoot 'prepare-scaleworld-s4-for-ami-bake-via-ssm.ps1'
 
 $stackLauncher = [System.IO.File]::ReadAllText($stackLauncherPath)
 $stackRecycleLauncher = [System.IO.File]::ReadAllText($stackRecycleLauncherPath)
@@ -96,6 +98,8 @@ $provisioningMode = [System.IO.File]::ReadAllText($provisioningModePath)
 $stopSupersededRoot = [System.IO.File]::ReadAllText($stopSupersededRootPath)
 $prepareForBake = [System.IO.File]::ReadAllText($prepareForBakePath)
 $prepareScaleWorldS4ForBake = [System.IO.File]::ReadAllText($prepareScaleWorldS4ForBakePath)
+$prepareScaleWorldS4ForBakeViaSsm = [System.IO.File]::ReadAllText($prepareScaleWorldS4ForBakeViaSsmPath)
+$prepareScaleWorldS4ForBakeViaSsmScript = [System.IO.File]::ReadAllText($prepareScaleWorldS4ForBakeViaSsmScriptPath)
 
 Assert-DoesNotContainText `
     -Content $stackLauncher `
@@ -513,6 +517,41 @@ Assert-ContainsText `
     -Message 'ScaleWorld_s4 bake runner must delegate to the generic AMI bake preparation script.'
 
 Assert-ContainsText `
+    -Content $prepareScaleWorldS4ForBakeViaSsm `
+    -Expected 'prepare-scaleworld-s4-for-ami-bake-via-ssm.ps1' `
+    -Message 'ScaleWorld_s4 workstation bake runner must delegate to the SSM wrapper script.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldS4ForBakeViaSsmScript `
+    -Expected "InstanceName = 'ScaleWorld_s4'" `
+    -Message 'ScaleWorld_s4 SSM bake runner must target the dedicated stage bake source by default.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldS4ForBakeViaSsmScript `
+    -Expected 'AWS-RunPowerShellScript' `
+    -Message 'ScaleWorld_s4 SSM bake runner must execute through AWS Systems Manager.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldS4ForBakeViaSsmScript `
+    -Expected 'Get-LocalScriptCheckoutInfo' `
+    -Message 'ScaleWorld_s4 SSM bake runner must resolve the local committed checkout used for remote bootstrap sync.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldS4ForBakeViaSsmScript `
+    -Expected 'checkout --force `$targetCommit' `
+    -Message 'ScaleWorld_s4 SSM bake runner must sync the remote bootstrap checkout when bake tooling is missing.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldS4ForBakeViaSsmScript `
+    -Expected 'prepare-scaleworld-s4-for-ami-bake.bat' `
+    -Message 'ScaleWorld_s4 SSM bake runner must execute the on-instance bake-prep batch.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldS4ForBakeViaSsmScript `
+    -Expected 'Type PREPARE to continue' `
+    -Message 'ScaleWorld_s4 SSM bake runner must require an explicit local confirmation before remote cleanup.'
+
+Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'Using deployment-track default delivery mode.' `
     -Message 'Missing optional delivery-mode tags must fall back immediately instead of adding retry delay to normal startup.'
@@ -526,6 +565,71 @@ Assert-ContainsText `
     -Content $runtimeInstaller `
     -Expected '[System.IO.Compression.ZipFile]::ExtractToDirectory' `
     -Message 'Runtime artifact installer should use the faster .NET ZIP extraction path.'
+
+Assert-ContainsText `
+    -Content $runtimeInstaller `
+    -Expected "SourceRef = Normalize-Optional (`$manifest.sourceRef -as [string])" `
+    -Message 'Runtime artifact installer must preserve the source ref for bootstrap alignment.'
+
+Assert-ContainsText `
+    -Content $runtimeInstaller `
+    -Expected 'function Prune-InactiveRuntimeArtifacts' `
+    -Message 'Runtime artifact installer must prune inactive runtime releases after successful activation.'
+
+Assert-ContainsText `
+    -Content $runtimeInstaller `
+    -Expected 'Get-LiveRuntimeReleaseRoots' `
+    -Message 'Runtime artifact pruning must protect release roots still referenced by live processes.'
+
+Assert-ContainsText `
+    -Content $runtimeInstaller `
+    -Expected "Clear-DirectoryChildrenBestEffort -Path `$ScratchRoot" `
+    -Message 'Runtime artifact installer must clear runtime update cache after successful activation.'
+
+Assert-ContainsText `
+    -Content $runtimeInstaller `
+    -Expected "Write-Warning `"Skipping external runtime staging cleanup for '`$StagingParentRoot'.`"" `
+    -Message 'Runtime artifact pruning must not blindly clear external staging roots.'
+
+Assert-MatchesText `
+    -Content $runtimeInstaller `
+    -Pattern 'if \(\$Activate\) \{.*?Set-ActiveRuntimePointer.*?Prune-InactiveRuntimeArtifacts' `
+    -Message 'Runtime artifact pruning must only run after active runtime activation.'
+
+Assert-ContainsText `
+    -Content $provisioningMode `
+    -Expected "syncing_bootstrap_to_runtime_artifact" `
+    -Message 'Provisioning artifact install must publish a bootstrap-sync phase.'
+
+Assert-ContainsText `
+    -Content $provisioningMode `
+    -Expected "Continuing with general origin fetch before checking out the artifact commit." `
+    -Message 'Provisioning bootstrap alignment must treat source-ref fetch as best-effort and keep the artifact commit authoritative.'
+
+Assert-MatchesText `
+    -Content $provisioningMode `
+    -Pattern 'Invoke-BootstrapCheckoutAlignment.*?-RepoRoot \$pixelStreamingRoot.*?-SourceCommit \(Get-ObjectPropertyValue -InputObject \$installResult -Name ''SourceCommit''\).*?Set-ProvisioningRuntimeIdentityTags' `
+    -Message 'Provisioning must align bootstrap to the runtime artifact source before publishing runtime identity tags.'
+
+Assert-DoesNotContainText `
+    -Content $updateMode `
+    -Unexpected "`$installedSourceCommit = if (-not [string]::IsNullOrWhiteSpace(`$targetRuntimeSourceCommit))" `
+    -Message 'Update mode bootstrap alignment must use the installed artifact manifest commit, not a potentially stale EC2 target source tag.'
+
+Assert-ContainsText `
+    -Content $updateMode `
+    -Expected "Stopping existing streamer stack before PixelStreaming runtime activation." `
+    -Message 'Update mode must stop any old stack before activating and pruning runtime releases.'
+
+Assert-ContainsText `
+    -Content $updateMode `
+    -Expected "Set-UpdatePhase -AwsCli `$awsCli -Region `$identity.Region -InstanceId `$identity.InstanceId -Phase 'syncing_bootstrap'" `
+    -Message 'Update mode must expose bootstrap sync before marking artifact updates successful.'
+
+Assert-ContainsText `
+    -Content $updateMode `
+    -Expected 'Invoke-BootstrapCheckoutAlignment -RepoRoot $pixelStreamingRoot -SourceCommit $installedSourceCommit -SourceRef $installedSourceRef' `
+    -Message 'Update mode must align bootstrap to the installed runtime artifact source commit.'
 
 Assert-ContainsText `
     -Content $repoHeadPublisher `

@@ -196,6 +196,7 @@ function Read-RuntimeManifest {
         RuntimeZipKey = $runtimeZipKey
         RuntimeZipSha256 = $runtimeZipSha256.ToLowerInvariant()
         SourceCommit = Normalize-Optional ($manifest.pixelStreamingRepoCommit -as [string])
+        SourceRef = Normalize-Optional ($manifest.sourceRef -as [string])
         ContractVersion = Normalize-Optional ($manifest.scaleWorldContractVersion -as [string])
     }
 }
@@ -326,6 +327,168 @@ function Set-ActiveRuntimePointer {
     New-Item -ItemType Junction -Path $ActiveRoot -Target $TargetRoot | Out-Null
 }
 
+function Get-NormalizedFullPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $null
+    }
+
+    return [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+}
+
+function Get-ActiveRuntimeTarget {
+    param([string]$ActiveRoot)
+
+    if (-not (Test-Path -LiteralPath $ActiveRoot)) {
+        return $null
+    }
+
+    $activeItem = Get-Item -LiteralPath $ActiveRoot -Force
+    if (($activeItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0) {
+        return Get-NormalizedFullPath -Path $ActiveRoot
+    }
+
+    $target = @($activeItem.Target | Select-Object -First 1)[0]
+    if ([string]::IsNullOrWhiteSpace($target)) {
+        return $null
+    }
+
+    return Get-NormalizedFullPath -Path ([string]$target)
+}
+
+function Add-ProtectedRuntimeRoot {
+    param(
+        [hashtable]$Map,
+        [string]$Path
+    )
+
+    $normalized = Get-NormalizedFullPath -Path $Path
+    if ([string]::IsNullOrWhiteSpace($normalized)) {
+        return
+    }
+
+    $Map[$normalized.ToLowerInvariant()] = $true
+}
+
+function Test-ProtectedRuntimeRoot {
+    param(
+        [hashtable]$Map,
+        [string]$Path
+    )
+
+    $normalized = Get-NormalizedFullPath -Path $Path
+    if ([string]::IsNullOrWhiteSpace($normalized)) {
+        return $false
+    }
+
+    return $Map.ContainsKey($normalized.ToLowerInvariant())
+}
+
+function Get-LiveRuntimeReleaseRoots {
+    param([string]$ReleasesRoot)
+
+    $liveRoots = @{}
+    $releaseDirectories = @(Get-ChildItem -LiteralPath $ReleasesRoot -Directory -ErrorAction SilentlyContinue)
+    if ($releaseDirectories.Count -eq 0) {
+        return $liveRoots
+    }
+
+    try {
+        $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+    } catch {
+        Write-Warning "Could not inspect live process command lines before runtime pruning: $($_.Exception.Message)"
+        return $liveRoots
+    }
+
+    foreach ($process in $processes) {
+        $commandLine = [string]$process.CommandLine
+        if ([string]::IsNullOrWhiteSpace($commandLine)) {
+            continue
+        }
+
+        foreach ($directory in $releaseDirectories) {
+            $directoryFull = Get-NormalizedFullPath -Path $directory.FullName
+            if ([string]::IsNullOrWhiteSpace($directoryFull)) {
+                continue
+            }
+
+            if ($commandLine.IndexOf($directoryFull, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                $liveRoots[$directoryFull.ToLowerInvariant()] = $true
+            }
+        }
+    }
+
+    return $liveRoots
+}
+
+function Clear-DirectoryChildrenBestEffort {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    foreach ($child in @(Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue)) {
+        try {
+            if ($child.PSIsContainer) {
+                Remove-DirectoryBestEffort -Path $child.FullName
+            } else {
+                try {
+                    $child.Attributes = [System.IO.FileAttributes]::Normal
+                } catch {
+                }
+
+                Remove-Item -LiteralPath $child.FullName -Force -ErrorAction Stop
+            }
+        } catch {
+            Write-Warning "Runtime cache item '$($child.FullName)' could not be removed: $($_.Exception.Message)"
+        }
+    }
+}
+
+function Prune-InactiveRuntimeArtifacts {
+    param(
+        [string]$InstallRoot,
+        [string]$ReleasesRoot,
+        [string]$ActiveRoot,
+        [string]$KeepBundleRoot,
+        [string]$ScratchRoot,
+        [string]$StagingParentRoot
+    )
+
+    Assert-ChildPath -Parent $InstallRoot -Child $ReleasesRoot
+    Assert-ChildPath -Parent $InstallRoot -Child $ScratchRoot
+
+    $protectedRoots = @{}
+    Add-ProtectedRuntimeRoot -Map $protectedRoots -Path $KeepBundleRoot
+    Add-ProtectedRuntimeRoot -Map $protectedRoots -Path (Get-ActiveRuntimeTarget -ActiveRoot $ActiveRoot)
+
+    $liveRuntimeRoots = Get-LiveRuntimeReleaseRoots -ReleasesRoot $ReleasesRoot
+    foreach ($key in $liveRuntimeRoots.Keys) {
+        $protectedRoots[$key] = $true
+    }
+
+    foreach ($directory in @(Get-ChildItem -LiteralPath $ReleasesRoot -Directory -ErrorAction SilentlyContinue)) {
+        if (Test-ProtectedRuntimeRoot -Map $protectedRoots -Path $directory.FullName) {
+            Write-Host "Preserving runtime release '$($directory.FullName)'."
+            continue
+        }
+
+        Write-Host "Removing inactive runtime release '$($directory.FullName)'."
+        Remove-DirectoryBestEffort -Path $directory.FullName
+    }
+
+    Clear-DirectoryChildrenBestEffort -Path $ScratchRoot
+    $installRootFull = [System.IO.Path]::GetFullPath($InstallRoot).TrimEnd('\') + '\'
+    $stagingParentFull = [System.IO.Path]::GetFullPath($StagingParentRoot).TrimEnd('\') + '\'
+    if ($stagingParentFull.StartsWith($installRootFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Clear-DirectoryChildrenBestEffort -Path $StagingParentRoot
+    } else {
+        Write-Warning "Skipping external runtime staging cleanup for '$StagingParentRoot'."
+    }
+}
+
 $manifestS3Key = Normalize-Optional $ManifestS3Key
 $manifestPath = Normalize-Optional $ManifestPath
 $runtimeZipPathOverride = Normalize-Optional $RuntimeZipPath
@@ -419,6 +582,13 @@ if (-not (Test-InstalledRuntimeBundle -BundleRoot $bundleRoot -ExpectedManifest 
 
 if ($Activate) {
     Set-ActiveRuntimePointer -ActiveRoot $activeRoot -TargetRoot $bundleRoot
+    Prune-InactiveRuntimeArtifacts `
+        -InstallRoot $installRootFull `
+        -ReleasesRoot $releasesRoot `
+        -ActiveRoot $activeRoot `
+        -KeepBundleRoot $bundleRoot `
+        -ScratchRoot $scratchRoot `
+        -StagingParentRoot $stagingParentRoot
 }
 
 $result = [pscustomobject]@{
@@ -426,6 +596,7 @@ $result = [pscustomobject]@{
     RuntimeZipKey = $manifest.RuntimeZipKey
     ManifestS3Key = $manifestS3Key
     SourceCommit = $manifest.SourceCommit
+    SourceRef = $manifest.SourceRef
     ContractVersion = $manifest.ContractVersion
     InstalledRoot = $bundleRoot
     ActiveRoot = if ($Activate) { $activeRoot } else { $null }

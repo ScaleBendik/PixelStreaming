@@ -221,6 +221,93 @@ function Clear-ProvisioningUpdatePhaseTag {
     }
 }
 
+function Get-ObjectPropertyValue {
+    param(
+        [object]$InputObject,
+        [string]$Name
+    )
+
+    if ($null -eq $InputObject) {
+        return ''
+    }
+
+    $property = $InputObject.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        return ''
+    }
+
+    return ([string]$property.Value).Trim()
+}
+
+function Invoke-BootstrapCheckoutAlignment {
+    param(
+        [string]$RepoRoot,
+        [string]$SourceCommit,
+        [string]$SourceRef = ''
+    )
+
+    $targetCommit = ([string]$SourceCommit).Trim()
+    if ([string]::IsNullOrWhiteSpace($targetCommit)) {
+        throw 'Bootstrap checkout alignment requires a runtime artifact source commit.'
+    }
+
+    if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot '.git') -PathType Container)) {
+        throw "Bootstrap root '$RepoRoot' is not a git repository."
+    }
+
+    $git = Get-Command git -ErrorAction SilentlyContinue
+    if (-not $git) {
+        throw "Git ('git') was not found."
+    }
+
+    Write-ProvisioningLog "Aligning bootstrap checkout at '$RepoRoot' to runtime artifact source commit '$targetCommit'."
+    $sourceRefValue = ([string]$SourceRef).Trim()
+    if (-not [string]::IsNullOrWhiteSpace($sourceRefValue) -and -not [string]::Equals($sourceRefValue, 'HEAD', [System.StringComparison]::OrdinalIgnoreCase)) {
+        & $git.Source -C $RepoRoot fetch origin $sourceRefValue
+        if ($LASTEXITCODE -ne 0) {
+            Write-ProvisioningLog "Bootstrap source ref fetch '$sourceRefValue' failed. Continuing with general origin fetch before checking out the artifact commit." 'WARN'
+            $global:LASTEXITCODE = 0
+        }
+    }
+
+    & $git.Source -C $RepoRoot fetch --tags --prune origin
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Bootstrap checkout alignment failed while fetching origin.'
+    }
+
+    & $git.Source -C $RepoRoot checkout --force $targetCommit
+    if ($LASTEXITCODE -ne 0) {
+        throw "Bootstrap checkout alignment failed while checking out '$targetCommit'."
+    }
+
+    $head = ((& $git.Source -C $RepoRoot rev-parse HEAD) | Select-Object -First 1)
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace([string]$head)) {
+        throw 'Bootstrap checkout alignment failed while verifying HEAD.'
+    }
+
+    $headValue = ([string]$head).Trim()
+    if (-not [string]::Equals($headValue, $targetCommit, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Bootstrap checkout alignment ended at '$headValue' instead of '$targetCommit'."
+    }
+
+    $requiredFiles = @(
+        'SignallingWebServer\platform_scripts\cmd\start_streamer_stack.bat',
+        'SignallingWebServer\platform_scripts\powershell\invoke_provisioning_mode.ps1',
+        'SignallingWebServer\platform_scripts\powershell\invoke_update_mode.ps1',
+        'SignallingWebServer\platform_scripts\powershell\install_pixelstreaming_runtime.ps1',
+        'SignallingWebServer\platform_scripts\powershell\watchdog.ps1'
+    )
+
+    foreach ($relativePath in $requiredFiles) {
+        $candidate = Join-Path $RepoRoot $relativePath
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            throw "Bootstrap checkout '$targetCommit' does not contain required bootstrap file '$relativePath'."
+        }
+    }
+
+    Write-ProvisioningLog "Bootstrap checkout aligned to runtime artifact source commit '$targetCommit'."
+}
+
 function Test-FatalBootstrapError {
     param([string]$Message)
 
@@ -232,6 +319,9 @@ function Test-FatalBootstrapError {
         'Tracked local changes are present',
         'ensure_repo_current.ps1 was not found',
         'install_pixelstreaming_runtime.ps1 was not found',
+        'Bootstrap checkout alignment requires a runtime artifact source commit.',
+        'Bootstrap root',
+        'does not contain required bootstrap file',
         'Pinned git sync mode requires SCALEWORLD_GIT_TARGET_REF',
         'Unsupported git sync mode'
     )
@@ -437,6 +527,12 @@ while ($true) {
                 }
 
                 $installResult = Get-Content -LiteralPath $runtimeInstallResultPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                Set-ProvisioningHeartbeatState -Context $heartbeatContext -Status 'updating_infra' -Reason 'syncing_bootstrap_to_runtime_artifact'
+                Invoke-BootstrapCheckoutAlignment `
+                    -RepoRoot $pixelStreamingRoot `
+                    -SourceCommit (Get-ObjectPropertyValue -InputObject $installResult -Name 'SourceCommit') `
+                    -SourceRef (Get-ObjectPropertyValue -InputObject $installResult -Name 'SourceRef')
+
                 Set-ProvisioningRuntimeIdentityTags `
                     -AwsCli $awsCli `
                     -Region $identity.Region `
