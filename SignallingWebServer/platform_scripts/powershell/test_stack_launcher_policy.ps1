@@ -277,6 +277,16 @@ Assert-DoesNotContainText `
     -Message 'Watchdog mutex must not be root-scoped; root-scoped mutexes allow bootstrap and active runtime supervisors to coexist.'
 
 Assert-ContainsText `
+    -Content $watchdog `
+    -Expected '$script:SignallingWebServerRoot = (Resolve-Path (Join-Path $PSScriptRoot ''..\..'')).Path' `
+    -Message 'Watchdog root must be the resolved string path, not a Resolve-Path PathInfo object.'
+
+Assert-DoesNotContainText `
+    -Content $watchdog `
+    -Unexpected '$script:SignallingWebServerRoot = Resolve-Path (Join-Path $PSScriptRoot ''..\..'')' `
+    -Message 'Watchdog root must not keep PathInfo because later path matching calls string methods.'
+
+Assert-ContainsText `
     -Content $startWatchdog `
     -Expected 'set "WATCHDOG_WILBUR_RESTART_COMMAND=%WATCHDOG_RESTART_COMMAND%"' `
     -Message 'Default Wilbur recovery must use stack recovery so bootstrap-root watchdogs cannot bypass active-runtime delegation.'
@@ -353,7 +363,7 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $watchdog `
-    -Expected '$script:SignallingWebServerRoot.IndexOf(''\runtime-releases\''' `
+    -Expected '([string]$script:SignallingWebServerRoot).IndexOf(''\runtime-releases\''' `
     -Message 'Runtime-artifact watchdogs must accept their resolved runtime-release root when the configured Wilbur matcher uses the stable PixelStreamingRuntime path.'
 
 Assert-ContainsText `

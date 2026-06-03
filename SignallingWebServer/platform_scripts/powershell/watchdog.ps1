@@ -53,7 +53,7 @@ $script:LastMaintenanceModeReadFailure = $null
 $script:LastLoggedMaintenanceMode = '__uninitialized__'
 $script:LastSupersededRootCleanupAtUtc = [DateTimeOffset]::MinValue
 $script:LastSupersededRootCleanupFailure = $null
-$script:SignallingWebServerRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
+$script:SignallingWebServerRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $defaultLogPath = Join-Path $script:SignallingWebServerRoot 'logs\scaleworld-watchdog.log'
 $resolvedLogPath = if ([string]::IsNullOrWhiteSpace($LogPath)) { $defaultLogPath } elseif ([System.IO.Path]::IsPathRooted($LogPath)) { $LogPath } else { Join-Path $script:SignallingWebServerRoot $LogPath }
 $logDir = Split-Path -Parent $resolvedLogPath
@@ -663,7 +663,7 @@ function Get-WilburCommandLinePatterns {
         $patterns.Add(($Pattern).Trim())
     }
 
-    if ($script:SignallingWebServerRoot.IndexOf('\runtime-releases\', [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+    if (([string]$script:SignallingWebServerRoot).IndexOf('\runtime-releases\', [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
         $runtimeReleaseRoot = ([string]$script:SignallingWebServerRoot).Trim()
         $alreadyIncluded = $false
         foreach ($existing in $patterns) {
