@@ -468,9 +468,29 @@ Assert-ContainsText `
     -Message 'AMI bake preparation must expose an explicit escape hatch for desired-state reset.'
 
 Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected 'UseScriptCheckoutCommit' `
+    -Message 'AMI bake preparation must support using the script checkout commit for dedicated bake-source runners.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected 'function Test-BakePrepScripts' `
+    -Message 'AMI bake preparation must verify that AMI bake tooling remains present after bootstrap sync.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected "The selected target commit does not contain the AMI bake tooling." `
+    -Message 'AMI bake preparation must fail loudly when the target commit would remove the bake tooling.'
+
+Assert-ContainsText `
     -Content $prepareScaleWorldS4ForBake `
     -Expected '-ExpectedInstanceName "ScaleWorld_s4"' `
     -Message 'ScaleWorld_s4 bake runner must explicitly target the stage source instance.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldS4ForBake `
+    -Expected '-UseScriptCheckoutCommit' `
+    -Message 'ScaleWorld_s4 bake runner must target the checkout commit that contains the bake tooling.'
 
 Assert-ContainsText `
     -Content $prepareScaleWorldS4ForBake `

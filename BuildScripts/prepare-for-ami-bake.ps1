@@ -6,6 +6,7 @@ param(
     [string]$TargetCommit = '',
     [string]$TargetRef = '',
     [string]$ExpectedInstanceName = '',
+    [switch]$UseScriptCheckoutCommit,
     [switch]$SkipBootstrapSync,
     [switch]$SkipProcessStop,
     [switch]$SkipTransientCleanup,
@@ -169,6 +170,25 @@ function Get-GitOutput {
     return (($output | Out-String).Trim())
 }
 
+function Get-ScriptCheckoutInfo {
+    $scriptCheckoutRoot = Split-Path -Parent $PSScriptRoot
+    if (-not (Test-Path -LiteralPath (Join-Path $scriptCheckoutRoot '.git'))) {
+        throw "Cannot use script checkout commit because '$scriptCheckoutRoot' is not a git checkout."
+    }
+
+    $head = Get-GitOutput -RepoPath $scriptCheckoutRoot -Arguments @('rev-parse', 'HEAD')
+    $ref = Get-GitOutput -RepoPath $scriptCheckoutRoot -Arguments @('rev-parse', '--abbrev-ref', 'HEAD')
+    if ([string]::Equals($ref, 'HEAD', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $ref = ''
+    }
+
+    return [pscustomobject]@{
+        Root = $scriptCheckoutRoot
+        Head = $head
+        Ref = $ref
+    }
+}
+
 function Get-RuntimeBundleMetadata {
     param([string]$RuntimeRoot)
 
@@ -258,6 +278,24 @@ function Test-BootstrapProvisioningScript {
     }
 
     Write-BakePrepLog "Verified fixed provisioning script at '$scriptPath'."
+}
+
+function Test-BakePrepScripts {
+    param([string]$RepoPath)
+
+    $requiredPaths = @(
+        'BuildScripts\prepare-for-ami-bake.ps1',
+        'BuildScripts\prepare-scaleworld-s4-for-ami-bake.bat'
+    )
+
+    foreach ($relativePath in $requiredPaths) {
+        $path = Join-Path $RepoPath $relativePath
+        if (-not (Test-Path -LiteralPath $path)) {
+            throw "Bake-prep script '$path' is missing after bootstrap sync. The selected target commit does not contain the AMI bake tooling."
+        }
+    }
+
+    Write-BakePrepLog "Verified AMI bake-prep tooling in '$RepoPath'."
 }
 
 function Stop-StreamerStackProcesses {
@@ -531,16 +569,26 @@ Write-BakePrepLog "Runtime root: $runtimeRoot"
 Assert-ExpectedInstanceName -ExpectedName $ExpectedInstanceName
 
 $runtimeMetadata = Get-RuntimeBundleMetadata -RuntimeRoot $runtimeRoot
-$resolvedTargetCommit = if ([string]::IsNullOrWhiteSpace($TargetCommit)) {
-    [string]$runtimeMetadata.pixelStreamingRepoCommit
+$scriptCheckoutInfo = if ($UseScriptCheckoutCommit) {
+    Get-ScriptCheckoutInfo
 } else {
-    $TargetCommit.Trim()
+    $null
 }
 
-$resolvedTargetRef = if ([string]::IsNullOrWhiteSpace($TargetRef)) {
-    [string]$runtimeMetadata.sourceRef
+$resolvedTargetCommit = if (-not [string]::IsNullOrWhiteSpace($TargetCommit)) {
+    $TargetCommit.Trim()
+} elseif ($UseScriptCheckoutCommit) {
+    [string]$scriptCheckoutInfo.Head
 } else {
+    [string]$runtimeMetadata.pixelStreamingRepoCommit
+}
+
+$resolvedTargetRef = if (-not [string]::IsNullOrWhiteSpace($TargetRef)) {
     $TargetRef.Trim()
+} elseif ($UseScriptCheckoutCommit) {
+    [string]$scriptCheckoutInfo.Ref
+} else {
+    [string]$runtimeMetadata.sourceRef
 }
 
 if ([string]::IsNullOrWhiteSpace($resolvedTargetCommit)) {
@@ -548,8 +596,14 @@ if ([string]::IsNullOrWhiteSpace($resolvedTargetCommit)) {
 }
 
 Write-BakePrepLog "Runtime bundle: $($runtimeMetadata.bundleId)"
-Write-BakePrepLog "Runtime source commit: $resolvedTargetCommit"
-Write-BakePrepLog "Runtime source ref: $resolvedTargetRef"
+Write-BakePrepLog "Runtime metadata source commit: $($runtimeMetadata.pixelStreamingRepoCommit)"
+Write-BakePrepLog "Runtime metadata source ref: $($runtimeMetadata.sourceRef)"
+if ($UseScriptCheckoutCommit) {
+    Write-BakePrepLog "Using script checkout commit from '$($scriptCheckoutInfo.Root)' as bootstrap target."
+}
+
+Write-BakePrepLog "Bootstrap target commit: $resolvedTargetCommit"
+Write-BakePrepLog "Bootstrap target ref: $resolvedTargetRef"
 
 if (-not $SkipBootstrapSync) {
     Sync-BootstrapCheckout -RepoPath $bootstrapRoot -Commit $resolvedTargetCommit -Ref $resolvedTargetRef
@@ -557,6 +611,7 @@ if (-not $SkipBootstrapSync) {
 
 if (-not $SkipVerification) {
     Test-BootstrapProvisioningScript -RepoPath $bootstrapRoot
+    Test-BakePrepScripts -RepoPath $bootstrapRoot
 }
 
 if (-not $SkipProcessStop) {
