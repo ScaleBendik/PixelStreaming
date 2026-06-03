@@ -1,32 +1,32 @@
 # Prod Streamer Promotions
 
-This document is the current reference for the legacy Git-ref prod streamer promotion path.
+This document keeps the legacy Git-ref prod streamer promotion path as a break-glass reference. It is no longer the normal Prod release path.
 
-2026-05-27 release-train direction: normal PixelStreaming code promotion should move to immutable prebuilt runtime artifacts under `s3://scaleworlddepot/PixelStreamingRuntime/`. See `pixelstreaming-runtime-artifact-contract.md` and `../../scaleworld-server-manager-web/docs/release-train-current-state-2026-05-22.md`. The runtime install/update path, release-candidate API/store, manifest-backed candidate capture, first Release page capture/pin actions, and coarse updater capability gates exist. The Git-ref path below remains compatibility and break-glass until candidate promotion orchestration, shared/SQL candidate storage, capacity convergence, rollback, and Prod bootstrap/capability rollout are complete.
+2026-06-03 release-train direction: normal PixelStreaming code promotion uses immutable prebuilt runtime artifacts under `s3://scaleworlddepot/PixelStreamingRuntime/`, release-candidate records, and Stage-validated source-instance AMI/template baking for Prod capacity. See `pixelstreaming-runtime-artifact-contract.md` and `../../scaleworld-server-manager-web/docs/release-train-current-state-2026-05-22.md`. The Git-ref path below remains Dev iteration and Stage/bootstrap break-glass only; Prod lane repo sweeps are disabled.
 
-Stage/candidate promotion now exists as a separate first step:
-- Gold validation can promote the tested checkout to `/pixelstreaming/stage/git-target-ref`
-- prod promotion can then promote that already-tested stage candidate to `/pixelstreaming/prod/git-target-ref`
+Stage/candidate promotion is now release-candidate based:
+- Stage validates the intended runtime artifact and Unreal build as a release candidate.
+- Prod promotes the Stage live candidate pointer after passed validation evidence.
+- Prod capacity should be converged through runtime-artifact update jobs or through a new launch-template version baked from the validated Stage source instance.
 
 ## Current Model
 
-Prod streamer startup should not track moving upstream directly.
+Prod streamer startup should not track moving upstream or a moving Git ref during ordinary operation.
 
 Current prod model:
-1. validate the desired PixelStreaming commit on the gold/nonprod baseline
-2. bake the gold AMI from that same validated commit
-3. create an immutable annotated prod tag
-4. update the SSM parameter:
-   - `/pixelstreaming/prod/git-target-ref`
-5. prod instances in `pinned` mode resolve that parameter at startup
-
-Target prod model:
-1. build and validate a PixelStreaming runtime bundle on a clean release runner
+1. build and validate a PixelStreaming runtime bundle on a clean Stage/source runner
 2. publish `PixelStreamingRuntime/<bundleId>/manifest.json` and `runtime.zip`
 3. capture a Release Candidate Manifest referencing the runtime manifest, Unreal build, API/web versions, validation evidence, and rollback predecessor
-4. promote that candidate from Dev to Stage to Prod
-5. converge stopped/provisioned capacity through runtime artifact install/activate
-6. refresh AMI/launch template only when the base image changes, not for every PixelStreaming runtime change
+4. validate the Stage candidate and promote the Stage live pointer to Prod
+5. converge stopped/provisioned capacity through runtime artifact install/activate, or bake a Stage-validated source instance into a Prod launch-template version when a fresh base image is needed
+6. run AMI bake cleanup on the source instance after the final runtime artifact update and before image capture
+
+Legacy Git-ref prod model:
+1. validate the desired PixelStreaming commit on the old Gold/nonprod baseline
+2. bake the Gold AMI from that same validated commit
+3. create an immutable annotated prod tag
+4. update `/pixelstreaming/prod/git-target-ref`
+5. prod instances in `pinned` mode resolve that parameter at startup
 
 Delivery-mode note:
 - Dev keeps `git_ref` as the default so small code changes can still be tested by moving `/pixelstreaming/dev/git-target-ref`.
@@ -37,24 +37,27 @@ Delivery-mode note:
 
 Current promotion path details:
 
-1. `Promote Gold checkout to stage` writes `/pixelstreaming/stage/git-target-ref`
-2. `Promote stage ref to prod` copies that validated stage ref into `/pixelstreaming/prod/git-target-ref`
-3. the stage-to-prod action is currently orchestrated by the API through SSM on the running Gold instance, not directly on prod serving instances
+The Git-ref promotion path is legacy/break-glass:
+
+1. `Promote Gold checkout to stage` writes `/pixelstreaming/stage/git-target-ref`.
+2. `Promote stage ref to prod` copies that validated stage ref into `/pixelstreaming/prod/git-target-ref`.
+3. This path is not the normal Prod release route and should not be used for routine Prod provisioning.
 
 Current release-candidate state:
 
 1. Server Manager API can store release candidates and independent current Dev/Stage/Prod pointers.
 2. Candidates can carry PixelStreaming runtime manifest identity, Unreal build id, API/web version placeholders, validation snapshot placeholders, and rollback predecessor id.
-3. Pinning is conservative today: Dev pins Dev-sourced candidates, Stage pins Stage-sourced candidates, and Prod pins only the current Stage candidate visible in the same candidate store.
-4. Stage and Prod committed API config use different runtime Blob containers for release candidates. Until candidates move to a shared promotion store or SQL, artifact-backed Prod pinning requires an explicit copy/import of the Stage candidate and current Stage pointer into the Prod store.
-5. Candidates are not yet the full Prod promotion workflow. The Release page can capture/pin candidate pointers and the API verifies manifest metadata at capture time, but there is no validation-evidence UI, no idempotent promotion workflow, no rollback workflow, and no automatic Prod capacity convergence from candidate state.
-6. Until those gaps are closed, this Git-ref document remains the legacy operational fallback for Prod streamer promotion.
+3. Pinning is conservative today: Dev pins Dev-sourced candidates, Stage pins Stage-sourced candidates, and Prod pins only the Stage live pointer with passed validation evidence.
+4. Stage and Prod bridge their environment-local candidate stores through SSM live pointers at `/scaleworld/release/stage/current-candidate` and `/scaleworld/release/prod/current-candidate`.
+5. The Release page can capture/pin candidates, record Stage validation evidence, promote the validated Stage live pointer to Prod, and drive release-candidate update jobs. Full automatic Prod capacity convergence and rollback orchestration remain follow-up work.
+6. Until those gaps are closed, this Git-ref document remains the legacy operational fallback, not the preferred release plan.
 
 Operational note:
-- the actual gold-instance promotion script now writes to `Docs/prod-promotions.local.md`
+- the actual legacy Git-ref promotion script writes to `Docs/prod-promotions.local.md`
 - that local ledger is intentionally untracked so prod promotions do not block future pulls on the gold instance
 - the promotion script now refuses to create a prod tag unless local `HEAD` exactly matches `origin/<current-branch>`
-- keep the AMI bake and promotion on the same validated commit so prod startup does not need an expensive first-boot catch-up build
+- for any Git-ref fallback, keep the AMI bake and promotion on the same validated commit so prod startup does not need an expensive first-boot catch-up build
+- for the current runtime-artifact path, run `BuildScripts\prepare-for-ami-bake.ps1` on the Stage source after the final artifact update and before AMI capture
 - prod API startup also depends on Azure Key Vault secret `kv-scaleworld-prod/connect-ticket-signing-key`; it must contain the same value as streamer-side SSM `/pixelstreaming/prod/connect-ticket/signing-key`
 
 ## Naming Convention

@@ -153,7 +153,7 @@ Operational notes:
 1. This requires AWS CLI and instance-profile IAM permission for `ec2:StopInstances` on self.
 2. Use `viewer_idle_stop_dry_run=true` first to validate logs before enabling real stop.
 3. If you already stop instances from Session Manager policy/watchdog, coordinate timers to avoid policy fights.
-4. `start_dev_turn.bat` sets sane defaults, including a 5-minute default last-viewer grace window and a 5-minute default first-viewer grace window, but you can override them with environment variables before launch:
+4. `start_dev_turn.bat` sets sane defaults aligned with the Server Manager API session policy: a 5-minute default last-viewer/reconnect grace window and a 10-minute default first-viewer grace window. You can override them with environment variables before launch:
    - `VIEWER_IDLE_STOP`
    - `VIEWER_IDLE_GRACE_MS`
    - `VIEWER_IDLE_FIRST_VIEWER_GRACE_MS`
@@ -199,8 +199,8 @@ Important:
    - `upstream`: fetch configured upstream branch, pull if changed, then build when needed
    - `pinned`: resolve `SCALEWORLD_GIT_TARGET_REF` or `SCALEWORLD_GIT_TARGET_REF_PARAM`, reset to that ref, then build when needed
    - `off`: skip repo sync entirely
-8. `start_streamer_stack.bat` now applies pinned repo sync during normal prod boot as well, not just during maintenance/provisioning flows.
-9. Prod instances should prefer `pinned` mode with `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref`.
+8. `start_streamer_stack.bat` can still apply pinned repo sync during normal boot when the effective delivery mode is `git_ref`.
+9. Prod steady-state instances should prefer runtime-artifact delivery from a Stage-validated AMI/runtime candidate. Pinned Git-ref mode with `SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/prod/git-target-ref` is a migration or break-glass recovery path, not the intended startup path.
 10. Lane resolution now prefers the instance tag helper:
    - `platform_scripts/powershell/resolve_streaming_lane_from_instance_tag.ps1`
    - `ScaleWorldLane=nonprod|prod`
@@ -215,7 +215,7 @@ Important:
    - `ScaleWorldLane=prod` -> deployment track `prod`
    - `ScaleWorldLane=nonprod` -> deployment track `stage`
    - `Gold` should be explicitly tagged `ScaleWorldDeploymentTrack=dev`
-13. Boot repo sync now defaults on for all tracks unless `SCALEWORLD_GIT_SYNC_MODE=off`; `stage` and `prod` force stale `SCALEWORLD_GIT_SYNC_MODE=upstream` overrides back to `pinned` so the environment target-ref parameters remain authoritative.
+13. Boot repo sync is bypassed for `runtime_artifact` delivery, and uses pinned target refs for `git_ref` delivery. `stage` and `prod` force stale `SCALEWORLD_GIT_SYNC_MODE=upstream` overrides back to `pinned` so the environment target-ref parameters remain authoritative when Git-ref fallback is active.
 14. If tracked local repo changes are present, repo-sync recovery fails fast instead of overwriting them.
 15. On successful maintenance validation, the instance keeps Fleet command tags in place, requests stop, and relies on the API to clear those command tags after the stopped instance is observed for the matching job.
 16. The updater uses the prepared data drive (preferably `D:`) for download/scratch space when available, while the final active install remains on `C:\PixelStreaming\WindowsNoEditor`.
@@ -226,13 +226,14 @@ Important:
    - `Run with highest privileges`
    - `Do not start a new instance`
    - if the task fails, restart every `1 minute` for up to `30` attempts
-15. Provisioning bootstrap timing can be tuned with:
+18. Provisioning bootstrap timing can be tuned with:
    - `SCALEWORLD_PROVISIONING_BOOTSTRAP_TIMEOUT_SECONDS` (default `900`)
    - `SCALEWORLD_PROVISIONING_DETECTION_TIMEOUT_SECONDS` (default `90`)
    - `SCALEWORLD_PROVISIONING_BOOTSTRAP_RETRY_DELAY_SECONDS` (default `15`)
-16. If prod boot must reset to a newer pinned ref than the AMI was baked with, startup may spend several minutes in `git fetch` + `BuildScripts/build-all.bat` before Wilbur starts. That is a recovery path, not the intended steady-state launch cost.
+19. If prod boot must reset to a newer pinned ref than the AMI was baked with, startup may spend several minutes in `git fetch` + `BuildScripts/build-all.bat` before Wilbur starts. That is a recovery path, not the intended steady-state launch cost.
+20. Before using a Stage instance as a Prod AMI source, run `BuildScripts\prepare-for-ami-bake.ps1` after the final runtime artifact update. The helper clears transient update/provisioning/runtime state while preserving active runtime-artifact identity; `BuildScripts\prepare-scaleworld-s4-for-ami-bake.bat` is the current convenience runner for the Stage source named `ScaleWorld_s4`.
 
-Operational prerequisite: maintenance-mode update expects the instance's PixelStreaming directory to be a valid git checkout and `git` to be installed.
+Operational prerequisite: Git-ref delivery, repo-sync recovery, and provisioning repo-sync bootstrap expect the instance's PixelStreaming directory to be a valid git checkout with `git` installed. Runtime-artifact delivery should run from the active runtime root and should not depend on repo sync during ordinary startup.
 Given these options, to start the server with the closest behaviour as the old cirrus, you would invoke,
 ```
 npm start -- --console_messages --https_redirect verbose --serve --log_config --http_root www --homepage player.html

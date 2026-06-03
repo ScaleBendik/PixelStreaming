@@ -1,6 +1,6 @@
 # PixelStreaming Documentation
 
-Last updated: 2026-05-27
+Last updated: 2026-06-03
 
 This directory mixes upstream Pixel Streaming reference documentation with ScaleWorld operational docs for the customized streamer runtime.
 
@@ -13,6 +13,7 @@ Use these first for the Server Manager integration:
 | Streamer AWS/TURN/runtime topology | `cloud-infrastructure.md` |
 | Instance-agent bootstrap trust and secret separation | `../../scaleworld-server-manager-web/docs/instance-agent-bootstrap-trust-runbook-2026-05-05.md` |
 | Prod streamer promotion process | `prod-promotions.md` |
+| Stage source-instance AMI bake cleanup | `../BuildScripts/prepare-for-ami-bake.ps1` |
 | Unreal ZIP update artifact contract | `s3-build-archive-contract.md` |
 | PixelStreaming runtime artifact contract | `pixelstreaming-runtime-artifact-contract.md` |
 | Release Train current state | `../../scaleworld-server-manager-web/docs/release-train-current-state-2026-05-22.md` |
@@ -34,7 +35,9 @@ Use these first for the Server Manager integration:
 8. `git_ref` delivery remains the Dev fast path and the bootstrap/break-glass migration path. Stage/Prod default to `auto` so an installed active runtime artifact wins when present.
 9. Bootstrapped instances publish `ScaleWorldPixelStreamingUpdateCapabilities=pixelstreaming_runtime,combined_runtime_unreal`; Server Manager uses that tag to gate runtime-artifact and combined update jobs.
 10. Repo-head startup tagging preserves runtime-artifact identity when `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact` or runtime identity tags are already present without an explicit `git_ref`, so runtime-artifact server cards keep showing the active bundle id instead of reverting to a Git target ref.
-11. The long-term backlog still tracks splitting the instance agent into a separate service once current warm-pool behavior is stable.
+11. `start_dev_turn.bat` and Wilbur defaults now align with API session access defaults: 5-minute last-viewer/reconnect grace and 10-minute first-viewer grace. The long-term backlog tracks moving lifecycle policy authority fully to the API.
+12. Stage source instances intended for Prod AMI baking should run `BuildScripts\prepare-for-ami-bake.ps1` after the final runtime artifact update and before image capture. The `prepare-scaleworld-s4-for-ami-bake.bat` helper explicitly targets the current Stage bake source instance name.
+13. The long-term backlog still tracks splitting the instance agent into a separate service once current warm-pool behavior is stable.
 
 ## Upstream Pixel Streaming Docs
 
