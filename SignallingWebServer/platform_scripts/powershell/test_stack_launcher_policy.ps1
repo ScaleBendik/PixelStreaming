@@ -50,6 +50,7 @@ function Assert-MatchesText {
 }
 
 $cmdRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\cmd')
+$buildScriptsRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..\BuildScripts')
 $stackLauncherPath = Join-Path $cmdRoot 'start_streamer_stack.bat'
 $stackRecycleLauncherPath = Join-Path $cmdRoot 'start_stack_recycle.bat'
 $startDevTurnPath = Join-Path $cmdRoot 'start_dev_turn.bat'
@@ -70,6 +71,8 @@ $runtimeInstallerPath = Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.
 $updateModePath = Join-Path $PSScriptRoot 'invoke_update_mode.ps1'
 $provisioningModePath = Join-Path $PSScriptRoot 'invoke_provisioning_mode.ps1'
 $stopSupersededRootPath = Join-Path $PSScriptRoot 'stop_superseded_root_processes.ps1'
+$prepareForBakePath = Join-Path $buildScriptsRoot 'prepare-for-ami-bake.ps1'
+$prepareScaleWorldS4ForBakePath = Join-Path $buildScriptsRoot 'prepare-scaleworld-s4-for-ami-bake.bat'
 
 $stackLauncher = [System.IO.File]::ReadAllText($stackLauncherPath)
 $stackRecycleLauncher = [System.IO.File]::ReadAllText($stackRecycleLauncherPath)
@@ -91,6 +94,8 @@ $runtimeInstaller = [System.IO.File]::ReadAllText($runtimeInstallerPath)
 $updateMode = [System.IO.File]::ReadAllText($updateModePath)
 $provisioningMode = [System.IO.File]::ReadAllText($provisioningModePath)
 $stopSupersededRoot = [System.IO.File]::ReadAllText($stopSupersededRootPath)
+$prepareForBake = [System.IO.File]::ReadAllText($prepareForBakePath)
+$prepareScaleWorldS4ForBake = [System.IO.File]::ReadAllText($prepareScaleWorldS4ForBakePath)
 
 Assert-DoesNotContainText `
     -Content $stackLauncher `
@@ -396,6 +401,81 @@ Assert-ContainsText `
     -Content $provisioningMode `
     -Expected "Remove-ProvisioningInstanceTags -AwsCli `$AwsCli -Region `$Region -InstanceId `$InstanceId -Keys @('ScaleWorldUpdatePhase')" `
     -Message 'Provisioning update phase cleanup must remove only the stale update phase tag.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected 'Get-RuntimeBundleMetadata' `
+    -Message 'AMI bake preparation must derive the bootstrap source commit from runtime bundle metadata.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected 'ExpectedInstanceName' `
+    -Message 'AMI bake preparation must support an expected instance name guard for dedicated bake sources.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected 'Assert-ExpectedInstanceName' `
+    -Message 'AMI bake preparation must refuse to run on the wrong named source instance when requested.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected 'pixelStreamingRepoCommit' `
+    -Message 'AMI bake preparation must align the bootstrap checkout to the runtime artifact source commit.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected 'pre-bake-bootstrap-backup-' `
+    -Message 'AMI bake preparation must create a backup branch before resetting the bootstrap checkout.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected 'function Test-BootstrapProvisioningScript' `
+    -Message 'AMI bake preparation must verify the bootstrap provisioning script before bake.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected 'Key=$Key,Value=$normalizedValue' `
+    -Message 'AMI bake preparation must explicitly reject the old provisioning AWS CLI tag shorthand.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected 'Stop-StreamerStackProcesses' `
+    -Message 'AMI bake preparation must stop streamer stack processes before image capture.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected 'runtime-updates' `
+    -Message 'AMI bake preparation must clear runtime update caches before image capture.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected 'session-artifact-queue' `
+    -Message 'AMI bake preparation must clear carried-over session artifact queues before image capture.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected 'Reset-InstanceAgentDesiredStateForBake' `
+    -Message 'AMI bake preparation must reset desired state so stale source-instance commands are not baked.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected "policyVersion = 'bake-default'" `
+    -Message 'AMI bake preparation must mark the neutral desired-state snapshot as bake-generated.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected 'SkipDesiredStateReset' `
+    -Message 'AMI bake preparation must expose an explicit escape hatch for desired-state reset.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldS4ForBake `
+    -Expected '-ExpectedInstanceName "ScaleWorld_s4"' `
+    -Message 'ScaleWorld_s4 bake runner must explicitly target the stage source instance.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldS4ForBake `
+    -Expected 'prepare-for-ami-bake.ps1' `
+    -Message 'ScaleWorld_s4 bake runner must delegate to the generic AMI bake preparation script.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
