@@ -217,7 +217,7 @@ async function captureShutdownSessionArtifacts(
 
     if (!command) {
         log(
-            `[idle-stop] Capturing shutdown artifacts '${trigger}' without an active shutdown command; API correlation will use instance and event time.`
+            `[idle-stop] Capturing shutdown artifacts '${trigger}' without an active shutdown command; session registration will be skipped unless metadata includes session identity.`
         );
         const instanceTimeMetadata = {
             ...captureMetadata,

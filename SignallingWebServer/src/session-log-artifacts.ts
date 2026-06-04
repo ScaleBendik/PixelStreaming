@@ -181,6 +181,23 @@ function normalizeGuidText(value: unknown): string | undefined {
         : undefined;
 }
 
+function normalizeRequestSessionCorrelation(request: SessionLogArtifactRegistrationRequest): void {
+    request.sessionRequestId =
+        normalizeGuidText(request.sessionRequestId) ?? normalizeGuidText(request.metadata?.sessionRequestId);
+    request.userSessionId =
+        normalizeGuidText(request.userSessionId) ?? normalizeGuidText(request.metadata?.userSessionId);
+    request.sessionId =
+        normalizeOptionalText(request.sessionId) ?? normalizeOptionalText(request.metadata?.sessionId);
+}
+
+function hasSessionCorrelation(request: SessionLogArtifactRegistrationRequest): boolean {
+    return Boolean(
+        normalizeGuidText(request.sessionRequestId) ??
+            normalizeGuidText(request.userSessionId) ??
+            normalizeOptionalText(request.sessionId)
+    );
+}
+
 function truncateText(value: string, maxLength: number): string {
     if (value.length <= maxLength) {
         return value;
@@ -1022,6 +1039,29 @@ export function createSessionLogArtifactManager(
     };
 
     const registerRecord = async (record: ArtifactQueueRecord): Promise<void> => {
+        normalizeRequestSessionCorrelation(record.request);
+        if (!hasSessionCorrelation(record.request)) {
+            try {
+                fs.unlinkSync(path.join(queuePath, `${record.id}.json`));
+            } catch {
+                // best effort
+            }
+
+            try {
+                if (fs.existsSync(record.localPath)) {
+                    fs.unlinkSync(record.localPath);
+                }
+            } catch {
+                // best effort
+            }
+
+            log(
+                `[session-artifacts] Uploaded uncorrelated lifecycle artifact ${record.objectKey}; skipped session artifact registration.`
+            );
+            cleanSessionLogs('after_uncorrelated_upload');
+            return;
+        }
+
         await options.registerArtifact(record.request);
         try {
             fs.unlinkSync(path.join(queuePath, `${record.id}.json`));

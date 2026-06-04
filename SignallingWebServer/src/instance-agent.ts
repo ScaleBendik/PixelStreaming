@@ -108,6 +108,16 @@ interface PendingInstanceAgentEvent {
     metadata: Record<string, string>;
 }
 
+interface ScaleWorldSessionPlayer {
+    scaleWorldSessionId?: string | null;
+    scaleWorldSessionRequestId?: string | null;
+}
+
+interface PlayerSessionContext {
+    sessionId?: string;
+    sessionRequestId?: string;
+}
+
 interface InstanceAgentRuntimeSnapshot {
     status?: string;
     reason?: string;
@@ -505,6 +515,7 @@ export function wireInstanceAgent(
     let resetInProgress = false;
     let artifactManager: SessionLogArtifactManager | null = null;
     let screenshotArtifactManager: SessionScreenshotArtifactManager | null = null;
+    const playerSessionContexts = new Map<string, PlayerSessionContext>();
     const desiredStateListeners = new Set<InstanceAgentDesiredStateListener>();
     const commandListeners = new Set<InstanceAgentCommandListener>();
 
@@ -532,6 +543,30 @@ export function wireInstanceAgent(
             pendingEvents = pendingEvents.slice(pendingEvents.length - MAX_PENDING_EVENTS);
         }
     };
+
+    const readPlayerSessionContext = (playerId?: string): PlayerSessionContext => {
+        const normalizedPlayerId = normalizeOptionalText(playerId);
+        if (!normalizedPlayerId) {
+            return {};
+        }
+
+        const player = server.playerRegistry.get(normalizedPlayerId) as ScaleWorldSessionPlayer | undefined;
+        return {
+            sessionId: normalizeOptionalText(player?.scaleWorldSessionId),
+            sessionRequestId: normalizeOptionalText(player?.scaleWorldSessionRequestId)
+        };
+    };
+
+    const hasPlayerSessionContext = (context: PlayerSessionContext): boolean =>
+        Boolean(context.sessionId ?? context.sessionRequestId);
+
+    const buildPlayerSessionMetadata = (context: PlayerSessionContext): Record<string, unknown> => ({
+        sessionId: context.sessionId,
+        sessionRequestId: context.sessionRequestId
+    });
+
+    const getPlayerEventSessionId = (context: PlayerSessionContext): string | undefined =>
+        context.sessionId ?? context.sessionRequestId;
 
     const persistActiveCommand = (
         command: InstanceAgentCommand,
@@ -1077,7 +1112,11 @@ export function wireInstanceAgent(
                 trigger,
                 instanceId: identity.instanceId,
                 region: identity.region,
-                sessionRequestId: normalizeOptionalText(command?.sessionRequestId),
+                sessionRequestId:
+                    normalizeOptionalText(command?.sessionRequestId) ??
+                    normalizeOptionalText(metadata.sessionRequestId),
+                userSessionId: normalizeOptionalText(metadata.userSessionId),
+                sessionId: normalizeOptionalText(metadata.sessionId),
                 instanceCommandId: normalizeOptionalText(command?.instanceCommandId),
                 commandType: normalizeOptionalText(command?.commandType),
                 runtimeStatus: runtimeSnapshot.status,
@@ -1123,7 +1162,11 @@ export function wireInstanceAgent(
                 trigger,
                 instanceId: identity.instanceId,
                 region: identity.region,
-                sessionRequestId: normalizeOptionalText(command?.sessionRequestId),
+                sessionRequestId:
+                    normalizeOptionalText(command?.sessionRequestId) ??
+                    normalizeOptionalText(metadata.sessionRequestId),
+                userSessionId: normalizeOptionalText(metadata.userSessionId),
+                sessionId: normalizeOptionalText(metadata.sessionId),
                 runtimeStatus: runtimeSnapshot.status,
                 runtimeReason: runtimeSnapshot.reason,
                 runtimeVersion: runtimeSnapshot.version,
@@ -1158,7 +1201,10 @@ export function wireInstanceAgent(
         }
     };
 
-    const startSessionScreenshotArtifacts = async (metadata: Record<string, unknown> = {}): Promise<void> => {
+    const startSessionScreenshotArtifacts = async (
+        metadata: Record<string, unknown> = {},
+        sessionContext: PlayerSessionContext = {}
+    ): Promise<void> => {
         if (!screenshotArtifactManager) {
             return;
         }
@@ -1169,12 +1215,17 @@ export function wireInstanceAgent(
                 trigger: 'viewer_connected',
                 instanceId: identity.instanceId,
                 region: identity.region,
+                sessionRequestId: sessionContext.sessionRequestId,
+                sessionId: sessionContext.sessionId,
                 runtimeStatus: runtimeSnapshot.status,
                 runtimeReason: runtimeSnapshot.reason,
                 runtimeVersion: runtimeSnapshot.version,
                 lane: configuredLane,
                 timeRangeStartUtc: new Date().toISOString(),
-                metadata
+                metadata: {
+                    ...metadata,
+                    ...buildPlayerSessionMetadata(sessionContext)
+                }
             });
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -1383,21 +1434,47 @@ export function wireInstanceAgent(
 
     server.playerRegistry.on('added', (playerId: string) => {
         const viewerCount = server.playerRegistry.count();
-        queueEvent('viewer_connected', {
-            playerId,
-            viewerCount
-        });
-        void startSessionScreenshotArtifacts({ playerId, viewerCount });
+        const sessionContext = readPlayerSessionContext(playerId);
+        const normalizedPlayerId = normalizeOptionalText(playerId);
+        if (normalizedPlayerId && hasPlayerSessionContext(sessionContext)) {
+            playerSessionContexts.set(normalizedPlayerId, sessionContext);
+        } else if (normalizedPlayerId) {
+            playerSessionContexts.delete(normalizedPlayerId);
+        }
+        queueEvent(
+            'viewer_connected',
+            {
+                playerId,
+                viewerCount,
+                ...buildPlayerSessionMetadata(sessionContext)
+            },
+            getPlayerEventSessionId(sessionContext)
+        );
+        void startSessionScreenshotArtifacts({ playerId, viewerCount }, sessionContext);
         requestFastPolling('viewer_connected');
     });
     server.playerRegistry.on('removed', (playerId?: string) => {
         const rawCount = server.playerRegistry.count();
+        const normalizedPlayerId = normalizeOptionalText(playerId);
         const removedEntryStillPresent =
             typeof playerId === 'string' && playerId.length > 0 ? server.playerRegistry.has(playerId) : false;
-        queueEvent('viewer_disconnected', {
-            playerId,
-            viewerCount: Math.max(0, rawCount - (removedEntryStillPresent ? 1 : 0))
-        });
+        const sessionContext = removedEntryStillPresent
+            ? readPlayerSessionContext(playerId)
+            : normalizedPlayerId
+              ? (playerSessionContexts.get(normalizedPlayerId) ?? {})
+              : {};
+        queueEvent(
+            'viewer_disconnected',
+            {
+                playerId,
+                viewerCount: Math.max(0, rawCount - (removedEntryStillPresent ? 1 : 0)),
+                ...buildPlayerSessionMetadata(sessionContext)
+            },
+            getPlayerEventSessionId(sessionContext)
+        );
+        if (normalizedPlayerId) {
+            playerSessionContexts.delete(normalizedPlayerId);
+        }
         requestFastPolling('viewer_disconnected');
     });
 
@@ -1433,7 +1510,8 @@ export function wireInstanceAgent(
                     status: nextStatus,
                     reason: nextReason,
                     source: update.source,
-                    version: update.version
+                    version: update.version,
+                    sessionRequestId: activeCommand?.sessionRequestId
                 });
             } else if ((resetInProgress || pendingRecycleCompletion) && nextStatus === 'ready') {
                 const recycleMarker = pendingRecycleCompletion;
@@ -1456,7 +1534,8 @@ export function wireInstanceAgent(
                     version: update.version,
                     recycleId: recycleMarker?.recycleId,
                     recycleReason: recycleMarker?.reason,
-                    recycleRequestedAtUtc: recycleMarker?.requestedAtUtc
+                    recycleRequestedAtUtc: recycleMarker?.requestedAtUtc,
+                    sessionRequestId: activeCommand?.sessionRequestId
                 });
                 if (activeCommand && isRecycleToWarmCommand(activeCommand)) {
                     const commandToComplete = activeCommand;
@@ -1521,7 +1600,8 @@ export function wireInstanceAgent(
                     version: update.version,
                     recycleId: recycleMarker?.recycleId,
                     recycleReason: recycleMarker?.reason,
-                    recycleRequestedAtUtc: recycleMarker?.requestedAtUtc
+                    recycleRequestedAtUtc: recycleMarker?.requestedAtUtc,
+                    sessionRequestId: activeCommand?.sessionRequestId
                 });
                 if (activeCommand && isRecycleToWarmCommand(activeCommand)) {
                     const commandToFail = activeCommand;

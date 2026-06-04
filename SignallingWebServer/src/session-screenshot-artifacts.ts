@@ -198,6 +198,23 @@ function normalizeGuidText(value: unknown): string | undefined {
         : undefined;
 }
 
+function normalizeRequestSessionCorrelation(request: SessionScreenshotArtifactRegistrationRequest): void {
+    request.sessionRequestId =
+        normalizeGuidText(request.sessionRequestId) ?? normalizeGuidText(request.metadata?.sessionRequestId);
+    request.userSessionId =
+        normalizeGuidText(request.userSessionId) ?? normalizeGuidText(request.metadata?.userSessionId);
+    request.sessionId =
+        normalizeOptionalText(request.sessionId) ?? normalizeOptionalText(request.metadata?.sessionId);
+}
+
+function hasSessionCorrelation(request: SessionScreenshotArtifactRegistrationRequest): boolean {
+    return Boolean(
+        normalizeGuidText(request.sessionRequestId) ??
+            normalizeGuidText(request.userSessionId) ??
+            normalizeOptionalText(request.sessionId)
+    );
+}
+
 function truncateText(value: string, maxLength: number): string {
     return value.length <= maxLength ? value : `${value.slice(0, Math.max(0, maxLength - 3))}...`;
 }
@@ -754,6 +771,31 @@ export function createSessionScreenshotArtifactManager(
     };
 
     const registerRecord = async (record: ArtifactQueueRecord): Promise<void> => {
+        normalizeRequestSessionCorrelation(record.request);
+        if (!hasSessionCorrelation(record.request)) {
+            try {
+                fs.unlinkSync(path.join(queuePath, `${record.id}.json`));
+            } catch {
+                // best effort
+            }
+            try {
+                if (fs.existsSync(record.localPath)) fs.unlinkSync(record.localPath);
+            } catch {
+                // best effort
+            }
+            cleanupRecordSourceFiles(record, 'Uncorrelated lifecycle artifact');
+            const skippedByMaxFiles = Number.parseInt(record.request.metadata.skippedByMaxFiles ?? '0', 10);
+            const skippedByMaxBytes = Number.parseInt(record.request.metadata.skippedByMaxBytes ?? '0', 10);
+            const hasSkippedSourceFiles = skippedByMaxFiles > 0 || skippedByMaxBytes > 0;
+            if (!activeSession && !hasSkippedSourceFiles) {
+                cleanScreenshotSourceFolder('Post-uncorrelated-upload');
+            }
+            log(
+                `[screenshot-artifacts] Uploaded uncorrelated lifecycle artifact ${record.objectKey}; skipped session artifact registration.`
+            );
+            return;
+        }
+
         await options.registerArtifact(record.request);
         try {
             fs.unlinkSync(path.join(queuePath, `${record.id}.json`));
@@ -823,10 +865,17 @@ export function createSessionScreenshotArtifactManager(
 
     const mergeActiveContext = (context: Partial<SessionScreenshotArtifactCaptureContext>): void => {
         if (!activeSession) return;
+        const previousContext = activeSession.context;
         activeSession.context = {
-            ...activeSession.context,
+            ...previousContext,
             ...context,
-            metadata: { ...(activeSession.context.metadata ?? {}), ...(context.metadata ?? {}) }
+            sessionRequestId:
+                normalizeGuidText(context.sessionRequestId) ??
+                normalizeGuidText(previousContext.sessionRequestId),
+            userSessionId:
+                normalizeGuidText(context.userSessionId) ?? normalizeGuidText(previousContext.userSessionId),
+            sessionId: normalizeOptionalText(context.sessionId) ?? previousContext.sessionId,
+            metadata: { ...(previousContext.metadata ?? {}), ...(context.metadata ?? {}) }
         };
         writeActiveSessionSnapshot(activeSessionStatePath, activeSession);
     };
@@ -895,6 +944,12 @@ export function createSessionScreenshotArtifactManager(
         const mergedContext = {
             ...session.context,
             ...context,
+            sessionRequestId:
+                normalizeGuidText(context.sessionRequestId) ??
+                normalizeGuidText(session.context.sessionRequestId),
+            userSessionId:
+                normalizeGuidText(context.userSessionId) ?? normalizeGuidText(session.context.userSessionId),
+            sessionId: normalizeOptionalText(context.sessionId) ?? session.context.sessionId,
             metadata: { ...(session.context.metadata ?? {}), ...(context.metadata ?? {}) }
         } as SessionScreenshotArtifactCaptureContext;
         const sessionRequestId = normalizeGuidText(mergedContext.sessionRequestId);
