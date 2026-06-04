@@ -41,6 +41,8 @@ const EXPIRED_CONNECTION_GUIDANCE =
     'Connection expired. Return to your ScaleWorld session manager and click connect again to continue your session.';
 const SESSION_ENDED_GUIDANCE =
     'This ScaleWorld session has ended. Return to your ScaleWorld session manager to start a new session.';
+const INACTIVITY_DISCONNECT_GUIDANCE =
+    'Disconnected due to inactivity.<br><span style="display:block;font-size:0.62em;line-height:1.35;margin-top:0.75rem;text-transform:none;">Click to reconnect if this just happened. If it does not reconnect, return to the ScaleWorld session manager and request a new session.</span>';
 const RECONNECT_BOOTSTRAP_QUERY_PARAMS = new Set<string>([
     CONNECT_TICKET_PARAM,
     RECONNECT_REGION_PARAM,
@@ -437,6 +439,29 @@ const isScaleWorldSessionEndedReason = (reason: string): boolean => {
     return normalized.includes('scaleworld session ended');
 };
 
+const isInactivityDisconnectReason = (reason: string): boolean => {
+    const normalized = reason.trim().toLowerCase();
+    return (
+        normalized.includes('inactivity') ||
+        normalized.includes('afk') ||
+        normalized.includes('idle')
+    );
+};
+
+const showInactivityDisconnectGuidance = () => {
+    window.setTimeout(() => {
+        const disconnectOverlayText = document.getElementById('disconnectButton');
+        if (disconnectOverlayText) {
+            disconnectOverlayText.innerHTML = INACTIVITY_DISCONNECT_GUIDANCE;
+        }
+
+        const errorOverlayText = document.getElementById('errorOverlayInner');
+        if (errorOverlayText) {
+            errorOverlayText.innerHTML = INACTIVITY_DISCONNECT_GUIDANCE;
+        }
+    }, 0);
+};
+
 const showExpiredConnectionGuidance = () => {
     // Run after overlay updates so this text wins over generic "Disconnected".
     window.setTimeout(() => {
@@ -688,6 +713,11 @@ document.body.onload = function() {
     stream.addEventListener('webRtcDisconnected', (event) => {
         const eventData = (event as { data?: { eventString?: string } }).data;
         const reason = eventData?.eventString ?? '';
+        if (isInactivityDisconnectReason(reason)) {
+            showInactivityDisconnectGuidance();
+            return;
+        }
+
         if (isScaleWorldSessionEndedReason(reason)) {
             removeSessionStorage(connectTicketStorageKey);
             removeSessionStorage(reconnectContextStorageKey);
