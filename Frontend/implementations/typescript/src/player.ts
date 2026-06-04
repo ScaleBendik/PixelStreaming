@@ -437,31 +437,6 @@ const isScaleWorldSessionEndedReason = (reason: string): boolean => {
     return normalized.includes('scaleworld session ended');
 };
 
-const parseConnectTicketExpiryMs = (ticket: string): number | null => {
-    const trimmedTicket = ticket.trim();
-    if (!trimmedTicket) {
-        return null;
-    }
-
-    const segments = trimmedTicket.split('.');
-    if (segments.length < 2) {
-        return null;
-    }
-
-    try {
-        const base64 = segments[1].replace(/-/g, '+').replace(/_/g, '/');
-        const payloadJson = atob(base64);
-        const payload = JSON.parse(payloadJson) as { exp?: unknown };
-        if (typeof payload.exp !== 'number') {
-            return null;
-        }
-
-        return payload.exp * 1000;
-    } catch {
-        return null;
-    }
-};
-
 const showExpiredConnectionGuidance = () => {
     // Run after overlay updates so this text wins over generic "Disconnected".
     window.setTimeout(() => {
@@ -553,9 +528,6 @@ document.body.onload = function() {
 
     const connectTicket =
         connectTicketFromQuery || readSessionStorage(connectTicketStorageKey)?.trim() || '';
-    const connectTicketExpiresAtMs = connectTicket
-        ? parseConnectTicketExpiryMs(connectTicket)
-        : null;
     const reconnectContext =
         reconnectContextFromHash ??
         reconnectContextFromQuery ??
@@ -726,9 +698,7 @@ document.body.onload = function() {
             return;
         }
 
-        const isConnectTicketDisconnect =
-            isConnectTicketDisconnectReason(reason) ||
-            (connectTicketExpiresAtMs !== null && Date.now() >= connectTicketExpiresAtMs);
+        const isConnectTicketDisconnect = isConnectTicketDisconnectReason(reason);
         if (!isConnectTicketDisconnect) {
             return;
         }
