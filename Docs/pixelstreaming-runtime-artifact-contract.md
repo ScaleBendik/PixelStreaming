@@ -1,7 +1,7 @@
 # PixelStreaming Runtime Artifact Contract
 
 Date: 2026-05-21
-Last updated: 2026-06-03
+Last updated: 2026-06-04
 Status: active foundation
 
 ## Intent
@@ -151,11 +151,19 @@ Minimum workstation/publisher IAM:
 
 ## Windows Install Layout
 
-Stable bootstrap/updater root:
+Target stable bootstrap/updater root:
 
 ```text
 C:\PixelStreaming\bootstrap
 ```
+
+Current migration bootstrap/updater root:
+
+```text
+C:\PixelStreaming\PixelStreaming
+```
+
+The current Stage/Prod bridge still uses `C:\PixelStreaming\PixelStreaming` as a Git checkout for bootstrappers, update mode, provisioning mode, and bake-prep tooling. Runtime artifact update/provisioning aligns that checkout to the installed runtime artifact source commit before reporting success. This reduces drift between active runtime and bootstrappers, but it is not the final desired layout.
 
 Versioned runtime installs:
 
@@ -178,6 +186,8 @@ C:\PixelStreaming\logs
 
 Existing script/runbook paths that still assume `C:\PixelStreaming\PixelStreaming` need compatibility wrappers or explicit root overrides during migration.
 
+Long-term target: Stage/Prod serving instances should not need Git installed or a mutable repository checkout for ordinary operation. The bootstrap/updater payload should be artifact-owned and versioned with the runtime, with Git target refs retained only for Dev iteration and break-glass recovery.
+
 ## Update Flow
 
 Initial standalone installer script:
@@ -187,6 +197,13 @@ SignallingWebServer/platform_scripts/powershell/install_pixelstreaming_runtime.p
 ```
 
 Fleet update mode now uses this installer for `pixelstreaming_runtime` targets. Provisioning mode also uses it when the instance is launched with a `ScaleWorldTargetRuntimeManifestKey` tag. Release-candidate orchestration still needs to decide which manifest to stamp for each target.
+
+As of 2026-06-04, runtime artifact install/update behavior also:
+
+1. preserves source commit/ref metadata from the manifest into installed runtime metadata
+2. prunes older `runtime-releases` bundles so repeated artifact updates do not exhaust disk space
+3. uses `C:\PixelStreaming\state\runtime-updates` as transient scratch/cache state
+4. lets update/provisioning mode align the bootstrap checkout to the installed artifact source commit before final success
 
 Fleet update target types:
 
@@ -239,7 +256,7 @@ For combined updates, the runtime prepare step runs before activation and in par
 
 Rollback should switch the active pointer back to the previous installed bundle and restart, not reset a Git checkout.
 
-Migration note: existing instances only gain this path after their bootstrap checkout or base AMI contains the updated updater/provisioning scripts. Use the legacy repo-sweep/git-ref path once to deploy the bootstrap, then use runtime artifacts for subsequent PixelStreaming changes.
+Migration note: existing instances only gain this path after their bootstrap checkout or base AMI contains the updated updater/provisioning scripts. Use the legacy repo-sweep/git-ref path once to deploy the bootstrap, then use runtime artifacts for subsequent PixelStreaming changes. For Stage/Prod, prefer a Stage-validated source-instance AMI after bake prep over routine Git target-ref updates.
 
 Bootstrap readiness tag:
 
@@ -248,6 +265,15 @@ ScaleWorldPixelStreamingUpdateCapabilities=pixelstreaming_runtime,combined_runti
 ```
 
 The updater publishes this capability tag after the stable bootstrap/updater path is present. Server Manager API and web use it as the coarse compatibility gate for runtime-artifact and combined update jobs. A versioned updater contract is still a planned follow-up.
+
+Source alignment check after updates:
+
+```text
+ScaleWorldPixelStreamingRuntimeSourceCommit == installed artifact manifest commit
+ScaleWorldRuntimeRepoHead == same commit, or diagnostic-only when running from a non-git runtime root
+```
+
+If these disagree on a Stage/Prod source instance intended for AMI bake, run bake prep or inspect update/provisioning logs before baking.
 
 ## Runtime Identity Tags
 

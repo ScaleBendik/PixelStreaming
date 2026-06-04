@@ -147,6 +147,7 @@ Behavior:
 4. While `ScaleWorldMaintenanceMode` is present, Wilbur suppresses idle-stop timers entirely. This keeps provisioning/update maintenance instances alive even if they are expected to have zero viewers.
 5. Once maintenance clears, the first-viewer timer starts from that point instead of from initial process boot.
 6. Stop is executed via `aws ec2 stop-instances` against the current instance discovered from IMDSv2 metadata.
+7. Browser AFK disconnects should not keep refreshing expired connect tickets. The ScaleWorld player wrapper now lets stale AFK sessions fall through to API reconnect grace/recycle and shows explicit inactivity guidance if the tab is left on the disconnected Pixel Streaming page.
 
 Operational notes:
 
@@ -231,9 +232,11 @@ Important:
    - `SCALEWORLD_PROVISIONING_DETECTION_TIMEOUT_SECONDS` (default `90`)
    - `SCALEWORLD_PROVISIONING_BOOTSTRAP_RETRY_DELAY_SECONDS` (default `15`)
 19. If prod boot must reset to a newer pinned ref than the AMI was baked with, startup may spend several minutes in `git fetch` + `BuildScripts/build-all.bat` before Wilbur starts. That is a recovery path, not the intended steady-state launch cost.
-20. Before using a Stage instance as a Prod AMI source, run `BuildScripts\prepare-for-ami-bake.ps1` after the final runtime artifact update. The helper clears transient update/provisioning/runtime state while preserving active runtime-artifact identity; `BuildScripts\prepare-scaleworld-s4-for-ami-bake.bat` is the current convenience runner for the Stage source named `ScaleWorld_s4`.
+20. Runtime-artifact update/provisioning mode now aligns the bootstrap checkout at `C:\PixelStreaming\PixelStreaming` to the installed runtime artifact source commit before reporting success. This keeps bootstrappers, watchdog recovery, and active runtime scripts in sync during the migration period.
+21. Runtime-artifact installation prunes old `C:\PixelStreaming\runtime-releases` bundles so repeated updates do not grow disk usage indefinitely. The active runtime remains `C:\PixelStreaming\PixelStreamingRuntime`.
+22. Before using a Stage instance as a Prod AMI source, run `BuildScripts\prepare-for-ami-bake.ps1` after the final runtime artifact update. The helper aligns the bootstrap checkout to the runtime source commit, clears transient update/provisioning/runtime/session-artifact state while preserving active runtime-artifact identity, and verifies bake-prep/provisioning tooling. `BuildScripts\prepare-scaleworld-s4-for-ami-bake.bat` is the local-on-instance runner for the Stage source named `ScaleWorld_s4`; `BuildScripts\prepare-scaleworld-s4-for-ami-bake-via-ssm.bat` runs the same operation from an operator workstation through SSM.
 
-Operational prerequisite: Git-ref delivery, repo-sync recovery, and provisioning repo-sync bootstrap expect the instance's PixelStreaming directory to be a valid git checkout with `git` installed. Runtime-artifact delivery should run from the active runtime root and should not depend on repo sync during ordinary startup.
+Operational prerequisite during migration: Git-ref delivery, repo-sync recovery, provisioning bootstrap alignment, update bootstrap alignment, and AMI bake prep expect `C:\PixelStreaming\PixelStreaming` to be a valid git checkout with `git` installed. Runtime-artifact delivery should run Wilbur/Unreal/watchdog from the active runtime root and should not depend on repo sync during ordinary startup. The long-term target is to remove this Git requirement from Stage/Prod serving instances by making the bootstrap/updater payload artifact-owned.
 Given these options, to start the server with the closest behaviour as the old cirrus, you would invoke,
 ```
 npm start -- --console_messages --https_redirect verbose --serve --log_config --http_root www --homepage player.html
