@@ -1,5 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="ScaleWorld">
   <rect width="1024" height="1024" fill="#052846"/>
-  <path fill="#fff" d="M83 271c0-117 95-212 212-212h688c0 117-95 212-212 212H83Z"/>
-  <path fill="#fff" fill-rule="evenodd" d="M83 397h670c140 0 254 114 254 254v40c0 140-114 254-254 254H20c0-117 95-212 212-212h523c24 0 43-19 43-43v-40c0-24-19-43-43-43H293C177 607 83 513 83 397Z"/>
+  <g transform="translate(512 512) scale(0.82) translate(-512 -512)">
+    <path fill="#fff" d="M83 271c0-117 95-212 212-212h688c0 117-95 212-212 212H83Z"/>
+    <path fill="#fff" fill-rule="evenodd" d="M83 397h670c140 0 254 114 254 254v40c0 140-114 254-254 254H20c0-117 95-212 212-212h523c24 0 43-19 43-43v-40c0-24-19-43-43-43H293C177 607 83 513 83 397Z"/>
+  </g>
 </svg>
