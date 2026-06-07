@@ -83,6 +83,11 @@ type ScaleWorldSessionPlayer = {
     scaleWorldSessionRequestId?: string | null;
 };
 
+type ShutdownArtifactSessionMetadata = {
+    sessionId?: string;
+    sessionRequestId?: string;
+};
+
 async function readCurrentInstanceIdentity(): Promise<{ instanceId: string; region: string }> {
     const token = await readImdsToken();
     const [instanceId, region] = await Promise.all([
@@ -225,19 +230,6 @@ async function captureShutdownSessionArtifacts(
         };
         try {
             await withTimeout(
-                instanceAgentClient.captureSessionScreenshotArtifact(trigger, null, instanceTimeMetadata),
-                screenshotTimeoutMs,
-                `Timed out after ${screenshotTimeoutMs} ms.`
-            );
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            log(
-                `[idle-stop] Screenshot artifact capture '${trigger}' without shutdown command failed: ${message}`
-            );
-        }
-
-        try {
-            await withTimeout(
                 instanceAgentClient.captureSessionLogArtifact(trigger, null, instanceTimeMetadata),
                 logTimeoutMs,
                 `Timed out after ${logTimeoutMs} ms.`
@@ -246,6 +238,19 @@ async function captureShutdownSessionArtifacts(
             const message = error instanceof Error ? error.message : String(error);
             log(
                 `[idle-stop] Diagnostic artifact capture '${trigger}' without shutdown command failed: ${message}`
+            );
+        }
+
+        try {
+            await withTimeout(
+                instanceAgentClient.captureSessionScreenshotArtifact(trigger, null, instanceTimeMetadata),
+                screenshotTimeoutMs,
+                `Timed out after ${screenshotTimeoutMs} ms.`
+            );
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            log(
+                `[idle-stop] Screenshot artifact capture '${trigger}' without shutdown command failed: ${message}`
             );
         }
         return;
@@ -447,6 +452,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     let stopInFlight = false;
     let hasSeenViewer = server.playerRegistry.count() > 0;
     let hasSeenManagedSessionViewer = false;
+    let lastManagedSessionId: string | null = null;
     let lastManagedSessionRequestId: string | null = null;
     let lastManagedSessionObservedAtMs: number | null = null;
     let currentMaintenanceMode: string | null = null;
@@ -662,11 +668,25 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         hasSeenManagedSessionViewer = true;
+        if (sessionId) {
+            lastManagedSessionId = sessionId;
+        }
         if (sessionRequestId) {
             lastManagedSessionRequestId = sessionRequestId;
             lastManagedSessionObservedAtMs = Date.now();
         }
         return true;
+    };
+    const resolvePassiveShutdownArtifactMetadata = (): ShutdownArtifactSessionMetadata | null => {
+        const metadata: ShutdownArtifactSessionMetadata = {};
+        if (lastManagedSessionId) {
+            metadata.sessionId = lastManagedSessionId;
+        }
+        if (lastManagedSessionRequestId) {
+            metadata.sessionRequestId = lastManagedSessionRequestId;
+        }
+
+        return metadata.sessionId || metadata.sessionRequestId ? metadata : null;
     };
     const disconnectPlayersForExplicitTeardown = (command: RuntimeInstanceCommand): number => {
         const players: IPlayer[] = server.playerRegistry.listPlayers();
@@ -1136,11 +1156,16 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         const mappedPendingReason = mapPendingReason(reason);
         publishStatus('idle_shutdown_pending', mappedPendingReason);
         startTransientStatusHeartbeat('idle_shutdown_pending', mappedPendingReason);
-        const artifactSessionRequestId =
-            reason === 'grace-after-last-viewer' ? lastManagedSessionRequestId : null;
+        const artifactSessionMetadata =
+            reason === 'grace-after-last-viewer' ? resolvePassiveShutdownArtifactMetadata() : null;
+        if (reason === 'grace-after-last-viewer') {
+            log(
+                `[idle-stop] Prepared passive shutdown artifact metadata (sessionRequestId=${artifactSessionMetadata?.sessionRequestId ?? '-'}, sessionId=${artifactSessionMetadata?.sessionId ?? '-'}).`
+            );
+        }
         zeroViewersTimer = setTimeout(() => {
             zeroViewersTimer = null;
-            void requestStop(reason, artifactSessionRequestId);
+            void requestStop(reason, artifactSessionMetadata);
         }, delayMs);
         log(
             `[idle-stop] Scheduled stop in ${delayMs} ms (reason=${reason}, pendingReason=${mappedPendingReason}).`
@@ -1516,7 +1541,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
     const requestStop = async (
         reason: string,
-        artifactSessionRequestId?: string | null
+        artifactSessionMetadata?: ShutdownArtifactSessionMetadata | null
     ): Promise<boolean> => {
         if (stopInFlight) return false;
         resetInFlight = false;
@@ -1566,9 +1591,14 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             const shutdownArtifactMetadata =
-                commandToStart || reason !== 'grace-after-last-viewer' || !artifactSessionRequestId
+                commandToStart || reason !== 'grace-after-last-viewer'
                     ? undefined
-                    : { sessionRequestId: artifactSessionRequestId };
+                    : (artifactSessionMetadata ?? undefined);
+            if (!commandToStart && reason === 'grace-after-last-viewer') {
+                log(
+                    `[idle-stop] Capturing passive shutdown artifacts with metadata (sessionRequestId=${shutdownArtifactMetadata?.sessionRequestId ?? '-'}, sessionId=${shutdownArtifactMetadata?.sessionId ?? '-'}).`
+                );
+            }
 
             await captureShutdownSessionArtifacts(
                 options.instanceAgentClient,
