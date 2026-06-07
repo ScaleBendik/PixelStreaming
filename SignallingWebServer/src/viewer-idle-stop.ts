@@ -1136,8 +1136,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         const mappedPendingReason = mapPendingReason(reason);
         publishStatus('idle_shutdown_pending', mappedPendingReason);
         startTransientStatusHeartbeat('idle_shutdown_pending', mappedPendingReason);
+        const artifactSessionRequestId =
+            reason === 'grace-after-last-viewer' ? lastManagedSessionRequestId : null;
         zeroViewersTimer = setTimeout(() => {
-            void requestStop(reason);
+            zeroViewersTimer = null;
+            void requestStop(reason, artifactSessionRequestId);
         }, delayMs);
         log(
             `[idle-stop] Scheduled stop in ${delayMs} ms (reason=${reason}, pendingReason=${mappedPendingReason}).`
@@ -1511,7 +1514,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         );
     };
 
-    const requestStop = async (reason: string): Promise<boolean> => {
+    const requestStop = async (
+        reason: string,
+        artifactSessionRequestId?: string | null
+    ): Promise<boolean> => {
         if (stopInFlight) return false;
         resetInFlight = false;
         recycleLaunchRequested = false;
@@ -1559,6 +1565,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 }
             }
 
+            const shutdownArtifactMetadata =
+                commandToStart || reason !== 'grace-after-last-viewer' || !artifactSessionRequestId
+                    ? undefined
+                    : { sessionRequestId: artifactSessionRequestId };
+
             await captureShutdownSessionArtifacts(
                 options.instanceAgentClient,
                 commandToStart,
@@ -1566,7 +1577,8 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 reason,
                 log,
                 shutdownLogArtifactCaptureTimeoutMs,
-                shutdownScreenshotArtifactCaptureTimeoutMs
+                shutdownScreenshotArtifactCaptureTimeoutMs,
+                shutdownArtifactMetadata
             );
 
             publishStatus('stopping', mapStopReason(reason));
