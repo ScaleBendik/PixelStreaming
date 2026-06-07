@@ -653,20 +653,62 @@ export function wireInstanceAgent(
         }
     };
 
+    const reconcileActiveCommandFromControlPlane = (
+        commands: InstanceAgentCommand[],
+        source: string
+    ): void => {
+        const activeCommandId = normalizeOptionalText(activeCommand?.instanceCommandId)?.toLowerCase();
+        if (!activeCommand || !activeCommandId) {
+            return;
+        }
+
+        if (
+            commands.some(
+                (command) =>
+                    normalizeOptionalText(command.instanceCommandId)?.toLowerCase() === activeCommandId
+            )
+        ) {
+            return;
+        }
+
+        const staleCommand = activeCommand;
+        log(
+            `[instance-agent] Clearing local active command ${staleCommand.instanceCommandId} (${staleCommand.commandType}, status=${staleCommand.status}) because the control plane did not return it in the ${source} command set.`
+        );
+        queueEvent('instance_command_journal_cleared', {
+            instanceCommandId: staleCommand.instanceCommandId,
+            commandType: staleCommand.commandType,
+            commandStatus: staleCommand.status,
+            sessionRequestId: staleCommand.sessionRequestId,
+            source
+        });
+        clearActiveCommand();
+    };
+
     const applyCommands = (
         values: InstanceAgentCommandResponse[] | null | undefined,
         source: string
     ): void => {
-        if (!Array.isArray(values) || values.length === 0) {
+        if (!Array.isArray(values)) {
             return;
         }
 
+        const commands: InstanceAgentCommand[] = [];
         for (const rawCommand of values) {
             const command = normalizeCommand(rawCommand);
             if (!command) {
                 continue;
             }
 
+            commands.push(command);
+        }
+
+        reconcileActiveCommandFromControlPlane(commands, source);
+        if (commands.length === 0) {
+            return;
+        }
+
+        for (const command of commands) {
             queueEvent('instance_command_received', {
                 instanceCommandId: command.instanceCommandId,
                 commandType: command.commandType,

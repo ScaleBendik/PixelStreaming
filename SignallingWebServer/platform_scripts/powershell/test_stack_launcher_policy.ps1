@@ -1121,6 +1121,16 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $instanceAgent `
+    -Expected 'reconcileActiveCommandFromControlPlane' `
+    -Message 'Instance agent must reconcile locally recovered commands against authoritative control-plane command sets.'
+
+Assert-ContainsText `
+    -Content $instanceAgent `
+    -Expected 'because the control plane did not return it in the' `
+    -Message 'Instance agent must clear stale local command journals when bootstrap or heartbeat no longer returns the command.'
+
+Assert-ContainsText `
+    -Content $instanceAgent `
     -Expected "activeCommand.instanceCommandId !== recoveredActiveCommandId" `
     -Message 'Recovered command finalization must not complete a newly received recycle command against a stale ready snapshot.'
 
