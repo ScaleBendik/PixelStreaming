@@ -258,19 +258,6 @@ async function captureShutdownSessionArtifacts(
 
     try {
         await withTimeout(
-            instanceAgentClient.captureSessionScreenshotArtifact(trigger, command, captureMetadata),
-            screenshotTimeoutMs,
-            `Timed out after ${screenshotTimeoutMs} ms.`
-        );
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        log(
-            `[idle-stop] Screenshot artifact capture '${trigger}' for shutdown command ${command.instanceCommandId} failed: ${message}`
-        );
-    }
-
-    try {
-        await withTimeout(
             instanceAgentClient.captureSessionLogArtifact(trigger, command, captureMetadata),
             logTimeoutMs,
             `Timed out after ${logTimeoutMs} ms.`
@@ -279,6 +266,19 @@ async function captureShutdownSessionArtifacts(
         const message = error instanceof Error ? error.message : String(error);
         log(
             `[idle-stop] Diagnostic artifact capture '${trigger}' for shutdown command ${command.instanceCommandId} failed: ${message}`
+        );
+    }
+
+    try {
+        await withTimeout(
+            instanceAgentClient.captureSessionScreenshotArtifact(trigger, command, captureMetadata),
+            screenshotTimeoutMs,
+            `Timed out after ${screenshotTimeoutMs} ms.`
+        );
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log(
+            `[idle-stop] Screenshot artifact capture '${trigger}' for shutdown command ${command.instanceCommandId} failed: ${message}`
         );
     }
 }
