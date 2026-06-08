@@ -455,6 +455,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     let lastManagedSessionId: string | null = null;
     let lastManagedSessionRequestId: string | null = null;
     let lastManagedSessionObservedAtMs: number | null = null;
+    let lastShutdownCommandSessionRequestId: string | null = null;
     let currentMaintenanceMode: string | null = null;
     let maintenanceStateInitialized = false;
     let maintenanceRefreshInFlight = false;
@@ -685,8 +686,39 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         if (lastManagedSessionRequestId) {
             metadata.sessionRequestId = lastManagedSessionRequestId;
         }
+        if (!metadata.sessionRequestId && lastShutdownCommandSessionRequestId) {
+            metadata.sessionRequestId = lastShutdownCommandSessionRequestId;
+        }
 
         return metadata.sessionId || metadata.sessionRequestId ? metadata : null;
+    };
+    const rememberShutdownCommandSession = (command: InstanceAgentCommand): void => {
+        if (!isShutdownCommand(command) || !commandMatchesCurrentManagedSession(command)) {
+            return;
+        }
+
+        const sessionRequestId = normalizeOptionalText(command.sessionRequestId);
+        if (sessionRequestId) {
+            lastShutdownCommandSessionRequestId = sessionRequestId;
+        }
+    };
+    const resolveNoCommandShutdownArtifactMetadata = (
+        reason: string,
+        metadata?: ShutdownArtifactSessionMetadata | null
+    ): ShutdownArtifactSessionMetadata | undefined => {
+        if (metadata?.sessionId || metadata?.sessionRequestId) {
+            return metadata;
+        }
+
+        switch (reason) {
+            case 'agent_shutdown_requested':
+            case 'command_shutdown_requested':
+            case 'grace-after-last-viewer':
+            case 'retry-after-failure':
+                return resolvePassiveShutdownArtifactMetadata() ?? undefined;
+            default:
+                return undefined;
+        }
     };
     const disconnectPlayersForExplicitTeardown = (command: RuntimeInstanceCommand): number => {
         const players: IPlayer[] = server.playerRegistry.listPlayers();
@@ -814,8 +846,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         startResetWindow(true);
     };
     const tryResumeActiveShutdownCommand = (): void => {
+        const command = getActiveShutdownCommand();
         if (
-            !getActiveShutdownCommand() ||
+            !command ||
             stopInFlight ||
             server.playerRegistry.count() > 0 ||
             !maintenanceStateInitialized ||
@@ -824,7 +857,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
-        void requestStop('command_shutdown_requested');
+        void requestStop('command_shutdown_requested', {
+            sessionRequestId: command.sessionRequestId
+        });
     };
     const tryResumeDesiredStateShutdown = (): boolean => {
         if (
@@ -843,7 +878,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         clearTransientStatusHeartbeat();
         desiredStateShutdownResumeRequested = true;
         log('[idle-stop] Resuming shutdown requested by desired state.');
-        void requestStop(resolveDesiredStateShutdownReason())
+        void requestStop(resolveDesiredStateShutdownReason(), resolvePassiveShutdownArtifactMetadata())
             .then((accepted) => {
                 if (!accepted) {
                     desiredStateShutdownResumeRequested = false;
@@ -1043,7 +1078,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             if (currentDesiredState.shutdownRequested) {
-                void requestStop(resolveDesiredStateShutdownReason());
+                void requestStop(
+                    resolveDesiredStateShutdownReason(),
+                    resolvePassiveShutdownArtifactMetadata()
+                );
                 return;
             }
 
@@ -1069,7 +1107,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             if (currentDesiredState.shutdownRequested) {
-                void requestStop(resolveDesiredStateShutdownReason());
+                void requestStop(
+                    resolveDesiredStateShutdownReason(),
+                    resolvePassiveShutdownArtifactMetadata()
+                );
                 return;
             }
 
@@ -1128,7 +1169,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             (currentDesiredState.shutdownRequested || getActiveShutdownCommand()) &&
             server.playerRegistry.count() === 0
         ) {
-            void requestStop(resolveDesiredStateShutdownReason());
+            void requestStop(resolveDesiredStateShutdownReason(), resolvePassiveShutdownArtifactMetadata());
         }
     };
 
@@ -1224,7 +1265,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             if (currentDesiredState.shutdownRequested) {
-                void requestStop(resolveDesiredStateShutdownReason());
+                void requestStop(
+                    resolveDesiredStateShutdownReason(),
+                    resolvePassiveShutdownArtifactMetadata()
+                );
                 return;
             }
 
@@ -1276,7 +1320,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             if (getActiveShutdownCommand() || currentDesiredState.shutdownRequested) {
-                void requestStop(resolveDesiredStateShutdownReason());
+                void requestStop(
+                    resolveDesiredStateShutdownReason(),
+                    resolvePassiveShutdownArtifactMetadata()
+                );
                 return;
             }
 
@@ -1351,7 +1398,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         hasSeenViewer = false;
         if (currentDesiredState.shutdownRequested) {
-            void requestStop(resolveDesiredStateShutdownReason());
+            void requestStop(resolveDesiredStateShutdownReason(), resolvePassiveShutdownArtifactMetadata());
             return;
         }
 
@@ -1380,7 +1427,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             if (currentDesiredState.shutdownRequested) {
-                void requestStop(resolveDesiredStateShutdownReason());
+                void requestStop(
+                    resolveDesiredStateShutdownReason(),
+                    resolvePassiveShutdownArtifactMetadata()
+                );
                 return;
             }
 
@@ -1590,13 +1640,12 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 }
             }
 
-            const shutdownArtifactMetadata =
-                commandToStart || reason !== 'grace-after-last-viewer'
-                    ? undefined
-                    : (artifactSessionMetadata ?? undefined);
-            if (!commandToStart && reason === 'grace-after-last-viewer') {
+            const shutdownArtifactMetadata = commandToStart
+                ? undefined
+                : resolveNoCommandShutdownArtifactMetadata(reason, artifactSessionMetadata);
+            if (!commandToStart) {
                 log(
-                    `[idle-stop] Capturing passive shutdown artifacts with metadata (sessionRequestId=${shutdownArtifactMetadata?.sessionRequestId ?? '-'}, sessionId=${shutdownArtifactMetadata?.sessionId ?? '-'}).`
+                    `[idle-stop] Capturing no-command shutdown artifacts with metadata (reason=${reason}, sessionRequestId=${shutdownArtifactMetadata?.sessionRequestId ?? '-'}, sessionId=${shutdownArtifactMetadata?.sessionId ?? '-'}).`
                 );
             }
 
@@ -1731,8 +1780,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 return;
             }
 
-            if (maintenanceStateInitialized && !isMaintenanceActive() && getActiveShutdownCommand()) {
-                void requestStop('command_shutdown_requested');
+            const shutdownCommand = getActiveShutdownCommand();
+            if (maintenanceStateInitialized && !isMaintenanceActive() && shutdownCommand) {
+                void requestStop('command_shutdown_requested', {
+                    sessionRequestId: shutdownCommand.sessionRequestId
+                });
                 return;
             }
 
@@ -1768,6 +1820,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             applyDesiredStateSnapshot(nextDesiredState, `agent:${context.source}`);
         });
         options.instanceAgentClient.addCommandListener((command: InstanceAgentCommand) => {
+            rememberShutdownCommandSession(command);
             void (async () => {
                 let trackedCommand = readActiveCommand();
                 if (trackedCommand && (await failSupersededCommand(trackedCommand, 'active-command'))) {
@@ -1837,7 +1890,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     refreshActiveCommand();
                     if (server.playerRegistry.count() === 0) {
                         if (isShutdownCommand(command)) {
-                            void requestStop('command_shutdown_requested');
+                            void requestStop('command_shutdown_requested', {
+                                sessionRequestId: command.sessionRequestId
+                            });
                             return;
                         }
 
