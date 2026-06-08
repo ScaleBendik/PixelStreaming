@@ -197,6 +197,10 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMes
     }
 }
 
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function captureShutdownSessionArtifacts(
     instanceAgentClient:
         | Pick<InstanceAgentClient, 'captureSessionLogArtifact' | 'captureSessionScreenshotArtifact'>
@@ -801,6 +805,30 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         return 'agent_shutdown_requested';
+    };
+    const waitForActiveShutdownCommand = async (
+        reason: string,
+        timeoutMs = 2_000,
+        intervalMs = 100
+    ): Promise<RuntimeInstanceCommand | null> => {
+        let command = getActiveShutdownCommand();
+        if (command || reason !== 'agent_shutdown_requested' || !currentDesiredState.shutdownRequested) {
+            return command;
+        }
+
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            await sleep(intervalMs);
+            command = getActiveShutdownCommand();
+            if (command) {
+                log(
+                    `[idle-stop] Resolved shutdown command ${command.instanceCommandId} after desired-state shutdown reconciliation.`
+                );
+                return command;
+            }
+        }
+
+        return null;
     };
     const refreshActiveCommand = (): void => {
         readActiveCommand();
@@ -1625,7 +1653,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         stopInFlight = true;
         try {
-            const commandToStart = getActiveShutdownCommand();
+            const commandToStart = await waitForActiveShutdownCommand(reason);
             if (commandToStart && options.instanceAgentClient) {
                 try {
                     await options.instanceAgentClient.startCommand(commandToStart, {
@@ -1640,10 +1668,16 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 }
             }
 
-            const shutdownArtifactMetadata = commandToStart
-                ? undefined
-                : resolveNoCommandShutdownArtifactMetadata(reason, artifactSessionMetadata);
-            if (!commandToStart) {
+            const shutdownArtifactMetadata =
+                artifactSessionMetadata ??
+                (commandToStart
+                    ? { sessionRequestId: commandToStart.sessionRequestId }
+                    : resolveNoCommandShutdownArtifactMetadata(reason, artifactSessionMetadata));
+            if (commandToStart) {
+                log(
+                    `[idle-stop] Capturing command shutdown artifacts with metadata (reason=${reason}, sessionRequestId=${shutdownArtifactMetadata?.sessionRequestId ?? '-'}, command=${commandToStart.instanceCommandId}).`
+                );
+            } else {
                 log(
                     `[idle-stop] Capturing no-command shutdown artifacts with metadata (reason=${reason}, sessionRequestId=${shutdownArtifactMetadata?.sessionRequestId ?? '-'}, sessionId=${shutdownArtifactMetadata?.sessionId ?? '-'}).`
                 );
