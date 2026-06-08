@@ -534,6 +534,15 @@ export function wireInstanceAgent(
         }
     };
 
+    const flushEventsBestEffort = async (context: string): Promise<void> => {
+        try {
+            await flushEvents();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            log(`[instance-agent] Failed to flush ${context}: ${message}`);
+        }
+    };
+
     const readPlayerSessionContext = (playerId?: string): PlayerSessionContext => {
         const normalizedPlayerId = normalizeOptionalText(playerId);
         if (!normalizedPlayerId) {
@@ -1167,19 +1176,30 @@ export function wireInstanceAgent(
         command: InstanceAgentArtifactCommandContext,
         metadata: Record<string, unknown> = {}
     ): Promise<void> => {
+        const sessionRequestId =
+            normalizeOptionalText(command?.sessionRequestId) ??
+            normalizeOptionalText(metadata.sessionRequestId);
+        const userSessionId = normalizeOptionalText(metadata.userSessionId);
+        const sessionId = normalizeOptionalText(metadata.sessionId);
+        const instanceCommandId = normalizeOptionalText(command?.instanceCommandId);
+        const commandType = normalizeOptionalText(command?.commandType);
+
+        log(
+            `[session-artifacts] Capture requested trigger=${trigger}, enabled=${artifactManager ? 'true' : 'false'}, sessionRequestId=${sessionRequestId ?? '-'}, userSessionId=${userSessionId ?? '-'}, sessionId=${sessionId ?? '-'}, command=${instanceCommandId ?? '-'} (${commandType ?? '-'}).`
+        );
+
         if (!artifactManager) {
+            log(`[session-artifacts] Capture '${trigger}' skipped because artifact upload is disabled.`);
             queueEvent('session_log_artifact_disabled', {
                 ...metadata,
                 trigger,
-                sessionRequestId:
-                    normalizeOptionalText(command?.sessionRequestId) ??
-                    normalizeOptionalText(metadata.sessionRequestId),
-                userSessionId: normalizeOptionalText(metadata.userSessionId),
-                sessionId: normalizeOptionalText(metadata.sessionId),
-                instanceCommandId: normalizeOptionalText(command?.instanceCommandId),
-                commandType: normalizeOptionalText(command?.commandType)
+                sessionRequestId,
+                userSessionId,
+                sessionId,
+                instanceCommandId,
+                commandType
             });
-            void flushEvents().catch(() => undefined);
+            await flushEventsBestEffort('session log artifact disabled event');
             return;
         }
 
@@ -1189,13 +1209,11 @@ export function wireInstanceAgent(
                 trigger,
                 instanceId: identity.instanceId,
                 region: identity.region,
-                sessionRequestId:
-                    normalizeOptionalText(command?.sessionRequestId) ??
-                    normalizeOptionalText(metadata.sessionRequestId),
-                userSessionId: normalizeOptionalText(metadata.userSessionId),
-                sessionId: normalizeOptionalText(metadata.sessionId),
-                instanceCommandId: normalizeOptionalText(command?.instanceCommandId),
-                commandType: normalizeOptionalText(command?.commandType),
+                sessionRequestId,
+                userSessionId,
+                sessionId,
+                instanceCommandId,
+                commandType,
                 runtimeStatus: runtimeSnapshot.status,
                 runtimeReason: runtimeSnapshot.reason,
                 runtimeVersion: runtimeSnapshot.version,
@@ -1208,23 +1226,21 @@ export function wireInstanceAgent(
                 metadata
             });
             queueSessionLogArtifactEvent(trigger, command, metadata, result);
-            void flushEvents().catch(() => undefined);
+            await flushEventsBestEffort('session log artifact result event');
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             log(`[session-artifacts] ${trigger} capture failed: ${message}`);
             queueEvent('session_log_artifact_capture_failed', {
                 trigger,
                 errorMessage: truncateDiagnosticText(message),
-                sessionRequestId:
-                    normalizeOptionalText(command?.sessionRequestId) ??
-                    normalizeOptionalText(metadata.sessionRequestId),
-                userSessionId: normalizeOptionalText(metadata.userSessionId),
-                sessionId: normalizeOptionalText(metadata.sessionId),
-                instanceCommandId: normalizeOptionalText(command?.instanceCommandId),
-                commandType: normalizeOptionalText(command?.commandType),
+                sessionRequestId,
+                userSessionId,
+                sessionId,
+                instanceCommandId,
+                commandType,
                 ...metadata
             });
-            void flushEvents().catch(() => undefined);
+            await flushEventsBestEffort('session log artifact failure event');
             throw error;
         }
     };
@@ -1274,7 +1290,7 @@ export function wireInstanceAgent(
                     commandType: normalizeOptionalText(command?.commandType),
                     ...metadata
                 });
-                void flushEvents().catch(() => undefined);
+                await flushEventsBestEffort('screenshot artifact empty event');
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
