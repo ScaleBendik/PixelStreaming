@@ -1093,6 +1093,39 @@ export function createSessionLogArtifactManager(
         cleanSessionLogs('after_registration');
     };
 
+    const processQueueFile = async (filePath: string): Promise<boolean> => {
+        const record = readQueueRecord(filePath);
+        if (!record) {
+            return false;
+        }
+
+        try {
+            const discardReason = await resolveQueueRecordIdentityMismatch(record);
+            if (discardReason) {
+                discardQueueRecord(record, discardReason);
+                return true;
+            }
+
+            if (record.status === 'pending_upload') {
+                await uploadRecord(record);
+            }
+
+            if (record.status === 'pending_registration') {
+                await registerRecord(record);
+            }
+            return true;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            record.attempts += 1;
+            record.lastError = truncateText(message, 1000);
+            updateRecord(record);
+            log(
+                `[session-artifacts] Queue record ${record.id} failed (attempt=${record.attempts}): ${truncateText(message, 500)}`
+            );
+            return true;
+        }
+    };
+
     const drainQueueCore = async (): Promise<void> => {
         let files: string[];
         try {
@@ -1111,35 +1144,8 @@ export function createSessionLogArtifactManager(
                 break;
             }
 
-            const record = readQueueRecord(filePath);
-            if (!record) {
-                continue;
-            }
-
-            try {
-                const discardReason = await resolveQueueRecordIdentityMismatch(record);
-                if (discardReason) {
-                    discardQueueRecord(record, discardReason);
-                    processed += 1;
-                    continue;
-                }
-
-                if (record.status === 'pending_upload') {
-                    await uploadRecord(record);
-                }
-
-                if (record.status === 'pending_registration') {
-                    await registerRecord(record);
-                }
+            if (await processQueueFile(filePath)) {
                 processed += 1;
-            } catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
-                record.attempts += 1;
-                record.lastError = truncateText(message, 1000);
-                updateRecord(record);
-                log(
-                    `[session-artifacts] Queue record ${record.id} failed (attempt=${record.attempts}): ${truncateText(message, 500)}`
-                );
             }
         }
     };
@@ -1251,13 +1257,14 @@ export function createSessionLogArtifactManager(
             `[session-artifacts] Captured diagnostic bundle ${localPath} (${compressed.length} bytes, files=${collected.files.length}, entries=${includedEntryCount}, missing=${missingEntryCount}).`
         );
         const hadSessionCorrelation = hasSessionCorrelation(request);
-        await drainQueue();
         const recordPath = path.join(queuePath, `${artifactId}.json`);
+        await processQueueFile(recordPath);
+        await drainQueue();
         let queuedRecord = readQueueRecord(recordPath);
         // A background drain may have started before this record was written.
         // Run one fresh drain so shutdown captures do not stop with an untouched bundle.
         if (queuedRecord?.status === 'pending_upload' && queuedRecord.attempts === 0) {
-            await drainQueue();
+            await processQueueFile(recordPath);
             queuedRecord = readQueueRecord(recordPath);
         }
 
