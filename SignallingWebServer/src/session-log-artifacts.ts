@@ -15,7 +15,7 @@ const DEFAULT_MAX_ENTRY_BYTES = 512 * 1024;
 const MAX_DRAIN_RECORDS = 3;
 const TAR_BLOCK_SIZE = 512;
 
-type QueueRecordStatus = 'pending_upload' | 'pending_registration';
+export type QueueRecordStatus = 'pending_upload' | 'pending_registration';
 
 interface LogCandidate {
     kind: string;
@@ -119,6 +119,18 @@ export interface SessionLogArtifactCaptureContext {
     metadata?: Record<string, unknown>;
 }
 
+export interface SessionLogArtifactCaptureResult {
+    artifactId: string;
+    objectKey: string;
+    sessionRequestId?: string;
+    userSessionId?: string;
+    sessionId?: string;
+    status: 'registered' | 'queued' | 'uploaded_uncorrelated';
+    queueStatus?: QueueRecordStatus;
+    attempts?: number;
+    lastError?: string;
+}
+
 export interface SessionLogArtifactManagerOptions extends SessionLogArtifactRuntimeOptions {
     registerArtifact: (request: SessionLogArtifactRegistrationRequest) => Promise<void>;
     getCurrentInstanceIdentity?: () => Promise<{ instanceId: string; region: string }>;
@@ -126,7 +138,7 @@ export interface SessionLogArtifactManagerOptions extends SessionLogArtifactRunt
 }
 
 export interface SessionLogArtifactManager {
-    captureAndUpload(context: SessionLogArtifactCaptureContext): Promise<void>;
+    captureAndUpload(context: SessionLogArtifactCaptureContext): Promise<SessionLogArtifactCaptureResult>;
     drainQueue(): Promise<void>;
     cleanStartupLogs(options?: { preserveRecycleLogs?: boolean }): void;
 }
@@ -1143,7 +1155,9 @@ export function createSessionLogArtifactManager(
         return drainPromise;
     };
 
-    const captureAndUpload = async (context: SessionLogArtifactCaptureContext): Promise<void> => {
+    const captureAndUpload = async (
+        context: SessionLogArtifactCaptureContext
+    ): Promise<SessionLogArtifactCaptureResult> => {
         const artifactId = randomUUID();
         const createdAtUtc = new Date().toISOString();
         const candidates = discoverLogCandidates(options, repoRoot, logFolder, desiredStatePath);
@@ -1236,7 +1250,39 @@ export function createSessionLogArtifactManager(
         log(
             `[session-artifacts] Captured diagnostic bundle ${localPath} (${compressed.length} bytes, files=${collected.files.length}, entries=${includedEntryCount}, missing=${missingEntryCount}).`
         );
+        const hadSessionCorrelation = hasSessionCorrelation(request);
         await drainQueue();
+        const recordPath = path.join(queuePath, `${artifactId}.json`);
+        let queuedRecord = readQueueRecord(recordPath);
+        // A background drain may have started before this record was written.
+        // Run one fresh drain so shutdown captures do not stop with an untouched bundle.
+        if (queuedRecord?.status === 'pending_upload' && queuedRecord.attempts === 0) {
+            await drainQueue();
+            queuedRecord = readQueueRecord(recordPath);
+        }
+
+        if (queuedRecord) {
+            return {
+                artifactId,
+                objectKey,
+                sessionRequestId: request.sessionRequestId,
+                userSessionId: request.userSessionId,
+                sessionId: request.sessionId,
+                status: 'queued',
+                queueStatus: queuedRecord.status,
+                attempts: queuedRecord.attempts,
+                lastError: queuedRecord.lastError
+            };
+        }
+
+        return {
+            artifactId,
+            objectKey,
+            sessionRequestId: request.sessionRequestId,
+            userSessionId: request.userSessionId,
+            sessionId: request.sessionId,
+            status: hadSessionCorrelation ? 'registered' : 'uploaded_uncorrelated'
+        };
     };
 
     return {

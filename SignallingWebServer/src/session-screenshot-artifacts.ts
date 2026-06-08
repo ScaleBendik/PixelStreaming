@@ -1142,6 +1142,13 @@ export function createSessionScreenshotArtifactManager(
                 `[screenshot-artifacts] Captured screenshot bundle ${localPath} (${archive.length} bytes, screenshots=${selectedScreenshots.length}, skippedByMaxFiles=${skippedByMaxFiles}, skippedByMaxBytes=${skippedByMaxBytes}).`
             );
             await drainQueue();
+            const recordPath = path.join(queuePath, `${artifactId}.json`);
+            const queuedRecord = readQueueRecord(recordPath);
+            // A background drain may have started before this record was written.
+            // Run one fresh drain so shutdown captures do not stop with an untouched bundle.
+            if (queuedRecord?.status === 'pending_upload' && queuedRecord.attempts === 0) {
+                await drainQueue();
+            }
             return {
                 status: 'captured',
                 sessionRequestId,
