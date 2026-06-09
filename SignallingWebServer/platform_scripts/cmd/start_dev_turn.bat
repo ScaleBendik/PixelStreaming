@@ -5,10 +5,10 @@ set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%\..\..") do set "ROOT=%%~fI"
 if defined SCALEWORLD_WILBUR_ROOT set "ROOT=%SCALEWORLD_WILBUR_ROOT%"
 if not defined SCALEWORLD_INSTALL_BASE set "SCALEWORLD_INSTALL_BASE=C:\PixelStreaming"
-for %%I in ("%SCALEWORLD_INSTALL_BASE%\PixelStreamingRuntime") do set "SCALEWORLD_ACTIVE_RUNTIME_ROOT=%%~fI"
-set "ACTIVE_RUNTIME_WILBUR_LAUNCHER=%SCALEWORLD_ACTIVE_RUNTIME_ROOT%\SignallingWebServer\platform_scripts\cmd\start_dev_turn.bat"
-set "NORMALIZE_DELIVERY_MODE_SCRIPT=%ROOT%\SignallingWebServer\platform_scripts\powershell\normalize_pixelstreaming_delivery_mode.ps1"
-set "RESOLVE_DELIVERY_MODE_SCRIPT=%ROOT%\SignallingWebServer\platform_scripts\powershell\resolve_pixelstreaming_delivery_mode_from_instance_tag.ps1"
+for %%I in ("%SCALEWORLD_INSTALL_BASE%\PixelStreamingRuntime\SignallingWebServer") do set "SCALEWORLD_ACTIVE_RUNTIME_WILBUR_ROOT=%%~fI"
+set "ACTIVE_RUNTIME_WILBUR_LAUNCHER=%SCALEWORLD_ACTIVE_RUNTIME_WILBUR_ROOT%\platform_scripts\cmd\start_dev_turn.bat"
+set "NORMALIZE_DELIVERY_MODE_SCRIPT=%ROOT%\platform_scripts\powershell\normalize_pixelstreaming_delivery_mode.ps1"
+set "RESOLVE_DELIVERY_MODE_SCRIPT=%ROOT%\platform_scripts\powershell\resolve_pixelstreaming_delivery_mode_from_instance_tag.ps1"
 set "ACTIVE_RUNTIME_WILBUR_DELEGATED=false"
 call :delegate_to_active_runtime_if_required %*
 set "ACTIVE_RUNTIME_WILBUR_DELEGATE_EXIT=%errorlevel%"
@@ -780,7 +780,7 @@ goto resolve_deployment_track_retry
 set "ACTIVE_RUNTIME_WILBUR_DELEGATED=false"
 
 if /i "%SCALEWORLD_DISABLE_ACTIVE_RUNTIME_WILBUR_DELEGATION%"=="true" exit /b 0
-if /i "%ROOT%"=="%SCALEWORLD_ACTIVE_RUNTIME_ROOT%" exit /b 0
+if /i "%ROOT%"=="%SCALEWORLD_ACTIVE_RUNTIME_WILBUR_ROOT%" exit /b 0
 if not exist "%ACTIVE_RUNTIME_WILBUR_LAUNCHER%" if not defined SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE exit /b 0
 
 call :resolve_pixelstreaming_delivery_mode_for_wilbur

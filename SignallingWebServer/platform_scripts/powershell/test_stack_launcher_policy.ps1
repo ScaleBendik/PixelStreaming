@@ -208,12 +208,22 @@ Assert-MatchesText `
 
 Assert-ContainsText `
     -Content $startDevTurn `
-    -Expected 'set "ACTIVE_RUNTIME_WILBUR_LAUNCHER=%SCALEWORLD_ACTIVE_RUNTIME_ROOT%\SignallingWebServer\platform_scripts\cmd\start_dev_turn.bat"' `
+    -Expected 'for %%I in ("%SCALEWORLD_INSTALL_BASE%\PixelStreamingRuntime\SignallingWebServer") do set "SCALEWORLD_ACTIVE_RUNTIME_WILBUR_ROOT=%%~fI"' `
+    -Message 'Direct Wilbur startup must resolve the active runtime Wilbur root, not the runtime parent directory.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'set "ACTIVE_RUNTIME_WILBUR_LAUNCHER=%SCALEWORLD_ACTIVE_RUNTIME_WILBUR_ROOT%\platform_scripts\cmd\start_dev_turn.bat"' `
     -Message 'Direct Wilbur startup must target the active runtime Wilbur launcher when runtime-artifact mode is active.'
 
 Assert-ContainsText `
     -Content $startDevTurn `
-    -Expected 'if /i "%ROOT%"=="%SCALEWORLD_ACTIVE_RUNTIME_ROOT%" exit /b 0' `
+    -Expected 'set "NORMALIZE_DELIVERY_MODE_SCRIPT=%ROOT%\platform_scripts\powershell\normalize_pixelstreaming_delivery_mode.ps1"' `
+    -Message 'Direct Wilbur startup must resolve helper scripts relative to the SignallingWebServer root.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'if /i "%ROOT%"=="%SCALEWORLD_ACTIVE_RUNTIME_WILBUR_ROOT%" exit /b 0' `
     -Message 'Active-runtime Wilbur startup must not recursively delegate to itself.'
 
 Assert-ContainsText `
