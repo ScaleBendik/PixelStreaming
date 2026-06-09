@@ -197,6 +197,56 @@ Assert-ContainsText `
     -Message 'Delegated active runtime startup must bind Unreal recovery to the active runtime launcher directory.'
 
 Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'call :delegate_to_active_runtime_if_required %*' `
+    -Message 'Direct Wilbur startup must also perform active-runtime delegation before it can launch the bootstrap checkout.'
+
+Assert-MatchesText `
+    -Content $startDevTurn `
+    -Pattern 'call :delegate_to_active_runtime_if_required %\*.*?set "REGION=eu-north-1"' `
+    -Message 'Direct Wilbur startup must perform active-runtime delegation before resolving normal bootstrap startup settings.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'set "ACTIVE_RUNTIME_WILBUR_LAUNCHER=%SCALEWORLD_ACTIVE_RUNTIME_ROOT%\SignallingWebServer\platform_scripts\cmd\start_dev_turn.bat"' `
+    -Message 'Direct Wilbur startup must target the active runtime Wilbur launcher when runtime-artifact mode is active.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'if /i "%ROOT%"=="%SCALEWORLD_ACTIVE_RUNTIME_ROOT%" exit /b 0' `
+    -Message 'Active-runtime Wilbur startup must not recursively delegate to itself.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'if not exist "%ACTIVE_RUNTIME_WILBUR_LAUNCHER%" if not defined SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE exit /b 0' `
+    -Message 'Direct Wilbur startup must not query EC2 delivery-mode tags when no active runtime is installed and no explicit mode was provided.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="git_ref" exit /b 0' `
+    -Message 'Direct Wilbur startup must preserve explicit git-ref mode without active-runtime delegation.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'Delegating Wilbur startup to active PixelStreaming runtime' `
+    -Message 'Direct Wilbur startup must have an observable active-runtime handoff path.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'PixelStreaming delivery mode runtime_artifact requires active Wilbur launcher' `
+    -Message 'Direct Wilbur startup must fail closed when explicit runtime-artifact mode is active but no active runtime launcher exists.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'DELIVERY_MODE_OUTPUT=%TEMP%\scaleworld-delivery-mode-' `
+    -Message 'Direct Wilbur startup must capture delivery-mode resolver output without hiding resolver failures.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'if not "%RESOLVE_DELIVERY_MODE_EXIT%"=="0"' `
+    -Message 'Direct Wilbur startup must fail closed when delivery-mode resolution fails.'
+
+Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'set "STACK_ENABLE_PROVISIONING_MODE=false"' `
     -Message 'Delegated active runtime startup must suppress provisioning preflight before calling the runtime launcher.'
@@ -616,6 +666,11 @@ Assert-ContainsText `
     -Expected "Continuing with general origin fetch before checking out the artifact commit." `
     -Message 'Provisioning bootstrap alignment must treat source-ref fetch as best-effort and keep the artifact commit authoritative.'
 
+Assert-ContainsText `
+    -Content $provisioningMode `
+    -Expected "'SignallingWebServer\platform_scripts\cmd\start_dev_turn.bat'" `
+    -Message 'Provisioning bootstrap alignment must require the direct Wilbur launcher from the runtime artifact source commit.'
+
 Assert-MatchesText `
     -Content $provisioningMode `
     -Pattern 'Invoke-BootstrapCheckoutAlignment.*?-RepoRoot \$pixelStreamingRoot.*?-SourceCommit \(Get-ObjectPropertyValue -InputObject \$installResult -Name ''SourceCommit''\).*?Set-ProvisioningRuntimeIdentityTags' `
@@ -640,6 +695,11 @@ Assert-ContainsText `
     -Content $updateMode `
     -Expected 'Invoke-BootstrapCheckoutAlignment -RepoRoot $pixelStreamingRoot -SourceCommit $installedSourceCommit -SourceRef $installedSourceRef' `
     -Message 'Update mode must align bootstrap to the installed runtime artifact source commit.'
+
+Assert-ContainsText `
+    -Content $updateMode `
+    -Expected "'SignallingWebServer\platform_scripts\cmd\start_dev_turn.bat'" `
+    -Message 'Update mode bootstrap alignment must require the direct Wilbur launcher from the runtime artifact source commit.'
 
 Assert-ContainsText `
     -Content $repoHeadPublisher `
