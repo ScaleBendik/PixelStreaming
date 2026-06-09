@@ -15,7 +15,7 @@ const DEFAULT_MAX_ENTRY_BYTES = 512 * 1024;
 const MAX_DRAIN_RECORDS = 3;
 const TAR_BLOCK_SIZE = 512;
 
-export type QueueRecordStatus = 'pending_upload' | 'pending_registration';
+type QueueRecordStatus = 'pending_upload' | 'pending_registration';
 
 interface LogCandidate {
     kind: string;
@@ -119,18 +119,6 @@ export interface SessionLogArtifactCaptureContext {
     metadata?: Record<string, unknown>;
 }
 
-export interface SessionLogArtifactCaptureResult {
-    artifactId: string;
-    objectKey: string;
-    sessionRequestId?: string;
-    userSessionId?: string;
-    sessionId?: string;
-    status: 'registered' | 'queued' | 'uploaded_uncorrelated';
-    queueStatus?: QueueRecordStatus;
-    attempts?: number;
-    lastError?: string;
-}
-
 export interface SessionLogArtifactManagerOptions extends SessionLogArtifactRuntimeOptions {
     registerArtifact: (request: SessionLogArtifactRegistrationRequest) => Promise<void>;
     getCurrentInstanceIdentity?: () => Promise<{ instanceId: string; region: string }>;
@@ -138,7 +126,7 @@ export interface SessionLogArtifactManagerOptions extends SessionLogArtifactRunt
 }
 
 export interface SessionLogArtifactManager {
-    captureAndUpload(context: SessionLogArtifactCaptureContext): Promise<SessionLogArtifactCaptureResult>;
+    captureAndUpload(context: SessionLogArtifactCaptureContext): Promise<void>;
     drainQueue(): Promise<void>;
     cleanStartupLogs(options?: { preserveRecycleLogs?: boolean }): void;
 }
@@ -216,22 +204,6 @@ function truncateText(value: string, maxLength: number): string {
     }
 
     return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
-}
-
-function resolvePermanentRegistrationFailureReason(error: unknown): string | null {
-    const statusCode =
-        typeof (error as { statusCode?: unknown })?.statusCode === 'number'
-            ? (error as { statusCode: number }).statusCode
-            : undefined;
-    const message = error instanceof Error ? error.message : String(error);
-    if (
-        statusCode === 404 &&
-        message.toLowerCase().includes('no session analytics row matched artifact registration')
-    ) {
-        return 'artifact registration was permanently rejected because no session analytics row matched';
-    }
-
-    return null;
 }
 
 function normalizeMetadata(input: Record<string, unknown> | undefined): Record<string, string> {
@@ -1109,48 +1081,6 @@ export function createSessionLogArtifactManager(
         cleanSessionLogs('after_registration');
     };
 
-    const processQueueFile = async (filePath: string): Promise<boolean> => {
-        const record = readQueueRecord(filePath);
-        if (!record) {
-            return false;
-        }
-
-        try {
-            const discardReason = await resolveQueueRecordIdentityMismatch(record);
-            if (discardReason) {
-                discardQueueRecord(record, discardReason);
-                return true;
-            }
-
-            if (record.status === 'pending_upload') {
-                await uploadRecord(record);
-            }
-
-            if (record.status === 'pending_registration') {
-                await registerRecord(record);
-            }
-            return true;
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            const permanentFailureReason =
-                record.status === 'pending_registration'
-                    ? resolvePermanentRegistrationFailureReason(error)
-                    : null;
-            if (permanentFailureReason) {
-                discardQueueRecord(record, permanentFailureReason);
-                return true;
-            }
-
-            record.attempts += 1;
-            record.lastError = truncateText(message, 1000);
-            updateRecord(record);
-            log(
-                `[session-artifacts] Queue record ${record.id} failed (attempt=${record.attempts}): ${truncateText(message, 500)}`
-            );
-            return true;
-        }
-    };
-
     const drainQueueCore = async (): Promise<void> => {
         let files: string[];
         try {
@@ -1169,8 +1099,35 @@ export function createSessionLogArtifactManager(
                 break;
             }
 
-            if (await processQueueFile(filePath)) {
+            const record = readQueueRecord(filePath);
+            if (!record) {
+                continue;
+            }
+
+            try {
+                const discardReason = await resolveQueueRecordIdentityMismatch(record);
+                if (discardReason) {
+                    discardQueueRecord(record, discardReason);
+                    processed += 1;
+                    continue;
+                }
+
+                if (record.status === 'pending_upload') {
+                    await uploadRecord(record);
+                }
+
+                if (record.status === 'pending_registration') {
+                    await registerRecord(record);
+                }
                 processed += 1;
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                record.attempts += 1;
+                record.lastError = truncateText(message, 1000);
+                updateRecord(record);
+                log(
+                    `[session-artifacts] Queue record ${record.id} failed (attempt=${record.attempts}): ${truncateText(message, 500)}`
+                );
             }
         }
     };
@@ -1186,9 +1143,7 @@ export function createSessionLogArtifactManager(
         return drainPromise;
     };
 
-    const captureAndUpload = async (
-        context: SessionLogArtifactCaptureContext
-    ): Promise<SessionLogArtifactCaptureResult> => {
+    const captureAndUpload = async (context: SessionLogArtifactCaptureContext): Promise<void> => {
         const artifactId = randomUUID();
         const createdAtUtc = new Date().toISOString();
         const candidates = discoverLogCandidates(options, repoRoot, logFolder, desiredStatePath);
@@ -1281,40 +1236,7 @@ export function createSessionLogArtifactManager(
         log(
             `[session-artifacts] Captured diagnostic bundle ${localPath} (${compressed.length} bytes, files=${collected.files.length}, entries=${includedEntryCount}, missing=${missingEntryCount}).`
         );
-        const hadSessionCorrelation = hasSessionCorrelation(request);
-        const recordPath = path.join(queuePath, `${artifactId}.json`);
-        await processQueueFile(recordPath);
         await drainQueue();
-        let queuedRecord = readQueueRecord(recordPath);
-        // A background drain may have started before this record was written.
-        // Run one fresh drain so shutdown captures do not stop with an untouched bundle.
-        if (queuedRecord?.status === 'pending_upload' && queuedRecord.attempts === 0) {
-            await processQueueFile(recordPath);
-            queuedRecord = readQueueRecord(recordPath);
-        }
-
-        if (queuedRecord) {
-            return {
-                artifactId,
-                objectKey,
-                sessionRequestId: request.sessionRequestId,
-                userSessionId: request.userSessionId,
-                sessionId: request.sessionId,
-                status: 'queued',
-                queueStatus: queuedRecord.status,
-                attempts: queuedRecord.attempts,
-                lastError: queuedRecord.lastError
-            };
-        }
-
-        return {
-            artifactId,
-            objectKey,
-            sessionRequestId: request.sessionRequestId,
-            userSessionId: request.userSessionId,
-            sessionId: request.sessionId,
-            status: hadSessionCorrelation ? 'registered' : 'uploaded_uncorrelated'
-        };
     };
 
     return {

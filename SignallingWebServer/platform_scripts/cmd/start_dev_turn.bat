@@ -4,16 +4,6 @@ setlocal EnableExtensions EnableDelayedExpansion
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%\..\..") do set "ROOT=%%~fI"
 if defined SCALEWORLD_WILBUR_ROOT set "ROOT=%SCALEWORLD_WILBUR_ROOT%"
-if not defined SCALEWORLD_INSTALL_BASE set "SCALEWORLD_INSTALL_BASE=C:\PixelStreaming"
-for %%I in ("%SCALEWORLD_INSTALL_BASE%\PixelStreamingRuntime\SignallingWebServer") do set "SCALEWORLD_ACTIVE_RUNTIME_WILBUR_ROOT=%%~fI"
-set "ACTIVE_RUNTIME_WILBUR_LAUNCHER=%SCALEWORLD_ACTIVE_RUNTIME_WILBUR_ROOT%\platform_scripts\cmd\start_dev_turn.bat"
-set "NORMALIZE_DELIVERY_MODE_SCRIPT=%ROOT%\platform_scripts\powershell\normalize_pixelstreaming_delivery_mode.ps1"
-set "RESOLVE_DELIVERY_MODE_SCRIPT=%ROOT%\platform_scripts\powershell\resolve_pixelstreaming_delivery_mode_from_instance_tag.ps1"
-set "ACTIVE_RUNTIME_WILBUR_DELEGATED=false"
-call :delegate_to_active_runtime_if_required %*
-set "ACTIVE_RUNTIME_WILBUR_DELEGATE_EXIT=%errorlevel%"
-if /i "%ACTIVE_RUNTIME_WILBUR_DELEGATED%"=="true" exit /b %ACTIVE_RUNTIME_WILBUR_DELEGATE_EXIT%
-if not "%ACTIVE_RUNTIME_WILBUR_DELEGATE_EXIT%"=="0" exit /b %ACTIVE_RUNTIME_WILBUR_DELEGATE_EXIT%
 set "REGION=eu-north-1"
 if not defined STREAMING_LANE_TAG_RETRY_COUNT set "STREAMING_LANE_TAG_RETRY_COUNT=12"
 if not defined STREAMING_LANE_TAG_RETRY_DELAY_SECONDS set "STREAMING_LANE_TAG_RETRY_DELAY_SECONDS=5"
@@ -775,81 +765,6 @@ echo WARNING: ScaleWorldDeploymentTrack instance tag lookup failed on attempt %D
 echo WARNING: Retrying in %DEPLOYMENT_TRACK_TAG_RETRY_DELAY_SECONDS% seconds before failing startup.
 timeout /t %DEPLOYMENT_TRACK_TAG_RETRY_DELAY_SECONDS% /nobreak >nul
 goto resolve_deployment_track_retry
-
-:delegate_to_active_runtime_if_required
-set "ACTIVE_RUNTIME_WILBUR_DELEGATED=false"
-
-if /i "%SCALEWORLD_DISABLE_ACTIVE_RUNTIME_WILBUR_DELEGATION%"=="true" exit /b 0
-if /i "%ROOT%"=="%SCALEWORLD_ACTIVE_RUNTIME_WILBUR_ROOT%" exit /b 0
-if not exist "%ACTIVE_RUNTIME_WILBUR_LAUNCHER%" if not defined SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE exit /b 0
-
-call :resolve_pixelstreaming_delivery_mode_for_wilbur
-if errorlevel 1 exit /b %errorlevel%
-
-if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="git_ref" exit /b 0
-if not defined SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE exit /b 0
-
-if not exist "%ACTIVE_RUNTIME_WILBUR_LAUNCHER%" (
-  if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="runtime_artifact" (
-    echo ERROR: PixelStreaming delivery mode runtime_artifact requires active Wilbur launcher "%ACTIVE_RUNTIME_WILBUR_LAUNCHER%".
-    exit /b 1
-  )
-
-  echo WARNING: Active PixelStreaming runtime launcher "%ACTIVE_RUNTIME_WILBUR_LAUNCHER%" was not found. Continuing with bootstrap Wilbur root.
-  exit /b 0
-)
-
-echo Delegating Wilbur startup to active PixelStreaming runtime "%ACTIVE_RUNTIME_WILBUR_LAUNCHER%".
-set "ACTIVE_RUNTIME_WILBUR_DELEGATED=true"
-call "%ACTIVE_RUNTIME_WILBUR_LAUNCHER%" %*
-exit /b %errorlevel%
-
-:resolve_pixelstreaming_delivery_mode_for_wilbur
-if defined SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE (
-  if not exist "%NORMALIZE_DELIVERY_MODE_SCRIPT%" (
-    echo ERROR: PixelStreaming delivery mode normalizer not found at "%NORMALIZE_DELIVERY_MODE_SCRIPT%".
-    exit /b 1
-  )
-
-  set "NORMALIZED_PIXELSTREAMING_DELIVERY_MODE="
-  for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%NORMALIZE_DELIVERY_MODE_SCRIPT%" -Value "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"`) do (
-    set "NORMALIZED_PIXELSTREAMING_DELIVERY_MODE=%%I"
-  )
-  if not defined NORMALIZED_PIXELSTREAMING_DELIVERY_MODE exit /b 1
-  set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=%NORMALIZED_PIXELSTREAMING_DELIVERY_MODE%"
-  exit /b 0
-)
-
-if not exist "%RESOLVE_DELIVERY_MODE_SCRIPT%" (
-  if exist "%ACTIVE_RUNTIME_WILBUR_LAUNCHER%" (
-    echo WARNING: PixelStreaming delivery mode resolver not found at "%RESOLVE_DELIVERY_MODE_SCRIPT%". Delegating Wilbur startup to the active runtime launcher to avoid bootstrap-root startup.
-    set "ACTIVE_RUNTIME_WILBUR_DELEGATED=true"
-    call "%ACTIVE_RUNTIME_WILBUR_LAUNCHER%" %*
-    exit /b %errorlevel%
-  )
-
-  exit /b 0
-)
-
-set "RESOLVED_PIXELSTREAMING_DELIVERY_MODE="
-if not defined TEMP set "TEMP=%SystemRoot%\Temp"
-set "DELIVERY_MODE_OUTPUT=%TEMP%\scaleworld-delivery-mode-%RANDOM%%RANDOM%.txt"
-set "DELIVERY_MODE_ERROR=%TEMP%\scaleworld-delivery-mode-%RANDOM%%RANDOM%.err"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%RESOLVE_DELIVERY_MODE_SCRIPT%" > "%DELIVERY_MODE_OUTPUT%" 2> "%DELIVERY_MODE_ERROR%"
-set "RESOLVE_DELIVERY_MODE_EXIT=%errorlevel%"
-if not "%RESOLVE_DELIVERY_MODE_EXIT%"=="0" (
-  if exist "%DELIVERY_MODE_ERROR%" type "%DELIVERY_MODE_ERROR%"
-  if exist "%DELIVERY_MODE_OUTPUT%" del /f /q "%DELIVERY_MODE_OUTPUT%" >nul 2>nul
-  if exist "%DELIVERY_MODE_ERROR%" del /f /q "%DELIVERY_MODE_ERROR%" >nul 2>nul
-  exit /b %RESOLVE_DELIVERY_MODE_EXIT%
-)
-for /f "usebackq delims=" %%I in ("%DELIVERY_MODE_OUTPUT%") do (
-  if not defined RESOLVED_PIXELSTREAMING_DELIVERY_MODE set "RESOLVED_PIXELSTREAMING_DELIVERY_MODE=%%I"
-)
-if exist "%DELIVERY_MODE_OUTPUT%" del /f /q "%DELIVERY_MODE_OUTPUT%" >nul 2>nul
-if exist "%DELIVERY_MODE_ERROR%" del /f /q "%DELIVERY_MODE_ERROR%" >nul 2>nul
-if defined RESOLVED_PIXELSTREAMING_DELIVERY_MODE set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=%RESOLVED_PIXELSTREAMING_DELIVERY_MODE%"
-exit /b 0
 
 :sync_repo_and_build
 for %%I in ("%ROOT%\..") do set "REPO_ROOT=%%~fI"

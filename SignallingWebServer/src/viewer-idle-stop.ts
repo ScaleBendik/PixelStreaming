@@ -12,7 +12,6 @@ import { RuntimeStatusPublisher, SignallingRuntimeStatusController } from './run
 import {
     normalizeInstanceAgentDesiredStateSnapshot,
     readInstanceAgentDesiredStateSnapshot,
-    writeInstanceAgentDesiredStateSnapshot,
     type InstanceAgentDesiredStateSnapshot
 } from './instance-agent-state';
 import {
@@ -82,11 +81,6 @@ type RuntimeInstanceCommand = InstanceAgentCommand & { status?: string; attemptN
 type ScaleWorldSessionPlayer = {
     scaleWorldSessionId?: string | null;
     scaleWorldSessionRequestId?: string | null;
-};
-
-type ShutdownArtifactSessionMetadata = {
-    sessionId?: string;
-    sessionRequestId?: string;
 };
 
 async function readCurrentInstanceIdentity(): Promise<{ instanceId: string; region: string }> {
@@ -198,10 +192,6 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMes
     }
 }
 
-function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 async function captureShutdownSessionArtifacts(
     instanceAgentClient:
         | Pick<InstanceAgentClient, 'captureSessionLogArtifact' | 'captureSessionScreenshotArtifact'>
@@ -235,19 +225,6 @@ async function captureShutdownSessionArtifacts(
         };
         try {
             await withTimeout(
-                instanceAgentClient.captureSessionLogArtifact(trigger, null, instanceTimeMetadata),
-                logTimeoutMs,
-                `Timed out after ${logTimeoutMs} ms.`
-            );
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            log(
-                `[idle-stop] Diagnostic artifact capture '${trigger}' without shutdown command failed: ${message}`
-            );
-        }
-
-        try {
-            await withTimeout(
                 instanceAgentClient.captureSessionScreenshotArtifact(trigger, null, instanceTimeMetadata),
                 screenshotTimeoutMs,
                 `Timed out after ${screenshotTimeoutMs} ms.`
@@ -258,20 +235,20 @@ async function captureShutdownSessionArtifacts(
                 `[idle-stop] Screenshot artifact capture '${trigger}' without shutdown command failed: ${message}`
             );
         }
-        return;
-    }
 
-    try {
-        await withTimeout(
-            instanceAgentClient.captureSessionLogArtifact(trigger, command, captureMetadata),
-            logTimeoutMs,
-            `Timed out after ${logTimeoutMs} ms.`
-        );
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        log(
-            `[idle-stop] Diagnostic artifact capture '${trigger}' for shutdown command ${command.instanceCommandId} failed: ${message}`
-        );
+        try {
+            await withTimeout(
+                instanceAgentClient.captureSessionLogArtifact(trigger, null, instanceTimeMetadata),
+                logTimeoutMs,
+                `Timed out after ${logTimeoutMs} ms.`
+            );
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            log(
+                `[idle-stop] Diagnostic artifact capture '${trigger}' without shutdown command failed: ${message}`
+            );
+        }
+        return;
     }
 
     try {
@@ -284,6 +261,19 @@ async function captureShutdownSessionArtifacts(
         const message = error instanceof Error ? error.message : String(error);
         log(
             `[idle-stop] Screenshot artifact capture '${trigger}' for shutdown command ${command.instanceCommandId} failed: ${message}`
+        );
+    }
+
+    try {
+        await withTimeout(
+            instanceAgentClient.captureSessionLogArtifact(trigger, command, captureMetadata),
+            logTimeoutMs,
+            `Timed out after ${logTimeoutMs} ms.`
+        );
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log(
+            `[idle-stop] Diagnostic artifact capture '${trigger}' for shutdown command ${command.instanceCommandId} failed: ${message}`
         );
     }
 }
@@ -457,10 +447,8 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     let stopInFlight = false;
     let hasSeenViewer = server.playerRegistry.count() > 0;
     let hasSeenManagedSessionViewer = false;
-    let lastManagedSessionId: string | null = null;
     let lastManagedSessionRequestId: string | null = null;
     let lastManagedSessionObservedAtMs: number | null = null;
-    let lastShutdownCommandSessionRequestId: string | null = null;
     let currentMaintenanceMode: string | null = null;
     let maintenanceStateInitialized = false;
     let maintenanceRefreshInFlight = false;
@@ -674,56 +662,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         hasSeenManagedSessionViewer = true;
-        if (sessionId) {
-            lastManagedSessionId = sessionId;
-        }
         if (sessionRequestId) {
             lastManagedSessionRequestId = sessionRequestId;
             lastManagedSessionObservedAtMs = Date.now();
         }
         return true;
-    };
-    const resolvePassiveShutdownArtifactMetadata = (): ShutdownArtifactSessionMetadata | null => {
-        const metadata: ShutdownArtifactSessionMetadata = {};
-        if (lastManagedSessionId) {
-            metadata.sessionId = lastManagedSessionId;
-        }
-        if (lastManagedSessionRequestId) {
-            metadata.sessionRequestId = lastManagedSessionRequestId;
-        }
-        if (!metadata.sessionRequestId && lastShutdownCommandSessionRequestId) {
-            metadata.sessionRequestId = lastShutdownCommandSessionRequestId;
-        }
-
-        return metadata.sessionId || metadata.sessionRequestId ? metadata : null;
-    };
-    const rememberShutdownCommandSession = (command: InstanceAgentCommand): void => {
-        if (!isShutdownCommand(command) || !commandMatchesCurrentManagedSession(command)) {
-            return;
-        }
-
-        const sessionRequestId = normalizeOptionalText(command.sessionRequestId);
-        if (sessionRequestId) {
-            lastShutdownCommandSessionRequestId = sessionRequestId;
-        }
-    };
-    const resolveNoCommandShutdownArtifactMetadata = (
-        reason: string,
-        metadata?: ShutdownArtifactSessionMetadata | null
-    ): ShutdownArtifactSessionMetadata | undefined => {
-        if (metadata?.sessionId || metadata?.sessionRequestId) {
-            return metadata;
-        }
-
-        switch (reason) {
-            case 'agent_shutdown_requested':
-            case 'command_shutdown_requested':
-            case 'grace-after-last-viewer':
-            case 'retry-after-failure':
-                return resolvePassiveShutdownArtifactMetadata() ?? undefined;
-            default:
-                return undefined;
-        }
     };
     const disconnectPlayersForExplicitTeardown = (command: RuntimeInstanceCommand): number => {
         const players: IPlayer[] = server.playerRegistry.listPlayers();
@@ -807,30 +750,6 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         return 'agent_shutdown_requested';
     };
-    const waitForActiveShutdownCommand = async (
-        reason: string,
-        timeoutMs = 2_000,
-        intervalMs = 100
-    ): Promise<RuntimeInstanceCommand | null> => {
-        let command = getActiveShutdownCommand();
-        if (command || reason !== 'agent_shutdown_requested' || !currentDesiredState.shutdownRequested) {
-            return command;
-        }
-
-        const deadline = Date.now() + timeoutMs;
-        while (Date.now() < deadline) {
-            await sleep(intervalMs);
-            command = getActiveShutdownCommand();
-            if (command) {
-                log(
-                    `[idle-stop] Resolved shutdown command ${command.instanceCommandId} after desired-state shutdown reconciliation.`
-                );
-                return command;
-            }
-        }
-
-        return null;
-    };
     const refreshActiveCommand = (): void => {
         readActiveCommand();
     };
@@ -875,9 +794,8 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         startResetWindow(true);
     };
     const tryResumeActiveShutdownCommand = (): void => {
-        const command = getActiveShutdownCommand();
         if (
-            !command ||
+            !getActiveShutdownCommand() ||
             stopInFlight ||
             server.playerRegistry.count() > 0 ||
             !maintenanceStateInitialized ||
@@ -886,9 +804,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
-        void requestStop('command_shutdown_requested', {
-            sessionRequestId: command.sessionRequestId
-        });
+        void requestStop('command_shutdown_requested');
     };
     const tryResumeDesiredStateShutdown = (): boolean => {
         if (
@@ -907,7 +823,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         clearTransientStatusHeartbeat();
         desiredStateShutdownResumeRequested = true;
         log('[idle-stop] Resuming shutdown requested by desired state.');
-        void requestStop(resolveDesiredStateShutdownReason(), resolvePassiveShutdownArtifactMetadata())
+        void requestStop(resolveDesiredStateShutdownReason())
             .then((accepted) => {
                 if (!accepted) {
                     desiredStateShutdownResumeRequested = false;
@@ -1107,10 +1023,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             if (currentDesiredState.shutdownRequested) {
-                void requestStop(
-                    resolveDesiredStateShutdownReason(),
-                    resolvePassiveShutdownArtifactMetadata()
-                );
+                void requestStop(resolveDesiredStateShutdownReason());
                 return;
             }
 
@@ -1136,10 +1049,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             if (currentDesiredState.shutdownRequested) {
-                void requestStop(
-                    resolveDesiredStateShutdownReason(),
-                    resolvePassiveShutdownArtifactMetadata()
-                );
+                void requestStop(resolveDesiredStateShutdownReason());
                 return;
             }
 
@@ -1198,7 +1108,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             (currentDesiredState.shutdownRequested || getActiveShutdownCommand()) &&
             server.playerRegistry.count() === 0
         ) {
-            void requestStop(resolveDesiredStateShutdownReason(), resolvePassiveShutdownArtifactMetadata());
+            void requestStop(resolveDesiredStateShutdownReason());
         }
     };
 
@@ -1208,27 +1118,6 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         applyDesiredStateSnapshot(readInstanceAgentDesiredStateSnapshot(desiredStatePath, log), 'file');
-    };
-    const clearLocalShutdownDesiredStateAfterAcceptedStop = (): void => {
-        if (desiredStatePath.length === 0) {
-            return;
-        }
-
-        const clearedDesiredState = writeInstanceAgentDesiredStateSnapshot(
-            desiredStatePath,
-            {
-                warmHoldEnabled: false,
-                drainEnabled: false,
-                shutdownRequested: false,
-                policyVersion: 'local-shutdown-completed',
-                message: 'Cleared after accepted shutdown stop request',
-                updatedAtUtc: new Date().toISOString()
-            },
-            log
-        );
-        currentDesiredState = clearedDesiredState;
-        desiredStateShutdownResumeRequested = false;
-        log('[idle-stop] Cleared local shutdown desired state after accepted stop request.');
     };
 
     const scheduleStop = (reason: string, delayMs: number): void => {
@@ -1247,16 +1136,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         const mappedPendingReason = mapPendingReason(reason);
         publishStatus('idle_shutdown_pending', mappedPendingReason);
         startTransientStatusHeartbeat('idle_shutdown_pending', mappedPendingReason);
-        const artifactSessionMetadata =
-            reason === 'grace-after-last-viewer' ? resolvePassiveShutdownArtifactMetadata() : null;
-        if (reason === 'grace-after-last-viewer') {
-            log(
-                `[idle-stop] Prepared passive shutdown artifact metadata (sessionRequestId=${artifactSessionMetadata?.sessionRequestId ?? '-'}, sessionId=${artifactSessionMetadata?.sessionId ?? '-'}).`
-            );
-        }
+        const artifactSessionRequestId =
+            reason === 'grace-after-last-viewer' ? lastManagedSessionRequestId : null;
         zeroViewersTimer = setTimeout(() => {
             zeroViewersTimer = null;
-            void requestStop(reason, artifactSessionMetadata);
+            void requestStop(reason, artifactSessionRequestId);
         }, delayMs);
         log(
             `[idle-stop] Scheduled stop in ${delayMs} ms (reason=${reason}, pendingReason=${mappedPendingReason}).`
@@ -1315,10 +1199,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             if (currentDesiredState.shutdownRequested) {
-                void requestStop(
-                    resolveDesiredStateShutdownReason(),
-                    resolvePassiveShutdownArtifactMetadata()
-                );
+                void requestStop(resolveDesiredStateShutdownReason());
                 return;
             }
 
@@ -1370,10 +1251,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             if (getActiveShutdownCommand() || currentDesiredState.shutdownRequested) {
-                void requestStop(
-                    resolveDesiredStateShutdownReason(),
-                    resolvePassiveShutdownArtifactMetadata()
-                );
+                void requestStop(resolveDesiredStateShutdownReason());
                 return;
             }
 
@@ -1448,7 +1326,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         hasSeenViewer = false;
         if (currentDesiredState.shutdownRequested) {
-            void requestStop(resolveDesiredStateShutdownReason(), resolvePassiveShutdownArtifactMetadata());
+            void requestStop(resolveDesiredStateShutdownReason());
             return;
         }
 
@@ -1477,10 +1355,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             if (currentDesiredState.shutdownRequested) {
-                void requestStop(
-                    resolveDesiredStateShutdownReason(),
-                    resolvePassiveShutdownArtifactMetadata()
-                );
+                void requestStop(resolveDesiredStateShutdownReason());
                 return;
             }
 
@@ -1641,7 +1516,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
     const requestStop = async (
         reason: string,
-        artifactSessionMetadata?: ShutdownArtifactSessionMetadata | null
+        artifactSessionRequestId?: string | null
     ): Promise<boolean> => {
         if (stopInFlight) return false;
         resetInFlight = false;
@@ -1675,7 +1550,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         stopInFlight = true;
         try {
-            const commandToStart = await waitForActiveShutdownCommand(reason);
+            const commandToStart = getActiveShutdownCommand();
             if (commandToStart && options.instanceAgentClient) {
                 try {
                     await options.instanceAgentClient.startCommand(commandToStart, {
@@ -1691,19 +1566,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             const shutdownArtifactMetadata =
-                artifactSessionMetadata ??
-                (commandToStart
-                    ? { sessionRequestId: commandToStart.sessionRequestId }
-                    : resolveNoCommandShutdownArtifactMetadata(reason, artifactSessionMetadata));
-            if (commandToStart) {
-                log(
-                    `[idle-stop] Capturing command shutdown artifacts with metadata (reason=${reason}, sessionRequestId=${shutdownArtifactMetadata?.sessionRequestId ?? '-'}, command=${commandToStart.instanceCommandId}).`
-                );
-            } else {
-                log(
-                    `[idle-stop] Capturing no-command shutdown artifacts with metadata (reason=${reason}, sessionRequestId=${shutdownArtifactMetadata?.sessionRequestId ?? '-'}, sessionId=${shutdownArtifactMetadata?.sessionId ?? '-'}).`
-                );
-            }
+                commandToStart || reason !== 'grace-after-last-viewer' || !artifactSessionRequestId
+                    ? undefined
+                    : { sessionRequestId: artifactSessionRequestId };
 
             await captureShutdownSessionArtifacts(
                 options.instanceAgentClient,
@@ -1719,9 +1584,6 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             publishStatus('stopping', mapStopReason(reason));
             log(`[idle-stop] Triggering stop (reason=${reason}).`);
             await stopCurrentInstance(awsCliPath, dryRun, log);
-            if (!dryRun) {
-                clearLocalShutdownDesiredStateAfterAcceptedStop();
-            }
             const commandToComplete = getActiveShutdownCommand();
             if (commandToComplete && options.instanceAgentClient) {
                 try {
@@ -1839,11 +1701,8 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 return;
             }
 
-            const shutdownCommand = getActiveShutdownCommand();
-            if (maintenanceStateInitialized && !isMaintenanceActive() && shutdownCommand) {
-                void requestStop('command_shutdown_requested', {
-                    sessionRequestId: shutdownCommand.sessionRequestId
-                });
+            if (maintenanceStateInitialized && !isMaintenanceActive() && getActiveShutdownCommand()) {
+                void requestStop('command_shutdown_requested');
                 return;
             }
 
@@ -1879,7 +1738,6 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             applyDesiredStateSnapshot(nextDesiredState, `agent:${context.source}`);
         });
         options.instanceAgentClient.addCommandListener((command: InstanceAgentCommand) => {
-            rememberShutdownCommandSession(command);
             void (async () => {
                 let trackedCommand = readActiveCommand();
                 if (trackedCommand && (await failSupersededCommand(trackedCommand, 'active-command'))) {
@@ -1949,9 +1807,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     refreshActiveCommand();
                     if (server.playerRegistry.count() === 0) {
                         if (isShutdownCommand(command)) {
-                            void requestStop('command_shutdown_requested', {
-                                sessionRequestId: command.sessionRequestId
-                            });
+                            void requestStop('command_shutdown_requested');
                             return;
                         }
 

@@ -218,23 +218,6 @@ function hasSessionCorrelation(request: SessionScreenshotArtifactRegistrationReq
 function truncateText(value: string, maxLength: number): string {
     return value.length <= maxLength ? value : `${value.slice(0, Math.max(0, maxLength - 3))}...`;
 }
-
-function resolvePermanentRegistrationFailureReason(error: unknown): string | null {
-    const statusCode =
-        typeof (error as { statusCode?: unknown })?.statusCode === 'number'
-            ? (error as { statusCode: number }).statusCode
-            : undefined;
-    const message = error instanceof Error ? error.message : String(error);
-    if (
-        statusCode === 404 &&
-        message.toLowerCase().includes('no session analytics row matched artifact registration')
-    ) {
-        return 'artifact registration was permanently rejected because no session analytics row matched';
-    }
-
-    return null;
-}
-
 function normalizeMetadata(input: Record<string, unknown> | undefined): Record<string, string> {
     const metadata: Record<string, string> = {};
     for (const [key, value] of Object.entries(input ?? {})) {
@@ -833,40 +816,6 @@ export function createSessionScreenshotArtifactManager(
         }
         log(`[screenshot-artifacts] Registered artifact ${record.objectKey}.`);
     };
-    const processQueueFile = async (filePath: string): Promise<boolean> => {
-        const record = readQueueRecord(filePath);
-        if (!record) return false;
-        try {
-            const discardReason = await resolveQueueRecordIdentityMismatch(record);
-            if (discardReason) {
-                discardQueueRecord(record, discardReason);
-                return true;
-            }
-
-            if (record.status === 'pending_upload') await uploadRecord(record);
-            if (record.status === 'pending_registration') await registerRecord(record);
-            return true;
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            const permanentFailureReason =
-                record.status === 'pending_registration'
-                    ? resolvePermanentRegistrationFailureReason(error)
-                    : null;
-            if (permanentFailureReason) {
-                discardQueueRecord(record, permanentFailureReason);
-                return true;
-            }
-
-            record.attempts += 1;
-            record.lastError = truncateText(message, 1000);
-            updateRecord(record);
-            log(
-                `[screenshot-artifacts] Queue record ${record.id} failed (attempt=${record.attempts}): ${truncateText(message, 500)}`
-            );
-            return true;
-        }
-    };
-
     const drainQueueCore = async (): Promise<void> => {
         let files: string[];
         try {
@@ -881,8 +830,27 @@ export function createSessionScreenshotArtifactManager(
         let processed = 0;
         for (const filePath of files) {
             if (processed >= MAX_DRAIN_RECORDS) break;
-            if (await processQueueFile(filePath)) {
+            const record = readQueueRecord(filePath);
+            if (!record) continue;
+            try {
+                const discardReason = await resolveQueueRecordIdentityMismatch(record);
+                if (discardReason) {
+                    discardQueueRecord(record, discardReason);
+                    processed += 1;
+                    continue;
+                }
+
+                if (record.status === 'pending_upload') await uploadRecord(record);
+                if (record.status === 'pending_registration') await registerRecord(record);
                 processed += 1;
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                record.attempts += 1;
+                record.lastError = truncateText(message, 1000);
+                updateRecord(record);
+                log(
+                    `[screenshot-artifacts] Queue record ${record.id} failed (attempt=${record.attempts}): ${truncateText(message, 500)}`
+                );
             }
         }
     };
@@ -1173,15 +1141,7 @@ export function createSessionScreenshotArtifactManager(
             log(
                 `[screenshot-artifacts] Captured screenshot bundle ${localPath} (${archive.length} bytes, screenshots=${selectedScreenshots.length}, skippedByMaxFiles=${skippedByMaxFiles}, skippedByMaxBytes=${skippedByMaxBytes}).`
             );
-            const recordPath = path.join(queuePath, `${artifactId}.json`);
-            await processQueueFile(recordPath);
             await drainQueue();
-            const queuedRecord = readQueueRecord(recordPath);
-            // A background drain may have started before this record was written.
-            // Run one fresh drain so shutdown captures do not stop with an untouched bundle.
-            if (queuedRecord?.status === 'pending_upload' && queuedRecord.attempts === 0) {
-                await processQueueFile(recordPath);
-            }
             return {
                 status: 'captured',
                 sessionRequestId,

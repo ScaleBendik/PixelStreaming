@@ -292,7 +292,6 @@ function Invoke-BootstrapCheckoutAlignment {
 
     $requiredFiles = @(
         'SignallingWebServer\platform_scripts\cmd\start_streamer_stack.bat',
-        'SignallingWebServer\platform_scripts\cmd\start_dev_turn.bat',
         'SignallingWebServer\platform_scripts\powershell\invoke_provisioning_mode.ps1',
         'SignallingWebServer\platform_scripts\powershell\invoke_update_mode.ps1',
         'SignallingWebServer\platform_scripts\powershell\install_pixelstreaming_runtime.ps1',

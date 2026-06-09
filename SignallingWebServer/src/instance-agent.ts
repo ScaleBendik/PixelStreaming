@@ -25,7 +25,6 @@ import {
 import {
     createSessionLogArtifactManager,
     type SessionLogArtifactManager,
-    type SessionLogArtifactCaptureResult,
     type SessionLogArtifactRegistrationRequest,
     type SessionLogArtifactRuntimeOptions
 } from './session-log-artifacts';
@@ -151,15 +150,6 @@ export interface InstanceAgentCommandTransitionResult {
     recordedAtUtc: string;
 }
 
-type InstanceAgentArtifactCommandContext =
-    | Pick<InstanceAgentCommand, 'instanceCommandId' | 'commandType' | 'sessionRequestId' | 'requestedAtUtc'>
-    | Pick<
-          InstanceAgentCommandJournalSnapshot,
-          'instanceCommandId' | 'commandType' | 'sessionRequestId' | 'requestedAtUtc'
-      >
-    | null
-    | undefined;
-
 export type InstanceAgentDesiredStateListener = (
     desiredState: InstanceAgentDesiredStateSnapshot,
     context: InstanceAgentDesiredStateListenerContext
@@ -200,12 +190,32 @@ export interface InstanceAgentClient {
     ): Promise<InstanceAgentCommandTransitionResult>;
     captureSessionLogArtifact(
         trigger: string,
-        command: InstanceAgentArtifactCommandContext,
+        command:
+            | Pick<
+                  InstanceAgentCommand,
+                  'instanceCommandId' | 'commandType' | 'sessionRequestId' | 'requestedAtUtc'
+              >
+            | Pick<
+                  InstanceAgentCommandJournalSnapshot,
+                  'instanceCommandId' | 'commandType' | 'sessionRequestId' | 'requestedAtUtc'
+              >
+            | null
+            | undefined,
         metadata?: Record<string, unknown>
     ): Promise<void>;
     captureSessionScreenshotArtifact(
         trigger: string,
-        command: InstanceAgentArtifactCommandContext,
+        command:
+            | Pick<
+                  InstanceAgentCommand,
+                  'instanceCommandId' | 'commandType' | 'sessionRequestId' | 'requestedAtUtc'
+              >
+            | Pick<
+                  InstanceAgentCommandJournalSnapshot,
+                  'instanceCommandId' | 'commandType' | 'sessionRequestId' | 'requestedAtUtc'
+              >
+            | null
+            | undefined,
         metadata?: Record<string, unknown>
     ): Promise<void>;
     requestFastPolling(reason: string, options?: { durationMs?: number; intervalMs?: number }): void;
@@ -534,15 +544,6 @@ export function wireInstanceAgent(
         }
     };
 
-    const flushEventsBestEffort = async (context: string): Promise<void> => {
-        try {
-            await flushEvents();
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            log(`[instance-agent] Failed to flush ${context}: ${message}`);
-        }
-    };
-
     const readPlayerSessionContext = (playerId?: string): PlayerSessionContext => {
         const normalizedPlayerId = normalizeOptionalText(playerId);
         if (!normalizedPlayerId) {
@@ -652,62 +653,20 @@ export function wireInstanceAgent(
         }
     };
 
-    const reconcileActiveCommandFromControlPlane = (
-        commands: InstanceAgentCommand[],
-        source: string
-    ): void => {
-        const activeCommandId = normalizeOptionalText(activeCommand?.instanceCommandId)?.toLowerCase();
-        if (!activeCommand || !activeCommandId) {
-            return;
-        }
-
-        if (
-            commands.some(
-                (command) =>
-                    normalizeOptionalText(command.instanceCommandId)?.toLowerCase() === activeCommandId
-            )
-        ) {
-            return;
-        }
-
-        const staleCommand = activeCommand;
-        log(
-            `[instance-agent] Clearing local active command ${staleCommand.instanceCommandId} (${staleCommand.commandType}, status=${staleCommand.status}) because the control plane did not return it in the ${source} command set.`
-        );
-        queueEvent('instance_command_journal_cleared', {
-            instanceCommandId: staleCommand.instanceCommandId,
-            commandType: staleCommand.commandType,
-            commandStatus: staleCommand.status,
-            sessionRequestId: staleCommand.sessionRequestId,
-            source
-        });
-        clearActiveCommand();
-    };
-
     const applyCommands = (
         values: InstanceAgentCommandResponse[] | null | undefined,
         source: string
     ): void => {
-        if (!Array.isArray(values)) {
+        if (!Array.isArray(values) || values.length === 0) {
             return;
         }
 
-        const commands: InstanceAgentCommand[] = [];
         for (const rawCommand of values) {
             const command = normalizeCommand(rawCommand);
             if (!command) {
                 continue;
             }
 
-            commands.push(command);
-        }
-
-        reconcileActiveCommandFromControlPlane(commands, source);
-        if (commands.length === 0) {
-            return;
-        }
-
-        for (const command of commands) {
             queueEvent('instance_command_received', {
                 instanceCommandId: command.instanceCommandId,
                 commandType: command.commandType,
@@ -1090,13 +1049,7 @@ export function wireInstanceAgent(
             metadata: request.metadata
         });
         if (!response.ok) {
-            const error = new Error(
-                await describeErrorResponse(response, 'Artifact registration')
-            ) as Error & {
-                statusCode?: number;
-            };
-            error.statusCode = response.status;
-            throw error;
+            throw new Error(await describeErrorResponse(response, 'Artifact registration'));
         }
 
         const payload = await parseJsonResponse<InstanceAgentArtifactRegistrationResponse>(response);
@@ -1134,92 +1087,38 @@ export function wireInstanceAgent(
             (activeCommand !== null && isRecycleToWarmCommand(activeCommand))
     });
 
-    const queueSessionLogArtifactEvent = (
-        trigger: string,
-        command: InstanceAgentArtifactCommandContext,
-        metadata: Record<string, unknown>,
-        result: SessionLogArtifactCaptureResult
-    ): void => {
-        const baseMetadata = {
-            ...metadata,
-            trigger,
-            artifactId: result.artifactId,
-            objectKey: result.objectKey,
-            sessionRequestId:
-                result.sessionRequestId ??
-                normalizeOptionalText(command?.sessionRequestId) ??
-                normalizeOptionalText(metadata.sessionRequestId),
-            userSessionId: result.userSessionId ?? normalizeOptionalText(metadata.userSessionId),
-            sessionId: result.sessionId ?? normalizeOptionalText(metadata.sessionId),
-            instanceCommandId: normalizeOptionalText(command?.instanceCommandId),
-            commandType: normalizeOptionalText(command?.commandType)
-        };
-
-        if (result.status === 'queued') {
-            queueEvent('session_log_artifact_queued', {
-                ...baseMetadata,
-                status: result.status,
-                queueStatus: result.queueStatus,
-                attempts: result.attempts,
-                lastError: result.lastError ? truncateDiagnosticText(result.lastError) : undefined
-            });
-            return;
-        }
-
-        queueEvent(
-            result.status === 'uploaded_uncorrelated'
-                ? 'session_log_artifact_uploaded_uncorrelated'
-                : 'session_log_artifact_registered',
-            {
-                ...baseMetadata,
-                status: result.status
-            }
-        );
-    };
-
     const captureSessionLogArtifact = async (
         trigger: string,
-        command: InstanceAgentArtifactCommandContext,
+        command:
+            | Pick<
+                  InstanceAgentCommand,
+                  'instanceCommandId' | 'commandType' | 'sessionRequestId' | 'requestedAtUtc'
+              >
+            | Pick<
+                  InstanceAgentCommandJournalSnapshot,
+                  'instanceCommandId' | 'commandType' | 'sessionRequestId' | 'requestedAtUtc'
+              >
+            | null
+            | undefined,
         metadata: Record<string, unknown> = {}
     ): Promise<void> => {
-        const sessionRequestId =
-            normalizeOptionalText(command?.sessionRequestId) ??
-            normalizeOptionalText(metadata.sessionRequestId);
-        const userSessionId = normalizeOptionalText(metadata.userSessionId);
-        const sessionId = normalizeOptionalText(metadata.sessionId);
-        const instanceCommandId = normalizeOptionalText(command?.instanceCommandId);
-        const commandType = normalizeOptionalText(command?.commandType);
-
-        log(
-            `[session-artifacts] Capture requested trigger=${trigger}, enabled=${artifactManager ? 'true' : 'false'}, sessionRequestId=${sessionRequestId ?? '-'}, userSessionId=${userSessionId ?? '-'}, sessionId=${sessionId ?? '-'}, command=${instanceCommandId ?? '-'} (${commandType ?? '-'}).`
-        );
-
         if (!artifactManager) {
-            log(`[session-artifacts] Capture '${trigger}' skipped because artifact upload is disabled.`);
-            queueEvent('session_log_artifact_disabled', {
-                ...metadata,
-                trigger,
-                sessionRequestId,
-                userSessionId,
-                sessionId,
-                instanceCommandId,
-                commandType
-            });
-            await flushEventsBestEffort('session log artifact disabled event');
             return;
         }
 
         try {
             const identity = await resolveBootstrapIdentity();
-            const result = await artifactManager.captureAndUpload({
+            await artifactManager.captureAndUpload({
                 trigger,
                 instanceId: identity.instanceId,
                 region: identity.region,
-                sessionRequestId,
-                userSessionId,
-                sessionId,
-                instanceCommandId,
-                commandType,
+                sessionRequestId:
+                    normalizeOptionalText(command?.sessionRequestId) ??
+                    normalizeOptionalText(metadata.sessionRequestId),
+                userSessionId: normalizeOptionalText(metadata.userSessionId),
+                sessionId: normalizeOptionalText(metadata.sessionId),
+                instanceCommandId: normalizeOptionalText(command?.instanceCommandId),
+                commandType: normalizeOptionalText(command?.commandType),
                 runtimeStatus: runtimeSnapshot.status,
                 runtimeReason: runtimeSnapshot.reason,
                 runtimeVersion: runtimeSnapshot.version,
@@ -1231,29 +1130,26 @@ export function wireInstanceAgent(
                 ),
                 metadata
             });
-            queueSessionLogArtifactEvent(trigger, command, metadata, result);
-            await flushEventsBestEffort('session log artifact result event');
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             log(`[session-artifacts] ${trigger} capture failed: ${message}`);
-            queueEvent('session_log_artifact_capture_failed', {
-                trigger,
-                errorMessage: truncateDiagnosticText(message),
-                sessionRequestId,
-                userSessionId,
-                sessionId,
-                instanceCommandId,
-                commandType,
-                ...metadata
-            });
-            await flushEventsBestEffort('session log artifact failure event');
             throw error;
         }
     };
 
     const captureSessionScreenshotArtifact = async (
         trigger: string,
-        command: InstanceAgentArtifactCommandContext,
+        command:
+            | Pick<
+                  InstanceAgentCommand,
+                  'instanceCommandId' | 'commandType' | 'sessionRequestId' | 'requestedAtUtc'
+              >
+            | Pick<
+                  InstanceAgentCommandJournalSnapshot,
+                  'instanceCommandId' | 'commandType' | 'sessionRequestId' | 'requestedAtUtc'
+              >
+            | null
+            | undefined,
         metadata: Record<string, unknown> = {}
     ): Promise<void> => {
         if (!screenshotArtifactManager) {
@@ -1296,7 +1192,7 @@ export function wireInstanceAgent(
                     commandType: normalizeOptionalText(command?.commandType),
                     ...metadata
                 });
-                await flushEventsBestEffort('screenshot artifact empty event');
+                void flushEvents().catch(() => undefined);
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
