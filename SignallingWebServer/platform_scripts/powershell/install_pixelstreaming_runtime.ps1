@@ -269,6 +269,7 @@ function Test-InstalledRuntimeBundle {
         "SignallingWebServer\peer_options.streamer.json",
         "SignallingWebServer\dist\index.js",
         "SignallingWebServer\platform_scripts\cmd\start_streamer_stack.bat",
+        "SignallingWebServer\platform_scripts\cmd\start_dev_turn.bat",
         "SignallingWebServer\platform_scripts\powershell\watchdog.ps1"
     )
 

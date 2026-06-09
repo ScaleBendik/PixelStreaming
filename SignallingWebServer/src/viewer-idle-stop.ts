@@ -12,6 +12,7 @@ import { RuntimeStatusPublisher, SignallingRuntimeStatusController } from './run
 import {
     normalizeInstanceAgentDesiredStateSnapshot,
     readInstanceAgentDesiredStateSnapshot,
+    writeInstanceAgentDesiredStateSnapshot,
     type InstanceAgentDesiredStateSnapshot
 } from './instance-agent-state';
 import {
@@ -1208,6 +1209,27 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         applyDesiredStateSnapshot(readInstanceAgentDesiredStateSnapshot(desiredStatePath, log), 'file');
     };
+    const clearLocalShutdownDesiredStateAfterAcceptedStop = (): void => {
+        if (desiredStatePath.length === 0) {
+            return;
+        }
+
+        const clearedDesiredState = writeInstanceAgentDesiredStateSnapshot(
+            desiredStatePath,
+            {
+                warmHoldEnabled: false,
+                drainEnabled: false,
+                shutdownRequested: false,
+                policyVersion: 'local-shutdown-completed',
+                message: 'Cleared after accepted shutdown stop request',
+                updatedAtUtc: new Date().toISOString()
+            },
+            log
+        );
+        currentDesiredState = clearedDesiredState;
+        desiredStateShutdownResumeRequested = false;
+        log('[idle-stop] Cleared local shutdown desired state after accepted stop request.');
+    };
 
     const scheduleStop = (reason: string, delayMs: number): void => {
         if (!maintenanceStateInitialized || isMaintenanceActive()) {
@@ -1697,6 +1719,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             publishStatus('stopping', mapStopReason(reason));
             log(`[idle-stop] Triggering stop (reason=${reason}).`);
             await stopCurrentInstance(awsCliPath, dryRun, log);
+            if (!dryRun) {
+                clearLocalShutdownDesiredStateAfterAcceptedStop();
+            }
             const commandToComplete = getActiveShutdownCommand();
             if (commandToComplete && options.instanceAgentClient) {
                 try {
