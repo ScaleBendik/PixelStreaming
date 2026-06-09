@@ -529,6 +529,33 @@ function buildRuntimeIdentityMetadata(options: RuntimeIdentityMetadataOptions): 
     };
 }
 
+function buildRuntimeIdentityLogMessage(metadata: Record<string, unknown>): string {
+    const summary = {
+        pixelStreamingRoot: metadata.pixelStreamingRoot,
+        pixelStreamingRootRealPath: metadata.pixelStreamingRootRealPath,
+        activeRuntimeRoot: metadata.activeRuntimeRoot,
+        activeRuntimeRootRealPath: metadata.activeRuntimeRootRealPath,
+        isActiveRuntimeRoot: metadata.isActiveRuntimeRoot,
+        isActiveRuntimeRealPath: metadata.isActiveRuntimeRealPath,
+        deliveryMode: metadata.deliveryMode,
+        gitSyncMode: metadata.gitSyncMode,
+        streamingLane: metadata.streamingLane,
+        deploymentTrack: metadata.deploymentTrack,
+        runtimeBundleId: metadata.runtimeBundleId,
+        runtimeBundleSourceCommit: metadata.runtimeBundleSourceCommit,
+        artifactUploadEnabled: metadata.artifactUploadEnabled,
+        artifactBucketConfigured: metadata.artifactBucketConfigured,
+        artifactPrefix: metadata.artifactPrefix,
+        artifactQueuePath: metadata.artifactQueuePath,
+        screenshotArtifactUploadEnabled: metadata.screenshotArtifactUploadEnabled,
+        screenshotArtifactBucketConfigured: metadata.screenshotArtifactBucketConfigured,
+        screenshotArtifactPrefix: metadata.screenshotArtifactPrefix,
+        screenshotArtifactQueuePath: metadata.screenshotArtifactQueuePath
+    };
+
+    return `[instance-agent] Runtime identity ${JSON.stringify(summary)}`;
+}
+
 function isTerminalCommandStatus(value: string | null | undefined): boolean {
     const normalized = normalizeOptionalText(value)?.toLowerCase();
     return (
@@ -1614,17 +1641,16 @@ export function wireInstanceAgent(
         agentVersion: configuredAgentVersion,
         runtimeVersion: configuredRuntimeVersion
     });
-    queueEvent(
-        'runtime_identity',
-        buildRuntimeIdentityMetadata({
-            configuredLane,
-            configuredAgentVersion,
-            configuredRuntimeVersion,
-            desiredStatePath,
-            sessionLogArtifacts: options.sessionLogArtifacts,
-            sessionScreenshotArtifacts: options.sessionScreenshotArtifacts
-        })
-    );
+    const runtimeIdentityMetadata = buildRuntimeIdentityMetadata({
+        configuredLane,
+        configuredAgentVersion,
+        configuredRuntimeVersion,
+        desiredStatePath,
+        sessionLogArtifacts: options.sessionLogArtifacts,
+        sessionScreenshotArtifacts: options.sessionScreenshotArtifacts
+    });
+    queueEvent('runtime_identity', runtimeIdentityMetadata);
+    log(buildRuntimeIdentityLogMessage(runtimeIdentityMetadata));
 
     server.playerRegistry.on('added', (playerId: string) => {
         const viewerCount = server.playerRegistry.count();
