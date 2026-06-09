@@ -1,4 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
+import fs from 'fs';
 import path from 'path';
 import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
 import type { RuntimeStatusUpdate, SessionNetworkPathReport } from './runtime-status';
@@ -122,6 +123,15 @@ interface InstanceAgentRuntimeSnapshot {
     status?: string;
     reason?: string;
     version?: string;
+}
+
+interface RuntimeIdentityMetadataOptions {
+    configuredLane?: string;
+    configuredAgentVersion?: string;
+    configuredRuntimeVersion?: string;
+    desiredStatePath: string;
+    sessionLogArtifacts?: SessionLogArtifactRuntimeOptions;
+    sessionScreenshotArtifacts?: SessionScreenshotArtifactRuntimeOptions;
 }
 
 export interface InstanceAgentDesiredStateListenerContext {
@@ -344,6 +354,179 @@ function truncateDiagnosticText(value: string, maxLength = 240): string {
     }
 
     return `${normalized.slice(0, maxLength - 3)}...`;
+}
+
+function normalizePathForComparison(value: string | undefined): string | undefined {
+    const normalized = normalizeOptionalText(value);
+    if (!normalized) {
+        return undefined;
+    }
+
+    try {
+        return path
+            .resolve(normalized)
+            .replace(/[\\/]+$/g, '')
+            .toLowerCase();
+    } catch {
+        return normalized.replace(/[\\/]+$/g, '').toLowerCase();
+    }
+}
+
+function resolveRealPath(value: string | undefined): string | undefined {
+    const normalized = normalizeOptionalText(value);
+    if (!normalized) {
+        return undefined;
+    }
+
+    try {
+        return fs.realpathSync.native(normalized);
+    } catch {
+        return undefined;
+    }
+}
+
+function tryReadJsonObject(filePath: string): Record<string, unknown> | null {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? (parsed as Record<string, unknown>)
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+function firstOptionalMetadataValue(
+    metadata: Record<string, unknown> | null,
+    ...keys: string[]
+): string | undefined {
+    if (!metadata) {
+        return undefined;
+    }
+
+    for (const key of keys) {
+        const value = normalizeOptionalText(metadata[key]);
+        if (value) {
+            return value;
+        }
+    }
+
+    return undefined;
+}
+
+function collectCliOptionNames(): string {
+    const optionNames = process.argv
+        .slice(2)
+        .filter((item) => item.startsWith('--'))
+        .map((item) => item.slice(2).split('=')[0]?.trim())
+        .filter((item): item is string => Boolean(item))
+        .map((item) => item.replace(/[^a-zA-Z0-9_-]+/g, '_'))
+        .filter((item, index, values) => values.indexOf(item) === index)
+        .sort();
+
+    return truncateDiagnosticText(optionNames.join(','), 512);
+}
+
+function buildRuntimeIdentityMetadata(options: RuntimeIdentityMetadataOptions): Record<string, unknown> {
+    const signallingRoot = path.resolve(__dirname, '..');
+    const pixelStreamingRoot = path.resolve(signallingRoot, '..');
+    const installBase = normalizeOptionalText(process.env.SCALEWORLD_INSTALL_BASE) ?? 'C:\\PixelStreaming';
+    const activeRuntimeRoot = path.join(installBase, 'PixelStreamingRuntime');
+    const pixelStreamingRootRealPath = resolveRealPath(pixelStreamingRoot);
+    const activeRuntimeRootRealPath = resolveRealPath(activeRuntimeRoot);
+    const runtimeBundleMetadataPath = path.join(pixelStreamingRoot, 'runtime-bundle-metadata.json');
+    const runtimeBundleMetadata = tryReadJsonObject(runtimeBundleMetadataPath);
+
+    const rootComparable = normalizePathForComparison(pixelStreamingRoot);
+    const activeRootComparable = normalizePathForComparison(activeRuntimeRoot);
+    const rootRealComparable = normalizePathForComparison(pixelStreamingRootRealPath);
+    const activeRootRealComparable = normalizePathForComparison(activeRuntimeRootRealPath);
+
+    const artifactOptions = options.sessionLogArtifacts ?? {};
+    const screenshotOptions = options.sessionScreenshotArtifacts ?? {};
+    const artifactBucketName =
+        normalizeOptionalText(artifactOptions.bucketName) ??
+        normalizeOptionalText(process.env.INSTANCE_AGENT_ARTIFACT_BUCKET);
+    const screenshotBucketName =
+        normalizeOptionalText(screenshotOptions.bucketName) ??
+        normalizeOptionalText(process.env.INSTANCE_AGENT_SCREENSHOT_ARTIFACT_BUCKET) ??
+        artifactBucketName;
+
+    return {
+        schemaVersion: 1,
+        nodeExecutable: process.execPath,
+        entryPoint: process.argv[1],
+        cliOptionNames: collectCliOptionNames(),
+        workingDirectory: process.cwd(),
+        scriptDirectory: __dirname,
+        signallingRoot,
+        pixelStreamingRoot,
+        pixelStreamingRootRealPath,
+        activeRuntimeRoot,
+        activeRuntimeRootRealPath,
+        isActiveRuntimeRoot:
+            Boolean(rootComparable && activeRootComparable) && rootComparable === activeRootComparable,
+        isActiveRuntimeRealPath:
+            Boolean(rootRealComparable && activeRootRealComparable) &&
+            rootRealComparable === activeRootRealComparable,
+        deliveryMode: process.env.SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE,
+        gitSyncMode: process.env.SCALEWORLD_GIT_SYNC_MODE,
+        streamingLane: process.env.SCALEWORLD_STREAMING_LANE,
+        deploymentTrack: process.env.SCALEWORLD_DEPLOYMENT_TRACK,
+        configuredLane: options.configuredLane,
+        agentVersion: options.configuredAgentVersion,
+        runtimeVersion: options.configuredRuntimeVersion,
+        runtimeBundleMetadataPresent: runtimeBundleMetadata !== null,
+        runtimeBundleId: firstOptionalMetadataValue(runtimeBundleMetadata, 'bundleId'),
+        runtimeBundleManifestKey: firstOptionalMetadataValue(runtimeBundleMetadata, 'manifestKey'),
+        runtimeBundleArtifactKey: firstOptionalMetadataValue(
+            runtimeBundleMetadata,
+            'runtimeZipKey',
+            'artifactKey'
+        ),
+        runtimeBundleSourceCommit: firstOptionalMetadataValue(
+            runtimeBundleMetadata,
+            'pixelStreamingRepoCommit',
+            'sourceCommit'
+        ),
+        runtimeBundleContractVersion: firstOptionalMetadataValue(
+            runtimeBundleMetadata,
+            'scaleWorldContractVersion',
+            'contractVersion'
+        ),
+        desiredStatePath: options.desiredStatePath,
+        artifactUploadEnabled: parseBoolean(
+            artifactOptions.enabled ?? process.env.INSTANCE_AGENT_ARTIFACT_UPLOAD_ENABLED,
+            false
+        ),
+        artifactBucketConfigured: Boolean(artifactBucketName),
+        artifactBucketName,
+        artifactPrefix:
+            normalizeOptionalText(artifactOptions.objectPrefix) ??
+            normalizeOptionalText(process.env.INSTANCE_AGENT_ARTIFACT_PREFIX),
+        artifactQueuePath:
+            normalizeOptionalText(artifactOptions.queuePath) ??
+            normalizeOptionalText(process.env.INSTANCE_AGENT_ARTIFACT_QUEUE_PATH),
+        artifactLogFolder:
+            normalizeOptionalText(artifactOptions.logFolder) ??
+            normalizeOptionalText(process.env.INSTANCE_AGENT_ARTIFACT_WILBUR_LOG_FOLDER),
+        artifactUnrealLogDirectory:
+            normalizeOptionalText(artifactOptions.unrealLogDirectory) ??
+            normalizeOptionalText(process.env.INSTANCE_AGENT_ARTIFACT_UNREAL_LOG_DIR) ??
+            normalizeOptionalText(process.env.SCALEWORLD_UNREAL_LOG_DIR),
+        screenshotArtifactUploadEnabled: parseBoolean(
+            screenshotOptions.enabled ?? process.env.INSTANCE_AGENT_SCREENSHOT_ARTIFACT_UPLOAD_ENABLED,
+            false
+        ),
+        screenshotArtifactBucketConfigured: Boolean(screenshotBucketName),
+        screenshotArtifactBucketName: screenshotBucketName,
+        screenshotArtifactPrefix:
+            normalizeOptionalText(screenshotOptions.objectPrefix) ??
+            normalizeOptionalText(process.env.INSTANCE_AGENT_SCREENSHOT_ARTIFACT_PREFIX),
+        screenshotArtifactQueuePath:
+            normalizeOptionalText(screenshotOptions.queuePath) ??
+            normalizeOptionalText(process.env.INSTANCE_AGENT_SCREENSHOT_ARTIFACT_QUEUE_PATH)
+    };
 }
 
 function isTerminalCommandStatus(value: string | null | undefined): boolean {
@@ -1431,6 +1614,17 @@ export function wireInstanceAgent(
         agentVersion: configuredAgentVersion,
         runtimeVersion: configuredRuntimeVersion
     });
+    queueEvent(
+        'runtime_identity',
+        buildRuntimeIdentityMetadata({
+            configuredLane,
+            configuredAgentVersion,
+            configuredRuntimeVersion,
+            desiredStatePath,
+            sessionLogArtifacts: options.sessionLogArtifacts,
+            sessionScreenshotArtifacts: options.sessionScreenshotArtifacts
+        })
+    );
 
     server.playerRegistry.on('added', (playerId: string) => {
         const viewerCount = server.playerRegistry.count();
