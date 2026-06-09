@@ -192,6 +192,15 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMes
     }
 }
 
+function normalizeArtifactMetadataText(value: unknown): string | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : null;
+}
+
 async function captureShutdownSessionArtifacts(
     instanceAgentClient:
         | Pick<InstanceAgentClient, 'captureSessionLogArtifact' | 'captureSessionScreenshotArtifact'>
@@ -209,19 +218,31 @@ async function captureShutdownSessionArtifacts(
         return;
     }
 
-    const captureMetadata = {
+    const captureMetadata: Record<string, unknown> = {
         reason,
         source: 'viewer-idle-stop',
         ...metadata
     };
+    const commandSessionRequestId = normalizeArtifactMetadataText(command?.sessionRequestId);
+    const metadataSessionRequestId = normalizeArtifactMetadataText(captureMetadata.sessionRequestId);
+    const metadataUserSessionId = normalizeArtifactMetadataText(captureMetadata.userSessionId);
+    const metadataSessionId = normalizeArtifactMetadataText(captureMetadata.sessionId);
+    const selectedArtifactSessionKey =
+        commandSessionRequestId ?? metadataSessionRequestId ?? metadataUserSessionId ?? metadataSessionId;
+
+    log(
+        `[idle-stop] Shutdown artifact correlation '${trigger}': commandPresent=${command ? 'true' : 'false'}, commandSessionRequestId=${commandSessionRequestId ?? '(none)'}, metadataSessionRequestId=${metadataSessionRequestId ?? '(none)'}, metadataUserSessionId=${metadataUserSessionId ?? '(none)'}, metadataSessionId=${metadataSessionId ?? '(none)'}, selectedArtifactSessionKey=${selectedArtifactSessionKey ?? '(none)'}.`
+    );
 
     if (!command) {
         log(
-            `[idle-stop] Capturing shutdown artifacts '${trigger}' without an active shutdown command; session registration will be skipped unless metadata includes session identity.`
+            selectedArtifactSessionKey
+                ? `[idle-stop] Capturing shutdown artifacts '${trigger}' without an active shutdown command using metadata session identity ${selectedArtifactSessionKey}.`
+                : `[idle-stop] Capturing shutdown artifacts '${trigger}' without an active shutdown command; session registration will be skipped unless metadata includes session identity.`
         );
         const instanceTimeMetadata = {
             ...captureMetadata,
-            correlation: 'instance_time'
+            correlation: selectedArtifactSessionKey ? 'metadata_session' : 'instance_time'
         };
         try {
             await withTimeout(
@@ -667,6 +688,21 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             lastManagedSessionObservedAtMs = Date.now();
         }
         return true;
+    };
+    const resolveShutdownArtifactSessionRequestId = (
+        reason: string,
+        requestedSessionRequestId?: string | null
+    ): string | null => {
+        const requested = normalizeOptionalText(requestedSessionRequestId);
+        if (requested) {
+            return requested;
+        }
+
+        if (!hasSeenViewer || !hasSeenManagedSessionViewer || reason === 'warm_pool_capacity_release') {
+            return null;
+        }
+
+        return lastManagedSessionRequestId;
     };
     const disconnectPlayersForExplicitTeardown = (command: RuntimeInstanceCommand): number => {
         const players: IPlayer[] = server.playerRegistry.listPlayers();
@@ -1565,10 +1601,12 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 }
             }
 
-            const shutdownArtifactMetadata =
-                commandToStart || reason !== 'grace-after-last-viewer' || !artifactSessionRequestId
-                    ? undefined
-                    : { sessionRequestId: artifactSessionRequestId };
+            const shutdownArtifactSessionRequestId = normalizeOptionalText(commandToStart?.sessionRequestId)
+                ? null
+                : resolveShutdownArtifactSessionRequestId(reason, artifactSessionRequestId);
+            const shutdownArtifactMetadata = shutdownArtifactSessionRequestId
+                ? { sessionRequestId: shutdownArtifactSessionRequestId }
+                : undefined;
 
             await captureShutdownSessionArtifacts(
                 options.instanceAgentClient,
