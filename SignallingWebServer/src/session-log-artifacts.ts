@@ -218,6 +218,22 @@ function truncateText(value: string, maxLength: number): string {
     return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
+function resolvePermanentRegistrationFailureReason(error: unknown): string | null {
+    const statusCode =
+        typeof (error as { statusCode?: unknown })?.statusCode === 'number'
+            ? (error as { statusCode: number }).statusCode
+            : undefined;
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+        statusCode === 404 &&
+        message.toLowerCase().includes('no session analytics row matched artifact registration')
+    ) {
+        return 'artifact registration was permanently rejected because no session analytics row matched';
+    }
+
+    return null;
+}
+
 function normalizeMetadata(input: Record<string, unknown> | undefined): Record<string, string> {
     const metadata: Record<string, string> = {};
     if (!input) {
@@ -1116,6 +1132,15 @@ export function createSessionLogArtifactManager(
             return true;
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
+            const permanentFailureReason =
+                record.status === 'pending_registration'
+                    ? resolvePermanentRegistrationFailureReason(error)
+                    : null;
+            if (permanentFailureReason) {
+                discardQueueRecord(record, permanentFailureReason);
+                return true;
+            }
+
             record.attempts += 1;
             record.lastError = truncateText(message, 1000);
             updateRecord(record);

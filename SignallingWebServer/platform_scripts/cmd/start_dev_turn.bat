@@ -820,7 +820,16 @@ if defined SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE (
   exit /b 0
 )
 
-if not exist "%RESOLVE_DELIVERY_MODE_SCRIPT%" exit /b 0
+if not exist "%RESOLVE_DELIVERY_MODE_SCRIPT%" (
+  if exist "%ACTIVE_RUNTIME_WILBUR_LAUNCHER%" (
+    echo WARNING: PixelStreaming delivery mode resolver not found at "%RESOLVE_DELIVERY_MODE_SCRIPT%". Delegating Wilbur startup to the active runtime launcher to avoid bootstrap-root startup.
+    set "ACTIVE_RUNTIME_WILBUR_DELEGATED=true"
+    call "%ACTIVE_RUNTIME_WILBUR_LAUNCHER%" %*
+    exit /b %errorlevel%
+  )
+
+  exit /b 0
+)
 
 set "RESOLVED_PIXELSTREAMING_DELIVERY_MODE="
 if not defined TEMP set "TEMP=%SystemRoot%\Temp"

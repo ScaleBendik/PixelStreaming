@@ -1090,7 +1090,13 @@ export function wireInstanceAgent(
             metadata: request.metadata
         });
         if (!response.ok) {
-            throw new Error(await describeErrorResponse(response, 'Artifact registration'));
+            const error = new Error(
+                await describeErrorResponse(response, 'Artifact registration')
+            ) as Error & {
+                statusCode?: number;
+            };
+            error.statusCode = response.status;
+            throw error;
         }
 
         const payload = await parseJsonResponse<InstanceAgentArtifactRegistrationResponse>(response);

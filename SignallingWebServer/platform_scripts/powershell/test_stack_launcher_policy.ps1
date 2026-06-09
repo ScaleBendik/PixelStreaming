@@ -257,6 +257,11 @@ Assert-ContainsText `
     -Message 'Direct Wilbur startup must fail closed when delivery-mode resolution fails.'
 
 Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'Delegating Wilbur startup to the active runtime launcher to avoid bootstrap-root startup.' `
+    -Message 'Direct Wilbur startup must not silently continue into the bootstrap checkout when the delivery-mode resolver is missing but an active runtime is installed.'
+
+Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'set "STACK_ENABLE_PROVISIONING_MODE=false"' `
     -Message 'Delegated active runtime startup must suppress provisioning preflight before calling the runtime launcher.'
