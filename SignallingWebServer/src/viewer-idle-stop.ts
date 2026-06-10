@@ -227,22 +227,31 @@ async function captureShutdownSessionArtifacts(
     const metadataSessionRequestId = normalizeArtifactMetadataText(captureMetadata.sessionRequestId);
     const metadataUserSessionId = normalizeArtifactMetadataText(captureMetadata.userSessionId);
     const metadataSessionId = normalizeArtifactMetadataText(captureMetadata.sessionId);
+    const allowLastSessionCorrelation =
+        captureMetadata.allowLastSessionCorrelation === true ||
+        normalizeArtifactMetadataText(captureMetadata.allowLastSessionCorrelation)?.toLowerCase() === 'true';
     const selectedArtifactSessionKey =
         commandSessionRequestId ?? metadataSessionRequestId ?? metadataUserSessionId ?? metadataSessionId;
 
     log(
-        `[idle-stop] Shutdown artifact correlation '${trigger}': commandPresent=${command ? 'true' : 'false'}, commandSessionRequestId=${commandSessionRequestId ?? '(none)'}, metadataSessionRequestId=${metadataSessionRequestId ?? '(none)'}, metadataUserSessionId=${metadataUserSessionId ?? '(none)'}, metadataSessionId=${metadataSessionId ?? '(none)'}, selectedArtifactSessionKey=${selectedArtifactSessionKey ?? '(none)'}.`
+        `[idle-stop] Shutdown artifact correlation '${trigger}': commandPresent=${command ? 'true' : 'false'}, commandSessionRequestId=${commandSessionRequestId ?? '(none)'}, metadataSessionRequestId=${metadataSessionRequestId ?? '(none)'}, metadataUserSessionId=${metadataUserSessionId ?? '(none)'}, metadataSessionId=${metadataSessionId ?? '(none)'}, allowLastSessionCorrelation=${allowLastSessionCorrelation ? 'true' : 'false'}, selectedArtifactSessionKey=${selectedArtifactSessionKey ?? '(none)'}.`
     );
 
     if (!command) {
         log(
             selectedArtifactSessionKey
                 ? `[idle-stop] Capturing shutdown artifacts '${trigger}' without an active shutdown command using metadata session identity ${selectedArtifactSessionKey}.`
-                : `[idle-stop] Capturing shutdown artifacts '${trigger}' without an active shutdown command; session registration will be skipped unless metadata includes session identity.`
+                : allowLastSessionCorrelation
+                  ? `[idle-stop] Capturing shutdown artifacts '${trigger}' without an active shutdown command using recent session correlation fallback.`
+                  : `[idle-stop] Capturing shutdown artifacts '${trigger}' without an active shutdown command; session registration will be skipped unless metadata includes session identity.`
         );
         const instanceTimeMetadata = {
             ...captureMetadata,
-            correlation: selectedArtifactSessionKey ? 'metadata_session' : 'instance_time'
+            correlation: selectedArtifactSessionKey
+                ? 'metadata_session'
+                : allowLastSessionCorrelation
+                  ? 'recent_session_context'
+                  : 'instance_time'
         };
         try {
             await withTimeout(
