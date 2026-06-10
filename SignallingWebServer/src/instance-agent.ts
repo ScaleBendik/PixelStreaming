@@ -594,6 +594,16 @@ function isRecycleToWarmCommand(
     return normalizeOptionalText(command?.commandType)?.toLowerCase() === 'recycletowarm';
 }
 
+function isShutdownCommand(
+    command:
+        | Pick<InstanceAgentCommand, 'commandType'>
+        | Pick<InstanceAgentCommandJournalSnapshot, 'commandType'>
+        | null
+        | undefined
+): boolean {
+    return normalizeOptionalText(command?.commandType)?.toLowerCase() === 'shutdown';
+}
+
 async function describeErrorResponse(response: Response, action: string): Promise<string> {
     const responseUrl = normalizeOptionalText(response.url) ?? 'unknown URL';
     const contentType = normalizeOptionalText(response.headers.get('content-type')) ?? '';
@@ -725,6 +735,8 @@ export function wireInstanceAgent(
     let resetInProgress = false;
     let artifactManager: SessionLogArtifactManager | null = null;
     let screenshotArtifactManager: SessionScreenshotArtifactManager | null = null;
+    let lastPlayerSessionContext: PlayerSessionContext = {};
+    let lastShutdownCommandSessionRequestId: string | undefined;
     const playerSessionContexts = new Map<string, PlayerSessionContext>();
     const desiredStateListeners = new Set<InstanceAgentDesiredStateListener>();
     const commandListeners = new Set<InstanceAgentCommandListener>();
@@ -769,6 +781,36 @@ export function wireInstanceAgent(
 
     const hasPlayerSessionContext = (context: PlayerSessionContext): boolean =>
         Boolean(context.sessionId ?? context.sessionRequestId);
+
+    const rememberPlayerSessionContext = (context: PlayerSessionContext): void => {
+        const sessionId = normalizeOptionalText(context.sessionId);
+        const sessionRequestId = normalizeOptionalText(context.sessionRequestId);
+        if (!sessionId && !sessionRequestId) {
+            return;
+        }
+
+        lastPlayerSessionContext = {
+            sessionId: sessionId ?? lastPlayerSessionContext.sessionId,
+            sessionRequestId: sessionRequestId ?? lastPlayerSessionContext.sessionRequestId
+        };
+    };
+
+    const rememberShutdownCommandSessionContext = (command: InstanceAgentCommand): void => {
+        if (!isShutdownCommand(command)) {
+            return;
+        }
+
+        lastShutdownCommandSessionRequestId = normalizeOptionalText(command.sessionRequestId);
+    };
+
+    const allowLastSessionCorrelation = (metadata: Record<string, unknown>): boolean =>
+        metadata.allowLastSessionCorrelation === true ||
+        normalizeOptionalText(metadata.allowLastSessionCorrelation)?.toLowerCase() === 'true';
+
+    const resolveLastSessionArtifactContext = (): PlayerSessionContext => ({
+        sessionId: lastPlayerSessionContext.sessionId,
+        sessionRequestId: lastShutdownCommandSessionRequestId ?? lastPlayerSessionContext.sessionRequestId
+    });
 
     const buildPlayerSessionMetadata = (context: PlayerSessionContext): Record<string, unknown> => ({
         sessionId: context.sessionId,
@@ -877,6 +919,7 @@ export function wireInstanceAgent(
                 continue;
             }
 
+            rememberShutdownCommandSessionContext(command);
             queueEvent('instance_command_received', {
                 instanceCommandId: command.instanceCommandId,
                 commandType: command.commandType,
@@ -1318,15 +1361,41 @@ export function wireInstanceAgent(
 
         try {
             const identity = await resolveBootstrapIdentity();
+            const commandSessionRequestId = normalizeOptionalText(command?.sessionRequestId);
+            const metadataSessionRequestId = normalizeOptionalText(metadata.sessionRequestId);
+            const metadataUserSessionId = normalizeOptionalText(metadata.userSessionId);
+            const metadataSessionId = normalizeOptionalText(metadata.sessionId);
+            const fallbackSessionContext = allowLastSessionCorrelation(metadata)
+                ? resolveLastSessionArtifactContext()
+                : {};
+            const fallbackSessionRequestId = normalizeOptionalText(fallbackSessionContext.sessionRequestId);
+            const fallbackSessionId = normalizeOptionalText(fallbackSessionContext.sessionId);
+            const selectedSessionRequestId =
+                commandSessionRequestId ?? metadataSessionRequestId ?? fallbackSessionRequestId;
+            const selectedUserSessionId = metadataUserSessionId;
+            const selectedSessionId =
+                metadataSessionId ??
+                (!selectedSessionRequestId && !selectedUserSessionId ? fallbackSessionId : undefined);
+
+            if (
+                !commandSessionRequestId &&
+                !metadataSessionRequestId &&
+                !metadataUserSessionId &&
+                !metadataSessionId &&
+                (fallbackSessionRequestId || fallbackSessionId)
+            ) {
+                log(
+                    `[session-artifacts] ${trigger} using recent session correlation: sessionRequestId=${fallbackSessionRequestId ?? '(none)'}, sessionId=${fallbackSessionId ?? '(none)'}.`
+                );
+            }
+
             await artifactManager.captureAndUpload({
                 trigger,
                 instanceId: identity.instanceId,
                 region: identity.region,
-                sessionRequestId:
-                    normalizeOptionalText(command?.sessionRequestId) ??
-                    normalizeOptionalText(metadata.sessionRequestId),
-                userSessionId: normalizeOptionalText(metadata.userSessionId),
-                sessionId: normalizeOptionalText(metadata.sessionId),
+                sessionRequestId: selectedSessionRequestId,
+                userSessionId: selectedUserSessionId,
+                sessionId: selectedSessionId,
                 instanceCommandId: normalizeOptionalText(command?.instanceCommandId),
                 commandType: normalizeOptionalText(command?.commandType),
                 runtimeStatus: runtimeSnapshot.status,
@@ -1658,6 +1727,7 @@ export function wireInstanceAgent(
         const normalizedPlayerId = normalizeOptionalText(playerId);
         if (normalizedPlayerId && hasPlayerSessionContext(sessionContext)) {
             playerSessionContexts.set(normalizedPlayerId, sessionContext);
+            rememberPlayerSessionContext(sessionContext);
         } else if (normalizedPlayerId) {
             playerSessionContexts.delete(normalizedPlayerId);
         }
@@ -1683,6 +1753,7 @@ export function wireInstanceAgent(
             : normalizedPlayerId
               ? (playerSessionContexts.get(normalizedPlayerId) ?? {})
               : {};
+        rememberPlayerSessionContext(sessionContext);
         queueEvent(
             'viewer_disconnected',
             {

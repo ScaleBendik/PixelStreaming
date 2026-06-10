@@ -1601,12 +1601,22 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 }
             }
 
-            const shutdownArtifactSessionRequestId = normalizeOptionalText(commandToStart?.sessionRequestId)
+            const commandSessionRequestId = normalizeOptionalText(commandToStart?.sessionRequestId);
+            const shutdownArtifactSessionRequestId = commandSessionRequestId
                 ? null
                 : resolveShutdownArtifactSessionRequestId(reason, artifactSessionRequestId);
-            const shutdownArtifactMetadata = shutdownArtifactSessionRequestId
-                ? { sessionRequestId: shutdownArtifactSessionRequestId }
-                : undefined;
+            const allowLastSessionCorrelation =
+                !commandSessionRequestId &&
+                !shutdownArtifactSessionRequestId &&
+                hasSeenViewer &&
+                reason !== 'warm_pool_capacity_release';
+            const shutdownArtifactMetadata: Record<string, unknown> | undefined =
+                shutdownArtifactSessionRequestId || allowLastSessionCorrelation
+                    ? {
+                          sessionRequestId: shutdownArtifactSessionRequestId ?? undefined,
+                          allowLastSessionCorrelation: allowLastSessionCorrelation ? true : undefined
+                      }
+                    : undefined;
 
             await captureShutdownSessionArtifacts(
                 options.instanceAgentClient,
