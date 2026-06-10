@@ -196,6 +196,31 @@ Assert-ContainsText `
     -Expected 'set "WATCHDOG_UNREAL_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_unreal.bat"""' `
     -Message 'Delegated active runtime startup must bind Unreal recovery to the active runtime launcher directory.'
 
+Assert-MatchesText `
+    -Content $startDevTurn `
+    -Pattern 'call :delegate_to_active_runtime_wilbur_if_needed %\*.*?call :resolve_streaming_lane_from_instance_tag' `
+    -Message 'Direct Wilbur launches must check active-runtime delegation before resolving normal runtime parameters.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'resolve_pixelstreaming_delivery_mode_from_instance_tag.ps1' `
+    -Message 'Direct Wilbur launches must resolve runtime-artifact delivery from instance tags before starting from the bootstrap checkout.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'PixelStreaming delivery mode runtime_artifact requires active runtime Wilbur launcher' `
+    -Message 'Direct Wilbur launches must fail closed instead of starting stale bootstrap Wilbur when runtime_artifact is explicit.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'Delegating Wilbur startup to active PixelStreaming runtime' `
+    -Message 'Direct Wilbur launches must hand off to the active runtime Wilbur launcher when runtime-artifact tags are present.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'if exist "%ROOT%\..\runtime-bundle-metadata.json" exit /b 0' `
+    -Message 'Runtime-release Wilbur launchers must not recursively delegate through the stable active-runtime junction.'
+
 Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'set "STACK_ENABLE_PROVISIONING_MODE=false"' `
