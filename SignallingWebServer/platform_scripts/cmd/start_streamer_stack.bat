@@ -4,12 +4,11 @@ setlocal EnableExtensions EnableDelayedExpansion
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%\..\..\..") do set "PIXELSTREAMING_ROOT=%%~fI"
 if not defined SCALEWORLD_INSTALL_BASE set "SCALEWORLD_INSTALL_BASE=C:\PixelStreaming"
-for %%I in ("%SCALEWORLD_INSTALL_BASE%\PixelStreamingRuntime") do set "SCALEWORLD_ACTIVE_RUNTIME_ROOT=%%~fI"
+set "RUNTIME_BUNDLE_METADATA=%PIXELSTREAMING_ROOT%\runtime-bundle-metadata.json"
 set "UPDATE_SCRIPT=%PIXELSTREAMING_ROOT%\SWupdate.ps1"
 set "DATA_DRIVE_SCRIPT=%SCRIPT_DIR%..\powershell\ensure_data_drive.ps1"
 set "UPDATE_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_update_mode.ps1"
 set "PROVISIONING_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_provisioning_mode.ps1"
-set "ACTIVE_RUNTIME_LAUNCHER_RESOLVER=%SCRIPT_DIR%..\powershell\resolve_active_runtime_launcher.ps1"
 set "ACTIVE_RUNTIME_IDENTITY_PUBLISHER=%SCRIPT_DIR%..\powershell\publish_active_runtime_identity_tags.ps1"
 set "STOP_SUPERSEDED_ROOT_SCRIPT=%SCRIPT_DIR%..\powershell\stop_superseded_root_processes.ps1"
 set "NORMALIZE_DELIVERY_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\normalize_pixelstreaming_delivery_mode.ps1"
@@ -89,8 +88,8 @@ if not defined SCALEWORLD_GIT_TARGET_REF_PARAM (
     set "SCALEWORLD_GIT_TARGET_REF_PARAM=/pixelstreaming/nonprod/git-target-ref"
   )
 )
-if /i "%PIXELSTREAMING_ROOT%"=="%SCALEWORLD_ACTIVE_RUNTIME_ROOT%" (
-  echo Active PixelStreaming runtime root detected. Skipping repository maintenance preflight in this launcher.
+if exist "%RUNTIME_BUNDLE_METADATA%" (
+  echo PixelStreaming runtime artifact metadata detected at "%RUNTIME_BUNDLE_METADATA%". Using the current launch root as the active runtime.
   set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=runtime_artifact"
   set "WATCHDOG_RESTART_COMMAND=""%SCRIPT_DIR%start_streamer_stack.bat"" --recovery"
   set "WATCHDOG_WILBUR_RESTART_COMMAND=""%SCRIPT_DIR%start_dev_turn.bat"""
@@ -110,19 +109,9 @@ if /i "%PIXELSTREAMING_ROOT%"=="%SCALEWORLD_ACTIVE_RUNTIME_ROOT%" (
   ) else (
     echo WARNING: Active runtime identity publisher not found at "%ACTIVE_RUNTIME_IDENTITY_PUBLISHER%".
   )
-  set "STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION=false"
-  set "STACK_ENABLE_UPDATE_MODE=false"
-  set "STACK_ENABLE_PROVISIONING_MODE=false"
-)
-if not defined STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION (
-  if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="git_ref" (
-    set "STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION=false"
-  ) else (
-    set "STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION=true"
-  )
 )
 if not defined STACK_ENABLE_BOOT_GIT_SYNC (
-  if /i "%PIXELSTREAMING_ROOT%"=="%SCALEWORLD_ACTIVE_RUNTIME_ROOT%" (
+  if exist "%RUNTIME_BUNDLE_METADATA%" (
     set "STACK_ENABLE_BOOT_GIT_SYNC=false"
   ) else if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="runtime_artifact" (
     set "STACK_ENABLE_BOOT_GIT_SYNC=false"
@@ -149,7 +138,6 @@ if /i "%~1"=="--validation" (
   set "STACK_ENABLE_UPDATE_MODE=false"
   set "STACK_ENABLE_PROVISIONING_MODE=false"
   set "STACK_ENABLE_BOOT_GIT_SYNC=false"
-  set "STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION=false"
   set "STACK_RUN_UNREAL_UPDATE_CHECK=false"
   shift
 )
@@ -210,12 +198,10 @@ if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_PROVISIONING_MODE%"=="
 
 echo PixelStreaming delivery mode "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%" for %SCALEWORLD_STREAMING_LANE%/%SCALEWORLD_DEPLOYMENT_TRACK% startup.
 
-if /i not "%STACK_MODE%"=="validation" if /i "%STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION%"=="true" (
-  set "ACTIVE_RUNTIME_DELEGATED=false"
-  call :delegate_to_active_runtime_if_available %*
-  set "ACTIVE_RUNTIME_DELEGATE_EXIT=!errorlevel!"
-  if /i "!ACTIVE_RUNTIME_DELEGATED!"=="true" exit /b !ACTIVE_RUNTIME_DELEGATE_EXIT!
-  if not "!ACTIVE_RUNTIME_DELEGATE_EXIT!"=="0" exit /b !ACTIVE_RUNTIME_DELEGATE_EXIT!
+if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="runtime_artifact" if not exist "%RUNTIME_BUNDLE_METADATA%" (
+  echo ERROR: PixelStreaming delivery mode runtime_artifact requires runtime metadata at "%RUNTIME_BUNDLE_METADATA%".
+  echo ERROR: Convert the launch root to an installed artifact or explicitly switch the instance back to git_ref maintenance.
+  exit /b 1
 )
 
 if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_BOOT_GIT_SYNC%"=="true" (
@@ -301,65 +287,11 @@ if not "%STACK_LAUNCH_EXIT%"=="0" (
 echo Stack launch completed.
 exit /b 0
 
-:delegate_to_active_runtime_if_available
-set "ACTIVE_RUNTIME_LAUNCHER="
-
-if not exist "%ACTIVE_RUNTIME_LAUNCHER_RESOLVER%" (
-  if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="runtime_artifact" (
-    echo ERROR: PixelStreaming delivery mode runtime_artifact requires active runtime resolver "%ACTIVE_RUNTIME_LAUNCHER_RESOLVER%".
-    exit /b 1
-  )
-  exit /b 0
-)
-
-for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%ACTIVE_RUNTIME_LAUNCHER_RESOLVER%" -CurrentRoot "%PIXELSTREAMING_ROOT%"`) do (
-  set "ACTIVE_RUNTIME_LAUNCHER=%%I"
-)
-
-if not defined ACTIVE_RUNTIME_LAUNCHER (
-  if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="runtime_artifact" (
-    echo ERROR: PixelStreaming delivery mode runtime_artifact requires an installed active runtime under "%SCALEWORLD_ACTIVE_RUNTIME_ROOT%".
-    exit /b 1
-  )
-  exit /b 0
-)
-if not exist "%ACTIVE_RUNTIME_LAUNCHER%" (
-  if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="runtime_artifact" (
-    echo ERROR: Active PixelStreaming runtime launcher resolved to "%ACTIVE_RUNTIME_LAUNCHER%", but the file was not found.
-    exit /b 1
-  )
-  echo WARNING: Active PixelStreaming runtime launcher resolved to "%ACTIVE_RUNTIME_LAUNCHER%", but the file was not found. Continuing with bootstrap checkout.
-  exit /b 0
-)
-
-echo Delegating normal startup to active PixelStreaming runtime "%ACTIVE_RUNTIME_LAUNCHER%".
-for %%I in ("%ACTIVE_RUNTIME_LAUNCHER%") do set "ACTIVE_RUNTIME_SCRIPT_DIR=%%~dpI"
-call :stop_superseded_root_processes_before_delegation
-set "WATCHDOG_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_streamer_stack.bat"" --recovery"
-set "WATCHDOG_WILBUR_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_dev_turn.bat"""
-set "WATCHDOG_UNREAL_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_unreal.bat"""
-set "STACK_ENABLE_BOOT_GIT_SYNC=false"
-set "STACK_ENABLE_UPDATE_MODE=false"
-set "STACK_ENABLE_PROVISIONING_MODE=false"
-set "STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION=false"
-set "ACTIVE_RUNTIME_DELEGATED=true"
-call "%ACTIVE_RUNTIME_LAUNCHER%" %*
-exit /b %errorlevel%
-
-:stop_superseded_root_processes_before_delegation
-if exist "%STOP_SUPERSEDED_ROOT_SCRIPT%" (
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%STOP_SUPERSEDED_ROOT_SCRIPT%" -CurrentRoot "%PIXELSTREAMING_ROOT%" -ActiveRoot "%SCALEWORLD_ACTIVE_RUNTIME_ROOT%"
-  if errorlevel 1 echo WARNING: Superseded PixelStreaming root cleanup failed before active-runtime handoff.
-) else (
-  echo WARNING: Superseded PixelStreaming root cleanup script not found at "%STOP_SUPERSEDED_ROOT_SCRIPT%".
-)
-exit /b 0
-
 :stop_superseded_runtime_roots_before_stack_launch
-if /i not "%PIXELSTREAMING_ROOT%"=="%SCALEWORLD_ACTIVE_RUNTIME_ROOT%" exit /b 0
+if not exist "%RUNTIME_BUNDLE_METADATA%" exit /b 0
 if exist "%STOP_SUPERSEDED_ROOT_SCRIPT%" (
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%STOP_SUPERSEDED_ROOT_SCRIPT%" -CurrentRoot "%PIXELSTREAMING_ROOT%" -ActiveRoot "%SCALEWORLD_ACTIVE_RUNTIME_ROOT%" -InstallRoot "%SCALEWORLD_INSTALL_BASE%" -AllRoots -WaitSeconds 3
-  if errorlevel 1 echo WARNING: Superseded PixelStreaming root cleanup failed before active-runtime stack launch.
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%STOP_SUPERSEDED_ROOT_SCRIPT%" -CurrentRoot "%PIXELSTREAMING_ROOT%" -ActiveRoot "%PIXELSTREAMING_ROOT%" -InstallRoot "%SCALEWORLD_INSTALL_BASE%" -AllRoots -WaitSeconds 3
+  if errorlevel 1 echo WARNING: Superseded PixelStreaming root cleanup failed before artifact-root stack launch.
 ) else (
   echo WARNING: Superseded PixelStreaming root cleanup script not found at "%STOP_SUPERSEDED_ROOT_SCRIPT%".
 )

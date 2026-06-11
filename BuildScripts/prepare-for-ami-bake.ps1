@@ -280,6 +280,30 @@ function Test-BootstrapProvisioningScript {
     Write-BakePrepLog "Verified fixed provisioning script at '$scriptPath'."
 }
 
+function Test-RuntimeLaunchRoot {
+    param([string]$RuntimeRoot)
+
+    $requiredPaths = @(
+        'runtime-bundle-metadata.json',
+        'BuildScripts\prepare-for-ami-bake.ps1',
+        'BuildScripts\prepare-scaleworld-s4-for-ami-bake.bat',
+        'SignallingWebServer\platform_scripts\cmd\start_streamer_stack.bat',
+        'SignallingWebServer\platform_scripts\powershell\invoke_provisioning_mode.ps1',
+        'SignallingWebServer\platform_scripts\powershell\invoke_update_mode.ps1',
+        'SignallingWebServer\platform_scripts\powershell\install_pixelstreaming_runtime.ps1',
+        'SignallingWebServer\platform_scripts\powershell\watchdog.ps1'
+    )
+
+    foreach ($relativePath in $requiredPaths) {
+        $scriptPath = Join-Path $RuntimeRoot $relativePath
+        if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+            throw "Runtime artifact launch root '$RuntimeRoot' is missing required bake/startup file '$relativePath'."
+        }
+    }
+
+    Write-BakePrepLog "Verified runtime artifact launch root at '$RuntimeRoot'."
+}
+
 function Test-BakePrepScripts {
     param([string]$RepoPath)
 
@@ -560,16 +584,21 @@ function Write-FinalSummary {
 
 $installRoot = (Resolve-DefaultPath -Value $InstallBasePath -DefaultValue 'C:\PixelStreaming').TrimEnd('\')
 $bootstrapRoot = Resolve-DefaultPath -Value $BootstrapRepoPath -DefaultValue (Join-Path $installRoot 'PixelStreaming')
-$runtimeRoot = Resolve-DefaultPath -Value $RuntimeRootPath -DefaultValue (Join-Path $installRoot 'PixelStreamingRuntime')
+$runtimeRoot = Resolve-DefaultPath -Value $RuntimeRootPath -DefaultValue (Join-Path $installRoot 'PixelStreaming')
 
 Write-BakePrepLog "Install root: $installRoot"
-Write-BakePrepLog "Bootstrap repo: $bootstrapRoot"
+Write-BakePrepLog "Launch root: $bootstrapRoot"
 Write-BakePrepLog "Runtime root: $runtimeRoot"
 
 Assert-ExpectedInstanceName -ExpectedName $ExpectedInstanceName
 
 $runtimeMetadata = Get-RuntimeBundleMetadata -RuntimeRoot $runtimeRoot
-$scriptCheckoutInfo = if ($UseScriptCheckoutCommit) {
+$runtimeRootIsArtifact = Test-Path -LiteralPath (Join-Path $runtimeRoot 'runtime-bundle-metadata.json') -PathType Leaf
+$useScriptCheckoutTarget = $UseScriptCheckoutCommit -and (-not $runtimeRootIsArtifact)
+$scriptCheckoutInfo = if ($UseScriptCheckoutCommit -and $runtimeRootIsArtifact) {
+    Write-BakePrepLog 'Ignoring -UseScriptCheckoutCommit because the runtime launch root is an artifact, not a git checkout.' 'WARN'
+    $null
+} elseif ($useScriptCheckoutTarget) {
     Get-ScriptCheckoutInfo
 } else {
     $null
@@ -577,7 +606,7 @@ $scriptCheckoutInfo = if ($UseScriptCheckoutCommit) {
 
 $resolvedTargetCommit = if (-not [string]::IsNullOrWhiteSpace($TargetCommit)) {
     $TargetCommit.Trim()
-} elseif ($UseScriptCheckoutCommit) {
+} elseif ($useScriptCheckoutTarget) {
     [string]$scriptCheckoutInfo.Head
 } else {
     [string]$runtimeMetadata.pixelStreamingRepoCommit
@@ -585,7 +614,7 @@ $resolvedTargetCommit = if (-not [string]::IsNullOrWhiteSpace($TargetCommit)) {
 
 $resolvedTargetRef = if (-not [string]::IsNullOrWhiteSpace($TargetRef)) {
     $TargetRef.Trim()
-} elseif ($UseScriptCheckoutCommit) {
+} elseif ($useScriptCheckoutTarget) {
     [string]$scriptCheckoutInfo.Ref
 } else {
     [string]$runtimeMetadata.sourceRef
@@ -598,20 +627,26 @@ if ([string]::IsNullOrWhiteSpace($resolvedTargetCommit)) {
 Write-BakePrepLog "Runtime bundle: $($runtimeMetadata.bundleId)"
 Write-BakePrepLog "Runtime metadata source commit: $($runtimeMetadata.pixelStreamingRepoCommit)"
 Write-BakePrepLog "Runtime metadata source ref: $($runtimeMetadata.sourceRef)"
-if ($UseScriptCheckoutCommit) {
+if ($useScriptCheckoutTarget) {
     Write-BakePrepLog "Using script checkout commit from '$($scriptCheckoutInfo.Root)' as bootstrap target."
 }
 
 Write-BakePrepLog "Bootstrap target commit: $resolvedTargetCommit"
 Write-BakePrepLog "Bootstrap target ref: $resolvedTargetRef"
 
-if (-not $SkipBootstrapSync) {
+if ($runtimeRootIsArtifact) {
+    Write-BakePrepLog 'Skipping bootstrap git sync because the runtime artifact is the launch root.'
+} elseif (-not $SkipBootstrapSync) {
     Sync-BootstrapCheckout -RepoPath $bootstrapRoot -Commit $resolvedTargetCommit -Ref $resolvedTargetRef
 }
 
 if (-not $SkipVerification) {
-    Test-BootstrapProvisioningScript -RepoPath $bootstrapRoot
-    Test-BakePrepScripts -RepoPath $bootstrapRoot
+    if ($runtimeRootIsArtifact) {
+        Test-RuntimeLaunchRoot -RuntimeRoot $runtimeRoot
+    } else {
+        Test-BootstrapProvisioningScript -RepoPath $bootstrapRoot
+        Test-BakePrepScripts -RepoPath $bootstrapRoot
+    }
 }
 
 if (-not $SkipProcessStop) {

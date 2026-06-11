@@ -239,75 +239,6 @@ function Get-ObjectPropertyValue {
     return ([string]$property.Value).Trim()
 }
 
-function Invoke-BootstrapCheckoutAlignment {
-    param(
-        [string]$RepoRoot,
-        [string]$SourceCommit,
-        [string]$SourceRef = ''
-    )
-
-    $targetCommit = ([string]$SourceCommit).Trim()
-    if ([string]::IsNullOrWhiteSpace($targetCommit)) {
-        throw 'Bootstrap checkout alignment requires a runtime artifact source commit.'
-    }
-
-    if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot '.git') -PathType Container)) {
-        throw "Bootstrap root '$RepoRoot' is not a git repository."
-    }
-
-    $git = Get-Command git -ErrorAction SilentlyContinue
-    if (-not $git) {
-        throw "Git ('git') was not found."
-    }
-
-    Write-ProvisioningLog "Aligning bootstrap checkout at '$RepoRoot' to runtime artifact source commit '$targetCommit'."
-    $sourceRefValue = ([string]$SourceRef).Trim()
-    if (-not [string]::IsNullOrWhiteSpace($sourceRefValue) -and -not [string]::Equals($sourceRefValue, 'HEAD', [System.StringComparison]::OrdinalIgnoreCase)) {
-        & $git.Source -C $RepoRoot fetch origin $sourceRefValue
-        if ($LASTEXITCODE -ne 0) {
-            Write-ProvisioningLog "Bootstrap source ref fetch '$sourceRefValue' failed. Continuing with general origin fetch before checking out the artifact commit." 'WARN'
-            $global:LASTEXITCODE = 0
-        }
-    }
-
-    & $git.Source -C $RepoRoot fetch --tags --prune origin
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Bootstrap checkout alignment failed while fetching origin.'
-    }
-
-    & $git.Source -C $RepoRoot checkout --force $targetCommit
-    if ($LASTEXITCODE -ne 0) {
-        throw "Bootstrap checkout alignment failed while checking out '$targetCommit'."
-    }
-
-    $head = ((& $git.Source -C $RepoRoot rev-parse HEAD) | Select-Object -First 1)
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace([string]$head)) {
-        throw 'Bootstrap checkout alignment failed while verifying HEAD.'
-    }
-
-    $headValue = ([string]$head).Trim()
-    if (-not [string]::Equals($headValue, $targetCommit, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Bootstrap checkout alignment ended at '$headValue' instead of '$targetCommit'."
-    }
-
-    $requiredFiles = @(
-        'SignallingWebServer\platform_scripts\cmd\start_streamer_stack.bat',
-        'SignallingWebServer\platform_scripts\powershell\invoke_provisioning_mode.ps1',
-        'SignallingWebServer\platform_scripts\powershell\invoke_update_mode.ps1',
-        'SignallingWebServer\platform_scripts\powershell\install_pixelstreaming_runtime.ps1',
-        'SignallingWebServer\platform_scripts\powershell\watchdog.ps1'
-    )
-
-    foreach ($relativePath in $requiredFiles) {
-        $candidate = Join-Path $RepoRoot $relativePath
-        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
-            throw "Bootstrap checkout '$targetCommit' does not contain required bootstrap file '$relativePath'."
-        }
-    }
-
-    Write-ProvisioningLog "Bootstrap checkout aligned to runtime artifact source commit '$targetCommit'."
-}
-
 function Test-FatalBootstrapError {
     param([string]$Message)
 
@@ -319,9 +250,7 @@ function Test-FatalBootstrapError {
         'Tracked local changes are present',
         'ensure_repo_current.ps1 was not found',
         'install_pixelstreaming_runtime.ps1 was not found',
-        'Bootstrap checkout alignment requires a runtime artifact source commit.',
-        'Bootstrap root',
-        'does not contain required bootstrap file',
+        'Provisioning launch root',
         'Pinned git sync mode requires SCALEWORLD_GIT_TARGET_REF',
         'Unsupported git sync mode'
     )
@@ -477,9 +406,13 @@ while ($true) {
         }
 
         $provisioningConfirmed = $true
+        $hasRuntimeArtifactTarget = -not [string]::IsNullOrWhiteSpace($targetRuntimeManifestKey)
+        $runtimeBundleMetadataPath = Join-Path $pixelStreamingRoot 'runtime-bundle-metadata.json'
+        $currentRootIsRuntimeArtifact = Test-Path -LiteralPath $runtimeBundleMetadataPath -PathType Leaf
+        $currentRootIsGitCheckout = Test-Path -LiteralPath (Join-Path $pixelStreamingRoot '.git') -PathType Container
 
-        if (-not (Test-Path -LiteralPath $repoSyncScript)) {
-            throw "ensure_repo_current.ps1 was not found at '$repoSyncScript'."
+        if ((-not $currentRootIsRuntimeArtifact) -and (-not $currentRootIsGitCheckout)) {
+            throw "Provisioning launch root '$pixelStreamingRoot' is neither a git checkout nor an installed PixelStreaming runtime artifact."
         }
 
         $heartbeatContext = New-ProvisioningHeartbeatContext -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId
@@ -487,20 +420,28 @@ while ($true) {
             Set-ProvisioningHeartbeatState -Context $heartbeatContext -Status 'booting' -Reason 'provisioning_bootstrap'
             Start-ProvisioningHeartbeat -Context $heartbeatContext
 
-            Write-ProvisioningLog "Provisioning maintenance detected for instance '$($identity.InstanceId)'. Ensuring repo/bootstrap prerequisites before first startup."
-            Set-ProvisioningHeartbeatState -Context $heartbeatContext -Status 'updating_infra' -Reason 'provisioning_repo_sync'
-            & $repoSyncScript `
-                -RepoRoot $pixelStreamingRoot `
-                -Mode 'provisioning' `
-                -PhaseAwsCli $awsCli `
-                -PhaseRegion $identity.Region `
-                -PhaseInstanceId $identity.InstanceId `
-                -BuildingUpdatePhase 'provisioning_repo_sync'
-            if ($LASTEXITCODE -ne 0) {
-                throw "ensure_repo_current.ps1 exited with code $LASTEXITCODE."
+            Write-ProvisioningLog "Provisioning maintenance detected for instance '$($identity.InstanceId)'. Preparing launch root before first startup."
+            if ($currentRootIsGitCheckout) {
+                if (-not (Test-Path -LiteralPath $repoSyncScript)) {
+                    throw "ensure_repo_current.ps1 was not found at '$repoSyncScript'."
+                }
+
+                Set-ProvisioningHeartbeatState -Context $heartbeatContext -Status 'updating_infra' -Reason 'provisioning_repo_sync'
+                & $repoSyncScript `
+                    -RepoRoot $pixelStreamingRoot `
+                    -Mode 'provisioning' `
+                    -PhaseAwsCli $awsCli `
+                    -PhaseRegion $identity.Region `
+                    -PhaseInstanceId $identity.InstanceId `
+                    -BuildingUpdatePhase 'provisioning_repo_sync'
+                if ($LASTEXITCODE -ne 0) {
+                    throw "ensure_repo_current.ps1 exited with code $LASTEXITCODE."
+                }
+            } else {
+                Write-ProvisioningLog "Launch root '$pixelStreamingRoot' is already a runtime artifact. Skipping provisioning git sync."
             }
 
-            if (-not [string]::IsNullOrWhiteSpace($targetRuntimeManifestKey)) {
+            if ($hasRuntimeArtifactTarget) {
                 if (-not (Test-Path -LiteralPath $runtimeInstallerScript)) {
                     throw "install_pixelstreaming_runtime.ps1 was not found at '$runtimeInstallerScript'."
                 }
@@ -527,11 +468,6 @@ while ($true) {
                 }
 
                 $installResult = Get-Content -LiteralPath $runtimeInstallResultPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-                Set-ProvisioningHeartbeatState -Context $heartbeatContext -Status 'updating_infra' -Reason 'syncing_bootstrap_to_runtime_artifact'
-                Invoke-BootstrapCheckoutAlignment `
-                    -RepoRoot $pixelStreamingRoot `
-                    -SourceCommit (Get-ObjectPropertyValue -InputObject $installResult -Name 'SourceCommit') `
-                    -SourceRef (Get-ObjectPropertyValue -InputObject $installResult -Name 'SourceRef')
 
                 Set-ProvisioningRuntimeIdentityTags `
                     -AwsCli $awsCli `

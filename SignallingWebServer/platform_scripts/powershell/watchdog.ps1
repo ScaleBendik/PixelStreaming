@@ -285,7 +285,7 @@ function Invoke-ActiveRuntimeSupersededRootCleanup {
     } else {
         $env:SCALEWORLD_INSTALL_BASE
     }
-    $activeRoot = Join-Path $installRoot 'PixelStreamingRuntime'
+    $activeRoot = Join-Path $installRoot 'PixelStreaming'
     $currentRoot = Split-Path -Parent ([string]$script:SignallingWebServerRoot)
     if (-not (Test-CurrentRootIsActiveRuntime -CurrentRoot $currentRoot -ActiveRoot $activeRoot)) {
         return

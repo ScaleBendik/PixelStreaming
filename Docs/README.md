@@ -1,6 +1,6 @@
 # PixelStreaming Documentation
 
-Last updated: 2026-06-03
+Last updated: 2026-06-11
 
 This directory mixes upstream Pixel Streaming reference documentation with ScaleWorld operational docs for the customized streamer runtime.
 
@@ -31,8 +31,8 @@ Use these first for the Server Manager integration:
 4. The in-house watchdog can restart Wilbur, Unreal, or the full stack and publishes `ScaleWorldRuntimeStatus*` tags.
 5. The instance agent is currently embedded in Wilbur. It bootstraps to the API, sends heartbeats/runtime events, consumes desired state and commands, and registers diagnostic/screenshot artifacts. Desired-state writes are normally driven by SQL-backed session, warm-pool, and operational controls rather than ad hoc server-card UI toggles.
 6. Diagnostic bundles and screenshot bundles are uploaded to S3 through AWS CLI and registered with the API for SQL-backed analytics/downloads.
-7. Runtime artifact delivery is active: runtime bundles are published under `PixelStreamingRuntime/<bundleId>/`, installed into versioned runtime roots, and activated through `C:\PixelStreaming\PixelStreamingRuntime`.
-8. `git_ref` delivery remains the Dev fast path and the bootstrap/break-glass migration path. Stage/Prod default to `auto` so an installed active runtime artifact wins when present.
+7. Runtime artifact delivery is active: runtime bundles are published under `PixelStreamingRuntime/<bundleId>/`, installed into versioned `C:\PixelStreaming\runtime-releases\<bundleId>` roots, and activated by replacing `C:\PixelStreaming\PixelStreaming` with a junction to the selected bundle. `C:\PixelStreaming\PixelStreamingRuntime` is only a compatibility alias.
+8. `git_ref` delivery remains the Dev fast path and the break-glass path. Stage/Prod default to `auto` so an artifact launch root wins when present.
 9. Bootstrapped instances publish `ScaleWorldPixelStreamingUpdateCapabilities=pixelstreaming_runtime,combined_runtime_unreal`; Server Manager uses that tag to gate runtime-artifact and combined update jobs.
 10. Repo-head startup tagging preserves runtime-artifact identity when `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact` or runtime identity tags are already present without an explicit `git_ref`, so runtime-artifact server cards keep showing the active bundle id instead of reverting to a Git target ref.
 11. `start_dev_turn.bat` and Wilbur defaults now align with API session access defaults: 5-minute last-viewer/reconnect grace and 10-minute first-viewer grace. The long-term backlog tracks moving lifecycle policy authority fully to the API.

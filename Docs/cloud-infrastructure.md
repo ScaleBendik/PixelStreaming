@@ -122,8 +122,8 @@ Planned replacement for normal PixelStreaming code promotion:
 - Git target refs remain compatibility and break-glass inputs during migration
 - delivery mode is explicit:
   - Dev defaults to `git_ref` so `/pixelstreaming/dev/git-target-ref` remains the fast iteration path
-  - Stage/Prod default to `auto` so active runtime artifacts win when installed, with pinned git-ref fallback during migration
-  - `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact` forces artifact startup and fails closed if no active runtime is installed
+  - Stage/Prod default to `auto` so artifact launch roots win when installed, with pinned git-ref fallback during migration
+  - `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact` forces artifact startup and fails closed if the current launch root has no runtime metadata
   - when the delivery-mode tag is absent but runtime artifact identity tags are present, startup infers runtime-artifact delivery instead of falling back to the Dev git-ref default
   - repo-head startup tagging preserves runtime-artifact identity when `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact` or runtime identity exists without an explicit `git_ref`, so `ScaleWorldPixelStreamingVersion` remains the active runtime bundle id instead of reverting to the Git target ref
 
@@ -472,9 +472,9 @@ Manual and maintenance-mode helpers:
 `start_streamer_stack.bat` now checks instance maintenance tags before normal startup.
 
 - If `ScaleWorldMaintenanceMode=update`, the instance runs the update path first instead of launching Wilbur/Unreal for user traffic.
-- If `ScaleWorldMaintenanceMode=provisioning`, the instance runs a bounded provisioning bootstrap first. That bootstrap waits for fresh-launch prerequisites, syncs the PixelStreaming repo if upstream changed, runs `BuildScripts/build-all.bat` when needed, installs the tagged PixelStreaming runtime artifact when `ScaleWorldTargetRuntimeManifestKey` is present, and then continues into normal Wilbur/Unreal startup. This keeps normal restarts fast while making new launches self-healing even if the AMI repo is behind or Windows networking is not ready at the first scheduler tick.
-- If delivery mode is `runtime_artifact`, startup requires `C:\PixelStreaming\PixelStreamingRuntime` to point at an installed runtime bundle.
-- If delivery mode is `auto`, startup delegates to that active runtime when present and otherwise falls back to pinned git-ref sync.
+- If `ScaleWorldMaintenanceMode=provisioning`, the instance runs a bounded provisioning bootstrap first. Git launch roots may sync the PixelStreaming repo to the configured target ref before first startup. When `ScaleWorldTargetRuntimeManifestKey` is present, provisioning installs and activates that artifact as the launch root without aligning a git checkout to the artifact source commit.
+- If delivery mode is `runtime_artifact`, startup requires `C:\PixelStreaming\PixelStreaming\runtime-bundle-metadata.json`.
+- If delivery mode is `auto`, startup uses the current artifact launch root when metadata is present and otherwise falls back to pinned git-ref sync.
 - If delivery mode is `git_ref`, startup ignores installed runtime artifacts and follows the deployment-track target ref. This is the Dev default.
 
 Startup always may publish repo-head diagnostics, but delivery identity is authoritative. When the instance is currently tagged `runtime_artifact`, or runtime identity tags are present without an explicit `git_ref`, repo-head publishing must not clear `ScaleWorldPixelStreamingRuntime*` tags and must not replace `ScaleWorldPixelStreamingVersion` with the resolved Git target ref. Runtime artifact update/provisioning is the writer that moves the visible runtime identity to a new bundle.
@@ -491,9 +491,9 @@ If tracked local changes exist in the repo, the maintenance update fails fast in
 
 Prerequisite: the instance must have a valid PixelStreaming git checkout and Git installed so update mode can fetch/pull before building.
 
-During PixelStreaming runtime maintenance-mode updates, `invoke_update_mode.ps1` does not build on the serving instance. It downloads the selected runtime manifest, verifies and installs the ZIP through `install_pixelstreaming_runtime.ps1`, switches the active runtime junction, launches validation from the active runtime root, publishes runtime identity tags, and stops for API reconciliation.
+During PixelStreaming runtime maintenance-mode updates, `invoke_update_mode.ps1` does not build on the serving instance. It downloads the selected runtime manifest, verifies and installs the ZIP through `install_pixelstreaming_runtime.ps1`, switches `C:\PixelStreaming\PixelStreaming` to the installed artifact bundle, launches validation from that launch root, publishes runtime identity tags, and stops for API reconciliation.
 
-Combined Unreal ZIP plus PixelStreaming runtime updates use `ScaleWorldUpdateTargetType=combined_runtime_unreal`. The instance prepares the runtime artifact in the background while the Unreal payload is prepared, fails before activation if either prepare step fails, activates the runtime artifact, activates the Unreal release, validates once from the active runtime launcher, publishes both `ScaleWorldCurrentBuild` and the runtime identity tags, and then stops for API reconciliation.
+Combined Unreal ZIP plus PixelStreaming runtime updates use `ScaleWorldUpdateTargetType=combined_runtime_unreal`. The instance prepares the runtime artifact in the background while the Unreal payload is prepared, fails before activation if either prepare step fails, activates the runtime artifact as the launch root, activates the Unreal release, validates once from the artifact launcher, publishes both `ScaleWorldCurrentBuild` and the runtime identity tags, and then stops for API reconciliation.
 
 Migration prerequisite: current live/stopped instances must first receive this bootstrap/updater code through the legacy repo-sweep/git-ref path or a refreshed base AMI. After that one-time bootstrap rollout, they publish `ScaleWorldPixelStreamingUpdateCapabilities=pixelstreaming_runtime,combined_runtime_unreal`, and small PixelStreaming runtime changes should use runtime manifests instead of AMI bakes.
 

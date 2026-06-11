@@ -431,16 +431,16 @@ function buildRuntimeIdentityMetadata(options: RuntimeIdentityMetadataOptions): 
     const signallingRoot = path.resolve(__dirname, '..');
     const pixelStreamingRoot = path.resolve(signallingRoot, '..');
     const installBase = normalizeOptionalText(process.env.SCALEWORLD_INSTALL_BASE) ?? 'C:\\PixelStreaming';
-    const activeRuntimeRoot = path.join(installBase, 'PixelStreamingRuntime');
+    const launchRoot = path.join(installBase, 'PixelStreaming');
     const pixelStreamingRootRealPath = resolveRealPath(pixelStreamingRoot);
-    const activeRuntimeRootRealPath = resolveRealPath(activeRuntimeRoot);
+    const launchRootRealPath = resolveRealPath(launchRoot);
     const runtimeBundleMetadataPath = path.join(pixelStreamingRoot, 'runtime-bundle-metadata.json');
     const runtimeBundleMetadata = tryReadJsonObject(runtimeBundleMetadataPath);
 
     const rootComparable = normalizePathForComparison(pixelStreamingRoot);
-    const activeRootComparable = normalizePathForComparison(activeRuntimeRoot);
+    const launchRootComparable = normalizePathForComparison(launchRoot);
     const rootRealComparable = normalizePathForComparison(pixelStreamingRootRealPath);
-    const activeRootRealComparable = normalizePathForComparison(activeRuntimeRootRealPath);
+    const launchRootRealComparable = normalizePathForComparison(launchRootRealPath);
 
     const artifactOptions = options.sessionLogArtifacts ?? {};
     const screenshotOptions = options.sessionScreenshotArtifacts ?? {};
@@ -462,13 +462,20 @@ function buildRuntimeIdentityMetadata(options: RuntimeIdentityMetadataOptions): 
         signallingRoot,
         pixelStreamingRoot,
         pixelStreamingRootRealPath,
-        activeRuntimeRoot,
-        activeRuntimeRootRealPath,
+        launchRoot,
+        launchRootRealPath,
+        activeRuntimeRoot: launchRoot,
+        activeRuntimeRootRealPath: launchRootRealPath,
+        isLaunchRoot:
+            Boolean(rootComparable && launchRootComparable) && rootComparable === launchRootComparable,
+        isLaunchRootRealPath:
+            Boolean(rootRealComparable && launchRootRealComparable) &&
+            rootRealComparable === launchRootRealComparable,
         isActiveRuntimeRoot:
-            Boolean(rootComparable && activeRootComparable) && rootComparable === activeRootComparable,
+            Boolean(rootComparable && launchRootComparable) && rootComparable === launchRootComparable,
         isActiveRuntimeRealPath:
-            Boolean(rootRealComparable && activeRootRealComparable) &&
-            rootRealComparable === activeRootRealComparable,
+            Boolean(rootRealComparable && launchRootRealComparable) &&
+            rootRealComparable === launchRootRealComparable,
         deliveryMode: process.env.SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE,
         gitSyncMode: process.env.SCALEWORLD_GIT_SYNC_MODE,
         streamingLane: process.env.SCALEWORLD_STREAMING_LANE,
@@ -533,8 +540,12 @@ function buildRuntimeIdentityLogMessage(metadata: Record<string, unknown>): stri
     const summary = {
         pixelStreamingRoot: metadata.pixelStreamingRoot,
         pixelStreamingRootRealPath: metadata.pixelStreamingRootRealPath,
+        launchRoot: metadata.launchRoot,
+        launchRootRealPath: metadata.launchRootRealPath,
         activeRuntimeRoot: metadata.activeRuntimeRoot,
         activeRuntimeRootRealPath: metadata.activeRuntimeRootRealPath,
+        isLaunchRoot: metadata.isLaunchRoot,
+        isLaunchRootRealPath: metadata.isLaunchRootRealPath,
         isActiveRuntimeRoot: metadata.isActiveRuntimeRoot,
         isActiveRuntimeRealPath: metadata.isActiveRuntimeRealPath,
         deliveryMode: metadata.deliveryMode,

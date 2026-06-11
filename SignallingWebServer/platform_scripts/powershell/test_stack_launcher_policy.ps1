@@ -71,6 +71,7 @@ $runtimeInstallerPath = Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.
 $updateModePath = Join-Path $PSScriptRoot 'invoke_update_mode.ps1'
 $provisioningModePath = Join-Path $PSScriptRoot 'invoke_provisioning_mode.ps1'
 $stopSupersededRootPath = Join-Path $PSScriptRoot 'stop_superseded_root_processes.ps1'
+$packageRuntimeArtifactPath = Join-Path $buildScriptsRoot 'package-runtime-artifact.ps1'
 $prepareForBakePath = Join-Path $buildScriptsRoot 'prepare-for-ami-bake.ps1'
 $prepareScaleWorldS4ForBakePath = Join-Path $buildScriptsRoot 'prepare-scaleworld-s4-for-ami-bake.bat'
 $prepareScaleWorldS4ForBakeViaSsmPath = Join-Path $buildScriptsRoot 'prepare-scaleworld-s4-for-ami-bake-via-ssm.bat'
@@ -96,6 +97,7 @@ $runtimeInstaller = [System.IO.File]::ReadAllText($runtimeInstallerPath)
 $updateMode = [System.IO.File]::ReadAllText($updateModePath)
 $provisioningMode = [System.IO.File]::ReadAllText($provisioningModePath)
 $stopSupersededRoot = [System.IO.File]::ReadAllText($stopSupersededRootPath)
+$packageRuntimeArtifact = [System.IO.File]::ReadAllText($packageRuntimeArtifactPath)
 $prepareForBake = [System.IO.File]::ReadAllText($prepareForBakePath)
 $prepareScaleWorldS4ForBake = [System.IO.File]::ReadAllText($prepareScaleWorldS4ForBakePath)
 $prepareScaleWorldS4ForBakeViaSsm = [System.IO.File]::ReadAllText($prepareScaleWorldS4ForBakeViaSsmPath)
@@ -129,107 +131,87 @@ Assert-ContainsText `
 Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=auto"' `
-    -Message 'Stage/Prod startup should preserve runtime-artifact delegation while retaining git-ref fallback during migration.'
+    -Message 'Stage/Prod startup should preserve automatic artifact detection while retaining git-ref fallback for non-artifact roots.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
-    -Expected 'if /i not "%STACK_MODE%"=="validation" if /i "%STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION%"=="true"' `
-    -Message 'Active runtime delegation must run for normal and recovery starts so bootstrap-root watchdog recovery cannot bypass the active runtime.'
+    -Expected 'set "RUNTIME_BUNDLE_METADATA=%PIXELSTREAMING_ROOT%\runtime-bundle-metadata.json"' `
+    -Message 'Stack launcher must detect runtime artifacts from metadata in the current launch root.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
-    -Expected 'Active PixelStreaming runtime root detected. Skipping repository maintenance preflight in this launcher.' `
-    -Message 'Active runtime launchers must not re-enter repository update/provisioning preflight after bootstrap-root handoff.'
-
-Assert-ContainsText `
-    -Content $stackLauncher `
-    -Expected 'publish_active_runtime_identity_tags.ps1' `
-    -Message 'Active runtime launchers must publish runtime artifact identity from local metadata before Wilbur can publish fallback git-ref tags.'
+    -Expected 'PixelStreaming runtime artifact metadata detected at "%RUNTIME_BUNDLE_METADATA%". Using the current launch root as the active runtime.' `
+    -Message 'Artifact launch roots must identify themselves without delegating through another root.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'set "WATCHDOG_RESTART_COMMAND=""%SCRIPT_DIR%start_streamer_stack.bat"" --recovery"' `
-    -Message 'Active runtime launchers must overwrite inherited watchdog stack recovery so recovery cannot jump back to the bootstrap checkout.'
+    -Message 'Artifact launch roots must bind watchdog stack recovery to the same launch root.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'set "WATCHDOG_WILBUR_RESTART_COMMAND=""%SCRIPT_DIR%start_dev_turn.bat"""' `
-    -Message 'Active runtime launchers must overwrite inherited Wilbur recovery to the active runtime root.'
+    -Message 'Artifact launch roots must bind Wilbur recovery to the same launch root.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'set "WATCHDOG_UNREAL_RESTART_COMMAND=""%SCRIPT_DIR%start_unreal.bat"""' `
-    -Message 'Active runtime launchers must overwrite inherited Unreal recovery to the active runtime root.'
+    -Message 'Artifact launch roots must bind Unreal recovery to the same launch root.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'set "WATCHDOG_STREAMER_HEALTH_PATH=%PIXELSTREAMING_ROOT%\SignallingWebServer\state\streamer-health.json"' `
-    -Message 'Active runtime launchers must overwrite inherited streamer health paths to the active runtime state file.'
+    -Message 'Artifact launch roots must keep streamer health under the same launch root.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'del /f /q "%WATCHDOG_STREAMER_HEALTH_PATH%"' `
-    -Message 'Active runtime launchers must remove stale baked streamer health snapshots before watchdog evaluates runtime freshness.'
-
-Assert-MatchesText `
-    -Content $stackLauncher `
-    -Pattern 'Active PixelStreaming runtime root detected.*?set "WATCHDOG_RESTART_COMMAND=.*?start_streamer_stack\.bat.*?del /f /q "%WATCHDOG_STREAMER_HEALTH_PATH%".*?if exist "%ACTIVE_RUNTIME_IDENTITY_PUBLISHER%".*?set "STACK_ENABLE_UPDATE_MODE=false".*?set "STACK_ENABLE_PROVISIONING_MODE=false"' `
-    -Message 'Active runtime launcher hardening must happen before identity publish and without re-enabling update or provisioning preflight.'
+    -Message 'Artifact launch roots must remove stale baked streamer health snapshots before watchdog evaluates runtime freshness.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
-    -Expected 'if /i "!ACTIVE_RUNTIME_DELEGATED!"=="true" exit /b !ACTIVE_RUNTIME_DELEGATE_EXIT!' `
-    -Message 'A successful active runtime delegation must be a terminal handoff so the bootstrap checkout cannot launch a second stack.'
+    -Expected 'publish_active_runtime_identity_tags.ps1' `
+    -Message 'Artifact launch roots must publish runtime artifact identity from local metadata before Wilbur can publish fallback git-ref tags.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
-    -Expected 'set "WATCHDOG_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_streamer_stack.bat"" --recovery"' `
-    -Message 'Delegated active runtime startup must bind watchdog stack recovery to the active runtime launcher, not the bootstrap checkout.'
+    -Expected 'set "STACK_ENABLE_BOOT_GIT_SYNC=false"' `
+    -Message 'Artifact launch roots must disable boot-time git sync.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
-    -Expected 'set "WATCHDOG_WILBUR_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_dev_turn.bat"""' `
-    -Message 'Delegated active runtime startup must bind Wilbur recovery to the active runtime launcher directory.'
+    -Expected 'PixelStreaming delivery mode runtime_artifact requires runtime metadata at "%RUNTIME_BUNDLE_METADATA%".' `
+    -Message 'Explicit runtime-artifact mode must fail closed when the current launch root is not an installed artifact.'
 
-Assert-ContainsText `
+Assert-DoesNotContainText `
     -Content $stackLauncher `
-    -Expected 'set "WATCHDOG_UNREAL_RESTART_COMMAND=""!ACTIVE_RUNTIME_SCRIPT_DIR!start_unreal.bat"""' `
-    -Message 'Delegated active runtime startup must bind Unreal recovery to the active runtime launcher directory.'
+    -Unexpected 'STACK_ENABLE_ACTIVE_RUNTIME_DELEGATION' `
+    -Message 'Stack launcher must not retain the split-root active runtime delegation switch.'
 
-Assert-MatchesText `
+Assert-DoesNotContainText `
+    -Content $stackLauncher `
+    -Unexpected ':delegate_to_active_runtime_if_available' `
+    -Message 'Stack launcher must not retain the split-root active runtime delegation label.'
+
+Assert-DoesNotContainText `
     -Content $startDevTurn `
-    -Pattern 'call :delegate_to_active_runtime_wilbur_if_needed %\*.*?call :resolve_streaming_lane_from_instance_tag' `
-    -Message 'Direct Wilbur launches must check active-runtime delegation before resolving normal runtime parameters.'
+    -Unexpected ':delegate_to_active_runtime_wilbur_if_needed' `
+    -Message 'Direct Wilbur launcher must not retain split-root runtime delegation.'
 
-Assert-ContainsText `
+Assert-DoesNotContainText `
     -Content $startDevTurn `
-    -Expected 'resolve_pixelstreaming_delivery_mode_from_instance_tag.ps1' `
-    -Message 'Direct Wilbur launches must resolve runtime-artifact delivery from instance tags before starting from the bootstrap checkout.'
-
-Assert-ContainsText `
-    -Content $startDevTurn `
-    -Expected 'PixelStreaming delivery mode runtime_artifact requires active runtime Wilbur launcher' `
-    -Message 'Direct Wilbur launches must fail closed instead of starting stale bootstrap Wilbur when runtime_artifact is explicit.'
+    -Unexpected 'Delegating Wilbur startup to active PixelStreaming runtime' `
+    -Message 'Direct Wilbur launcher must not hand off to a separate runtime root.'
 
 Assert-ContainsText `
     -Content $startDevTurn `
-    -Expected 'Delegating Wilbur startup to active PixelStreaming runtime' `
-    -Message 'Direct Wilbur launches must hand off to the active runtime Wilbur launcher when runtime-artifact tags are present.'
-
-Assert-ContainsText `
-    -Content $startDevTurn `
-    -Expected 'if exist "%ROOT%\..\runtime-bundle-metadata.json" exit /b 0' `
-    -Message 'Runtime-release Wilbur launchers must not recursively delegate through the stable active-runtime junction.'
-
-Assert-ContainsText `
-    -Content $stackLauncher `
-    -Expected 'set "STACK_ENABLE_PROVISIONING_MODE=false"' `
-    -Message 'Delegated active runtime startup must suppress provisioning preflight before calling the runtime launcher.'
+    -Expected 'set "RUNTIME_BUNDLE_METADATA=%ROOT%\..\runtime-bundle-metadata.json"' `
+    -Message 'Direct Wilbur launcher must be able to identify artifact launch roots from local metadata.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'stop_superseded_root_processes.ps1' `
-    -Message 'Delegated active runtime startup must retire superseded bootstrap-root supervisors before handing off.'
+    -Message 'Artifact launch roots must retire superseded stale-root supervisors before launching.'
 
 Assert-ContainsText `
     -Content $stopSupersededRoot `
@@ -358,8 +340,8 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $stackLauncher `
-    -Expected 'PixelStreaming delivery mode runtime_artifact requires an installed active runtime' `
-    -Message 'Explicit runtime-artifact mode must fail closed when the active runtime is missing.'
+    -Expected 'PixelStreaming delivery mode runtime_artifact requires runtime metadata at "%RUNTIME_BUNDLE_METADATA%".' `
+    -Message 'Explicit runtime-artifact mode must fail closed when the current launch root is not an installed artifact.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
@@ -389,7 +371,7 @@ Assert-ContainsText `
 Assert-ContainsText `
     -Content $watchdog `
     -Expected '([string]$script:SignallingWebServerRoot).IndexOf(''\runtime-releases\''' `
-    -Message 'Runtime-artifact watchdogs must accept their resolved runtime-release root when the configured Wilbur matcher uses the stable PixelStreamingRuntime path.'
+    -Message 'Runtime-artifact watchdogs must accept their resolved runtime-release root when the configured Wilbur matcher uses the stable PixelStreaming launch path.'
 
 Assert-ContainsText `
     -Content $watchdog `
@@ -474,12 +456,17 @@ Assert-ContainsText `
 Assert-ContainsText `
     -Content $prepareForBake `
     -Expected 'pixelStreamingRepoCommit' `
-    -Message 'AMI bake preparation must align the bootstrap checkout to the runtime artifact source commit.'
+    -Message 'AMI bake preparation must read the runtime artifact source commit from bundle metadata.'
 
 Assert-ContainsText `
     -Content $prepareForBake `
-    -Expected 'pre-bake-bootstrap-backup-' `
-    -Message 'AMI bake preparation must create a backup branch before resetting the bootstrap checkout.'
+    -Expected 'Skipping bootstrap git sync because the runtime artifact is the launch root.' `
+    -Message 'AMI bake preparation must not mutate git when the artifact is the launch root.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected 'function Test-RuntimeLaunchRoot' `
+    -Message 'AMI bake preparation must verify artifact launch-root startup tooling before image capture.'
 
 Assert-ContainsText `
     -Content $prepareForBake `
@@ -529,7 +516,7 @@ Assert-ContainsText `
 Assert-ContainsText `
     -Content $prepareForBake `
     -Expected 'function Test-BakePrepScripts' `
-    -Message 'AMI bake preparation must verify that AMI bake tooling remains present after bootstrap sync.'
+    -Message 'AMI bake preparation must keep legacy git-checkout bake tooling verification available for non-artifact roots.'
 
 Assert-ContainsText `
     -Content $prepareForBake `
@@ -541,10 +528,10 @@ Assert-ContainsText `
     -Expected '-ExpectedInstanceName "ScaleWorld_s4"' `
     -Message 'ScaleWorld_s4 bake runner must explicitly target the stage source instance.'
 
-Assert-ContainsText `
+Assert-DoesNotContainText `
     -Content $prepareScaleWorldS4ForBake `
-    -Expected '-UseScriptCheckoutCommit' `
-    -Message 'ScaleWorld_s4 bake runner must target the checkout commit that contains the bake tooling.'
+    -Unexpected '-UseScriptCheckoutCommit' `
+    -Message 'ScaleWorld_s4 bake runner must not assume the launch root is a git checkout.'
 
 Assert-ContainsText `
     -Content $prepareScaleWorldS4ForBake `
@@ -566,15 +553,20 @@ Assert-ContainsText `
     -Expected 'AWS-RunPowerShellScript' `
     -Message 'ScaleWorld_s4 SSM bake runner must execute through AWS Systems Manager.'
 
-Assert-ContainsText `
+Assert-DoesNotContainText `
     -Content $prepareScaleWorldS4ForBakeViaSsmScript `
-    -Expected 'Get-LocalScriptCheckoutInfo' `
-    -Message 'ScaleWorld_s4 SSM bake runner must resolve the local committed checkout used for remote bootstrap sync.'
+    -Unexpected 'Get-LocalScriptCheckoutInfo' `
+    -Message 'ScaleWorld_s4 SSM bake runner must not derive a remote bootstrap sync target from the local checkout.'
+
+Assert-DoesNotContainText `
+    -Content $prepareScaleWorldS4ForBakeViaSsmScript `
+    -Unexpected 'checkout --force `$targetCommit' `
+    -Message 'ScaleWorld_s4 SSM bake runner must not mutate the remote launch root with git.'
 
 Assert-ContainsText `
     -Content $prepareScaleWorldS4ForBakeViaSsmScript `
-    -Expected 'checkout --force `$targetCommit' `
-    -Message 'ScaleWorld_s4 SSM bake runner must sync the remote bootstrap checkout when bake tooling is missing.'
+    -Expected 'Artifact-mode bake prep no longer mutates' `
+    -Message 'ScaleWorld_s4 SSM bake runner must fail clearly when the remote artifact lacks bake tooling.'
 
 Assert-ContainsText `
     -Content $prepareScaleWorldS4ForBakeViaSsmScript `
@@ -602,9 +594,19 @@ Assert-ContainsText `
     -Message 'Runtime artifact installer should use the faster .NET ZIP extraction path.'
 
 Assert-ContainsText `
+    -Content $packageRuntimeArtifact `
+    -Expected 'Copy-RequiredFile -RelativePath "SWupdate.ps1" -DestinationRoot $stageRoot' `
+    -Message 'Runtime artifacts must include root SWupdate.ps1 because artifact launch roots run Unreal update activation from the artifact root.'
+
+Assert-ContainsText `
+    -Content $runtimeInstaller `
+    -Expected '"SWupdate.ps1"' `
+    -Message 'Runtime artifact installer must reject bundles missing root SWupdate.ps1.'
+
+Assert-ContainsText `
     -Content $runtimeInstaller `
     -Expected "SourceRef = Normalize-Optional (`$manifest.sourceRef -as [string])" `
-    -Message 'Runtime artifact installer must preserve the source ref for bootstrap alignment.'
+    -Message 'Runtime artifact installer must preserve the source ref in installed runtime identity metadata.'
 
 Assert-ContainsText `
     -Content $runtimeInstaller `
@@ -631,20 +633,20 @@ Assert-MatchesText `
     -Pattern 'if \(\$Activate\) \{.*?Set-ActiveRuntimePointer.*?Prune-InactiveRuntimeArtifacts' `
     -Message 'Runtime artifact pruning must only run after active runtime activation.'
 
-Assert-ContainsText `
+Assert-DoesNotContainText `
     -Content $provisioningMode `
-    -Expected "syncing_bootstrap_to_runtime_artifact" `
-    -Message 'Provisioning artifact install must publish a bootstrap-sync phase.'
+    -Unexpected "syncing_bootstrap_to_runtime_artifact" `
+    -Message 'Provisioning artifact install must not publish a bootstrap-sync phase.'
 
-Assert-ContainsText `
+Assert-DoesNotContainText `
     -Content $provisioningMode `
-    -Expected "Continuing with general origin fetch before checking out the artifact commit." `
-    -Message 'Provisioning bootstrap alignment must treat source-ref fetch as best-effort and keep the artifact commit authoritative.'
+    -Unexpected "Continuing with general origin fetch before checking out the artifact commit." `
+    -Message 'Provisioning must not fetch artifact source refs for bootstrap alignment.'
 
-Assert-MatchesText `
+Assert-DoesNotContainText `
     -Content $provisioningMode `
-    -Pattern 'Invoke-BootstrapCheckoutAlignment.*?-RepoRoot \$pixelStreamingRoot.*?-SourceCommit \(Get-ObjectPropertyValue -InputObject \$installResult -Name ''SourceCommit''\).*?Set-ProvisioningRuntimeIdentityTags' `
-    -Message 'Provisioning must align bootstrap to the runtime artifact source before publishing runtime identity tags.'
+    -Unexpected 'Invoke-BootstrapCheckoutAlignment' `
+    -Message 'Provisioning must not align the launch root to the runtime artifact source commit.'
 
 Assert-DoesNotContainText `
     -Content $updateMode `
@@ -656,15 +658,15 @@ Assert-ContainsText `
     -Expected "Stopping existing streamer stack before PixelStreaming runtime activation." `
     -Message 'Update mode must stop any old stack before activating and pruning runtime releases.'
 
-Assert-ContainsText `
+Assert-DoesNotContainText `
     -Content $updateMode `
-    -Expected "Set-UpdatePhase -AwsCli `$awsCli -Region `$identity.Region -InstanceId `$identity.InstanceId -Phase 'syncing_bootstrap'" `
-    -Message 'Update mode must expose bootstrap sync before marking artifact updates successful.'
+    -Unexpected "Set-UpdatePhase -AwsCli `$awsCli -Region `$identity.Region -InstanceId `$identity.InstanceId -Phase 'syncing_bootstrap'" `
+    -Message 'Update mode must not expose a bootstrap sync phase for artifact updates.'
 
-Assert-ContainsText `
+Assert-DoesNotContainText `
     -Content $updateMode `
-    -Expected 'Invoke-BootstrapCheckoutAlignment -RepoRoot $pixelStreamingRoot -SourceCommit $installedSourceCommit -SourceRef $installedSourceRef' `
-    -Message 'Update mode must align bootstrap to the installed runtime artifact source commit.'
+    -Unexpected 'Invoke-BootstrapCheckoutAlignment' `
+    -Message 'Update mode must not align the launch root to the installed runtime artifact source commit.'
 
 Assert-ContainsText `
     -Content $repoHeadPublisher `

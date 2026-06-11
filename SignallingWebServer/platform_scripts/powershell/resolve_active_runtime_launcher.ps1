@@ -37,7 +37,7 @@ if (-not $installRootPath) {
     exit 0
 }
 
-$activeRuntimeRoot = Join-Path $installRootPath 'PixelStreamingRuntime'
+$activeRuntimeRoot = Join-Path $installRootPath 'PixelStreaming'
 $activeLauncher = Join-Path $activeRuntimeRoot 'SignallingWebServer\platform_scripts\cmd\start_streamer_stack.bat'
 if (-not (Test-Path -LiteralPath $activeLauncher)) {
     exit 0

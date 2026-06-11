@@ -32,7 +32,7 @@ Delivery-mode note:
 - Dev keeps `git_ref` as the default so small code changes can still be tested by moving `/pixelstreaming/dev/git-target-ref`.
 - Runtime artifact update/provisioning success marks instances with `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact`.
 - Instances that have completed the bootstrap migration publish `ScaleWorldPixelStreamingUpdateCapabilities=pixelstreaming_runtime,combined_runtime_unreal`; Server Manager API/web block runtime-artifact and combined jobs when the tag is missing.
-- Stage/Prod default to `auto`, so they use the active runtime artifact after installation and keep git-ref fallback only for migration and break-glass.
+- Stage/Prod default to `auto`, so they use the artifact launch root after installation and keep git-ref fallback only for migration and break-glass.
 - After an artifact update, startup infers runtime-artifact delivery from existing runtime identity tags if the delivery-mode tag is missing. Repo-head tagging must preserve runtime-artifact identity and leave `ScaleWorldPixelStreamingVersion` on the active bundle id unless the instance is explicitly moved back to `git_ref`.
 
 Current promotion path details:

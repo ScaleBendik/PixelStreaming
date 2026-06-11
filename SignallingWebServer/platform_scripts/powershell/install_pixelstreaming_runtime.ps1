@@ -263,6 +263,9 @@ function Test-InstalledRuntimeBundle {
     $requiredFiles = @(
         "runtime-bundle-metadata.json",
         "package.json",
+        "SWupdate.ps1",
+        "BuildScripts\prepare-for-ami-bake.ps1",
+        "BuildScripts\prepare-scaleworld-s4-for-ami-bake.bat",
         "SignallingWebServer\config.json",
         "SignallingWebServer\package.json",
         "SignallingWebServer\peer_options.player.json",
@@ -300,20 +303,86 @@ function Write-InstalledRuntimeMarker {
     ($marker | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath $markerPath -Encoding ASCII
 }
 
+function Move-ExistingLaunchRootToArchive {
+    param(
+        [string]$ActiveRoot,
+        [string]$InstallRoot
+    )
+
+    $archiveRoot = Join-Path $InstallRoot 'archived-launch-roots'
+    New-Item -ItemType Directory -Path $archiveRoot -Force | Out-Null
+
+    $leafName = Split-Path -Leaf $ActiveRoot
+    if ([string]::IsNullOrWhiteSpace($leafName)) {
+        $leafName = 'PixelStreaming'
+    }
+
+    $timestamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')
+    $archivePath = Join-Path $archiveRoot "$leafName-$timestamp"
+    $attempt = 0
+    while (Test-Path -LiteralPath $archivePath) {
+        $attempt++
+        $archivePath = Join-Path $archiveRoot "$leafName-$timestamp-$attempt"
+    }
+
+    Assert-ChildPath -Parent $InstallRoot -Child $archivePath
+    Write-Host "Archiving existing launch root '$ActiveRoot' to '$archivePath' before artifact activation."
+    Move-Item -LiteralPath $ActiveRoot -Destination $archivePath -Force -ErrorAction Stop
+    return $archivePath
+}
+
 function Set-ActiveRuntimePointer {
     param(
         [string]$ActiveRoot,
-        [string]$TargetRoot
+        [string]$TargetRoot,
+        [string]$InstallRoot,
+        [switch]$ArchiveExistingLaunchRoot
     )
 
     $targetRootFull = [System.IO.Path]::GetFullPath($TargetRoot).TrimEnd('\')
     if (Test-Path -LiteralPath $ActiveRoot) {
         $activeItem = Get-Item -LiteralPath $ActiveRoot -Force
         if (($activeItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0) {
-            throw "Active runtime root '$ActiveRoot' exists and is not a junction/symlink."
+            if (-not $ArchiveExistingLaunchRoot) {
+                throw "Active runtime root '$ActiveRoot' exists and is not a junction/symlink."
+            }
+
+            [void](Move-ExistingLaunchRootToArchive -ActiveRoot $ActiveRoot -InstallRoot $InstallRoot)
+        } else {
+            $existingTarget = @($activeItem.Target | Select-Object -First 1)[0]
+            if (-not [string]::IsNullOrWhiteSpace($existingTarget)) {
+                $existingTargetFull = [System.IO.Path]::GetFullPath([string]$existingTarget).TrimEnd('\')
+                if ([string]::Equals($existingTargetFull, $targetRootFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    return
+                }
+            }
+
+            $activeItem.Delete()
+        }
+    }
+
+    New-Item -ItemType Junction -Path $ActiveRoot -Target $TargetRoot | Out-Null
+}
+
+function Set-CompatibilityRuntimePointer {
+    param(
+        [string]$CompatibilityRoot,
+        [string]$TargetRoot
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CompatibilityRoot)) {
+        return
+    }
+
+    $targetRootFull = [System.IO.Path]::GetFullPath($TargetRoot).TrimEnd('\')
+    if (Test-Path -LiteralPath $CompatibilityRoot) {
+        $compatItem = Get-Item -LiteralPath $CompatibilityRoot -Force
+        if (($compatItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0) {
+            Write-Warning "Compatibility runtime root '$CompatibilityRoot' exists and is not a junction/symlink. Leaving it unchanged."
+            return
         }
 
-        $existingTarget = @($activeItem.Target | Select-Object -First 1)[0]
+        $existingTarget = @($compatItem.Target | Select-Object -First 1)[0]
         if (-not [string]::IsNullOrWhiteSpace($existingTarget)) {
             $existingTargetFull = [System.IO.Path]::GetFullPath([string]$existingTarget).TrimEnd('\')
             if ([string]::Equals($existingTargetFull, $targetRootFull, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -321,10 +390,19 @@ function Set-ActiveRuntimePointer {
             }
         }
 
-        $activeItem.Delete()
+        try {
+            $compatItem.Delete()
+        } catch {
+            Write-Warning "Compatibility runtime root '$CompatibilityRoot' could not be removed: $($_.Exception.Message)"
+            return
+        }
     }
 
-    New-Item -ItemType Junction -Path $ActiveRoot -Target $TargetRoot | Out-Null
+    try {
+        New-Item -ItemType Junction -Path $CompatibilityRoot -Target $TargetRoot | Out-Null
+    } catch {
+        Write-Warning "Compatibility runtime root '$CompatibilityRoot' could not be pointed at '$TargetRoot': $($_.Exception.Message)"
+    }
 }
 
 function Get-NormalizedFullPath {
@@ -504,8 +582,11 @@ $stagingParentRoot = if ($env:SCALEWORLD_RUNTIME_STAGING_ROOT) {
 } else {
     Join-Path $installRootFull "rt-stage"
 }
-$activeRoot = Join-Path $installRootFull "PixelStreamingRuntime"
+$activeRoot = Join-Path $installRootFull "PixelStreaming"
+$compatibilityRoot = Join-Path $installRootFull "PixelStreamingRuntime"
 
+New-Item -ItemType Directory -Path $installRootFull -Force | Out-Null
+Set-Location -LiteralPath $installRootFull
 New-Item -ItemType Directory -Path $releasesRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $scratchRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $stagingParentRoot -Force | Out-Null
@@ -581,7 +662,8 @@ if (-not (Test-InstalledRuntimeBundle -BundleRoot $bundleRoot -ExpectedManifest 
 }
 
 if ($Activate) {
-    Set-ActiveRuntimePointer -ActiveRoot $activeRoot -TargetRoot $bundleRoot
+    Set-ActiveRuntimePointer -ActiveRoot $activeRoot -TargetRoot $bundleRoot -InstallRoot $installRootFull -ArchiveExistingLaunchRoot
+    Set-CompatibilityRuntimePointer -CompatibilityRoot $compatibilityRoot -TargetRoot $bundleRoot
     Prune-InactiveRuntimeArtifacts `
         -InstallRoot $installRootFull `
         -ReleasesRoot $releasesRoot `
@@ -600,6 +682,7 @@ $result = [pscustomobject]@{
     ContractVersion = $manifest.ContractVersion
     InstalledRoot = $bundleRoot
     ActiveRoot = if ($Activate) { $activeRoot } else { $null }
+    CompatibilityRoot = if ($Activate) { $compatibilityRoot } else { $null }
 }
 
 $resultJson = $result | ConvertTo-Json -Depth 4

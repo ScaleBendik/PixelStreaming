@@ -5,12 +5,7 @@ set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%\..\..") do set "ROOT=%%~fI"
 if defined SCALEWORLD_WILBUR_ROOT set "ROOT=%SCALEWORLD_WILBUR_ROOT%"
 if not defined SCALEWORLD_INSTALL_BASE set "SCALEWORLD_INSTALL_BASE=C:\PixelStreaming"
-for %%I in ("%SCALEWORLD_INSTALL_BASE%\PixelStreamingRuntime\SignallingWebServer") do set "SCALEWORLD_ACTIVE_WILBUR_ROOT=%%~fI"
-set "ACTIVE_RUNTIME_WILBUR_LAUNCHER=%SCALEWORLD_ACTIVE_WILBUR_ROOT%\platform_scripts\cmd\start_dev_turn.bat"
-set "ACTIVE_RUNTIME_WILBUR_DELEGATED=false"
-call :delegate_to_active_runtime_wilbur_if_needed %*
-if /i "%ACTIVE_RUNTIME_WILBUR_DELEGATED%"=="true" exit /b %ACTIVE_RUNTIME_WILBUR_DELEGATE_EXIT%
-if errorlevel 1 exit /b %errorlevel%
+set "RUNTIME_BUNDLE_METADATA=%ROOT%\..\runtime-bundle-metadata.json"
 set "REGION=eu-north-1"
 if not defined STREAMING_LANE_TAG_RETRY_COUNT set "STREAMING_LANE_TAG_RETRY_COUNT=12"
 if not defined STREAMING_LANE_TAG_RETRY_DELAY_SECONDS set "STREAMING_LANE_TAG_RETRY_DELAY_SECONDS=5"
@@ -800,38 +795,6 @@ if not "%REPO_SYNC_EXIT%"=="0" (
   exit /b %REPO_SYNC_EXIT%
 )
 
-exit /b 0
-
-:delegate_to_active_runtime_wilbur_if_needed
-if /i "%SCALEWORLD_DISABLE_ACTIVE_RUNTIME_WILBUR_DELEGATION%"=="true" exit /b 0
-if defined SCALEWORLD_WILBUR_ROOT exit /b 0
-if /i "%ROOT%"=="%SCALEWORLD_ACTIVE_WILBUR_ROOT%" exit /b 0
-if exist "%ROOT%\..\runtime-bundle-metadata.json" exit /b 0
-
-set "WILBUR_DELEGATION_DELIVERY_MODE=%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"
-if not defined WILBUR_DELEGATION_DELIVERY_MODE (
-  set "WILBUR_DELIVERY_MODE_RESOLVER=%ROOT%\platform_scripts\powershell\resolve_pixelstreaming_delivery_mode_from_instance_tag.ps1"
-  if exist "%WILBUR_DELIVERY_MODE_RESOLVER%" (
-    for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%WILBUR_DELIVERY_MODE_RESOLVER%"`) do (
-      set "WILBUR_DELEGATION_DELIVERY_MODE=%%I"
-    )
-    if errorlevel 1 exit /b 0
-  )
-)
-
-if /i "%WILBUR_DELEGATION_DELIVERY_MODE%"=="runtime-artifact" set "WILBUR_DELEGATION_DELIVERY_MODE=runtime_artifact"
-if /i "%WILBUR_DELEGATION_DELIVERY_MODE%"=="artifact" set "WILBUR_DELEGATION_DELIVERY_MODE=runtime_artifact"
-if /i not "%WILBUR_DELEGATION_DELIVERY_MODE%"=="runtime_artifact" exit /b 0
-
-if not exist "%ACTIVE_RUNTIME_WILBUR_LAUNCHER%" (
-  echo ERROR: PixelStreaming delivery mode runtime_artifact requires active runtime Wilbur launcher "%ACTIVE_RUNTIME_WILBUR_LAUNCHER%".
-  exit /b 1
-)
-
-echo Delegating Wilbur startup to active PixelStreaming runtime "%ACTIVE_RUNTIME_WILBUR_LAUNCHER%".
-call "%ACTIVE_RUNTIME_WILBUR_LAUNCHER%" %*
-set "ACTIVE_RUNTIME_WILBUR_DELEGATE_EXIT=!errorlevel!"
-set "ACTIVE_RUNTIME_WILBUR_DELEGATED=true"
 exit /b 0
 
 :reset_startup_heartbeat

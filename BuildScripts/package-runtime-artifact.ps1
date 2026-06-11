@@ -430,6 +430,9 @@ Copy-RequiredFile -RelativePath "NODE_VERSION" -DestinationRoot $stageRoot
 Copy-OptionalFile -RelativePath "RELEASE_VERSION" -DestinationRoot $stageRoot
 Copy-RequiredFile -RelativePath "package.json" -DestinationRoot $stageRoot
 Copy-RequiredFile -RelativePath "package-lock.json" -DestinationRoot $stageRoot
+Copy-RequiredFile -RelativePath "SWupdate.ps1" -DestinationRoot $stageRoot
+Copy-RequiredFile -RelativePath "BuildScripts\prepare-for-ami-bake.ps1" -DestinationRoot $stageRoot
+Copy-RequiredFile -RelativePath "BuildScripts\prepare-scaleworld-s4-for-ami-bake.bat" -DestinationRoot $stageRoot
 
 Copy-RequiredFile -RelativePath "Common\package.json" -DestinationRoot $stageRoot
 Copy-RequiredDirectory -RelativePath "Common\dist" -DestinationRoot $stageRoot

@@ -45,32 +45,6 @@ function Invoke-AwsText {
     return (($output | Out-String).Trim())
 }
 
-function Invoke-GitText {
-    param([string[]]$Arguments)
-
-    $output = & git @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "git $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
-    }
-
-    return (($output | Out-String).Trim())
-}
-
-function Get-LocalScriptCheckoutInfo {
-    $repoRoot = Split-Path -Parent $PSScriptRoot
-    if (-not (Test-Path -LiteralPath (Join-Path $repoRoot '.git'))) {
-        throw "Cannot resolve local script checkout because '$repoRoot' is not a git checkout."
-    }
-
-    $head = Invoke-GitText -Arguments @('-C', $repoRoot, 'rev-parse', 'HEAD')
-    $ref = Invoke-GitText -Arguments @('-C', $repoRoot, 'rev-parse', '--abbrev-ref', 'HEAD')
-    return [pscustomobject]@{
-        Root = $repoRoot
-        Head = $head
-        Ref = $ref
-    }
-}
-
 function ConvertTo-PowerShellSingleQuotedLiteral {
     param([string]$Value)
 
@@ -130,49 +104,19 @@ function Assert-SsmOnline {
 function New-RemoteBakePrepCommand {
     param(
         [string]$BootstrapRepoPath,
-        [string]$BatchPath,
-        [string]$TargetCommit,
-        [string]$TargetRef
+        [string]$BatchPath
     )
 
     $repoLiteral = ConvertTo-PowerShellSingleQuotedLiteral -Value $BootstrapRepoPath
     $batchLiteral = ConvertTo-PowerShellSingleQuotedLiteral -Value $BatchPath
-    $commitLiteral = ConvertTo-PowerShellSingleQuotedLiteral -Value $TargetCommit
-    $refLiteral = ConvertTo-PowerShellSingleQuotedLiteral -Value $TargetRef
 
     return @"
 `$ErrorActionPreference = 'Stop'
 `$repoPath = $repoLiteral
 `$batchPath = $batchLiteral
-`$targetCommit = $commitLiteral
-`$targetRef = $refLiteral
 
 if (-not (Test-Path -LiteralPath `$batchPath)) {
-    if (-not (Test-Path -LiteralPath (Join-Path `$repoPath '.git'))) {
-        throw "Remote AMI bake-prep batch was not found at '`$batchPath', and '`$repoPath' is not a git checkout."
-    }
-
-    Write-Host "Remote AMI bake-prep batch is missing; syncing bootstrap checkout '`$repoPath' to `$targetCommit."
-    if (-not [string]::IsNullOrWhiteSpace(`$targetRef) -and `$targetRef -ne 'HEAD') {
-        & git -C `$repoPath fetch origin `$targetRef
-        if (`$LASTEXITCODE -ne 0) {
-            throw "git fetch origin `$targetRef failed with exit code `$LASTEXITCODE."
-        }
-    }
-
-    & git -C `$repoPath fetch --tags --prune origin
-    if (`$LASTEXITCODE -ne 0) {
-        throw "git fetch --tags --prune origin failed with exit code `$LASTEXITCODE."
-    }
-
-    & git -C `$repoPath checkout --force `$targetCommit
-    if (`$LASTEXITCODE -ne 0) {
-        throw "git checkout --force `$targetCommit failed with exit code `$LASTEXITCODE."
-    }
-}
-
-if (-not (Test-Path -LiteralPath `$batchPath)) {
-    throw "Remote AMI bake-prep batch was not found at '`$batchPath'."
+    throw "Remote AMI bake-prep batch was not found at '`$batchPath'. Artifact-mode bake prep no longer mutates '`$repoPath' with git. Activate a PixelStreaming runtime artifact that includes BuildScripts, or pass -RemoteBatchPath to the installed bake-prep batch."
 }
 
 Write-Host "Running `$batchPath on `$env:COMPUTERNAME..."
@@ -282,9 +226,6 @@ if ($PollSeconds -le 0) {
 }
 
 Write-SsmBakeLog "Resolving '$InstanceName' in '$Region'."
-$scriptCheckout = Get-LocalScriptCheckoutInfo
-Write-SsmBakeLog "Local PixelStreaming checkout: $($scriptCheckout.Root)"
-Write-SsmBakeLog "Remote bootstrap sync target: $($scriptCheckout.Head) ($($scriptCheckout.Ref))"
 
 $instance = Resolve-ScaleWorldInstance -Name $InstanceName -AwsRegion $Region
 $instanceId = [string]$instance.InstanceId
@@ -296,7 +237,7 @@ Write-SsmBakeLog "SSM is online for '$instanceId'."
 if (-not $Force) {
     Write-Host ''
     Write-Host "This will run AMI bake preparation on $InstanceName ($instanceId) in $Region."
-    Write-Host "If needed, it will sync $RemoteBootstrapRepoPath to $($scriptCheckout.Head) before running bake-prep."
+    Write-Host "It expects the remote launch root at $RemoteBootstrapRepoPath to already contain the bake-prep batch."
     Write-Host 'It will stop PixelStreaming stack processes and clear transient runtime/update/session-artifact state on the remote instance.'
     $confirmation = Read-Host 'Type PREPARE to continue'
     if ($confirmation -ne 'PREPARE') {
@@ -306,9 +247,7 @@ if (-not $Force) {
 
 $remoteCommand = New-RemoteBakePrepCommand `
     -BootstrapRepoPath $RemoteBootstrapRepoPath `
-    -BatchPath $RemoteBatchPath `
-    -TargetCommit ([string]$scriptCheckout.Head) `
-    -TargetRef ([string]$scriptCheckout.Ref)
+    -BatchPath $RemoteBatchPath
 $executionTimeoutSeconds = [Math]::Max(60, $TimeoutMinutes * 60)
 Write-SsmBakeLog "Sending remote bake-prep command to '$instanceId'."
 $commandId = Send-RemoteCommand `

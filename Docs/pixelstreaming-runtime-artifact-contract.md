@@ -151,19 +151,11 @@ Minimum workstation/publisher IAM:
 
 ## Windows Install Layout
 
-Target stable bootstrap/updater root:
-
-```text
-C:\PixelStreaming\bootstrap
-```
-
-Current migration bootstrap/updater root:
+Stable launch root:
 
 ```text
 C:\PixelStreaming\PixelStreaming
 ```
-
-The current Stage/Prod bridge still uses `C:\PixelStreaming\PixelStreaming` as a Git checkout for bootstrappers, update mode, provisioning mode, and bake-prep tooling. Runtime artifact update/provisioning aligns that checkout to the installed runtime artifact source commit before reporting success. This reduces drift between active runtime and bootstrappers, but it is not the final desired layout.
 
 Versioned runtime installs:
 
@@ -171,11 +163,15 @@ Versioned runtime installs:
 C:\PixelStreaming\runtime-releases\<bundleId>
 ```
 
-Active runtime pointer:
+In `runtime_artifact` mode, artifact installation activates a bundle by replacing `C:\PixelStreaming\PixelStreaming` with a junction to `C:\PixelStreaming\runtime-releases\<bundleId>`. This makes the bootstrappers, updater, watchdog, Wilbur launcher, and runtime code come from the same artifact. The installer archives any previous non-junction launch root under `C:\PixelStreaming\archived-launch-roots\`.
+
+Compatibility alias:
 
 ```text
 C:\PixelStreaming\PixelStreamingRuntime
 ```
+
+`C:\PixelStreaming\PixelStreamingRuntime` may point at the same bundle for old scripts/runbooks, but new startup and maintenance paths must not use it as the launcher target.
 
 Mutable runtime state and logs must stay outside the versioned bundle, preferably under:
 
@@ -184,9 +180,7 @@ C:\PixelStreaming\state
 C:\PixelStreaming\logs
 ```
 
-Existing script/runbook paths that still assume `C:\PixelStreaming\PixelStreaming` need compatibility wrappers or explicit root overrides during migration.
-
-Long-term target: Stage/Prod serving instances should not need Git installed or a mutable repository checkout for ordinary operation. The bootstrap/updater payload should be artifact-owned and versioned with the runtime, with Git target refs retained only for Dev iteration and break-glass recovery.
+Git-ref delivery still uses `C:\PixelStreaming\PixelStreaming` as a mutable checkout. Dev keeps that path for rapid iteration. Stage/Prod artifact delivery should not need Git installed or a mutable repository checkout for ordinary operation.
 
 ## Update Flow
 
@@ -198,12 +192,14 @@ SignallingWebServer/platform_scripts/powershell/install_pixelstreaming_runtime.p
 
 Fleet update mode now uses this installer for `pixelstreaming_runtime` targets. Provisioning mode also uses it when the instance is launched with a `ScaleWorldTargetRuntimeManifestKey` tag. Release-candidate orchestration still needs to decide which manifest to stamp for each target.
 
-As of 2026-06-04, runtime artifact install/update behavior also:
+As of 2026-06-11, runtime artifact install/update behavior:
 
 1. preserves source commit/ref metadata from the manifest into installed runtime metadata
-2. prunes older `runtime-releases` bundles so repeated artifact updates do not exhaust disk space
-3. uses `C:\PixelStreaming\state\runtime-updates` as transient scratch/cache state
-4. lets update/provisioning mode align the bootstrap checkout to the installed artifact source commit before final success
+2. activates the artifact as `C:\PixelStreaming\PixelStreaming`, the single launch root
+3. maintains `C:\PixelStreaming\PixelStreamingRuntime` only as a compatibility alias
+4. prunes older `runtime-releases` bundles so repeated artifact updates do not exhaust disk space
+5. uses `C:\PixelStreaming\state\runtime-updates` as transient scratch/cache state
+6. does not align a git checkout to the artifact source commit
 
 Fleet update target types:
 
@@ -233,9 +229,9 @@ ScaleWorldPixelStreamingDeliveryMode=git_ref|runtime_artifact|auto
 `ScaleWorldPixelStreamingDeliveryMode` is the EC2 tag override and wins when the env var is not set. Defaults are:
 
 1. `dev` deployment track -> `git_ref`, preserving the fast `/pixelstreaming/dev/git-target-ref` startup sync loop for iteration.
-2. `stage` and `prod` deployment tracks -> `auto`, delegating to an installed active runtime artifact when one exists and falling back to pinned git-ref compatibility while migration is in progress.
+2. `stage` and `prod` deployment tracks -> `auto`, using the current artifact launch root when runtime metadata exists and falling back to pinned git-ref compatibility while migration is in progress.
 
-Explicit `runtime_artifact` fails closed when no active runtime is installed. If the delivery-mode tag is missing but runtime artifact identity tags are present, startup infers `runtime_artifact` instead of falling back to the Dev git-ref default. Git-ref startup publishes `ScaleWorldPixelStreamingDeliveryMode=git_ref` and clears stale runtime artifact identity tags only when git-ref delivery is explicit. Runtime artifact update/provisioning success publishes `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact`.
+Explicit `runtime_artifact` fails closed when the current launch root has no `runtime-bundle-metadata.json`. If the delivery-mode tag is missing but runtime artifact identity tags are present, startup infers `runtime_artifact` instead of falling back to the Dev git-ref default. Git-ref startup publishes `ScaleWorldPixelStreamingDeliveryMode=git_ref` and clears stale runtime artifact identity tags only when git-ref delivery is explicit. Runtime artifact update/provisioning success publishes `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact`.
 
 Runtime-artifact identity is sticky across normal startup. The repo-head publisher may still record repository diagnostics after startup, but when the current instance tag says `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact` or runtime identity is present without an explicit `git_ref`, it must not clear runtime identity tags and must not rewrite `ScaleWorldPixelStreamingVersion` to the Git target ref. The displayed version should continue to be the runtime bundle id until an explicit Git-ref delivery update changes the delivery mode.
 
@@ -247,14 +243,14 @@ Per instance:
 4. download `runtime.zip`
 5. verify SHA256
 6. extract to `runtime-releases\<bundleId>`
-7. switch `PixelStreamingRuntime` active pointer
-8. start stack from the active runtime root in validation mode
+7. switch `PixelStreaming` launch root to the installed artifact bundle
+8. start stack from the artifact launch root in validation mode
 9. validate streamer health and EC2 runtime readiness
 10. publish runtime identity tags
 
 For combined updates, the runtime prepare step runs before activation and in parallel with the Unreal prepare work where possible. If either prepare step fails, activation is not attempted. If activation or validation fails after one payload has already been activated, the instance stays in failed update maintenance state for manual inspection. Runtime rollback to a previous installed bundle is still a planned follow-up.
 
-Rollback should switch the active pointer back to the previous installed bundle and restart, not reset a Git checkout.
+Rollback should switch the launch-root junction back to the previous installed bundle and restart, not reset a Git checkout.
 
 Migration note: existing instances only gain this path after their bootstrap checkout or base AMI contains the updated updater/provisioning scripts. Use the legacy repo-sweep/git-ref path once to deploy the bootstrap, then use runtime artifacts for subsequent PixelStreaming changes. For Stage/Prod, prefer a Stage-validated source-instance AMI after bake prep over routine Git target-ref updates.
 
@@ -266,14 +262,13 @@ ScaleWorldPixelStreamingUpdateCapabilities=pixelstreaming_runtime,combined_runti
 
 The updater publishes this capability tag after the stable bootstrap/updater path is present. Server Manager API and web use it as the coarse compatibility gate for runtime-artifact and combined update jobs. A versioned updater contract is still a planned follow-up.
 
-Source alignment check after updates:
+Runtime source metadata check after updates:
 
 ```text
 ScaleWorldPixelStreamingRuntimeSourceCommit == installed artifact manifest commit
-ScaleWorldRuntimeRepoHead == same commit, or diagnostic-only when running from a non-git runtime root
 ```
 
-If these disagree on a Stage/Prod source instance intended for AMI bake, run bake prep or inspect update/provisioning logs before baking.
+`ScaleWorldRuntimeRepoHead` is diagnostic only for git-ref roots and is not expected to match artifact launch roots.
 
 ## Runtime Identity Tags
 
