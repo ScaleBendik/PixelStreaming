@@ -909,7 +909,26 @@ export function wireInstanceAgent(
         values: InstanceAgentCommandResponse[] | null | undefined,
         source: string
     ): void => {
-        if (!Array.isArray(values) || values.length === 0) {
+        if (!Array.isArray(values)) {
+            return;
+        }
+
+        const openCommandIds = new Set<string>();
+        for (const rawCommand of values) {
+            const commandId = normalizeOptionalText(rawCommand?.instanceCommandId);
+            if (commandId) {
+                openCommandIds.add(commandId);
+            }
+        }
+
+        if (activeCommand && !openCommandIds.has(activeCommand.instanceCommandId)) {
+            log(
+                `[instance-agent] Clearing stale active command ${activeCommand.instanceCommandId} because the API ${source} response no longer lists it as open.`
+            );
+            clearActiveCommand();
+        }
+
+        if (values.length === 0) {
             return;
         }
 
