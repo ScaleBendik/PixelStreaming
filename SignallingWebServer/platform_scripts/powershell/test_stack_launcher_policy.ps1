@@ -399,6 +399,46 @@ Assert-ContainsText `
     -Message 'Runtime-artifact validation must not be blocked by a pre-existing git-ref stack.'
 
 Assert-ContainsText `
+    -Content $updateMode `
+    -Expected 'function Test-RuntimeArtifactLaunchRoot' `
+    -Message 'Update mode must detect installed runtime-artifact launch roots before deciding whether repo sync is valid.'
+
+Assert-ContainsText `
+    -Content $updateMode `
+    -Expected "Join-Path `$Root 'runtime-bundle-metadata.json'" `
+    -Message 'Update mode must identify artifact launch roots from local runtime metadata, not from mutable git state.'
+
+Assert-ContainsText `
+    -Content $updateMode `
+    -Expected 'function Invoke-RepoSyncForMutableLaunchRoot' `
+    -Message 'Update mode must centralize guarded repo sync so Unreal and combined updates cannot accidentally treat artifacts as git checkouts.'
+
+Assert-ContainsText `
+    -Content $updateMode `
+    -Expected 'Skipping PixelStreaming repo/bootstrap sync before $Context because launch root' `
+    -Message 'Update mode must skip repo sync for runtime-artifact launch roots instead of failing on missing git/build-all files.'
+
+Assert-ContainsText `
+    -Content $updateMode `
+    -Expected "Reason = 'runtime_artifact_launch_root'" `
+    -Message 'Update mode trace must record why repo sync was skipped for artifact-delivered launch roots.'
+
+Assert-ContainsText `
+    -Content $updateMode `
+    -Expected "-Context 'Unreal update'" `
+    -Message 'Unreal update preparation must use the guarded repo-sync helper.'
+
+Assert-ContainsText `
+    -Content $updateMode `
+    -Expected "-Context 'Unreal activation'" `
+    -Message 'Unreal activation must use the guarded repo-sync helper.'
+
+Assert-DoesNotContainText `
+    -Content $updateMode `
+    -Unexpected "Preparing Unreal update payload for '`$zipFileName' in parallel with PixelStreaming repo sync." `
+    -Message 'Update mode must not claim all Unreal preparation runs in parallel with repo sync because artifact roots skip git sync.'
+
+Assert-ContainsText `
     -Content $provisioningMode `
     -Expected 'function Set-ProvisioningInstanceTags' `
     -Message 'Provisioning runtime identity tags must use a JSON tag payload helper instead of AWS CLI shorthand.'

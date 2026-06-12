@@ -811,6 +811,48 @@ function Get-ActiveRuntimeStackLauncher {
     return $null
 }
 
+function Test-RuntimeArtifactLaunchRoot {
+    param([string]$Root)
+
+    if ([string]::IsNullOrWhiteSpace($Root)) {
+        return $false
+    }
+
+    return Test-Path -LiteralPath (Join-Path $Root 'runtime-bundle-metadata.json') -PathType Leaf
+}
+
+function Invoke-RepoSyncForMutableLaunchRoot {
+    param(
+        [string]$Context,
+        [string]$RepoRoot,
+        [string]$RepoSyncScript,
+        [string]$AwsCli,
+        [string]$Region,
+        [string]$InstanceId,
+        [string]$BuildingUpdatePhase
+    )
+
+    if (Test-RuntimeArtifactLaunchRoot -Root $RepoRoot) {
+        Write-UpdateModeLog "Skipping PixelStreaming repo/bootstrap sync before $Context because launch root '$RepoRoot' is runtime-artifact delivered."
+        Write-UpdateModeTrace -Step 'repo_sync_skipped' -Data @{
+            Context = $Context
+            Reason = 'runtime_artifact_launch_root'
+            PixelStreamingRoot = $RepoRoot
+        }
+        return
+    }
+
+    if (-not (Test-Path -LiteralPath $RepoSyncScript)) {
+        throw "Repo sync helper not found at '$RepoSyncScript'."
+    }
+
+    Write-UpdateModeLog "Preparing PixelStreaming repo/bootstrap state before $Context."
+    & $RepoSyncScript -RepoRoot $RepoRoot -Mode 'update' -PhaseAwsCli $AwsCli -PhaseRegion $Region -PhaseInstanceId $InstanceId -BuildingUpdatePhase $BuildingUpdatePhase
+    if ($LASTEXITCODE -ne 0) {
+        throw "ensure_repo_current.ps1 exited with code $LASTEXITCODE."
+    }
+}
+
 function Start-ValidationStack {
     param(
         [string]$LauncherPath,
@@ -1171,15 +1213,14 @@ try {
             -RedirectStandardError $runtimePrepareStdErrPath
     }
 
-    if (-not (Test-Path -LiteralPath $repoSyncScript)) {
-        throw "Repo sync helper not found at '$repoSyncScript'."
-    }
-
-    Write-UpdateModeLog 'Preparing PixelStreaming repo/bootstrap state before Unreal update.'
-    & $repoSyncScript -RepoRoot $pixelStreamingRoot -Mode 'update' -PhaseAwsCli $awsCli -PhaseRegion $identity.Region -PhaseInstanceId $identity.InstanceId -BuildingUpdatePhase 'building_pixelstreaming'
-    if ($LASTEXITCODE -ne 0) {
-        throw "ensure_repo_current.ps1 exited with code $LASTEXITCODE."
-    }
+    Invoke-RepoSyncForMutableLaunchRoot `
+        -Context 'Unreal update' `
+        -RepoRoot $pixelStreamingRoot `
+        -RepoSyncScript $repoSyncScript `
+        -AwsCli $awsCli `
+        -Region $identity.Region `
+        -InstanceId $identity.InstanceId `
+        -BuildingUpdatePhase 'building_pixelstreaming'
 
     if (-not (Test-Path -LiteralPath $updateScript)) {
         throw "SWupdate.ps1 not found at '$updateScript'."
@@ -1206,7 +1247,7 @@ try {
     ) + $updateArgs + @('-PrepareReleaseOnly')
 
     Set-UpdatePhase -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Phase 'preparing_release'
-    Write-UpdateModeLog "Preparing Unreal update payload for '$zipFileName' in parallel with PixelStreaming repo sync."
+    Write-UpdateModeLog "Preparing Unreal update payload for '$zipFileName'."
     if ($showVisiblePrepareWindow) {
         $quotedUpdateScript = $updateScript.Replace("'", "''")
         $quotedZipKey = $targetZipKey.Replace("'", "''")
@@ -1236,11 +1277,14 @@ try {
             -RedirectStandardError $prepareUpdateStdErrPath
     }
 
-    Write-UpdateModeLog 'Preparing PixelStreaming repo/bootstrap state before Unreal activation.'
-    & $repoSyncScript -RepoRoot $pixelStreamingRoot -Mode 'update' -PhaseAwsCli $awsCli -PhaseRegion $identity.Region -PhaseInstanceId $identity.InstanceId -BuildingUpdatePhase 'building_pixelstreaming'
-    if ($LASTEXITCODE -ne 0) {
-        throw "ensure_repo_current.ps1 exited with code $LASTEXITCODE."
-    }
+    Invoke-RepoSyncForMutableLaunchRoot `
+        -Context 'Unreal activation' `
+        -RepoRoot $pixelStreamingRoot `
+        -RepoSyncScript $repoSyncScript `
+        -AwsCli $awsCli `
+        -Region $identity.Region `
+        -InstanceId $identity.InstanceId `
+        -BuildingUpdatePhase 'building_pixelstreaming'
 
     Write-UpdateModeLog "Waiting for Unreal update payload preparation for '$zipFileName' to finish."
     $prepareUpdateProcess.WaitForExit()
