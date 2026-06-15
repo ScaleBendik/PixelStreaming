@@ -1856,7 +1856,9 @@ export function wireInstanceAgent(
                     recycleId: recycleMarker?.recycleId,
                     recycleReason: recycleMarker?.reason,
                     recycleRequestedAtUtc: recycleMarker?.requestedAtUtc,
-                    sessionRequestId: activeCommand?.sessionRequestId
+                    sessionRequestId: activeCommand?.sessionRequestId ?? recycleMarker?.sessionRequestId,
+                    userSessionId: recycleMarker?.userSessionId,
+                    sessionId: recycleMarker?.sessionId
                 });
                 if (activeCommand && isRecycleToWarmCommand(activeCommand)) {
                     const commandToComplete = activeCommand;
@@ -1889,12 +1891,25 @@ export function wireInstanceAgent(
                         );
                     });
                 } else {
-                    void captureSessionScreenshotArtifact('reset_completed', null, {
+                    const recycleSessionMetadata = {
                         recycleId: recycleMarker?.recycleId,
                         recycleReason: recycleMarker?.reason,
                         recycleRequestedAtUtc: recycleMarker?.requestedAtUtc,
+                        sessionRequestId: recycleMarker?.sessionRequestId,
+                        userSessionId: recycleMarker?.userSessionId,
+                        sessionId: recycleMarker?.sessionId,
                         source: update.source,
-                        correlation: 'instance_time'
+                        correlation: recycleMarker?.sessionRequestId
+                            ? 'recycle_marker_session'
+                            : 'instance_time'
+                    };
+                    if (recycleMarker) {
+                        void captureSessionLogArtifact('reset_completed', null, recycleSessionMetadata).catch(
+                            () => undefined
+                        );
+                    }
+                    void captureSessionScreenshotArtifact('reset_completed', null, {
+                        ...recycleSessionMetadata
                     }).catch(() => undefined);
                 }
             } else if (
@@ -1922,7 +1937,9 @@ export function wireInstanceAgent(
                     recycleId: recycleMarker?.recycleId,
                     recycleReason: recycleMarker?.reason,
                     recycleRequestedAtUtc: recycleMarker?.requestedAtUtc,
-                    sessionRequestId: activeCommand?.sessionRequestId
+                    sessionRequestId: activeCommand?.sessionRequestId ?? recycleMarker?.sessionRequestId,
+                    userSessionId: recycleMarker?.userSessionId,
+                    sessionId: recycleMarker?.sessionId
                 });
                 if (activeCommand && isRecycleToWarmCommand(activeCommand)) {
                     const commandToFail = activeCommand;
@@ -1977,11 +1994,12 @@ export function wireInstanceAgent(
             queueEvent(
                 'session_network_path',
                 {
+                    sessionRequestId: update.sessionRequestId,
                     usesTurn: update.usesTurn,
                     candidateType: update.candidateType,
                     relayProtocol: update.relayProtocol
                 },
-                update.sessionId
+                update.sessionRequestId ?? update.sessionId
             );
         },
         getDesiredState() {

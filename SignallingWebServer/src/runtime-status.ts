@@ -35,6 +35,7 @@ export interface RuntimeStatusPublisherOptions {
 }
 export interface SessionNetworkPathReport {
     sessionId: string;
+    sessionRequestId?: string;
     usesTurn: boolean;
     candidateType?: string;
     relayProtocol?: string;
@@ -353,7 +354,7 @@ export function createSessionNetworkPathReporter(
 
     return {
         async report(update: SessionNetworkPathReport): Promise<boolean> {
-            const sessionId = normalizeTagValue(update.sessionId);
+            const sessionId = normalizeTagValue(update.sessionRequestId ?? update.sessionId);
             if (!sessionId) {
                 return false;
             }

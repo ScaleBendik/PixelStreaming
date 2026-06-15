@@ -713,6 +713,20 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         return lastManagedSessionRequestId;
     };
+    const resolveRecycleMarkerSessionRequestId = (
+        command: { sessionRequestId?: string | null } | null | undefined
+    ): string | null => {
+        const commandSessionRequestId = normalizeOptionalText(command?.sessionRequestId);
+        if (commandSessionRequestId) {
+            return commandSessionRequestId;
+        }
+
+        if (!hasSeenViewer || !hasSeenManagedSessionViewer) {
+            return null;
+        }
+
+        return lastManagedSessionRequestId;
+    };
     const disconnectPlayersForExplicitTeardown = (command: RuntimeInstanceCommand): number => {
         const players: IPlayer[] = server.playerRegistry.listPlayers();
         if (players.length === 0) {
@@ -1436,6 +1450,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     requestedAtUtc: new Date().toISOString(),
                     reason: 'post_session_cleanup',
                     recycleId: randomUUID(),
+                    sessionRequestId: resolveRecycleMarkerSessionRequestId(commandToStart) ?? undefined,
                     sourcePid: process.pid
                 },
                 log

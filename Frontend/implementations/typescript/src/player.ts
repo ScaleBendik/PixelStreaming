@@ -97,6 +97,7 @@ type AggregatedStatsLike = {
 
 type SessionNetworkPathReport = {
     sessionId: string;
+    sessionRequestId?: string;
     usesTurn: boolean;
     candidateType?: string;
     relayProtocol?: string;
@@ -362,6 +363,7 @@ const findCandidateByIdOrUniqueTransport = (
 
 const deriveSessionNetworkPathReport = (
     sessionId: string,
+    sessionRequestId: string | undefined,
     aggregatedStats: AggregatedStatsLike
 ): SessionNetworkPathReport | null => {
     const activeCandidatePair = findActiveCandidatePair(aggregatedStats);
@@ -410,6 +412,7 @@ const deriveSessionNetworkPathReport = (
 
     return {
         sessionId,
+        sessionRequestId,
         usesTurn,
         candidateType,
         relayProtocol
@@ -650,10 +653,10 @@ document.body.onload = function() {
         config.setFlagEnabled(Flags.AutoConnect, true);
     }
 
+    const sessionNetworkPathRuntimeId = reconnectContext?.sessionId?.trim() || '';
+    const sessionNetworkPathRequestId = reconnectContext?.sessionRequestId?.trim() || '';
     const sessionNetworkPathCorrelationId =
-        reconnectContext?.sessionId?.trim() ||
-        reconnectContext?.sessionRequestId?.trim() ||
-        '';
+        sessionNetworkPathRuntimeId || sessionNetworkPathRequestId;
     let lastConfirmedSessionNetworkPathSignature = '';
     let pendingSessionNetworkPathSignature = '';
     if (sessionNetworkPathCorrelationId) {
@@ -667,6 +670,7 @@ document.body.onload = function() {
 
             const report = deriveSessionNetworkPathReport(
                 sessionNetworkPathCorrelationId,
+                sessionNetworkPathRequestId || undefined,
                 aggregatedStats
             );
             if (!report) {

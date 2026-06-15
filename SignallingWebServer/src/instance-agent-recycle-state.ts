@@ -7,6 +7,9 @@ export interface InstanceAgentRecycleMarkerSnapshot {
     requestedAtUtc?: string;
     reason?: string;
     recycleId?: string;
+    sessionRequestId?: string;
+    userSessionId?: string;
+    sessionId?: string;
     sourcePid?: number;
 }
 
@@ -56,6 +59,9 @@ export function normalizeInstanceAgentRecycleMarkerSnapshot(
         requestedAtUtc: normalizeOptionalText(value?.requestedAtUtc),
         reason: normalizeOptionalText(value?.reason),
         recycleId: normalizeOptionalText(value?.recycleId),
+        sessionRequestId: normalizeOptionalText(value?.sessionRequestId),
+        userSessionId: normalizeOptionalText(value?.userSessionId),
+        sessionId: normalizeOptionalText(value?.sessionId),
         sourcePid: normalizeOptionalInteger(value?.sourcePid)
     };
 }

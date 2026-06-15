@@ -815,12 +815,14 @@ app.post('/api/session-network-path', express.json({ limit: '8kb' }), async (req
     const body = request.body as
         | {
               sessionId?: unknown;
+              sessionRequestId?: unknown;
               usesTurn?: unknown;
               candidateType?: unknown;
               relayProtocol?: unknown;
           }
         | undefined;
     const sessionId = typeof body?.sessionId === 'string' ? body.sessionId.trim() : '';
+    const sessionRequestId = typeof body?.sessionRequestId === 'string' ? body.sessionRequestId.trim() : '';
     const usesTurn = typeof body?.usesTurn === 'boolean' ? body.usesTurn : null;
     const candidateType = typeof body?.candidateType === 'string' ? body.candidateType.trim() : '';
     const relayProtocol = typeof body?.relayProtocol === 'string' ? body.relayProtocol.trim() : '';
@@ -832,6 +834,7 @@ app.post('/api/session-network-path', express.json({ limit: '8kb' }), async (req
 
     instanceAgentClient?.recordSessionNetworkPath({
         sessionId,
+        sessionRequestId,
         usesTurn,
         candidateType,
         relayProtocol
@@ -843,6 +846,7 @@ app.post('/api/session-network-path', express.json({ limit: '8kb' }), async (req
 
     const reported = await sessionNetworkPathReporter.report({
         sessionId,
+        sessionRequestId,
         usesTurn,
         candidateType,
         relayProtocol
