@@ -8,6 +8,7 @@ import { SFUConnection } from './SFUConnection';
 import { Logger } from './Logger';
 import { StreamerRegistry } from './StreamerRegistry';
 import { PlayerRegistry } from './PlayerRegistry';
+import { IceCandidateMonitor, IceCandidateMonitorOptions } from './IceCandidateMonitor';
 import { Messages, MessageHelpers, SignallingProtocol } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
 import { stringify } from './Utils';
 
@@ -81,6 +82,15 @@ export interface IServerConfig {
 
     // Number of consecutive missed pongs before terminating a player connection.
     playerKeepaliveMaxMissedPongs?: number;
+
+    // Passive ICE candidate summary logging for player/streamer candidate types.
+    iceCandidateSummary?: boolean;
+
+    // Quiet period before emitting a per-player ICE candidate summary.
+    iceCandidateSummaryDelayMs?: number;
+
+    // Maximum player candidate summaries tracked in memory at once.
+    iceCandidateSummaryMaxTrackedPlayers?: number;
 }
 
 export type ProtocolConfig = {
@@ -164,6 +174,7 @@ export class SignallingServer {
     private playerKeepaliveMaxMissedPongs: number;
     private playerKeepaliveTimer: NodeJS.Timeout | null;
     private playerKeepaliveState: Map<wslib.WebSocket, IPlayerKeepaliveState>;
+    readonly iceCandidateMonitor: IceCandidateMonitor;
 
     /**
      * Initializes the server object and sets up listening sockets for streamers
@@ -211,6 +222,11 @@ export class SignallingServer {
         );
         this.playerKeepaliveTimer = null;
         this.playerKeepaliveState = new Map();
+        this.iceCandidateMonitor = new IceCandidateMonitor({
+            enabled: this.config.iceCandidateSummary,
+            summaryDelayMs: this.config.iceCandidateSummaryDelayMs,
+            maxTrackedPlayers: this.config.iceCandidateSummaryMaxTrackedPlayers
+        } satisfies IceCandidateMonitorOptions);
 
         if (!config.playerPort && !config.httpServer && !config.httpsServer) {
             Logger.error('No player port, http server or https server supplied to SignallingServer.');

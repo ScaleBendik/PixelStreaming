@@ -324,6 +324,21 @@ program
         config_file.player_keepalive_max_missed_pongs || '2'
     )
     .option(
+        '--ice_candidate_summary <value>',
+        'Enables passive ICE candidate summary logging. true/false',
+        config_file.ice_candidate_summary ?? 'false'
+    )
+    .option(
+        '--ice_candidate_summary_delay_ms <number>',
+        'Quiet period before emitting a per-player ICE candidate summary.',
+        config_file.ice_candidate_summary_delay_ms || '5000'
+    )
+    .option(
+        '--ice_candidate_summary_max_tracked_players <number>',
+        'Maximum player ICE candidate summaries tracked in memory at once.',
+        config_file.ice_candidate_summary_max_tracked_players || '256'
+    )
+    .option(
         '--viewer_idle_stop <value>',
         'Enables automatic EC2 stop when the signalling server stays idle (no viewers). true/false',
         config_file.viewer_idle_stop ?? 'false'
@@ -700,7 +715,10 @@ const serverOpts: IServerConfig = {
     maxSubscribers: options.max_players,
     playerKeepalive: options.player_keepalive,
     playerKeepaliveIntervalMs: options.player_keepalive_interval_ms,
-    playerKeepaliveMaxMissedPongs: options.player_keepalive_max_missed_pongs
+    playerKeepaliveMaxMissedPongs: options.player_keepalive_max_missed_pongs,
+    iceCandidateSummary: options.ice_candidate_summary,
+    iceCandidateSummaryDelayMs: options.ice_candidate_summary_delay_ms,
+    iceCandidateSummaryMaxTrackedPlayers: options.ice_candidate_summary_max_tracked_players
 };
 
 if (playerVerifyClient) {

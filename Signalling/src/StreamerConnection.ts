@@ -127,7 +127,7 @@ export class StreamerConnection extends EventEmitter implements IStreamer, LogUt
 
         this.protocol.on(Messages.offer.typeName, this.forwardMessage.bind(this));
         this.protocol.on(Messages.answer.typeName, this.forwardMessage.bind(this));
-        this.protocol.on(Messages.iceCandidate.typeName, this.forwardMessage.bind(this));
+        this.protocol.on(Messages.iceCandidate.typeName, this.onIceCandidateMessage.bind(this));
     }
 
     private forwardMessage(message: BaseMessage): void {
@@ -140,6 +140,12 @@ export class StreamerConnection extends EventEmitter implements IStreamer, LogUt
                 player.protocol.sendMessage(message);
             }
         }
+    }
+
+    private onIceCandidateMessage(message: BaseMessage): void {
+        const player = message.playerId ? this.server.playerRegistry.get(message.playerId) : undefined;
+        this.server.iceCandidateMonitor.recordStreamerCandidate(this, player, message);
+        this.forwardMessage(message);
     }
 
     private onTransportError(error: ErrorEvent): void {

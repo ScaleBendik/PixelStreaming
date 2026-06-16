@@ -114,7 +114,7 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
 
         this.protocol.on(Messages.offer.typeName, this.sendToStreamer.bind(this));
         this.protocol.on(Messages.answer.typeName, this.sendToStreamer.bind(this));
-        this.protocol.on(Messages.iceCandidate.typeName, this.sendToStreamer.bind(this));
+        this.protocol.on(Messages.iceCandidate.typeName, this.onIceCandidateMessage.bind(this));
         this.protocol.on(Messages.dataChannelRequest.typeName, this.sendToStreamer.bind(this));
         this.protocol.on(Messages.peerDataChannelsReady.typeName, this.sendToStreamer.bind(this));
         this.protocol.on(Messages.layerPreference.typeName, this.sendToStreamer.bind(this));
@@ -143,6 +143,11 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
         message.playerId = this.playerId;
         LogUtils.logForward(this, this.subscribedStreamer!, message);
         this.subscribedStreamer!.protocol.sendMessage(message);
+    }
+
+    private onIceCandidateMessage(message: BaseMessage): void {
+        this.server.iceCandidateMonitor.recordPlayerCandidate(this, this.subscribedStreamer, message);
+        this.sendToStreamer(message);
     }
 
     private subscribe(streamerId: string) {
@@ -221,6 +226,7 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
 
     private onTransportClose(_event: CloseEvent): void {
         Logger.debug('PlayerConnection transport close.');
+        this.server.iceCandidateMonitor.flushPlayer(this.playerId, 'player_disconnected');
         this.disconnect();
     }
 
