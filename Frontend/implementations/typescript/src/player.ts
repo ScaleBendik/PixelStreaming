@@ -36,6 +36,8 @@ const SESSION_MANAGER_RECONNECT_PATH = '/servers/';
 const SESSION_MANAGER_RECONNECT_REGION_PARAM = 'reconnectRegion';
 const SESSION_MANAGER_RECONNECT_INSTANCE_ID_PARAM = 'reconnectInstanceId';
 const SESSION_MANAGER_RECONNECT_SESSION_ID_PARAM = 'reconnectSessionId';
+const SESSION_MANAGER_RECONNECT_SESSION_REQUEST_ID_PARAM =
+    'reconnectSessionRequestId';
 const SESSION_NETWORK_PATH_ENDPOINT = '/api/session-network-path';
 const EXPIRED_CONNECTION_GUIDANCE =
     'Connection expired. Return to your ScaleWorld session manager and click connect again to continue your session.';
@@ -276,6 +278,12 @@ const buildSessionManagerReconnectUrl = (context: ReconnectContext): string | nu
             reconnectUrl.searchParams.set(
                 SESSION_MANAGER_RECONNECT_SESSION_ID_PARAM,
                 context.sessionId
+            );
+        }
+        if (context.sessionRequestId) {
+            reconnectUrl.searchParams.set(
+                SESSION_MANAGER_RECONNECT_SESSION_REQUEST_ID_PARAM,
+                context.sessionRequestId
             );
         }
         return reconnectUrl.toString();
