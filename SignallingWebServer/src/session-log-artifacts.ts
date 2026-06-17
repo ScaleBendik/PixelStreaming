@@ -14,6 +14,7 @@ const DEFAULT_MAX_BUNDLE_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_ENTRY_BYTES = 512 * 1024;
 const DEFAULT_QUEUE_RETRY_WINDOW_MS = 10 * 60 * 1000;
 const MAX_DRAIN_RECORDS = 3;
+const MAX_CLEANUP_TREE_ENTRIES = 10_000;
 const TAR_BLOCK_SIZE = 512;
 
 type QueueRecordStatus = 'pending_upload' | 'pending_registration';
@@ -820,6 +821,58 @@ function getFileModifiedMs(filePath: string): number | null {
     }
 }
 
+function getDirectoryContentModifiedMs(directoryPath: string): number | null {
+    const stack = [directoryPath];
+    let latestMs: number | null = null;
+    let visitedEntries = 0;
+
+    while (stack.length > 0) {
+        if (visitedEntries >= MAX_CLEANUP_TREE_ENTRIES) {
+            return null;
+        }
+
+        const currentPath = stack.pop();
+        if (!currentPath) {
+            continue;
+        }
+
+        let entries: fs.Dirent[];
+        try {
+            entries = fs.readdirSync(currentPath, { withFileTypes: true });
+        } catch {
+            return null;
+        }
+
+        if (entries.length === 0) {
+            const modifiedMs = getFileModifiedMs(currentPath);
+            if (modifiedMs !== null) {
+                latestMs = latestMs === null ? modifiedMs : Math.max(latestMs, modifiedMs);
+            }
+            continue;
+        }
+
+        for (const entry of entries) {
+            visitedEntries += 1;
+            const entryPath = path.join(currentPath, entry.name);
+            if (entry.isDirectory()) {
+                stack.push(entryPath);
+                continue;
+            }
+
+            const modifiedMs = getFileModifiedMs(entryPath);
+            if (modifiedMs !== null) {
+                latestMs = latestMs === null ? modifiedMs : Math.max(latestMs, modifiedMs);
+            }
+        }
+    }
+
+    return latestMs ?? getFileModifiedMs(directoryPath);
+}
+
+function getCleanupCandidateModifiedMs(entryPath: string, isDirectory: boolean): number | null {
+    return isDirectory ? getDirectoryContentModifiedMs(entryPath) : getFileModifiedMs(entryPath);
+}
+
 function getQueueRecordCreatedMs(record: ArtifactQueueRecord, filePath: string): number | null {
     const createdMs = Date.parse(record.createdAtUtc);
     if (Number.isFinite(createdMs)) {
@@ -1115,7 +1168,7 @@ export function createSessionLogArtifactManager(
                 continue;
             }
 
-            const modifiedMs = getFileModifiedMs(entryPath);
+            const modifiedMs = getCleanupCandidateModifiedMs(entryPath, entry.isDirectory());
             if (modifiedMs === null || nowMs - modifiedMs <= queueRetryWindowMs) {
                 continue;
             }
