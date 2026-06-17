@@ -82,6 +82,11 @@ function resolveAuthOption(currentValue: unknown, envVarName: string): string {
     return (process.env[envVarName] || '').trim();
 }
 
+function normalizeOptionalOption(value: unknown): string | undefined {
+    const normalized = typeof value === 'string' ? value.trim() : '';
+    return normalized.length > 0 ? normalized : undefined;
+}
+
 function sanitizeOptionsForLogging(input: IProgramOptions): IProgramOptions {
     const sanitized: IProgramOptions = { ...input };
     for (const field of REDACTED_LOG_FIELDS) {
@@ -758,7 +763,7 @@ const signallingServer = new SignallingServer(serverOpts);
 const instanceAgentClient = wireInstanceAgent(signallingServer, {
     enabled: options.instance_agent,
     apiBaseUrl: String(options.instance_agent_api_base_url || ''),
-    bootstrapSharedSecret: String(options.instance_agent_bootstrap_shared_secret || ''),
+    bootstrapSharedSecret: normalizeOptionalOption(options.instance_agent_bootstrap_shared_secret),
     instanceId: String(options.instance_agent_instance_id || ''),
     region: String(options.instance_agent_region || ''),
     requireIdentityProof: options.instance_agent_require_identity_proof,

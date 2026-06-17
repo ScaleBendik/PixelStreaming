@@ -301,7 +301,6 @@ call start.bat -- ^
   --runtime_status_source="signalling-server" ^
   --instance_agent="%INSTANCE_AGENT%" ^
   --instance_agent_api_base_url="%INSTANCE_AGENT_API_BASE_URL%" ^
-  --instance_agent_bootstrap_shared_secret="%INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET%" ^
   --instance_agent_instance_id="%INSTANCE_AGENT_INSTANCE_ID%" ^
   --instance_agent_region="%INSTANCE_AGENT_REGION%" ^
   --instance_agent_require_identity_proof="%INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF%" ^
@@ -353,7 +352,6 @@ call start.bat -- ^
   --runtime_status_source="signalling-server" ^
   --instance_agent="%INSTANCE_AGENT%" ^
   --instance_agent_api_base_url="%INSTANCE_AGENT_API_BASE_URL%" ^
-  --instance_agent_bootstrap_shared_secret="%INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET%" ^
   --instance_agent_instance_id="%INSTANCE_AGENT_INSTANCE_ID%" ^
   --instance_agent_region="%INSTANCE_AGENT_REGION%" ^
   --instance_agent_require_identity_proof="%INSTANCE_AGENT_REQUIRE_IDENTITY_PROOF%" ^
