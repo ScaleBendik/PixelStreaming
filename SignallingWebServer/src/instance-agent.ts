@@ -1353,6 +1353,11 @@ export function wireInstanceAgent(
             pendingRecycleCompletion !== null ||
             (activeCommand !== null && isRecycleToWarmCommand(activeCommand))
     });
+    artifactManager?.cleanStartupQueue({
+        preserveQueue:
+            pendingRecycleCompletion !== null ||
+            (activeCommand !== null && isRecycleToWarmCommand(activeCommand))
+    });
     screenshotArtifactManager = createSessionScreenshotArtifactManager({
         ...(options.sessionScreenshotArtifacts ?? {}),
         lane: configuredLane ?? options.sessionScreenshotArtifacts?.lane,
@@ -1365,6 +1370,11 @@ export function wireInstanceAgent(
         logger: log
     });
     screenshotArtifactManager?.cleanStartupScreenshots({
+        preserveActiveSession:
+            pendingRecycleCompletion !== null ||
+            (activeCommand !== null && isRecycleToWarmCommand(activeCommand))
+    });
+    screenshotArtifactManager?.cleanStartupQueue({
         preserveActiveSession:
             pendingRecycleCompletion !== null ||
             (activeCommand !== null && isRecycleToWarmCommand(activeCommand))

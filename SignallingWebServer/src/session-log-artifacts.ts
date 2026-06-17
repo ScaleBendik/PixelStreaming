@@ -12,6 +12,7 @@ const gzipAsync = promisify(gzip);
 const DEFAULT_OBJECT_PREFIX = 'PixelStreamingLogs';
 const DEFAULT_MAX_BUNDLE_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_ENTRY_BYTES = 512 * 1024;
+const DEFAULT_QUEUE_RETRY_WINDOW_MS = 10 * 60 * 1000;
 const MAX_DRAIN_RECORDS = 3;
 const TAR_BLOCK_SIZE = 512;
 
@@ -78,6 +79,7 @@ export interface SessionLogArtifactRuntimeOptions {
     includeRuntimeStatusSnapshot?: unknown;
     cleanupSessionLogsAfterUpload?: unknown;
     cleanupLifecycleLogsOnStartup?: unknown;
+    queueRetryWindowMs?: unknown;
 }
 
 export interface SessionLogArtifactRegistrationRequest {
@@ -129,6 +131,7 @@ export interface SessionLogArtifactManager {
     captureAndUpload(context: SessionLogArtifactCaptureContext): Promise<void>;
     drainQueue(): Promise<void>;
     cleanStartupLogs(options?: { preserveRecycleLogs?: boolean }): void;
+    cleanStartupQueue(options?: { preserveQueue?: boolean }): void;
 }
 
 function parseBoolean(rawValue: unknown, fallback: boolean): boolean {
@@ -155,6 +158,18 @@ function parsePositiveInteger(rawValue: unknown, fallback: number): number {
     if (typeof rawValue !== 'string' && typeof rawValue !== 'number') return fallback;
     const parsed = Number.parseInt(String(rawValue), 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function formatDurationMs(durationMs: number): string {
+    const safeDurationMs = Math.max(0, Math.floor(durationMs));
+    const seconds = Math.floor(safeDurationMs / 1000);
+    if (seconds < 60) {
+        return `${seconds}s`;
+    }
+
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return remainingSeconds > 0 ? `${minutes}m${remainingSeconds}s` : `${minutes}m`;
 }
 
 function normalizeOptionalText(value: unknown): string | undefined {
@@ -762,9 +777,107 @@ function writeJsonAtomic(filePath: string, value: unknown): void {
 
 function readQueueRecord(filePath: string): ArtifactQueueRecord | null {
     try {
-        return JSON.parse(fs.readFileSync(filePath, 'utf8')) as ArtifactQueueRecord;
+        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
+        if (!isRecordLike(parsed)) {
+            return null;
+        }
+
+        const record = parsed as unknown as ArtifactQueueRecord;
+        if (
+            !normalizeOptionalText(record.id) ||
+            (record.status !== 'pending_upload' && record.status !== 'pending_registration') ||
+            !normalizeOptionalText(record.localPath) ||
+            !normalizeOptionalText(record.bucketName) ||
+            !normalizeOptionalText(record.objectKey) ||
+            !isRecordLike(record.request)
+        ) {
+            return null;
+        }
+
+        if (!Number.isFinite(record.attempts)) {
+            record.attempts = 0;
+        }
+
+        if (!isRecordLike(record.request.metadata)) {
+            record.request.metadata = {};
+        }
+
+        return record;
     } catch {
         return null;
+    }
+}
+
+function isRecordLike(value: unknown): value is Record<string, unknown> {
+    return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function getFileModifiedMs(filePath: string): number | null {
+    try {
+        return fs.statSync(filePath).mtimeMs;
+    } catch {
+        return null;
+    }
+}
+
+function getQueueRecordCreatedMs(record: ArtifactQueueRecord, filePath: string): number | null {
+    const createdMs = Date.parse(record.createdAtUtc);
+    if (Number.isFinite(createdMs)) {
+        return createdMs;
+    }
+
+    const updatedMs = Date.parse(record.updatedAtUtc);
+    if (Number.isFinite(updatedMs)) {
+        return updatedMs;
+    }
+
+    return getFileModifiedMs(filePath);
+}
+
+function getQueueFileAgeMs(filePath: string, nowMs: number): number | null {
+    const modifiedMs = getFileModifiedMs(filePath);
+    return modifiedMs === null ? null : nowMs - modifiedMs;
+}
+
+function normalizePathForComparison(filePath: string): string {
+    const resolved = path.resolve(filePath);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function isPathBelow(childPath: string, parentPath: string): boolean {
+    const resolvedChild = normalizePathForComparison(childPath);
+    const resolvedParent = normalizePathForComparison(parentPath);
+    return resolvedChild !== resolvedParent && resolvedChild.startsWith(`${resolvedParent}${path.sep}`);
+}
+
+function deleteFileIfWithin(filePath: string | undefined, parentPath: string): boolean {
+    const normalizedPath = normalizeOptionalText(filePath);
+    if (!normalizedPath || !isPathBelow(normalizedPath, parentPath)) {
+        return false;
+    }
+
+    try {
+        if (fs.existsSync(normalizedPath)) {
+            fs.unlinkSync(normalizedPath);
+            return true;
+        }
+    } catch {
+        return false;
+    }
+
+    return false;
+}
+
+function deleteDirectoryIfWithin(directoryPath: string, parentPath: string): boolean {
+    if (!isPathBelow(directoryPath, parentPath)) {
+        return false;
+    }
+
+    try {
+        fs.rmSync(directoryPath, { recursive: true, force: true });
+        return true;
+    } catch {
+        return false;
     }
 }
 
@@ -884,6 +997,10 @@ export function createSessionLogArtifactManager(
         options.maxBytes ?? process.env.INSTANCE_AGENT_ARTIFACT_MAX_BYTES,
         DEFAULT_MAX_BUNDLE_BYTES
     );
+    const queueRetryWindowMs = parsePositiveInteger(
+        options.queueRetryWindowMs ?? process.env.INSTANCE_AGENT_ARTIFACT_QUEUE_RETRY_WINDOW_MS,
+        DEFAULT_QUEUE_RETRY_WINDOW_MS
+    );
     const logFolder =
         resolvePathMaybeRelative(options.logFolder, repoRoot) ??
         resolvePathMaybeRelative(process.env.INSTANCE_AGENT_ARTIFACT_WILBUR_LOG_FOLDER, repoRoot) ??
@@ -904,7 +1021,7 @@ export function createSessionLogArtifactManager(
     fs.mkdirSync(queuePath, { recursive: true });
     fs.mkdirSync(bundlePath, { recursive: true });
     log(
-        `[session-artifacts] Enabled. bucket=${bucketName}, prefix=${objectPrefix}, queue=${queuePath}, maxBundleBytes=${maxBundleBytes}.`
+        `[session-artifacts] Enabled. bucket=${bucketName}, prefix=${objectPrefix}, queue=${queuePath}, maxBundleBytes=${maxBundleBytes}, queueRetryWindowMs=${queueRetryWindowMs}.`
     );
 
     const updateRecord = (record: ArtifactQueueRecord): void => {
@@ -939,22 +1056,140 @@ export function createSessionLogArtifactManager(
         return null;
     };
 
-    const discardQueueRecord = (record: ArtifactQueueRecord, reason: string): void => {
-        try {
-            fs.unlinkSync(path.join(queuePath, `${record.id}.json`));
-        } catch {
-            // best effort
+    const discardQueueRecord = (record: ArtifactQueueRecord, reason: string, filePath?: string): void => {
+        deleteFileIfWithin(filePath ?? path.join(queuePath, `${record.id}.json`), queuePath);
+
+        const deletedBundle = deleteFileIfWithin(record.localPath, queuePath);
+
+        log(
+            `[session-artifacts] Discarded stale queue record ${record.id}: ${reason}. localBundleDeleted=${deletedBundle}.`
+        );
+    };
+
+    const isQueueRecordExpired = (record: ArtifactQueueRecord, filePath: string, nowMs: number): boolean => {
+        const createdMs = getQueueRecordCreatedMs(record, filePath);
+        return createdMs !== null && nowMs - createdMs > queueRetryWindowMs;
+    };
+
+    const buildExpiredRecordReason = (
+        record: ArtifactQueueRecord,
+        filePath: string,
+        nowMs: number,
+        context: string
+    ): string => {
+        const createdMs = getQueueRecordCreatedMs(record, filePath);
+        const ageMs = createdMs === null ? 0 : nowMs - createdMs;
+        const lastError = normalizeOptionalText(record.lastError);
+        return `${context} retry window elapsed (age=${formatDurationMs(ageMs)}, status=${record.status}, attempts=${record.attempts}, lastError=${lastError ? truncateText(lastError, 300) : 'none'})`;
+    };
+
+    const discardMalformedQueueFileIfExpired = (
+        filePath: string,
+        nowMs: number,
+        context: string
+    ): boolean => {
+        const ageMs = getQueueFileAgeMs(filePath, nowMs);
+        if (ageMs === null || ageMs <= queueRetryWindowMs || !deleteFileIfWithin(filePath, queuePath)) {
+            return false;
         }
 
+        log(
+            `[session-artifacts] ${context} queue cleanup removed stale malformed queue record ${path.basename(filePath)} (age=${formatDurationMs(ageMs)}).`
+        );
+        return true;
+    };
+
+    const cleanStaleBundleFiles = (nowMs: number, preservedLocalPaths: Set<string>): void => {
+        let entries: fs.Dirent[];
         try {
-            if (fs.existsSync(record.localPath)) {
-                fs.unlinkSync(record.localPath);
+            entries = fs.readdirSync(bundlePath, { withFileTypes: true });
+        } catch {
+            return;
+        }
+
+        let removed = 0;
+        let failed = 0;
+        for (const entry of entries) {
+            const entryPath = path.join(bundlePath, entry.name);
+            if (preservedLocalPaths.has(path.resolve(entryPath).toLowerCase())) {
+                continue;
             }
-        } catch {
-            // best effort
+
+            const modifiedMs = getFileModifiedMs(entryPath);
+            if (modifiedMs === null || nowMs - modifiedMs <= queueRetryWindowMs) {
+                continue;
+            }
+
+            const deleted = entry.isDirectory()
+                ? deleteDirectoryIfWithin(entryPath, bundlePath)
+                : deleteFileIfWithin(entryPath, bundlePath);
+            if (deleted) {
+                removed += 1;
+            } else {
+                failed += 1;
+            }
         }
 
-        log(`[session-artifacts] Discarded stale queue record ${record.id}: ${reason}.`);
+        if (removed > 0 || failed > 0) {
+            log(
+                `[session-artifacts] Startup queue cleanup removed ${removed} stale local bundle item(s) from ${bundlePath}${failed > 0 ? ` (failed=${failed})` : ''}.`
+            );
+        }
+    };
+
+    const cleanStartupQueue = (startupOptions?: { preserveQueue?: boolean }): void => {
+        if (startupOptions?.preserveQueue) {
+            log(
+                '[session-artifacts] Startup queue cleanup skipped because recycle recovery may need local artifact records.'
+            );
+            return;
+        }
+
+        let files: string[];
+        try {
+            files = fs
+                .readdirSync(queuePath)
+                .filter((fileName) => fileName.endsWith('.json'))
+                .map((fileName) => path.join(queuePath, fileName))
+                .sort();
+        } catch {
+            return;
+        }
+
+        const nowMs = Date.now();
+        let removedMalformed = 0;
+        const preservedLocalPaths = new Set<string>();
+        for (const filePath of files) {
+            const record = readQueueRecord(filePath);
+            if (!record) {
+                if (discardMalformedQueueFileIfExpired(filePath, nowMs, 'Startup')) {
+                    removedMalformed += 1;
+                }
+                continue;
+            }
+
+            if (isQueueRecordExpired(record, filePath, nowMs)) {
+                discardQueueRecord(
+                    record,
+                    buildExpiredRecordReason(record, filePath, nowMs, 'startup'),
+                    filePath
+                );
+                continue;
+            }
+
+            const localPath = normalizeOptionalText(record.localPath);
+            if (localPath && isPathBelow(localPath, bundlePath)) {
+                preservedLocalPaths.add(path.resolve(localPath).toLowerCase());
+            }
+        }
+
+        if (removedMalformed > 0) {
+            log(
+                `[session-artifacts] Startup queue cleanup removed ${removedMalformed} stale malformed queue record(s).`
+            );
+        }
+
+        cleanStaleBundleFiles(nowMs, preservedLocalPaths);
     };
 
     const cleanSessionLogs = (reason: string): void => {
@@ -1041,19 +1276,8 @@ export function createSessionLogArtifactManager(
     const registerRecord = async (record: ArtifactQueueRecord): Promise<void> => {
         normalizeRequestSessionCorrelation(record.request);
         if (!hasSessionCorrelation(record.request)) {
-            try {
-                fs.unlinkSync(path.join(queuePath, `${record.id}.json`));
-            } catch {
-                // best effort
-            }
-
-            try {
-                if (fs.existsSync(record.localPath)) {
-                    fs.unlinkSync(record.localPath);
-                }
-            } catch {
-                // best effort
-            }
+            deleteFileIfWithin(path.join(queuePath, `${record.id}.json`), queuePath);
+            deleteFileIfWithin(record.localPath, queuePath);
 
             log(
                 `[session-artifacts] Uploaded uncorrelated lifecycle artifact ${record.objectKey}; skipped session artifact registration.`
@@ -1063,19 +1287,8 @@ export function createSessionLogArtifactManager(
         }
 
         await options.registerArtifact(record.request);
-        try {
-            fs.unlinkSync(path.join(queuePath, `${record.id}.json`));
-        } catch {
-            // best effort
-        }
-
-        try {
-            if (fs.existsSync(record.localPath)) {
-                fs.unlinkSync(record.localPath);
-            }
-        } catch {
-            // best effort
-        }
+        deleteFileIfWithin(path.join(queuePath, `${record.id}.json`), queuePath);
+        deleteFileIfWithin(record.localPath, queuePath);
 
         log(`[session-artifacts] Registered artifact ${record.objectKey}.`);
         cleanSessionLogs('after_registration');
@@ -1101,13 +1314,27 @@ export function createSessionLogArtifactManager(
 
             const record = readQueueRecord(filePath);
             if (!record) {
+                if (discardMalformedQueueFileIfExpired(filePath, Date.now(), 'Drain')) {
+                    processed += 1;
+                }
                 continue;
             }
 
             try {
+                const nowMs = Date.now();
+                if (isQueueRecordExpired(record, filePath, nowMs)) {
+                    discardQueueRecord(
+                        record,
+                        buildExpiredRecordReason(record, filePath, nowMs, 'drain'),
+                        filePath
+                    );
+                    processed += 1;
+                    continue;
+                }
+
                 const discardReason = await resolveQueueRecordIdentityMismatch(record);
                 if (discardReason) {
-                    discardQueueRecord(record, discardReason);
+                    discardQueueRecord(record, discardReason, filePath);
                     processed += 1;
                     continue;
                 }
@@ -1242,6 +1469,7 @@ export function createSessionLogArtifactManager(
     return {
         captureAndUpload,
         drainQueue,
-        cleanStartupLogs
+        cleanStartupLogs,
+        cleanStartupQueue
     };
 }
