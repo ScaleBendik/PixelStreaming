@@ -290,7 +290,15 @@ export class PixelStreamingApplicationStyle {
             display: 'flex',
             flexDirection: 'row',
             justifyContent: 'space-between',
-            padding: '0.15rem 10px 0.15rem 10px'
+            padding: '0.15rem 10px 0.15rem 10px',
+            borderRadius: '4px',
+            boxSizing: 'border-box'
+        },
+        '.setting:nth-child(even)': {
+            backgroundColor: 'rgba(128, 128, 128, 0.10)'
+        },
+        '.setting:hover, .setting:focus-within': {
+            backgroundColor: 'rgba(128, 128, 128, 0.20)'
         },
         '.settings-text': {
             color: 'var(--color2)',
@@ -350,7 +358,8 @@ export class PixelStreamingApplicationStyle {
         },
         '.tgl-switch': {
             verticalAlign: 'middle',
-            display: 'inline-block'
+            display: 'inline-flex',
+            justifyContent: 'flex-end'
         },
         '.tgl-switch .tgl': {
             display: 'none'
@@ -424,15 +433,15 @@ export class PixelStreamingApplicationStyle {
             borderRadius: '4px',
             color: 'var(--color2)',
             textAlign: 'right',
-            fontFamily: 'inherit'
+            fontFamily: 'inherit',
+            boxSizing: 'border-box'
         },
         '.form-control:hover': {
             borderColor: 'var(--color7)'
         },
-        '.duration-form-group': {
-            gridTemplateColumns: 'minmax(8rem, 1fr) max-content',
-            columnGap: '0.75rem',
-            alignItems: 'center'
+        '.form-control:focus-visible': {
+            borderColor: 'var(--color3)',
+            outline: 'none'
         },
         '.duration-control': {
             display: 'flex',
@@ -467,6 +476,11 @@ export class PixelStreamingApplicationStyle {
             paddingRight: '10px',
             paddingLeft: '10px'
         },
+        '.duration-form-group': {
+            gridTemplateColumns: 'minmax(8rem, 1fr) max-content',
+            columnGap: '0.75rem',
+            alignItems: 'center'
+        },
         '.form-group label': {
             verticalAlign: 'middle',
             fontWeight: 'normal'
@@ -475,12 +489,12 @@ export class PixelStreamingApplicationStyle {
             display: 'flex',
             flexDirection: 'column',
             borderBottom: '1px solid var(--color7)',
-            paddingTop: '10px',
-            paddingBottom: '10px'
+            paddingTop: '0.75rem',
+            paddingBottom: '0.75rem'
         },
         '.settingsContainer> :first-child': {
             marginTop: '4px',
-            marginBottom: '4px',
+            marginBottom: '6px',
             fontWeight: 'bold',
             justifyContent: 'space-between',
             display: 'flex',
@@ -500,17 +514,19 @@ export class PixelStreamingApplicationStyle {
             boxShadow: 'none',
             color: 'inherit',
             cursor: 'pointer',
-            padding: '0',
+            padding: '0.15rem 0.45rem',
             margin: '0',
             minHeight: '2rem',
             textAlign: 'left',
-            userSelect: 'none'
+            userSelect: 'none',
+            borderRadius: '4px'
         },
         '.settingsSectionLabel': {
             flex: '0 1 auto'
         },
         '.settingsSectionHeader:hover': {
-            color: 'var(--color3)'
+            color: 'var(--color3)',
+            backgroundColor: 'rgba(128, 128, 128, 0.12)'
         },
         '.settingsSectionHeader:focus-visible': {
             outline: '1px solid var(--color3)',
@@ -525,7 +541,8 @@ export class PixelStreamingApplicationStyle {
         },
         '.settingsSectionBody': {
             display: 'flex',
-            flexDirection: 'column'
+            flexDirection: 'column',
+            gap: '0.1rem'
         },
         '.settingsSectionBody[hidden]': {
             display: 'none'

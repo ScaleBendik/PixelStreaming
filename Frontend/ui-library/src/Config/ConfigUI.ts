@@ -209,16 +209,6 @@ export class ConfigUI {
                 this.addSettingFlag(psSettingsSection, this.flagsUi.get(Flags.AFKDetection));
             if (isSettingEnabled(settingsConfig, Flags.WaitForStreamer))
                 this.addSettingFlag(psSettingsSection, this.flagsUi.get(Flags.WaitForStreamer));
-            if (isSettingEnabled(settingsConfig, NumericParameters.AFKTimeoutSecs))
-                this.addSettingNumeric(
-                    psSettingsSection,
-                    this.numericParametersUi.get(NumericParameters.AFKTimeoutSecs)
-                );
-            if (isSettingEnabled(settingsConfig, NumericParameters.AFKCountdownSecs))
-                this.addSettingNumeric(
-                    psSettingsSection,
-                    this.numericParametersUi.get(NumericParameters.AFKCountdownSecs)
-                );
             if (isSettingEnabled(settingsConfig, NumericParameters.MaxReconnectAttempts))
                 this.addSettingNumeric(
                     psSettingsSection,
@@ -233,6 +223,16 @@ export class ConfigUI {
                 this.addSettingNumeric(
                     psSettingsSection,
                     this.numericParametersUi.get(NumericParameters.KeepaliveDelay)
+                );
+            if (isSettingEnabled(settingsConfig, NumericParameters.AFKCountdownSecs))
+                this.addSettingNumeric(
+                    psSettingsSection,
+                    this.numericParametersUi.get(NumericParameters.AFKCountdownSecs)
+                );
+            if (isSettingEnabled(settingsConfig, NumericParameters.AFKTimeoutSecs))
+                this.addSettingNumeric(
+                    psSettingsSection,
+                    this.numericParametersUi.get(NumericParameters.AFKTimeoutSecs)
                 );
         }
 
