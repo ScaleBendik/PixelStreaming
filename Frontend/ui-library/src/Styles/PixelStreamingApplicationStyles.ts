@@ -17,7 +17,7 @@ export interface ColorPalette {
 
 export class PixelStreamingApplicationStyle {
     defaultLightModePalette: ColorPalette = {
-        '--color0': '#e2e0dd80',
+        '--color0': '#e2e0ddf2',
         '--color1': '#FFFFFF',
         '--color2': '#000000',
         '--color3': '#0585fe',
@@ -28,7 +28,7 @@ export class PixelStreamingApplicationStyle {
     };
 
     defaultDarkModePalette: ColorPalette = {
-        '--color0': '#1d1f22e0',
+        '--color0': '#1d1f22f5',
         '--color1': '#000000',
         '--color2': '#FFFFFF',
         '--color3': '#0585fe',
@@ -40,7 +40,7 @@ export class PixelStreamingApplicationStyle {
 
     defaultStyles = {
         ':root': {
-            '--color0': '#1d1f22e0',
+            '--color0': '#1d1f22f5',
             '--color1': '#000000',
             '--color2': '#FFFFFF',
             '--color3': '#0585fe',
@@ -465,6 +465,18 @@ export class PixelStreamingApplicationStyle {
             boxSizing: 'border-box'
         },
         '.duration-control-label': {
+            fontSize: '0.75rem',
+            fontWeight: 'normal'
+        },
+        '.number-control-with-unit': {
+            display: 'inline-flex',
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            gap: '0.25rem',
+            whiteSpace: 'nowrap'
+        },
+        '.number-control-unit': {
             fontSize: '0.75rem',
             fontWeight: 'normal'
         },

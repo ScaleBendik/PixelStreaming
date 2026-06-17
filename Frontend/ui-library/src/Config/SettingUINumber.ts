@@ -39,6 +39,10 @@ export class SettingUINumber<CustomIds extends string = NumericParametersIds> ex
         return this.setting.id === NumericParameters.AFKTimeoutSecs;
     }
 
+    private get isAfkCountdownSetting(): boolean {
+        return this.setting.id === NumericParameters.AFKCountdownSecs;
+    }
+
     public get settingsTextElem(): HTMLElement {
         if (!this._settingsTextElem) {
             this._settingsTextElem = document.createElement('label');
@@ -149,6 +153,20 @@ export class SettingUINumber<CustomIds extends string = NumericParametersIds> ex
         return this._durationInputRow;
     }
 
+    private createUnitInputRow(unitLabel: string): HTMLElement {
+        const row = document.createElement('span');
+        row.classList.add('number-control-with-unit');
+
+        const unit = document.createElement('span');
+        unit.classList.add('number-control-unit');
+        unit.textContent = unitLabel;
+
+        row.appendChild(this.spinner);
+        row.appendChild(unit);
+
+        return row;
+    }
+
     /**
      * @returns Return or creates a HTML element that represents this setting in the DOM.
      */
@@ -166,8 +184,11 @@ export class SettingUINumber<CustomIds extends string = NumericParametersIds> ex
                 this._rootElement.classList.add('duration-form-group');
                 this._rootElement.appendChild(this.durationInputRow);
             } else {
-                // create label element to wrap out input type
-                this._rootElement.appendChild(this.spinner);
+                if (this.isAfkCountdownSetting) {
+                    this._rootElement.appendChild(this.createUnitInputRow('sec'));
+                } else {
+                    this._rootElement.appendChild(this.spinner);
+                }
 
                 // setup onchange
                 this.spinner.onchange = (event: Event) => {

@@ -205,8 +205,6 @@ export class ConfigUI {
                 this.addSettingFlag(psSettingsSection, this.flagsUi.get(Flags.ForceTURN));
             if (isSettingEnabled(settingsConfig, Flags.SuppressBrowserKeys))
                 this.addSettingFlag(psSettingsSection, this.flagsUi.get(Flags.SuppressBrowserKeys));
-            if (isSettingEnabled(settingsConfig, Flags.AFKDetection))
-                this.addSettingFlag(psSettingsSection, this.flagsUi.get(Flags.AFKDetection));
             if (isSettingEnabled(settingsConfig, Flags.WaitForStreamer))
                 this.addSettingFlag(psSettingsSection, this.flagsUi.get(Flags.WaitForStreamer));
             if (isSettingEnabled(settingsConfig, NumericParameters.MaxReconnectAttempts))

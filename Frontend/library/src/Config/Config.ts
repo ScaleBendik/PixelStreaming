@@ -631,7 +631,7 @@ export class Config {
             NumericParameters.AFKCountdownSecs,
             new SettingNumber(
                 NumericParameters.AFKCountdownSecs,
-                'AFK countdown',
+                'Disconnect countdown',
                 'The time (in seconds) for a user to respond before the stream is ended after an AFK timeout.',
                 10 /*min*/,
                 null /*max*/,
