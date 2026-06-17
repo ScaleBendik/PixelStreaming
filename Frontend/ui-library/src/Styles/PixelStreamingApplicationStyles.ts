@@ -429,6 +429,36 @@ export class PixelStreamingApplicationStyle {
         '.form-control:hover': {
             borderColor: 'var(--color7)'
         },
+        '.duration-form-group': {
+            gridTemplateColumns: 'minmax(8rem, 1fr) max-content',
+            columnGap: '0.75rem',
+            alignItems: 'center'
+        },
+        '.duration-control': {
+            display: 'flex',
+            flexDirection: 'row',
+            flexWrap: 'nowrap',
+            justifyContent: 'flex-end',
+            alignItems: 'center',
+            gap: '0.35rem',
+            whiteSpace: 'nowrap'
+        },
+        '.duration-control-field': {
+            display: 'inline-flex',
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: '0.15rem',
+            flex: '0 0 auto'
+        },
+        '.duration-control-input': {
+            width: '2.6rem',
+            textAlign: 'center',
+            boxSizing: 'border-box'
+        },
+        '.duration-control-label': {
+            fontSize: '0.75rem',
+            fontWeight: 'normal'
+        },
         '.form-group': {
             paddingTop: '4px',
             display: 'grid',

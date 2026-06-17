@@ -1,14 +1,22 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 import type { NumericParametersIds, SettingNumber } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.7';
-import { Logger } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.7';
+import { Logger, NumericParameters } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.7';
 import { SettingUIBase } from './SettingUIBase';
+
+type DurationFields = {
+    hours: HTMLInputElement;
+    minutes: HTMLInputElement;
+    seconds: HTMLInputElement;
+};
 
 /**
  * A number spinner with a text label beside it.
  */
 export class SettingUINumber<CustomIds extends string = NumericParametersIds> extends SettingUIBase {
     _spinner: HTMLInputElement;
+    _durationInputRow: HTMLElement;
+    _durationFields: DurationFields;
 
     /* This element contains a text node that reflects the setting's text label. */
     _settingsTextElem: HTMLElement;
@@ -25,6 +33,10 @@ export class SettingUINumber<CustomIds extends string = NumericParametersIds> ex
      */
     public override get setting(): SettingNumber<CustomIds> {
         return this._setting as SettingNumber<CustomIds>;
+    }
+
+    private get isAfkTimeoutSetting(): boolean {
+        return this.setting.id === NumericParameters.AFKTimeoutSecs;
     }
 
     public get settingsTextElem(): HTMLElement {
@@ -67,6 +79,76 @@ export class SettingUINumber<CustomIds extends string = NumericParametersIds> ex
         return this._spinner;
     }
 
+    private createDurationField(label: string, max?: number): HTMLInputElement {
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.min = '0';
+        input.step = '1';
+        input.inputMode = 'numeric';
+        if (max != null) {
+            input.max = max.toString();
+        }
+        input.title = `${this.setting.description} (${label})`;
+        input.classList.add('form-control');
+        input.classList.add('duration-control-input');
+
+        // Block keypress/up/down propogation from text field typing going to UE
+        input.addEventListener('keypress', (event) => {
+            event.stopPropagation();
+        });
+        input.addEventListener('keyup', (event) => {
+            event.stopPropagation();
+        });
+        input.addEventListener('keydown', (event) => {
+            event.stopPropagation();
+        });
+        input.addEventListener('change', () => {
+            this.commitDurationFields();
+        });
+
+        return input;
+    }
+
+    private createDurationFieldGroup(label: string, input: HTMLInputElement): HTMLElement {
+        const group = document.createElement('span');
+        group.classList.add('duration-control-field');
+
+        const unitLabel = document.createElement('span');
+        unitLabel.classList.add('duration-control-label');
+        unitLabel.textContent = label;
+
+        group.appendChild(input);
+        group.appendChild(unitLabel);
+
+        return group;
+    }
+
+    private get durationFields(): DurationFields {
+        if (!this._durationFields) {
+            this._durationFields = {
+                hours: this.createDurationField('hours', 12),
+                minutes: this.createDurationField('minutes', 59),
+                seconds: this.createDurationField('seconds', 59)
+            };
+        }
+
+        return this._durationFields;
+    }
+
+    private get durationInputRow(): HTMLElement {
+        if (!this._durationInputRow) {
+            const fields = this.durationFields;
+            this._durationInputRow = document.createElement('div');
+            this._durationInputRow.classList.add('duration-control');
+            this._durationInputRow.title = `${this.setting.description} Maximum 12 hours.`;
+            this._durationInputRow.appendChild(this.createDurationFieldGroup('h', fields.hours));
+            this._durationInputRow.appendChild(this.createDurationFieldGroup('min', fields.minutes));
+            this._durationInputRow.appendChild(this.createDurationFieldGroup('sec', fields.seconds));
+        }
+
+        return this._durationInputRow;
+    }
+
     /**
      * @returns Return or creates a HTML element that represents this setting in the DOM.
      */
@@ -80,37 +162,100 @@ export class SettingUINumber<CustomIds extends string = NumericParametersIds> ex
             // create div element to contain our setting's text
             this._rootElement.appendChild(this.settingsTextElem);
 
-            // create label element to wrap out input type
-            this._rootElement.appendChild(this.spinner);
+            if (this.isAfkTimeoutSetting) {
+                this._rootElement.classList.add('duration-form-group');
+                this._rootElement.appendChild(this.durationInputRow);
+            } else {
+                // create label element to wrap out input type
+                this._rootElement.appendChild(this.spinner);
 
-            // setup onchange
-            this.spinner.onchange = (event: Event) => {
-                const inputElem = event.target as HTMLInputElement;
+                // setup onchange
+                this.spinner.onchange = (event: Event) => {
+                    const inputElem = event.target as HTMLInputElement;
 
-                const parsedValue = Number.parseFloat(inputElem.value);
+                    const parsedValue = Number.parseFloat(inputElem.value);
 
-                if (Number.isNaN(parsedValue)) {
-                    Logger.Warning(
-                        `Could not parse value change into a valid number - value was ${inputElem.value}, resetting value to ${this.setting.min}`
-                    );
-                    if (this.setting.number !== this.setting.min) {
-                        this.setting.number = this.setting.min;
+                    if (Number.isNaN(parsedValue)) {
+                        Logger.Warning(
+                            `Could not parse value change into a valid number - value was ${inputElem.value}, resetting value to ${this.setting.min}`
+                        );
+                        if (this.setting.number !== this.setting.min) {
+                            this.setting.number = this.setting.min;
+                        }
+                    } else {
+                        if (this.setting.number !== parsedValue) {
+                            this.setting.number = parsedValue;
+                            this.setting.updateURLParams();
+                        }
                     }
-                } else {
-                    if (this.setting.number !== parsedValue) {
-                        this.setting.number = parsedValue;
-                        this.setting.updateURLParams();
-                    }
-                }
-            };
+                };
+            }
         }
         return this._rootElement;
+    }
+
+    private getDurationFieldValue(input: HTMLInputElement): number | null {
+        const parsedValue = Number.parseInt(input.value, 10);
+        if (Number.isNaN(parsedValue) || parsedValue < 0) {
+            return null;
+        }
+
+        return parsedValue;
+    }
+
+    private commitDurationFields(): void {
+        const fields = this.durationFields;
+        const hours = this.getDurationFieldValue(fields.hours);
+        const minutes = this.getDurationFieldValue(fields.minutes);
+        const seconds = this.getDurationFieldValue(fields.seconds);
+
+        if (hours == null || minutes == null || seconds == null) {
+            Logger.Warning(
+                'Could not parse AFK timeout into a valid duration, resetting to the current value.'
+            );
+            this.updateDurationFields(this.setting.number);
+            return;
+        }
+
+        const totalSeconds = hours * 60 * 60 + minutes * 60 + seconds;
+        const clampedSeconds = this.setting.clamp(totalSeconds);
+
+        if (this.setting.number !== clampedSeconds) {
+            this.setting.number = clampedSeconds;
+            this.setting.updateURLParams();
+        }
+
+        this.updateDurationFields(clampedSeconds);
+    }
+
+    private updateDurationFields(newNumber: number): void {
+        const fields = this.durationFields;
+        const totalSeconds = Math.floor(this.setting.clamp(newNumber));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+
+        fields.hours.value = hours.toString();
+        fields.minutes.value = minutes.toString();
+        fields.seconds.value = seconds.toString();
+    }
+
+    private setDurationFieldsDisabled(disabled: boolean): void {
+        const fields = this.durationFields;
+        fields.hours.disabled = disabled;
+        fields.minutes.disabled = disabled;
+        fields.seconds.disabled = disabled;
     }
 
     /**
      * Set the number in the spinner (will be clamped within range).
      */
     public set number(newNumber: number) {
+        if (this.isAfkTimeoutSetting) {
+            this.updateDurationFields(newNumber);
+            return;
+        }
+
         this.spinner.value = this.setting.clamp(newNumber).toString();
     }
 
@@ -118,6 +263,14 @@ export class SettingUINumber<CustomIds extends string = NumericParametersIds> ex
      * Get value
      */
     public get number() {
+        if (this.isAfkTimeoutSetting) {
+            const fields = this.durationFields;
+            const hours = this.getDurationFieldValue(fields.hours) ?? 0;
+            const minutes = this.getDurationFieldValue(fields.minutes) ?? 0;
+            const seconds = this.getDurationFieldValue(fields.seconds) ?? 0;
+            return this.setting.clamp(hours * 60 * 60 + minutes * 60 + seconds);
+        }
+
         return +this.spinner.value;
     }
 
@@ -137,10 +290,20 @@ export class SettingUINumber<CustomIds extends string = NumericParametersIds> ex
     }
 
     public disable(): void {
+        if (this.isAfkTimeoutSetting) {
+            this.setDurationFieldsDisabled(true);
+            return;
+        }
+
         this.spinner.disabled = true;
     }
 
     public enable(): void {
+        if (this.isAfkTimeoutSetting) {
+            this.setDurationFieldsDisabled(false);
+            return;
+        }
+
         this.spinner.disabled = false;
     }
 }

@@ -38,7 +38,11 @@ import {
 } from '../UI/UIConfigurationTypes';
 
 export class ConfigUI {
-    private static readonly defaultExpandedSections = new Set<string>([SettingsSections.WebRTC, 'Commands']);
+    private static readonly defaultExpandedSections = new Set<string>([
+        SettingsSections.PixelStreaming,
+        SettingsSections.WebRTC,
+        SettingsSections.Commands
+    ]);
 
     private customFlags = new Map<FlagsIdsExtended, SettingFlag<FlagsIdsExtended>>();
 
@@ -184,8 +188,6 @@ export class ConfigUI {
                     psSettingsSection,
                     this.textParametersUi.get(TextParameters.SignallingServerUrl)
                 );
-            if (isSettingEnabled(settingsConfig, Flags.BrowserSendOffer))
-                this.addSettingFlag(psSettingsSection, this.flagsUi.get(Flags.BrowserSendOffer));
             if (isSettingEnabled(settingsConfig, OptionParameters.StreamerId))
                 this.addSettingOption(
                     psSettingsSection,
@@ -195,16 +197,10 @@ export class ConfigUI {
                 this.addSettingFlag(psSettingsSection, this.flagsUi.get(Flags.AutoConnect));
             if (isSettingEnabled(settingsConfig, Flags.AutoPlayVideo))
                 this.addSettingFlag(psSettingsSection, this.flagsUi.get(Flags.AutoPlayVideo));
-            if (isSettingEnabled(settingsConfig, Flags.UseMic))
-                this.addSettingFlag(psSettingsSection, this.flagsUi.get(Flags.UseMic));
-            if (isSettingEnabled(settingsConfig, Flags.UseCamera))
-                this.addSettingFlag(psSettingsSection, this.flagsUi.get(Flags.UseCamera));
             if (isSettingEnabled(settingsConfig, Flags.StartVideoMuted))
                 this.addSettingFlag(psSettingsSection, this.flagsUi.get(Flags.StartVideoMuted));
             if (isSettingEnabled(settingsConfig, Flags.IsQualityController))
                 this.addSettingFlag(psSettingsSection, this.flagsUi.get(Flags.IsQualityController));
-            if (isSettingEnabled(settingsConfig, Flags.ForceMonoAudio))
-                this.addSettingFlag(psSettingsSection, this.flagsUi.get(Flags.ForceMonoAudio));
             if (isSettingEnabled(settingsConfig, Flags.ForceTURN))
                 this.addSettingFlag(psSettingsSection, this.flagsUi.get(Flags.ForceTURN));
             if (isSettingEnabled(settingsConfig, Flags.SuppressBrowserKeys))

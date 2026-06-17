@@ -617,9 +617,9 @@ export class Config {
             new SettingNumber(
                 NumericParameters.AFKTimeoutSecs,
                 'AFK timeout',
-                'The time (in seconds) it takes for the application to time out if AFK timeout is enabled.',
+                'The time it takes for the application to time out if AFK timeout is enabled.',
                 0 /*min*/,
-                null /*max*/,
+                12 * 60 * 60 /*max*/,
                 settings && Object.prototype.hasOwnProperty.call(settings, NumericParameters.AFKTimeoutSecs)
                     ? settings[NumericParameters.AFKTimeoutSecs]
                     : 600 /*value*/,
