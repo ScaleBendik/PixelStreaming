@@ -350,6 +350,7 @@ Fleet provisioning now assumes the API will:
 - wait for target health and runtime `ready`
 - only then clear provisioning maintenance and expose the instance to the normal pool
 - during provisioning maintenance, Wilbur suppresses no-viewer idle-stop timers and the watchdog uses an extended streamer-health startup grace so long Unreal shader/precache warmup does not trigger premature stop/restart
+- while `ScaleWorldMaintenanceMode=provisioning` is present at stack startup, `start_streamer_stack.bat` passes `-RunProvisioningPSOWarmup` to `start_unreal.bat`; Unreal-only watchdog recovery routes through stack recovery so the flag is re-evaluated against the current maintenance tag
 - `SignallingWebServer/platform_scripts/cmd/start_watchdog.bat`
 - `SignallingWebServer/platform_scripts/cmd/start_stack.bat` (compatibility wrapper)
 

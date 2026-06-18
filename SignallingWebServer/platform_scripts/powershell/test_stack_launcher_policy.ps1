@@ -66,6 +66,7 @@ $instanceAgentPath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\s
 $repoSyncPath = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
 $repoHeadPublisherPath = Join-Path $PSScriptRoot 'publish_repo_head_tags.ps1'
 $deliveryModeResolverPath = Join-Path $PSScriptRoot 'resolve_pixelstreaming_delivery_mode_from_instance_tag.ps1'
+$maintenanceModeResolverPath = Join-Path $PSScriptRoot 'resolve_maintenance_mode_from_instance_tag.ps1'
 $activeRuntimeIdentityPublisherPath = Join-Path $PSScriptRoot 'publish_active_runtime_identity_tags.ps1'
 $runtimeInstallerPath = Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.ps1'
 $updateModePath = Join-Path $PSScriptRoot 'invoke_update_mode.ps1'
@@ -92,6 +93,7 @@ $instanceAgent = [System.IO.File]::ReadAllText($instanceAgentPath)
 $repoSync = [System.IO.File]::ReadAllText($repoSyncPath)
 $repoHeadPublisher = [System.IO.File]::ReadAllText($repoHeadPublisherPath)
 $deliveryModeResolver = [System.IO.File]::ReadAllText($deliveryModeResolverPath)
+$maintenanceModeResolver = [System.IO.File]::ReadAllText($maintenanceModeResolverPath)
 $activeRuntimeIdentityPublisher = [System.IO.File]::ReadAllText($activeRuntimeIdentityPublisherPath)
 $runtimeInstaller = [System.IO.File]::ReadAllText($runtimeInstallerPath)
 $updateMode = [System.IO.File]::ReadAllText($updateModePath)
@@ -782,6 +784,41 @@ Assert-ContainsText `
     -Content $deliveryModeResolver `
     -Expected "ScaleWorldPixelStreamingRuntimeBundleId" `
     -Message 'Delivery-mode resolution must infer runtime-artifact mode from existing runtime identity tags when the mode tag is absent.'
+
+Assert-ContainsText `
+    -Content $maintenanceModeResolver `
+    -Expected 'ScaleWorldMaintenanceMode' `
+    -Message 'Maintenance-mode resolution must read the EC2 maintenance tag that owns provisioning state.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'call :apply_unreal_provisioning_startup_args' `
+    -Message 'Stack startup must apply Unreal provisioning warmup arguments after the provisioning bootstrap check.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'if /i "!RESOLVED_MAINTENANCE_MODE!"=="provisioning"' `
+    -Message 'Unreal provisioning warmup must be gated by the current maintenance tag, not by the provisioning feature switch.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'set "SCALEWORLD_UNREAL_PROVISIONING_STARTUP_ARG=-RunProvisioningPSOWarmup"' `
+    -Message 'Stack startup must expose the exact Unreal startup flag used by the Blueprint warmup sequence.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'SCALEWORLD_UNREAL_STARTUP_ARGS:%SCALEWORLD_UNREAL_PROVISIONING_STARTUP_ARG%=' `
+    -Message 'Stack recovery must remove stale inherited provisioning warmup args before re-evaluating the maintenance tag.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'set "WATCHDOG_UNREAL_RESTART_COMMAND=%WATCHDOG_RESTART_COMMAND%"' `
+    -Message 'Provisioning Unreal-only watchdog recovery must route through stack recovery so the maintenance tag is re-evaluated.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'call "%SCRIPT_DIR%start_unreal.bat" %SCALEWORLD_UNREAL_STARTUP_ARGS%' `
+    -Message 'Stack startup must pass computed Unreal startup arguments to the direct Unreal launcher.'
 
 Assert-ContainsText `
     -Content $stackLauncher `

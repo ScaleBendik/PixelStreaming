@@ -9,6 +9,7 @@ set "UPDATE_SCRIPT=%PIXELSTREAMING_ROOT%\SWupdate.ps1"
 set "DATA_DRIVE_SCRIPT=%SCRIPT_DIR%..\powershell\ensure_data_drive.ps1"
 set "UPDATE_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_update_mode.ps1"
 set "PROVISIONING_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_provisioning_mode.ps1"
+set "RESOLVE_MAINTENANCE_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\resolve_maintenance_mode_from_instance_tag.ps1"
 set "ACTIVE_RUNTIME_IDENTITY_PUBLISHER=%SCRIPT_DIR%..\powershell\publish_active_runtime_identity_tags.ps1"
 set "STOP_SUPERSEDED_ROOT_SCRIPT=%SCRIPT_DIR%..\powershell\stop_superseded_root_processes.ps1"
 set "NORMALIZE_DELIVERY_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\normalize_pixelstreaming_delivery_mode.ps1"
@@ -21,6 +22,9 @@ if not defined DEPLOYMENT_TRACK_TAG_RETRY_COUNT set "DEPLOYMENT_TRACK_TAG_RETRY_
 if not defined DEPLOYMENT_TRACK_TAG_RETRY_DELAY_SECONDS set "DEPLOYMENT_TRACK_TAG_RETRY_DELAY_SECONDS=%STREAMING_LANE_TAG_RETRY_DELAY_SECONDS%"
 if not defined DELIVERY_MODE_TAG_RETRY_COUNT set "DELIVERY_MODE_TAG_RETRY_COUNT=%STREAMING_LANE_TAG_RETRY_COUNT%"
 if not defined DELIVERY_MODE_TAG_RETRY_DELAY_SECONDS set "DELIVERY_MODE_TAG_RETRY_DELAY_SECONDS=%STREAMING_LANE_TAG_RETRY_DELAY_SECONDS%"
+if not defined MAINTENANCE_MODE_TAG_RETRY_COUNT set "MAINTENANCE_MODE_TAG_RETRY_COUNT=%STREAMING_LANE_TAG_RETRY_COUNT%"
+if not defined MAINTENANCE_MODE_TAG_RETRY_DELAY_SECONDS set "MAINTENANCE_MODE_TAG_RETRY_DELAY_SECONDS=%STREAMING_LANE_TAG_RETRY_DELAY_SECONDS%"
+if not defined SCALEWORLD_UNREAL_PROVISIONING_STARTUP_ARG set "SCALEWORLD_UNREAL_PROVISIONING_STARTUP_ARG=-RunProvisioningPSOWarmup"
 call :resolve_streaming_lane_from_instance_tag
 if errorlevel 1 exit /b 1
 if defined RESOLVED_STREAMING_LANE set "SCALEWORLD_STREAMING_LANE=%RESOLVED_STREAMING_LANE%"
@@ -196,6 +200,11 @@ if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_PROVISIONING_MODE%"=="
   )
 )
 
+if not defined WATCHDOG_RESTART_COMMAND set "WATCHDOG_RESTART_COMMAND=""%SCRIPT_DIR%start_streamer_stack.bat"" --recovery"
+
+call :apply_unreal_provisioning_startup_args
+if errorlevel 1 exit /b 1
+
 echo PixelStreaming delivery mode "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%" for %SCALEWORLD_STREAMING_LANE%/%SCALEWORLD_DEPLOYMENT_TRACK% startup.
 
 if /i "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"=="runtime_artifact" if not exist "%RUNTIME_BUNDLE_METADATA%" (
@@ -213,8 +222,6 @@ if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_BOOT_GIT_SYNC%"=="true
   )
   if not "!STACK_SYNC_EXIT!"=="0" exit /b !STACK_SYNC_EXIT!
 )
-
-if not defined WATCHDOG_RESTART_COMMAND set "WATCHDOG_RESTART_COMMAND=""%SCRIPT_DIR%start_streamer_stack.bat"" --recovery"
 
 call :stop_superseded_runtime_roots_before_stack_launch
 
@@ -419,6 +426,54 @@ echo WARNING: Retrying in %DELIVERY_MODE_TAG_RETRY_DELAY_SECONDS% seconds before
 timeout /t %DELIVERY_MODE_TAG_RETRY_DELAY_SECONDS% /nobreak >nul
 goto resolve_delivery_mode_retry
 
+:apply_unreal_provisioning_startup_args
+call :resolve_maintenance_mode_from_instance_tag
+if errorlevel 1 exit /b 1
+
+if defined SCALEWORLD_UNREAL_STARTUP_ARGS (
+  set "SCALEWORLD_UNREAL_STARTUP_ARGS=!SCALEWORLD_UNREAL_STARTUP_ARGS:%SCALEWORLD_UNREAL_PROVISIONING_STARTUP_ARG%=!"
+)
+
+if /i "!RESOLVED_MAINTENANCE_MODE!"=="provisioning" (
+  if defined SCALEWORLD_UNREAL_STARTUP_ARGS (
+    set "SCALEWORLD_UNREAL_STARTUP_ARGS=!SCALEWORLD_UNREAL_STARTUP_ARGS! !SCALEWORLD_UNREAL_PROVISIONING_STARTUP_ARG!"
+  ) else (
+    set "SCALEWORLD_UNREAL_STARTUP_ARGS=!SCALEWORLD_UNREAL_PROVISIONING_STARTUP_ARG!"
+  )
+  set "WATCHDOG_UNREAL_RESTART_COMMAND=%WATCHDOG_RESTART_COMMAND%"
+  echo Provisioning maintenance detected. Unreal startup will include !SCALEWORLD_UNREAL_PROVISIONING_STARTUP_ARG!.
+)
+
+exit /b 0
+
+:resolve_maintenance_mode_from_instance_tag
+set "RESOLVED_MAINTENANCE_MODE="
+set "RESOLVE_MAINTENANCE_MODE_EXIT=0"
+set /a MAINTENANCE_MODE_TAG_ATTEMPT=0
+if not exist "%RESOLVE_MAINTENANCE_MODE_SCRIPT%" exit /b 0
+
+:resolve_maintenance_mode_retry
+set /a MAINTENANCE_MODE_TAG_ATTEMPT+=1
+set "RESOLVED_MAINTENANCE_MODE="
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%RESOLVE_MAINTENANCE_MODE_SCRIPT%"`) do (
+  set "RESOLVED_MAINTENANCE_MODE=%%I"
+)
+set "RESOLVE_MAINTENANCE_MODE_EXIT=%errorlevel%"
+
+if defined RESOLVED_MAINTENANCE_MODE exit /b 0
+if "%RESOLVE_MAINTENANCE_MODE_EXIT%"=="0" exit /b 0
+
+if %MAINTENANCE_MODE_TAG_ATTEMPT% geq %MAINTENANCE_MODE_TAG_RETRY_COUNT% (
+  echo ERROR: ScaleWorldMaintenanceMode instance tag resolution failed after %MAINTENANCE_MODE_TAG_RETRY_COUNT% attempts.
+  echo ERROR: Refusing to continue without knowing whether provisioning startup warmup should run.
+  exit /b 1
+)
+
+echo WARNING: ScaleWorldMaintenanceMode instance tag lookup failed on attempt %MAINTENANCE_MODE_TAG_ATTEMPT% of %MAINTENANCE_MODE_TAG_RETRY_COUNT%.
+echo WARNING: Retrying in %MAINTENANCE_MODE_TAG_RETRY_DELAY_SECONDS% seconds before failing startup.
+timeout /t %MAINTENANCE_MODE_TAG_RETRY_DELAY_SECONDS% /nobreak >nul
+goto resolve_maintenance_mode_retry
+
 :launch_unreal_if_needed
 if exist "%SCRIPT_DIR%start_unreal.bat" (
   if not exist "%TEST_UNREAL_RUNTIME_SCRIPT%" (
@@ -429,7 +484,7 @@ if exist "%SCRIPT_DIR%start_unreal.bat" (
   if errorlevel 1 (
     timeout /t %STACK_UNREAL_START_DELAY_SECONDS% /nobreak >nul
     echo Starting Unreal runtime...
-    call "%SCRIPT_DIR%start_unreal.bat"
+    call "%SCRIPT_DIR%start_unreal.bat" %SCALEWORLD_UNREAL_STARTUP_ARGS%
     if errorlevel 1 (
       echo ERROR: Unreal launch failed.
       exit /b 1

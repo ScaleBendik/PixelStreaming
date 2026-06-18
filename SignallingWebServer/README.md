@@ -196,6 +196,7 @@ Important:
 6. `start_streamer_stack.bat` checks maintenance tags before normal startup:
    - `ScaleWorldMaintenanceMode=update` runs the update path first and can execute a single-line Unreal update from `ScaleWorldTargetZipKey`
    - `ScaleWorldMaintenanceMode=provisioning` runs a bounded bootstrap path first so fresh launches can wait for AWS metadata/network readiness, self-sync the PixelStreaming repo, and build if upstream changed before the normal stack comes up
+   - while `ScaleWorldMaintenanceMode=provisioning` remains active, Unreal launches include `-RunProvisioningPSOWarmup`; Unreal-only watchdog recovery routes through stack recovery so the current maintenance tag is re-evaluated
 7. Repo sync uses `platform_scripts/powershell/ensure_repo_current.ps1` and supports:
    - `upstream`: fetch configured upstream branch, pull if changed, then build when needed
    - `pinned`: resolve `SCALEWORLD_GIT_TARGET_REF` or `SCALEWORLD_GIT_TARGET_REF_PARAM`, reset to that ref, then build when needed

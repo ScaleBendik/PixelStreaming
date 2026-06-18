@@ -118,6 +118,7 @@ Provisioning note:
 
 - if the instance is still tagged `ScaleWorldMaintenanceMode=provisioning`, the watchdog extends streamer-health startup grace to the provisioning value above before treating `waiting_for_streamer` as a fault
 - this is intended for long first-boot Unreal warmup such as shader compilation and precache generation
+- stack startup also passes `-RunProvisioningPSOWarmup` to Unreal while `ScaleWorldMaintenanceMode=provisioning` is present; Unreal-only watchdog recovery routes through stack recovery so the startup flag is re-evaluated against the current maintenance tag
 
 ## Runtime Status Behavior
 
