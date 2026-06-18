@@ -568,6 +568,8 @@ document.body.onload = function() {
         pageUrl.searchParams.get(RECONNECT_SESSION_REQUEST_ID_PARAM),
         pageUrl.searchParams.get(RECONNECT_SESSION_MANAGER_ENV_PARAM)
     );
+    const reconnectContextFromUrl =
+        reconnectContextFromHash ?? reconnectContextFromQuery;
 
     const hasReconnectHashParams = hasReconnectContextParams(pageHashParams);
     const hasReconnectQueryParams = hasReconnectContextParams(pageUrl.searchParams);
@@ -579,10 +581,10 @@ document.body.onload = function() {
     if (connectTicketFromQuery) {
         writeSessionStorage(connectTicketStorageKey, connectTicketFromQuery);
     }
-    if (reconnectContextFromQuery) {
+    if (reconnectContextFromUrl) {
         writeSessionStorage(
             reconnectContextStorageKey,
-            JSON.stringify(reconnectContextFromQuery)
+            JSON.stringify(reconnectContextFromUrl)
         );
     }
     if (restorablePlayerQueryFromUrl) {
@@ -597,8 +599,7 @@ document.body.onload = function() {
         ? parseConnectTicketExpiryMs(connectTicket)
         : null;
     const reconnectContext =
-        reconnectContextFromHash ??
-        reconnectContextFromQuery ??
+        reconnectContextFromUrl ??
         loadReconnectContextFromStorage(reconnectContextStorageKey);
     const storedPlayerQuery =
         readSessionStorage(playerQueryStateStorageKey)?.trim() ?? '';
