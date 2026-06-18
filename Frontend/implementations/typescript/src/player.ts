@@ -459,6 +459,35 @@ const isInactivityDisconnectReason = (reason: string): boolean => {
     );
 };
 
+const parseConnectTicketExpiryMs = (ticket: string): number | null => {
+    const trimmedTicket = ticket.trim();
+    if (!trimmedTicket) {
+        return null;
+    }
+
+    const segments = trimmedTicket.split('.');
+    if (segments.length < 2) {
+        return null;
+    }
+
+    try {
+        const base64 = segments[1].replace(/-/g, '+').replace(/_/g, '/');
+        const paddedBase64 = base64.padEnd(
+            base64.length + ((4 - (base64.length % 4)) % 4),
+            '='
+        );
+        const payloadJson = atob(paddedBase64);
+        const payload = JSON.parse(payloadJson) as { exp?: unknown };
+        if (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp)) {
+            return null;
+        }
+
+        return Math.trunc(payload.exp) * 1000;
+    } catch {
+        return null;
+    }
+};
+
 const showInactivityDisconnectGuidance = () => {
     window.setTimeout(() => {
         const disconnectOverlayText = document.getElementById('disconnectButton');
@@ -564,6 +593,9 @@ document.body.onload = function() {
 
     const connectTicket =
         connectTicketFromQuery || readSessionStorage(connectTicketStorageKey)?.trim() || '';
+    const connectTicketExpiresAtMs = connectTicket
+        ? parseConnectTicketExpiryMs(connectTicket)
+        : null;
     const reconnectContext =
         reconnectContextFromHash ??
         reconnectContextFromQuery ??
@@ -740,7 +772,9 @@ document.body.onload = function() {
             return;
         }
 
-        const isConnectTicketDisconnect = isConnectTicketDisconnectReason(reason);
+        const isConnectTicketDisconnect =
+            isConnectTicketDisconnectReason(reason) ||
+            (connectTicketExpiresAtMs !== null && Date.now() >= connectTicketExpiresAtMs);
         if (!isConnectTicketDisconnect) {
             return;
         }
