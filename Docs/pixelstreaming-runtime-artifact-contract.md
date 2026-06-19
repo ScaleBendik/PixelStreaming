@@ -293,6 +293,14 @@ Release candidates should reference the PixelStreaming runtime manifest key, not
 
 Gold or a dev streamer may build and validate a runtime artifact, but the source of truth after publish is the immutable manifest plus its release-candidate record.
 
+## Published Artifact Ledger
+
+This ledger is operator context only. The S3 manifest and release-candidate record remain the source of truth for deploy and promotion decisions.
+
+| Published | Bundle id | Manifest key | Source | Notes |
+| --- | --- | --- | --- | --- |
+| 2026-06-19 | `pixelstreaming-runtime-20260619-001` | `PixelStreamingRuntime/pixelstreaming-runtime-20260619-001/manifest.json` | `work/single-launch-root-artifacts` @ `c85b3c481b56060b9a29dae163429a7f27775b10` | Promotable artifact containing provisioning startup warmup support. Runtime ZIP key `PixelStreamingRuntime/pixelstreaming-runtime-20260619-001/runtime.zip`, SHA256 `83a738d85b95907225260e65afe50959fa891a57d4da3617d8e69c649d9a488b`, size `99580384` bytes. |
+
 Current branch state:
 
 1. Server Manager API exposes `GET /admin/fleet/release-candidates`, `POST /admin/fleet/release-candidates/capture`, and `PUT /admin/fleet/release-candidates/current/{target}`.
