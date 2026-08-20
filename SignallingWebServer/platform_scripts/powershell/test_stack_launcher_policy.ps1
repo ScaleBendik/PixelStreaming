@@ -49,6 +49,54 @@ function Assert-MatchesText {
     }
 }
 
+function Assert-True {
+    param(
+        [Parameter(Mandatory = $true)]
+        [bool]$Condition,
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+
+    if (-not $Condition) {
+        throw $Message
+    }
+}
+
+function New-SelectedFunctionModule {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Content,
+        [Parameter(Mandatory = $true)]
+        [string[]]$FunctionNames
+    )
+
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput(
+        $Content,
+        [ref]$tokens,
+        [ref]$parseErrors)
+    if (@($parseErrors).Count -gt 0) {
+        throw "Could not parse policy source: $($parseErrors[0].Message)"
+    }
+
+    $definitions = New-Object System.Collections.Generic.List[string]
+    foreach ($functionName in $FunctionNames) {
+        $definition = $ast.Find({
+            param($node)
+            return $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                [string]::Equals($node.Name, $functionName, [System.StringComparison]::OrdinalIgnoreCase)
+        }, $true)
+        if ($null -eq $definition) {
+            throw "Could not find function '$functionName' in policy source."
+        }
+
+        $definitions.Add($definition.Extent.Text)
+    }
+
+    return New-Module -ScriptBlock ([scriptblock]::Create(($definitions -join "`r`n`r`n")))
+}
+
 $cmdRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\cmd')
 $buildScriptsRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..\BuildScripts')
 $stackLauncherPath = Join-Path $cmdRoot 'start_streamer_stack.bat'
@@ -70,6 +118,8 @@ $maintenanceModeResolverPath = Join-Path $PSScriptRoot 'resolve_maintenance_mode
 $activeRuntimeIdentityPublisherPath = Join-Path $PSScriptRoot 'publish_active_runtime_identity_tags.ps1'
 $runtimeInstallerPath = Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.ps1'
 $updateModePath = Join-Path $PSScriptRoot 'invoke_update_mode.ps1'
+$unrealPrerequisiteModulePath = Join-Path $PSScriptRoot 'unreal_prerequisite.psm1'
+$unrealPrerequisiteTestPath = Join-Path $PSScriptRoot 'test_unreal_prerequisite.ps1'
 $provisioningModePath = Join-Path $PSScriptRoot 'invoke_provisioning_mode.ps1'
 $stopSupersededRootPath = Join-Path $PSScriptRoot 'stop_superseded_root_processes.ps1'
 $packageRuntimeArtifactPath = Join-Path $buildScriptsRoot 'package-runtime-artifact.ps1'
@@ -97,6 +147,8 @@ $maintenanceModeResolver = [System.IO.File]::ReadAllText($maintenanceModeResolve
 $activeRuntimeIdentityPublisher = [System.IO.File]::ReadAllText($activeRuntimeIdentityPublisherPath)
 $runtimeInstaller = [System.IO.File]::ReadAllText($runtimeInstallerPath)
 $updateMode = [System.IO.File]::ReadAllText($updateModePath)
+$unrealPrerequisiteModule = [System.IO.File]::ReadAllText($unrealPrerequisiteModulePath)
+$unrealPrerequisiteTest = [System.IO.File]::ReadAllText($unrealPrerequisiteTestPath)
 $provisioningMode = [System.IO.File]::ReadAllText($provisioningModePath)
 $stopSupersededRoot = [System.IO.File]::ReadAllText($stopSupersededRootPath)
 $packageRuntimeArtifact = [System.IO.File]::ReadAllText($packageRuntimeArtifactPath)
@@ -441,6 +493,48 @@ Assert-DoesNotContainText `
     -Message 'Update mode must not claim all Unreal preparation runs in parallel with repo sync because artifact roots skip git sync.'
 
 Assert-ContainsText `
+    -Content $updateMode `
+    -Expected 'function Invoke-UnrealPrerequisitePreflight' `
+    -Message 'Update mode must centralize prerequisite validation and unattended installation before activation.'
+
+foreach ($phase in @('checking_prerequisites', 'installing_prerequisites', 'verifying_prerequisites')) {
+    Assert-ContainsText `
+        -Content $updateMode `
+        -Expected "-Phase '$phase'" `
+        -Message "Update mode must publish the '$phase' prerequisite phase."
+}
+
+Assert-MatchesText `
+    -Content $updateMode `
+    -Pattern 'if \(\$hasRuntimePayload -and -not \$hasUnrealPayload\) \{.*?Invoke-UnrealPrerequisitePreflight.*?Installing PixelStreaming runtime artifact' `
+    -Message 'Runtime-only updates must validate the current Unreal release before runtime activation.'
+
+Assert-MatchesText `
+    -Content $updateMode `
+    -Pattern '\$unrealPrerequisiteRoot = if \(\$hasPreparedReleaseForTarget\).*?\$preparedReleasePath.*?elseif \(\$currentReleaseAlreadyMatchesTarget\).*?\$activeInstallPath.*?Invoke-UnrealPrerequisitePreflight.*?if \(\$hasRuntimePayload\)' `
+    -Message 'Unreal and combined updates must check the prepared release, while same-build retries check the active release, before either payload is activated.'
+
+Assert-ContainsText `
+    -Content $updateMode `
+    -Expected "@('update_recovery_exhausted', 'watchdog_restart_failed')" `
+    -Message 'Update validation must fail fast only for terminal watchdog reasons after recovery is exhausted or cannot launch.'
+
+Assert-ContainsText `
+    -Content $updateMode `
+    -Expected '$statusAtUtc -lt $ValidationStartedAtUtc' `
+    -Message 'Terminal watchdog faults must be at least as new as the current validation start.'
+
+Assert-ContainsText `
+    -Content $updateMode `
+    -Expected '$code = "runtime_fault:$($streamerValidation.TerminalReason)"' `
+    -Message 'Streamer validation must preserve the concrete fresh terminal watchdog reason in the update result code.'
+
+Assert-ContainsText `
+    -Content $updateMode `
+    -Expected 'Get-UpdateFailureResultReason -ErrorRecord $_ -Fallback $reason' `
+    -Message 'Update failure publication must preserve stable prerequisite and validation machine codes.'
+
+Assert-ContainsText `
     -Content $provisioningMode `
     -Expected 'function Set-ProvisioningInstanceTags' `
     -Message 'Provisioning runtime identity tags must use a JSON tag payload helper instead of AWS CLI shorthand.'
@@ -641,9 +735,144 @@ Assert-ContainsText `
     -Message 'Runtime artifacts must include root SWupdate.ps1 because artifact launch roots run Unreal update activation from the artifact root.'
 
 Assert-ContainsText `
+    -Content $packageRuntimeArtifact `
+    -Expected 'Copy-RequiredFile -RelativePath "SignallingWebServer\platform_scripts\powershell\unreal_prerequisite.psm1" -DestinationRoot $stageRoot' `
+    -Message 'Runtime artifact packaging must explicitly include the Unreal prerequisite helper.'
+
+Assert-ContainsText `
+    -Content $packageRuntimeArtifact `
+    -Expected "'unreal-prerequisite-preflight-v1'" `
+    -Message 'New runtime artifacts must declare the prerequisite-preflight capability that makes the helper mandatory.'
+
+Assert-ContainsText `
     -Content $runtimeInstaller `
     -Expected '"SWupdate.ps1"' `
     -Message 'Runtime artifact installer must reject bundles missing root SWupdate.ps1.'
+
+Assert-ContainsText `
+    -Content $runtimeInstaller `
+    -Expected '"SignallingWebServer\platform_scripts\powershell\unreal_prerequisite.psm1"' `
+    -Message 'Runtime artifact installer must know the capability-gated Unreal prerequisite helper path.'
+
+Assert-ContainsText `
+    -Content $runtimeInstaller `
+    -Expected "if (@(`$ExpectedManifest.Capabilities) -contains 'unreal-prerequisite-preflight-v1') {" `
+    -Message 'Runtime artifact installer must require the Unreal prerequisite helper only for manifests that declare its capability.'
+
+Assert-ContainsText `
+    -Content $runtimeInstaller `
+    -Expected 'capabilities = @($Manifest.Capabilities)' `
+    -Message 'Runtime installer completion markers must preserve artifact capabilities for later self-consistency checks.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected "'SignallingWebServer\platform_scripts\powershell\unreal_prerequisite.psm1'" `
+    -Message 'AMI bake preparation must know the capability-gated Unreal prerequisite helper path.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected "if (`$capabilities -contains 'unreal-prerequisite-preflight-v1') {" `
+    -Message 'AMI bake validation must require the helper for new prerequisite-aware artifacts while accepting legacy rollback artifacts.'
+
+$runtimeInstallerPolicyModule = New-SelectedFunctionModule `
+    -Content $runtimeInstaller `
+    -FunctionNames @(
+        'Normalize-Optional',
+        'Get-NormalizedRuntimeCapabilities',
+        'Read-RuntimeManifest',
+        'Get-InstalledRuntimeMarkerPath',
+        'Test-RequiredRuntimeFile',
+        'Get-RequiredRuntimeFiles',
+        'Test-InstalledRuntimeBundle'
+    )
+$runtimePolicyTestRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("scaleworld-runtime-policy-{0}" -f [guid]::NewGuid().ToString('N'))
+try {
+    New-Item -ItemType Directory -Path $runtimePolicyTestRoot -Force | Out-Null
+    $legacyManifest = [ordered]@{
+        artifactType = 'pixelstreaming_runtime'
+        bundleId = 'legacy-rollback'
+        runtimeZipKey = 'runtime/legacy.zip'
+        runtimeZipSha256 = ('a' * 64)
+        capabilities = @('runtime-status-v1', 'instance-agent-bootstrap-v1')
+    }
+    $legacyExpectedManifest = [pscustomobject]@{
+        BundleId = $legacyManifest.bundleId
+        RuntimeZipKey = $legacyManifest.runtimeZipKey
+        RuntimeZipSha256 = $legacyManifest.runtimeZipSha256
+        Capabilities = @($legacyManifest.capabilities)
+    }
+    $legacyMarker = [ordered]@{
+        schemaVersion = 1
+        bundleId = $legacyManifest.bundleId
+        runtimeZipKey = $legacyManifest.runtimeZipKey
+        runtimeZipSha256 = $legacyManifest.runtimeZipSha256
+        installedAtUtc = '2026-01-01T00:00:00.0000000Z'
+    }
+    $legacyManifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $runtimePolicyTestRoot 'manifest.json') -Encoding ASCII
+    $legacyMarker | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $runtimePolicyTestRoot '.scaleworld-runtime-installed.json') -Encoding ASCII
+
+    $legacyRequiredFiles = @(& $runtimeInstallerPolicyModule {
+        param($Manifest)
+        Get-RequiredRuntimeFiles -ExpectedManifest $Manifest
+    } $legacyExpectedManifest)
+    foreach ($relativePath in $legacyRequiredFiles) {
+        $testFilePath = Join-Path $runtimePolicyTestRoot $relativePath
+        $testFileDirectory = Split-Path -Parent $testFilePath
+        New-Item -ItemType Directory -Path $testFileDirectory -Force | Out-Null
+        Set-Content -LiteralPath $testFilePath -Value '' -Encoding ASCII
+    }
+
+    $legacyAccepted = & $runtimeInstallerPolicyModule {
+        param($BundleRoot, $Manifest)
+        Test-InstalledRuntimeBundle -BundleRoot $BundleRoot -ExpectedManifest $Manifest
+    } $runtimePolicyTestRoot $legacyExpectedManifest
+    Assert-True `
+        -Condition $legacyAccepted `
+        -Message 'A pre-change runtime artifact and completion marker must remain valid for rollback/redeployment without the new helper.'
+
+    $prerequisiteAwareManifest = [ordered]@{}
+    foreach ($entry in $legacyManifest.GetEnumerator()) {
+        $prerequisiteAwareManifest[$entry.Key] = $entry.Value
+    }
+    $prerequisiteAwareManifest.capabilities = @($legacyManifest.capabilities) + 'unreal-prerequisite-preflight-v1'
+    $prerequisiteAwareManifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $runtimePolicyTestRoot 'manifest.json') -Encoding ASCII
+    $prerequisiteAwareExpectedManifest = [pscustomobject]@{
+        BundleId = $prerequisiteAwareManifest.bundleId
+        RuntimeZipKey = $prerequisiteAwareManifest.runtimeZipKey
+        RuntimeZipSha256 = $prerequisiteAwareManifest.runtimeZipSha256
+        Capabilities = @($prerequisiteAwareManifest.capabilities)
+    }
+
+    $newArtifactAcceptedWithoutHelper = & $runtimeInstallerPolicyModule {
+        param($BundleRoot, $Manifest)
+        Test-InstalledRuntimeBundle -BundleRoot $BundleRoot -ExpectedManifest $Manifest
+    } $runtimePolicyTestRoot $prerequisiteAwareExpectedManifest
+    Assert-True `
+        -Condition (-not $newArtifactAcceptedWithoutHelper) `
+        -Message 'A prerequisite-aware artifact must fail validation when its declared helper is missing.'
+
+    $helperPath = Join-Path $runtimePolicyTestRoot 'SignallingWebServer\platform_scripts\powershell\unreal_prerequisite.psm1'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $helperPath) -Force | Out-Null
+    Set-Content -LiteralPath $helperPath -Value '' -Encoding ASCII
+    $newArtifactAcceptedWithHelper = & $runtimeInstallerPolicyModule {
+        param($BundleRoot, $Manifest)
+        Test-InstalledRuntimeBundle -BundleRoot $BundleRoot -ExpectedManifest $Manifest
+    } $runtimePolicyTestRoot $prerequisiteAwareExpectedManifest
+    Assert-True `
+        -Condition $newArtifactAcceptedWithHelper `
+        -Message 'A prerequisite-aware artifact must pass validation after its declared helper is present.'
+} finally {
+    if ($null -ne $runtimeInstallerPolicyModule) {
+        Remove-Module $runtimeInstallerPolicyModule.Name -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $runtimePolicyTestRoot -PathType Container) {
+        $resolvedPolicyTestRoot = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $runtimePolicyTestRoot).ProviderPath)
+        $expectedTempPrefix = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\') + '\scaleworld-runtime-policy-'
+        if ($resolvedPolicyTestRoot.StartsWith($expectedTempPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Remove-Item -LiteralPath $resolvedPolicyTestRoot -Recurse -Force
+        }
+    }
+}
 
 Assert-ContainsText `
     -Content $runtimeInstaller `
@@ -910,6 +1139,137 @@ Assert-ContainsText `
     -Content $unrealLauncher `
     -Expected 'else { 120 }' `
     -Message 'Direct Unreal launcher default runtime wait must match the stack launcher default.'
+
+Assert-MatchesText `
+    -Content $unrealLauncher `
+    -Pattern 'Assert-ScaleWorldUnrealPrerequisite.*?Start-Process -FilePath \$processPath' `
+    -Message 'Normal Unreal startup must run its check-only prerequisite guard before launching the bootstrap executable.'
+
+Assert-DoesNotContainText `
+    -Content $unrealLauncher `
+    -Unexpected 'Install-ScaleWorldUnrealPrerequisite' `
+    -Message 'Normal serving startup must never install prerequisites or request a reboot.'
+
+Assert-ContainsText `
+    -Content $unrealPrerequisiteModule `
+    -Expected "`$script:BundledVcRedistRelativePath = 'Engine\Extras\Redist\en-us\vc_redist.x64.exe'" `
+    -Message 'The prerequisite requirement must be derived from the exact redistributable bundled with the Unreal release.'
+
+Assert-ContainsText `
+    -Content $unrealPrerequisiteModule `
+    -Expected 'Get-AuthenticodeSignature -FilePath $InstallerPath' `
+    -Message 'The bundled redistributable must have a valid Authenticode signature before execution.'
+
+Assert-ContainsText `
+    -Content $unrealPrerequisiteModule `
+    -Expected "[string]::Equals(`$signer, 'Microsoft Corporation'" `
+    -Message 'The bundled redistributable signer must be Microsoft Corporation.'
+
+Assert-ContainsText `
+    -Content $unrealPrerequisiteModule `
+    -Expected "@('/install', '/quiet', '/norestart')" `
+    -Message 'Prerequisite installation must be unattended and must not reboot an instance.'
+
+Assert-MatchesText `
+    -Content $unrealPrerequisiteModule `
+    -Pattern 'if \(-not \(Test-ScaleWorldProcessElevated\)\).*?unreal_prerequisite_elevation_required.*?\$exitCode = \$null' `
+    -Message 'A non-elevated update must fail before the installer can open an interactive UAC prompt.'
+
+Assert-ContainsText `
+    -Content $unrealPrerequisiteModule `
+    -Expected "'Global\ScaleWorldUnrealPrerequisiteInstall'" `
+    -Message 'Concurrent update invocations must serialize Visual C++ installation through a machine-wide mutex.'
+
+foreach ($code in @(
+    'unreal_prerequisite_64bit_powershell_required',
+    'unreal_prerequisite_elevation_required',
+    'unreal_prerequisite_install_busy',
+    'unreal_prerequisite_install_timeout',
+    'unreal_prerequisite_reboot_required',
+    'unreal_prerequisite_installer_initiated_reboot',
+    'unreal_prerequisite_install_failed',
+    'unreal_prerequisite_verification_failed'
+)) {
+    Assert-ContainsText `
+        -Content $unrealPrerequisiteModule `
+        -Expected $code `
+        -Message "The prerequisite helper must preserve stable failure code '$code'."
+}
+
+Assert-ContainsText `
+    -Content $unrealPrerequisiteModule `
+    -Expected 'SCALEWORLD_UNREAL_PREREQUISITE_INSTALL_TIMEOUT_SECONDS' `
+    -Message 'The prerequisite installer deadline must be configurable for fleet update environments.'
+
+Assert-ContainsText `
+    -Content $unrealPrerequisiteModule `
+    -Expected 'WaitForExit($TimeoutMilliseconds)' `
+    -Message 'The signed prerequisite installer must use a bounded process wait.'
+
+Assert-DoesNotContainText `
+    -Content $unrealPrerequisiteModule `
+    -Unexpected 'Stop-Process' `
+    -Message 'Prerequisite timeout handling must not terminate an active vendor or Windows Installer process.'
+
+Assert-ContainsText `
+    -Content $unrealPrerequisiteTest `
+    -Expected 'A timed-out VC++ bootstrap from a different artifact path must block a duplicate installer launch.' `
+    -Message 'Focused prerequisite tests must cover cross-artifact-path installer overlap prevention.'
+
+Assert-MatchesText `
+    -Content $unrealPrerequisiteModule `
+    -Pattern 'Get-ScaleWorldRuntimeDllVersionFromVersionInfo.*?FileVersion' `
+    -Message 'Runtime DLL acceptance must use the fixed FileVersion read by Unreal bootstrap.'
+
+Assert-ContainsText `
+    -Content $unrealPrerequisiteModule `
+    -Expected 'AppLocalSatisfied = $appLocalSatisfied' `
+    -Message 'Prerequisite verification must mirror Unreal bootstrap support for current app-local runtime DLLs without registry state.'
+
+Assert-ContainsText `
+    -Content $unrealPrerequisiteModule `
+    -Expected "OpenSubKey('SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64'" `
+    -Message 'The system prerequisite route must verify the x64 Visual C++ registry runtime.'
+
+Assert-ContainsText `
+    -Content $unrealPrerequisiteModule `
+    -Expected "Get-ScaleWorldSystemRuntimeDllObservation -FileName 'msvcp140_2.dll'" `
+    -Message 'The system prerequisite route must verify msvcp140_2.dll.'
+
+Assert-ContainsText `
+    -Content $unrealPrerequisiteModule `
+    -Expected "Get-ScaleWorldSystemRuntimeDllObservation -FileName 'vcruntime140_1.dll'" `
+    -Message 'The system prerequisite route must verify vcruntime140_1.dll.'
+
+Assert-ContainsText `
+    -Content $unrealPrerequisiteModule `
+    -Expected '$loadLibrarySearchDllLoadDir -bor $loadLibrarySearchSystem32' `
+    -Message 'DLL loadability probes must use only the DLL directory and System32 dependency search locations.'
+
+Assert-ContainsText `
+    -Content $unrealPrerequisiteModule `
+    -Expected '-Msvcp1402Loadable $msvcp1402.Loadable' `
+    -Message 'Version-current System32 DLLs must also pass a real loadability check.'
+
+Assert-ContainsText `
+    -Content $unrealPrerequisiteModule `
+    -Expected '-AppLocalMsvcp1402Loadable $appLocalMsvcp1402.Loadable' `
+    -Message 'Version-current app-local DLLs must also pass a real loadability check.'
+
+Assert-DoesNotContainText `
+    -Content $unrealPrerequisiteModule `
+    -Unexpected "GetValue('Version'" `
+    -Message 'The x64 runtime registry check must use Unreal''s numeric Major/Minor/Bld/Rbld values rather than the display Version string.'
+
+Assert-ContainsText `
+    -Content $unrealPrerequisiteTest `
+    -Expected 'Current app-local DLLs beside the packaged target must satisfy the Unreal bootstrap contract without registry state.' `
+    -Message 'Focused prerequisite tests must cover Unreal bootstrap app-local DLL behavior.'
+
+Assert-ContainsText `
+    -Content $unrealPrerequisiteTest `
+    -Expected 'A current but unloadable runtime DLL must not satisfy the Unreal bootstrap contract.' `
+    -Message 'Focused prerequisite tests must reject version-current but unloadable DLLs.'
 
 Assert-ContainsText `
     -Content $startDevTurn `

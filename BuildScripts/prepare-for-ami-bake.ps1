@@ -281,7 +281,11 @@ function Test-BootstrapProvisioningScript {
 }
 
 function Test-RuntimeLaunchRoot {
-    param([string]$RuntimeRoot)
+    param(
+        [string]$RuntimeRoot,
+        [Parameter(Mandatory = $true)]
+        [object]$RuntimeMetadata
+    )
 
     $requiredPaths = @(
         'runtime-bundle-metadata.json',
@@ -293,6 +297,15 @@ function Test-RuntimeLaunchRoot {
         'SignallingWebServer\platform_scripts\powershell\install_pixelstreaming_runtime.ps1',
         'SignallingWebServer\platform_scripts\powershell\watchdog.ps1'
     )
+
+    $capabilities = @(
+        @($RuntimeMetadata.capabilities) |
+            ForEach-Object { ([string]$_).Trim().ToLowerInvariant() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    if ($capabilities -contains 'unreal-prerequisite-preflight-v1') {
+        $requiredPaths += 'SignallingWebServer\platform_scripts\powershell\unreal_prerequisite.psm1'
+    }
 
     foreach ($relativePath in $requiredPaths) {
         $scriptPath = Join-Path $RuntimeRoot $relativePath
@@ -642,7 +655,7 @@ if ($runtimeRootIsArtifact) {
 
 if (-not $SkipVerification) {
     if ($runtimeRootIsArtifact) {
-        Test-RuntimeLaunchRoot -RuntimeRoot $runtimeRoot
+        Test-RuntimeLaunchRoot -RuntimeRoot $runtimeRoot -RuntimeMetadata $runtimeMetadata
     } else {
         Test-BootstrapProvisioningScript -RepoPath $bootstrapRoot
         Test-BakePrepScripts -RepoPath $bootstrapRoot

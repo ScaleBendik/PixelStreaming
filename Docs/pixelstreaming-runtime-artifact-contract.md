@@ -51,7 +51,8 @@ Minimum manifest shape:
   "scaleWorldContractVersion": "2026-05-21.1",
   "capabilities": [
     "runtime-status-v1",
-    "instance-agent-bootstrap-v1"
+    "instance-agent-bootstrap-v1",
+    "unreal-prerequisite-preflight-v1"
   ],
   "compatibility": {
     "api": {
@@ -65,7 +66,10 @@ Minimum manifest shape:
 }
 ```
 
-Compatibility fields are advisory at first. The hard requirements are that the manifest exists, the runtime ZIP exists, the checksum matches, and the bundle id is immutable.
+Compatibility fields are advisory at first. Capability entries are behavioral
+contracts: a validator may require capability-specific files and behavior when
+one is declared. The other hard requirements are that the manifest exists, the
+runtime ZIP exists, the checksum matches, and the bundle id is immutable.
 
 ## Bundle Contents
 
@@ -217,6 +221,58 @@ Fleet update target types:
 
 Combined updates are intended for changes where the PixelStreaming runtime and Unreal ZIP should be validated as one serving pair. They are not a replacement for the fast Dev `git_ref` path while iterating on PixelStreaming code.
 
+### Unreal prerequisite preflight
+
+New runtime bundles include
+`SignallingWebServer\platform_scripts\powershell\unreal_prerequisite.psm1` and
+declare `unreal-prerequisite-preflight-v1`. Runtime install and AMI-bake
+validation require the helper when that capability is declared. A pre-change
+schema-v1 manifest that does not declare the capability remains installable and
+activatable for rollback; its older completion marker may also omit capability
+metadata. This compatibility rule does not make a legacy updater
+prerequisite-aware, so converge the new runtime before an engine upgrade that
+depends on the preflight.
+
+Update mode derives the required x64 Visual C++ runtime version from the signed
+Microsoft installer bundled with the exact Unreal release at
+`Engine\Extras\Redist\en-us\vc_redist.x64.exe`. It does not hard-code the UE
+5.8 version. The check mirrors the packaged Unreal bootstrap contract: either
+both required DLLs beside the packaged Shipping executable are version-current
+and loadable, or the native x64 registry runtime and both System32 DLLs must be
+version-current and loadable. Native registry comparison uses Unreal's numeric
+`Major`, `Minor`, `Bld`, and `Rbld` values. Runtime DLL acceptance uses fixed
+`FileVersion`, matching `BootstrapPackagedGame`; `ProductVersion` is used only
+to derive the bundled installer's required version.
+
+For `unreal_zip` and `combined_runtime_unreal`, the check runs against the
+prepared release before either payload is activated. A same-build retry checks
+the active `WindowsNoEditor` release. A `pixelstreaming_runtime`-only update
+checks the current active Unreal release before activating the new runtime.
+When installation is required, update mode verifies path containment,
+Authenticode status, the Microsoft signer, and installer ProductVersion before
+running `/install /quiet /norestart` behind a machine-wide mutex. Installer exit
+code `3010` is an explicit reboot-required failure and activation does not
+continue. Normal `start_scaleworld.ps1` is check-only and fails before launching
+the Unreal bootstrap rather than allowing an invisible interactive prompt.
+
+The vendor-process wait defaults to 900 seconds and can be configured with
+`SCALEWORLD_UNREAL_PREREQUISITE_INSTALL_TIMEOUT_SECONDS` (1-7200 seconds). A
+deadline failure publishes `unreal_prerequisite_install_timeout` and leaves the
+vendor/Windows Installer process running rather than killing it. A later attempt
+treats any live `vc_redist.x64.exe`, including one launched from a different
+staging path, as busy and does not launch another copy. The preflight must run in
+native 64-bit Windows PowerShell; a SysWOW64 host fails with
+`unreal_prerequisite_64bit_powershell_required`.
+
+Admin-visible update phases are `checking_prerequisites`,
+`installing_prerequisites`, and `verifying_prerequisites`. Validation also stops
+early for a terminal watchdog reason from the current validation attempt
+(`update_recovery_exhausted` or `watchdog_restart_failed`) instead of waiting for
+the full validation timeout. The runtime-only prerequisite-aware bundle must be
+converged before a dependent Unreal engine upgrade; an already-running old
+updater cannot adopt scripts from a runtime it activates midway through the same
+job.
+
 ## Delivery Modes
 
 Startup has an explicit PixelStreaming delivery mode:
@@ -260,7 +316,13 @@ Bootstrap readiness tag:
 ScaleWorldPixelStreamingUpdateCapabilities=pixelstreaming_runtime,combined_runtime_unreal
 ```
 
-The updater publishes this capability tag after the stable bootstrap/updater path is present. Server Manager API and web use it as the coarse compatibility gate for runtime-artifact and combined update jobs. A versioned updater contract is still a planned follow-up.
+The updater publishes this instance capability tag after the stable
+bootstrap/updater path is present. Server Manager API and web use it as the
+coarse compatibility gate for runtime-artifact and combined update jobs. Runtime
+artifact manifests now use the explicit `unreal-prerequisite-preflight-v1`
+capability for helper validation and legacy rollback compatibility. The
+still-deferred contract is a build-emitted Unreal prerequisite manifest that
+pins the engine minimum, installer path/hash, and signer to the build.
 
 Runtime source metadata check after updates:
 

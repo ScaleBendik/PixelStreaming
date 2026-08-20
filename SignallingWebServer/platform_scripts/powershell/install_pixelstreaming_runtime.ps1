@@ -30,6 +30,18 @@ function Normalize-Optional {
     return $Value.Trim()
 }
 
+function Get-NormalizedRuntimeCapabilities {
+    param([AllowNull()][object[]]$Values)
+
+    return @(
+        @($Values) |
+            ForEach-Object { Normalize-Optional ([string]$_) } |
+            Where-Object { $null -ne $_ } |
+            ForEach-Object { $_.ToLowerInvariant() } |
+            Sort-Object -Unique
+    )
+}
+
 function Assert-ChildPath {
     param(
         [string]$Parent,
@@ -174,6 +186,7 @@ function Read-RuntimeManifest {
     $bundleId = Normalize-Optional ($manifest.bundleId -as [string])
     $runtimeZipKey = Normalize-Optional ($manifest.runtimeZipKey -as [string])
     $runtimeZipSha256 = Normalize-Optional ($manifest.runtimeZipSha256 -as [string])
+    $capabilities = @(Get-NormalizedRuntimeCapabilities -Values @($manifest.capabilities))
 
     if (-not $bundleId) {
         throw "Runtime manifest is missing bundleId."
@@ -198,6 +211,7 @@ function Read-RuntimeManifest {
         SourceCommit = Normalize-Optional ($manifest.pixelStreamingRepoCommit -as [string])
         SourceRef = Normalize-Optional ($manifest.sourceRef -as [string])
         ContractVersion = Normalize-Optional ($manifest.scaleWorldContractVersion -as [string])
+        Capabilities = $capabilities
     }
 }
 
@@ -214,6 +228,34 @@ function Test-RequiredRuntimeFile {
     )
 
     return Test-Path -LiteralPath (Join-Path $BundleRoot $RelativePath) -PathType Leaf
+}
+
+function Get-RequiredRuntimeFiles {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ExpectedManifest
+    )
+
+    $requiredFiles = @(
+        "runtime-bundle-metadata.json",
+        "package.json",
+        "SWupdate.ps1",
+        "BuildScripts\prepare-for-ami-bake.ps1",
+        "BuildScripts\prepare-scaleworld-s4-for-ami-bake.bat",
+        "SignallingWebServer\config.json",
+        "SignallingWebServer\package.json",
+        "SignallingWebServer\peer_options.player.json",
+        "SignallingWebServer\peer_options.streamer.json",
+        "SignallingWebServer\dist\index.js",
+        "SignallingWebServer\platform_scripts\cmd\start_streamer_stack.bat",
+        "SignallingWebServer\platform_scripts\powershell\watchdog.ps1"
+    )
+
+    if (@($ExpectedManifest.Capabilities) -contains 'unreal-prerequisite-preflight-v1') {
+        $requiredFiles += "SignallingWebServer\platform_scripts\powershell\unreal_prerequisite.psm1"
+    }
+
+    return @($requiredFiles)
 }
 
 function Test-InstalledRuntimeBundle {
@@ -260,20 +302,20 @@ function Test-InstalledRuntimeBundle {
         return $false
     }
 
-    $requiredFiles = @(
-        "runtime-bundle-metadata.json",
-        "package.json",
-        "SWupdate.ps1",
-        "BuildScripts\prepare-for-ami-bake.ps1",
-        "BuildScripts\prepare-scaleworld-s4-for-ami-bake.bat",
-        "SignallingWebServer\config.json",
-        "SignallingWebServer\package.json",
-        "SignallingWebServer\peer_options.player.json",
-        "SignallingWebServer\peer_options.streamer.json",
-        "SignallingWebServer\dist\index.js",
-        "SignallingWebServer\platform_scripts\cmd\start_streamer_stack.bat",
-        "SignallingWebServer\platform_scripts\powershell\watchdog.ps1"
-    )
+    $expectedCapabilities = @(Get-NormalizedRuntimeCapabilities -Values @($ExpectedManifest.Capabilities))
+    $installedCapabilities = @(Get-NormalizedRuntimeCapabilities -Values @($installedManifest.Capabilities))
+    $markerCapabilitiesProperty = $marker.PSObject.Properties['capabilities']
+    $markerCapabilitiesMismatch = $false
+    if ($null -ne $markerCapabilitiesProperty) {
+        $markerCapabilities = @(Get-NormalizedRuntimeCapabilities -Values @($markerCapabilitiesProperty.Value))
+        $markerCapabilitiesMismatch = ($expectedCapabilities -join "`n") -ne ($markerCapabilities -join "`n")
+    }
+    if (($expectedCapabilities -join "`n") -ne ($installedCapabilities -join "`n") -or $markerCapabilitiesMismatch) {
+        Write-Host "Runtime bundle '$($ExpectedManifest.BundleId)' capability metadata does not match the requested manifest. Reinstalling." -ForegroundColor Yellow
+        return $false
+    }
+
+    $requiredFiles = @(Get-RequiredRuntimeFiles -ExpectedManifest $ExpectedManifest)
 
     foreach ($relativePath in $requiredFiles) {
         if (-not (Test-RequiredRuntimeFile -BundleRoot $BundleRoot -RelativePath $relativePath)) {
@@ -297,6 +339,7 @@ function Write-InstalledRuntimeMarker {
         bundleId = $Manifest.BundleId
         runtimeZipKey = $Manifest.RuntimeZipKey
         runtimeZipSha256 = $Manifest.RuntimeZipSha256
+        capabilities = @($Manifest.Capabilities)
         installedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
     }
 
@@ -680,6 +723,7 @@ $result = [pscustomobject]@{
     SourceCommit = $manifest.SourceCommit
     SourceRef = $manifest.SourceRef
     ContractVersion = $manifest.ContractVersion
+    Capabilities = @($manifest.Capabilities)
     InstalledRoot = $bundleRoot
     ActiveRoot = if ($Activate) { $activeRoot } else { $null }
     CompatibilityRoot = if ($Activate) { $compatibilityRoot } else { $null }

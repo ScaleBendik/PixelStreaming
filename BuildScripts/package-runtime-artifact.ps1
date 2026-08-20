@@ -7,7 +7,7 @@ param(
     [ValidateSet("full", "runtime")]
     [string]$BuildScope = "full",
     [string]$ContractVersion,
-    [string[]]$Capabilities = @("runtime-status-v1", "instance-agent-bootstrap-v1"),
+    [string[]]$Capabilities = @("runtime-status-v1", "instance-agent-bootstrap-v1", "unreal-prerequisite-preflight-v1"),
     [switch]$SkipBuild,
     [switch]$SkipNodeModules,
     [switch]$AllowDirty,
@@ -366,6 +366,18 @@ if (-not $contractVersion) {
     $contractVersion = "{0}.1" -f (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd")
 }
 
+$artifactCapabilities = @(
+    @($Capabilities) |
+        ForEach-Object { Normalize-Optional ([string]$_) } |
+        Where-Object { $null -ne $_ } |
+        ForEach-Object { $_.ToLowerInvariant() } |
+        Sort-Object -Unique
+)
+if ($artifactCapabilities -notcontains 'unreal-prerequisite-preflight-v1') {
+    $artifactCapabilities += 'unreal-prerequisite-preflight-v1'
+    $artifactCapabilities = @($artifactCapabilities | Sort-Object -Unique)
+}
+
 $outputRoot = Normalize-Optional $OutputRoot
 if (-not $outputRoot) {
     $outputRoot = Join-Path $repoRootPath "BuildArtifacts\PixelStreamingRuntime"
@@ -447,6 +459,7 @@ Copy-RequiredFile -RelativePath "SignallingWebServer\peer_options.streamer.json"
 Copy-RequiredDirectory -RelativePath "SignallingWebServer\dist" -DestinationRoot $stageRoot
 Copy-RequiredDirectory -RelativePath "SignallingWebServer\www" -DestinationRoot $stageRoot
 Copy-RequiredDirectory -RelativePath "SignallingWebServer\platform_scripts" -DestinationRoot $stageRoot -ExtraRobocopyArguments @("/XD", "node", "coturn")
+Copy-RequiredFile -RelativePath "SignallingWebServer\platform_scripts\powershell\unreal_prerequisite.psm1" -DestinationRoot $stageRoot
 Copy-OptionalFile -RelativePath "SignallingWebServer\README.md" -DestinationRoot $stageRoot
 
 $nodeRuntimeSource = Join-Path $repoRootPath "SignallingWebServer\platform_scripts\cmd\node"
@@ -498,7 +511,7 @@ $embeddedMetadata = [ordered]@{
     nodeVersion = (Get-Content -LiteralPath (Join-Path $repoRootPath "NODE_VERSION") -Raw).Trim()
     npmVersion = $npmVersion
     scaleWorldContractVersion = $contractVersion
-    capabilities = $Capabilities
+    capabilities = $artifactCapabilities
     containsNodeModules = $containsNodeModules
     containsPortableNode = $containsPortableNode
     containsCoturn = $containsCoturn
@@ -534,7 +547,7 @@ $manifest = [ordered]@{
     npmVersion = $npmVersion
     buildScope = $BuildScope
     scaleWorldContractVersion = $contractVersion
-    capabilities = $Capabilities
+    capabilities = $artifactCapabilities
     containsNodeModules = $containsNodeModules
     containsPortableNode = $containsPortableNode
     containsCoturn = $containsCoturn

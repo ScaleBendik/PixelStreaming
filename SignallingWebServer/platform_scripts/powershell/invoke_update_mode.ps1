@@ -293,6 +293,122 @@ function Set-UpdatePhase {
     }
 }
 
+function New-UpdateModeFailureException {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Code,
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+
+    $exception = New-Object System.InvalidOperationException("${Code}: $Message")
+    $exception.Data['ScaleWorldUpdateResultReason'] = $Code
+    return $exception
+}
+
+function Get-UpdateFailureResultReason {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Management.Automation.ErrorRecord]$ErrorRecord,
+        [Parameter(Mandatory = $true)]
+        [string]$Fallback
+    )
+
+    $exception = $ErrorRecord.Exception
+    while ($null -ne $exception) {
+        if ($exception.Data.Contains('ScaleWorldUpdateResultReason')) {
+            $code = ([string]$exception.Data['ScaleWorldUpdateResultReason']).Trim()
+            if (-not [string]::IsNullOrWhiteSpace($code)) {
+                return $code
+            }
+        }
+        $exception = $exception.InnerException
+    }
+
+    return $Fallback
+}
+
+function ConvertTo-UpdateTraceVersion {
+    param([AllowNull()][object]$Value)
+
+    if ($null -eq $Value) {
+        return ''
+    }
+
+    return [string]$Value
+}
+
+function Get-UnrealPrerequisiteTraceSnapshot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Status
+    )
+
+    return [ordered]@{
+        State = [string]$Status.State
+        RequiredVersion = ConvertTo-UpdateTraceVersion -Value $Status.RequiredVersion
+        InstalledVersion = ConvertTo-UpdateTraceVersion -Value $Status.InstalledVersion
+        RegistryVersion = ConvertTo-UpdateTraceVersion -Value $Status.RegistryVersion
+        Msvcp1402Version = ConvertTo-UpdateTraceVersion -Value $Status.Msvcp1402Version
+        Vcruntime1401Version = ConvertTo-UpdateTraceVersion -Value $Status.Vcruntime1401Version
+        AppLocalMsvcp1402Version = ConvertTo-UpdateTraceVersion -Value $Status.AppLocalMsvcp1402Version
+        AppLocalVcruntime1401Version = ConvertTo-UpdateTraceVersion -Value $Status.AppLocalVcruntime1401Version
+        Msvcp1402Loadable = [bool]$Status.Msvcp1402Loadable
+        Vcruntime1401Loadable = [bool]$Status.Vcruntime1401Loadable
+        AppLocalMsvcp1402Loadable = [bool]$Status.AppLocalMsvcp1402Loadable
+        AppLocalVcruntime1401Loadable = [bool]$Status.AppLocalVcruntime1401Loadable
+        AppLocalSatisfied = [bool]$Status.AppLocalSatisfied
+        SystemSatisfied = [bool]$Status.SystemSatisfied
+        Missing = @($Status.Missing)
+        Satisfied = [bool]$Status.Satisfied
+    }
+}
+
+function Invoke-UnrealPrerequisitePreflight {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ModulePath,
+        [Parameter(Mandatory = $true)]
+        [string]$UnrealRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$AwsCli,
+        [Parameter(Mandatory = $true)]
+        [string]$Region,
+        [Parameter(Mandatory = $true)]
+        [string]$InstanceId
+    )
+
+    if (-not (Test-Path -LiteralPath $ModulePath -PathType Leaf)) {
+        throw (New-UpdateModeFailureException -Code 'unreal_prerequisite_helper_missing' -Message "Unreal prerequisite helper '$ModulePath' was not found.")
+    }
+
+    Import-Module $ModulePath -Force -ErrorAction Stop
+
+    Set-UpdatePhase -AwsCli $AwsCli -Region $Region -InstanceId $InstanceId -Phase 'checking_prerequisites'
+    Write-UpdateModeLog "Checking bundled Unreal prerequisites before activation."
+    $status = Get-ScaleWorldUnrealPrerequisiteStatus -UnrealRoot $UnrealRoot
+    Write-UpdateModeTrace -Step 'unreal_prerequisite_checked' -Data (Get-UnrealPrerequisiteTraceSnapshot -Status $status)
+
+    if ($status.Satisfied) {
+        Write-UpdateModeLog ("Unreal Visual C++ prerequisite is already satisfied (required={0}, installed={1})." -f $status.RequiredVersion, $status.InstalledVersion)
+        return $status
+    }
+
+    Set-UpdatePhase -AwsCli $AwsCli -Region $Region -InstanceId $InstanceId -Phase 'installing_prerequisites'
+    Write-UpdateModeLog ("Installing signed bundled Visual C++ prerequisite version {0} without restart." -f $status.RequiredVersion)
+    $installResult = Install-ScaleWorldUnrealPrerequisite -UnrealRoot $UnrealRoot
+
+    Set-UpdatePhase -AwsCli $AwsCli -Region $Region -InstanceId $InstanceId -Phase 'verifying_prerequisites'
+    $verified = Assert-ScaleWorldUnrealPrerequisite -UnrealRoot $UnrealRoot
+    Write-UpdateModeTrace -Step 'unreal_prerequisite_installed' -Data @{
+        Outcome = [string]$installResult.Outcome
+        InstallerExitCode = if ($null -eq $installResult.InstallerExitCode) { '' } else { [string]$installResult.InstallerExitCode }
+        Status = Get-UnrealPrerequisiteTraceSnapshot -Status $verified
+    }
+    Write-UpdateModeLog ("Unreal Visual C++ prerequisite installation verified (required={0}, installed={1})." -f $verified.RequiredVersion, $verified.InstalledVersion)
+    return $verified
+}
+
 function Publish-CurrentBuildTags {
     param(
         [string]$PublishScriptPath,
@@ -677,15 +793,49 @@ function Get-StreamerHealthSnapshot {
     }
 }
 
+function Get-FreshTerminalRuntimeFaultFromTags {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Tags,
+        [Parameter(Mandatory = $true)]
+        [DateTimeOffset]$ValidationStartedAtUtc
+    )
+
+    $status = ([string]$Tags['ScaleWorldRuntimeStatus']).Trim().ToLowerInvariant()
+    $source = ([string]$Tags['ScaleWorldRuntimeStatusSource']).Trim().ToLowerInvariant()
+    $reason = ([string]$Tags['ScaleWorldRuntimeStatusReason']).Trim().ToLowerInvariant()
+    $statusAtUtc = Parse-UtcTimestamp ([string]$Tags['ScaleWorldRuntimeStatusAtUtc'])
+    $terminalReasons = @('update_recovery_exhausted', 'watchdog_restart_failed')
+
+    if ($status -ne 'runtime_fault' -or $source -ne 'watchdog' -or $reason -notin $terminalReasons) {
+        return $null
+    }
+
+    if (-not $statusAtUtc -or $statusAtUtc -lt $ValidationStartedAtUtc) {
+        return $null
+    }
+
+    return [pscustomobject]@{
+        Reason = $reason
+        StatusAtUtc = $statusAtUtc
+        Summary = "status='$status'; source='$source'; reason='$reason'; statusAtUtc='$statusAtUtc'"
+    }
+}
+
 function Wait-ForStreamerValidation {
     param(
         [string]$HealthPath,
         [int]$TimeoutSeconds,
-        [int]$StableSeconds
+        [int]$StableSeconds,
+        [string]$AwsCli,
+        [string]$Region,
+        [string]$InstanceId,
+        [DateTimeOffset]$ValidationStartedAtUtc
     )
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $healthySince = $null
+    $nextRuntimeFaultCheckAtUtc = [DateTimeOffset]::MinValue
 
     while ((Get-Date) -lt $deadline) {
         $snapshot = Get-StreamerHealthSnapshot -Path $HealthPath
@@ -701,16 +851,42 @@ function Wait-ForStreamerValidation {
             }
 
             if (((Get-Date) - $healthySince).TotalSeconds -ge $StableSeconds) {
-                return $true
+                return [pscustomobject]@{
+                    Success = $true
+                    TerminalReason = ''
+                    Summary = 'streamer_health_ready'
+                }
             }
         } else {
             $healthySince = $null
         }
 
+        $nowUtc = [DateTimeOffset]::UtcNow
+        if ($nowUtc -ge $nextRuntimeFaultCheckAtUtc) {
+            try {
+                $tags = Get-InstanceTags -AwsCli $AwsCli -Region $Region -InstanceId $InstanceId
+                $terminalFault = Get-FreshTerminalRuntimeFaultFromTags -Tags $tags -ValidationStartedAtUtc $ValidationStartedAtUtc
+                if ($terminalFault) {
+                    return [pscustomobject]@{
+                        Success = $false
+                        TerminalReason = $terminalFault.Reason
+                        Summary = $terminalFault.Summary
+                    }
+                }
+            } catch {
+                Write-UpdateModeLog "Could not inspect terminal watchdog state during streamer validation: $($_.Exception.Message)" 'WARN'
+            }
+            $nextRuntimeFaultCheckAtUtc = $nowUtc.AddSeconds(5)
+        }
+
         Start-Sleep -Seconds 2
     }
 
-    return $false
+    return [pscustomobject]@{
+        Success = $false
+        TerminalReason = ''
+        Summary = 'streamer_health_timeout'
+    }
 }
 
 function Wait-ForRuntimeStatusValidation {
@@ -739,9 +915,19 @@ function Wait-ForRuntimeStatusValidation {
             $hasFreshObservation = ($statusAtUtc -and $statusAtUtc -ge $minimumObservedAtUtc) -or
                 ($heartbeatAtUtc -and $heartbeatAtUtc -ge $minimumObservedAtUtc)
 
+            $terminalFault = Get-FreshTerminalRuntimeFaultFromTags -Tags $tags -ValidationStartedAtUtc $ValidationStartedAtUtc
+            if ($terminalFault) {
+                return [pscustomobject]@{
+                    Success = $false
+                    TerminalReason = $terminalFault.Reason
+                    Summary = $terminalFault.Summary
+                }
+            }
+
             if ($status -eq 'ready' -and $source -eq 'signalling-server' -and $hasFreshObservation) {
                 return [pscustomobject]@{
                     Success = $true
+                    TerminalReason = ''
                     Summary = $lastSummary
                 }
             }
@@ -754,6 +940,7 @@ function Wait-ForRuntimeStatusValidation {
 
     return [pscustomobject]@{
         Success = $false
+        TerminalReason = ''
         Summary = $lastSummary
     }
 }
@@ -938,6 +1125,7 @@ $streamerHealthPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\s
 $repoSyncScript = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
 $publishCurrentBuildScript = Join-Path $PSScriptRoot 'publish_current_build_tags.ps1'
 $runtimeInstallerScript = Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.ps1'
+$unrealPrerequisiteModule = Join-Path $PSScriptRoot 'unreal_prerequisite.psm1'
 $installBasePath = if ($env:SCALEWORLD_INSTALL_BASE) { $env:SCALEWORLD_INSTALL_BASE } else { 'C:\PixelStreaming' }
 $runtimeArtifactBucket = if ($env:SCALEWORLD_RUNTIME_ARTIFACT_BUCKET) { $env:SCALEWORLD_RUNTIME_ARTIFACT_BUCKET } else { 'scaleworlddepot' }
 $activeInstallPath = Join-Path $installBasePath 'WindowsNoEditor'
@@ -1059,6 +1247,13 @@ try {
             Remove-Item -LiteralPath $runtimeInstallResultPath -Force
         }
 
+        [void](Invoke-UnrealPrerequisitePreflight `
+            -ModulePath $unrealPrerequisiteModule `
+            -UnrealRoot $activeInstallPath `
+            -AwsCli $awsCli `
+            -Region $identity.Region `
+            -InstanceId $identity.InstanceId)
+
         Set-UpdatePhase -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Phase 'installing_runtime'
         Write-UpdateModeLog "Installing PixelStreaming runtime artifact '$targetRuntimeManifestKey'."
         Write-UpdateModeTrace -Step 'before_runtime_install' -Data @{
@@ -1122,9 +1317,20 @@ try {
         Start-ValidationStack -LauncherPath $runtimeStackLauncher -RuntimeArtifact
 
         Write-UpdateModeLog "Waiting up to $ValidationTimeoutSeconds seconds for streamer validation."
-        $validated = Wait-ForStreamerValidation -HealthPath $runtimeStreamerHealthPath -TimeoutSeconds $ValidationTimeoutSeconds -StableSeconds $ValidationStableSeconds
-        if (-not $validated) {
-            throw "PixelStreaming runtime artifact failed validation within $ValidationTimeoutSeconds seconds."
+        $streamerValidation = Wait-ForStreamerValidation `
+            -HealthPath $runtimeStreamerHealthPath `
+            -TimeoutSeconds $ValidationTimeoutSeconds `
+            -StableSeconds $ValidationStableSeconds `
+            -AwsCli $awsCli `
+            -Region $identity.Region `
+            -InstanceId $identity.InstanceId `
+            -ValidationStartedAtUtc $validationStartedAtUtc
+        if (-not $streamerValidation.Success) {
+            if (-not [string]::IsNullOrWhiteSpace($streamerValidation.TerminalReason)) {
+                $code = "runtime_fault:$($streamerValidation.TerminalReason)"
+                throw (New-UpdateModeFailureException -Code $code -Message "PixelStreaming runtime validation stopped after a fresh terminal watchdog fault. $($streamerValidation.Summary)")
+            }
+            throw (New-UpdateModeFailureException -Code 'streamer_validation_timeout' -Message "PixelStreaming runtime artifact failed validation within $ValidationTimeoutSeconds seconds.")
         }
 
         Write-UpdateModeLog "Waiting up to $RuntimeStatusValidationTimeoutSeconds seconds for EC2 runtime status validation."
@@ -1135,7 +1341,11 @@ try {
             -ValidationStartedAtUtc $validationStartedAtUtc `
             -TimeoutSeconds $RuntimeStatusValidationTimeoutSeconds
         if (-not $runtimeStatusValidated.Success) {
-            throw "EC2 runtime status validation did not reach ready within $RuntimeStatusValidationTimeoutSeconds seconds. Last observed: $($runtimeStatusValidated.Summary)"
+            if (-not [string]::IsNullOrWhiteSpace($runtimeStatusValidated.TerminalReason)) {
+                $code = "runtime_fault:$($runtimeStatusValidated.TerminalReason)"
+                throw (New-UpdateModeFailureException -Code $code -Message "EC2 runtime status validation stopped after a fresh terminal watchdog fault. $($runtimeStatusValidated.Summary)")
+            }
+            throw (New-UpdateModeFailureException -Code 'runtime_status_validation_timeout' -Message "EC2 runtime status validation did not reach ready within $RuntimeStatusValidationTimeoutSeconds seconds. Last observed: $($runtimeStatusValidated.Summary)")
         }
 
         $completionTime = (Get-Date).ToUniversalTime().ToString('o')
@@ -1391,6 +1601,20 @@ try {
         PrepareStdErrExists = (Test-Path -LiteralPath $prepareUpdateStdErrPath)
     }
 
+    $unrealPrerequisiteRoot = if ($hasPreparedReleaseForTarget) {
+        $preparedReleasePath
+    } elseif ($currentReleaseAlreadyMatchesTarget) {
+        $activeInstallPath
+    } else {
+        throw (New-UpdateModeFailureException -Code 'unreal_prerequisite_root_missing' -Message 'No prepared or active Unreal release root was available for prerequisite validation.')
+    }
+    [void](Invoke-UnrealPrerequisitePreflight `
+        -ModulePath $unrealPrerequisiteModule `
+        -UnrealRoot $unrealPrerequisiteRoot `
+        -AwsCli $awsCli `
+        -Region $identity.Region `
+        -InstanceId $identity.InstanceId)
+
     if ($hasRuntimePayload) {
         Set-UpdatePhase -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Phase 'activating_runtime'
         Write-UpdateModeLog "Activating PixelStreaming runtime artifact '$targetRuntimeManifestKey'."
@@ -1514,9 +1738,20 @@ try {
     Start-ValidationStack -LauncherPath $validationStackLauncher -RuntimeArtifact:$hasRuntimePayload
 
     Write-UpdateModeLog "Waiting up to $ValidationTimeoutSeconds seconds for streamer validation."
-    $validated = Wait-ForStreamerValidation -HealthPath $validationHealthPath -TimeoutSeconds $ValidationTimeoutSeconds -StableSeconds $ValidationStableSeconds
-    if (-not $validated) {
-        throw "Updated build failed validation within $ValidationTimeoutSeconds seconds."
+    $streamerValidation = Wait-ForStreamerValidation `
+        -HealthPath $validationHealthPath `
+        -TimeoutSeconds $ValidationTimeoutSeconds `
+        -StableSeconds $ValidationStableSeconds `
+        -AwsCli $awsCli `
+        -Region $identity.Region `
+        -InstanceId $identity.InstanceId `
+        -ValidationStartedAtUtc $validationStartedAtUtc
+    if (-not $streamerValidation.Success) {
+        if (-not [string]::IsNullOrWhiteSpace($streamerValidation.TerminalReason)) {
+            $code = "runtime_fault:$($streamerValidation.TerminalReason)"
+            throw (New-UpdateModeFailureException -Code $code -Message "Updated build validation stopped after a fresh terminal watchdog fault. $($streamerValidation.Summary)")
+        }
+        throw (New-UpdateModeFailureException -Code 'streamer_validation_timeout' -Message "Updated build failed validation within $ValidationTimeoutSeconds seconds.")
     }
 
     Write-UpdateModeLog "Waiting up to $RuntimeStatusValidationTimeoutSeconds seconds for EC2 runtime status validation."
@@ -1527,7 +1762,11 @@ try {
         -ValidationStartedAtUtc $validationStartedAtUtc `
         -TimeoutSeconds $RuntimeStatusValidationTimeoutSeconds
     if (-not $runtimeStatusValidated.Success) {
-        throw "EC2 runtime status validation did not reach ready within $RuntimeStatusValidationTimeoutSeconds seconds. Last observed: $($runtimeStatusValidated.Summary)"
+        if (-not [string]::IsNullOrWhiteSpace($runtimeStatusValidated.TerminalReason)) {
+            $code = "runtime_fault:$($runtimeStatusValidated.TerminalReason)"
+            throw (New-UpdateModeFailureException -Code $code -Message "EC2 runtime status validation stopped after a fresh terminal watchdog fault. $($runtimeStatusValidated.Summary)")
+        }
+        throw (New-UpdateModeFailureException -Code 'runtime_status_validation_timeout' -Message "EC2 runtime status validation did not reach ready within $RuntimeStatusValidationTimeoutSeconds seconds. Last observed: $($runtimeStatusValidated.Summary)")
     }
     Write-UpdateModeTrace -Step 'after_validation' -Data @{
         TargetZipKey = $targetZipKey
@@ -1586,10 +1825,12 @@ try {
     Stop-ProcessIfRunning -Process $runtimePrepareProcess
     Stop-ProcessIfRunning -Process $prepareUpdateProcess
     $reason = $_.Exception.Message
+    $resultReason = Get-UpdateFailureResultReason -ErrorRecord $_ -Fallback $reason
     Write-UpdateModeTrace -Step 'update_failed' -Data @{
         TargetZipKey = $targetZipKey
         TargetRuntimeManifestKey = $targetRuntimeManifestKey
         Reason = $reason
+        ResultReason = $resultReason
         CurrentRelease = Get-ReleaseStateSnapshot -Path $currentReleaseStatePath
         PendingRelease = Get-ReleaseStateSnapshot -Path $pendingReleaseStatePath
         ActiveInstall = Get-ActiveInstallTargetSnapshot -Path $activeInstallPath
@@ -1604,7 +1845,7 @@ try {
     TrySet-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId -Tags @{
         ScaleWorldUpdateState = 'failed'
         ScaleWorldUpdatePhase = ''
-        ScaleWorldUpdateResultReason = $reason
+        ScaleWorldUpdateResultReason = $resultReason
         ScaleWorldUpdateCompletedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     } -FailureContext "Failed to publish update failure state."
     Write-UpdateModeLog "Update failed: $reason" 'ERROR'

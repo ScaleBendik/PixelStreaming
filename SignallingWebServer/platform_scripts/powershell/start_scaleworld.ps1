@@ -38,6 +38,19 @@ if (-not (Test-Path -LiteralPath $processPath)) {
     throw "ScaleWorld executable not found at '$processPath'."
 }
 
+$prerequisiteModulePath = Join-Path $PSScriptRoot 'unreal_prerequisite.psm1'
+if (-not (Test-Path -LiteralPath $prerequisiteModulePath -PathType Leaf)) {
+    throw "ScaleWorld prerequisite helper '$prerequisiteModulePath' was not found."
+}
+Import-Module $prerequisiteModulePath -Force -ErrorAction Stop
+
+# Normal startup is deliberately check-only. Installation is restricted to the
+# update pre-activation path so a serving start cannot mutate Windows or request
+# a reboot. Failing here also prevents Unreal's bootstrap executable from opening
+# an invisible interactive redistributable prompt.
+$prerequisiteStatus = Assert-ScaleWorldUnrealPrerequisite -UnrealRoot $installRootPath -LauncherExecutableName $ExecutableName
+Write-Output ("Verified Unreal Visual C++ prerequisite required={0} installed={1}." -f $prerequisiteStatus.RequiredVersion, $prerequisiteStatus.InstalledVersion)
+
 $runtimeMatcher = Get-ScaleWorldRuntimeProcessMatcher -InstallRoot $installRootPath -ExecutableName $ExecutableName -RuntimeProcessPattern $RuntimeProcessPattern -IncludeLauncherExecutable $false
 
 $arguments = @(
