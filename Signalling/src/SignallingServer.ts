@@ -15,6 +15,16 @@ import { stringify } from './Utils';
 const SCALEWORLD_SESSION_ID_PARAM = 'sm_session_id';
 const SCALEWORLD_SESSION_REQUEST_ID_PARAM = 'sm_session_request_id';
 
+type ValidatedConnectTicketIdentity = {
+    sessionRequestId: string;
+    activeSessionId?: string;
+};
+
+type AuthenticatedIncomingMessage = http.IncomingMessage & {
+    scaleWorldValidatedConnectTicketIdentity?: ValidatedConnectTicketIdentity;
+    scaleWorldConnectTicketIdentityValidated?: boolean;
+};
+
 function readScaleWorldQueryParam(request: http.IncomingMessage, name: string): string | undefined {
     try {
         const parsed = new URL(request.url || '/', 'http://localhost');
@@ -31,6 +41,35 @@ function readScaleWorldSessionId(request: http.IncomingMessage): string | undefi
 
 function readScaleWorldSessionRequestId(request: http.IncomingMessage): string | undefined {
     return readScaleWorldQueryParam(request, SCALEWORLD_SESSION_REQUEST_ID_PARAM);
+}
+
+function readRequestPathname(request: http.IncomingMessage): string {
+    try {
+        return new URL(request.url || '/', 'http://localhost').pathname || '/';
+    } catch {
+        return '/';
+    }
+}
+
+function readValidatedConnectTicketIdentity(
+    request: http.IncomingMessage
+): ValidatedConnectTicketIdentity | undefined {
+    const authenticatedRequest = request as AuthenticatedIncomingMessage;
+    if (authenticatedRequest.scaleWorldConnectTicketIdentityValidated !== true) {
+        return undefined;
+    }
+
+    const identity = authenticatedRequest.scaleWorldValidatedConnectTicketIdentity;
+    const sessionRequestId = identity?.sessionRequestId?.trim() ?? '';
+    const activeSessionId = identity?.activeSessionId?.trim() || undefined;
+    if (!sessionRequestId) {
+        return undefined;
+    }
+
+    return {
+        sessionRequestId,
+        activeSessionId
+    };
 }
 
 /**
@@ -296,22 +335,25 @@ export class SignallingServer {
     }
 
     private onPlayerConnected(ws: wslib.WebSocket, request: http.IncomingMessage) {
-        Logger.info(`New player connection: %s (%s)`, request.socket.remoteAddress, request.url);
+        Logger.info(
+            `New player connection: %s (path=%s, query=redacted)`,
+            request.socket.remoteAddress,
+            readRequestPathname(request)
+        );
 
         const newPlayer = new PlayerConnection(this, ws, request.socket.remoteAddress);
-        const scaleWorldSessionId = readScaleWorldSessionId(request);
+        const validatedIdentity = readValidatedConnectTicketIdentity(request);
+        const scaleWorldSessionId = validatedIdentity?.activeSessionId ?? readScaleWorldSessionId(request);
         if (scaleWorldSessionId) {
-            (newPlayer as PlayerConnection & { scaleWorldSessionId?: string }).scaleWorldSessionId =
-                scaleWorldSessionId;
+            newPlayer.scaleWorldSessionId = scaleWorldSessionId;
         }
-        const scaleWorldSessionRequestId = readScaleWorldSessionRequestId(request);
+        const scaleWorldSessionRequestId =
+            validatedIdentity?.sessionRequestId ?? readScaleWorldSessionRequestId(request);
         if (scaleWorldSessionRequestId) {
-            (
-                newPlayer as PlayerConnection & {
-                    scaleWorldSessionRequestId?: string;
-                }
-            ).scaleWorldSessionRequestId = scaleWorldSessionRequestId;
+            newPlayer.scaleWorldSessionRequestId = scaleWorldSessionRequestId;
         }
+        newPlayer.scaleWorldSessionIdentityValidated = validatedIdentity !== undefined;
+        newPlayer.scaleWorldActiveSessionIdValidated = validatedIdentity?.activeSessionId !== undefined;
         this.registerPlayerKeepalive(ws, request.socket.remoteAddress);
 
         // add it to the registry and when the transport closes, remove it

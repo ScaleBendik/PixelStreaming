@@ -99,8 +99,16 @@ export class WebServer {
 
                             return res.redirect(['https://', hostAddress, req.originalUrl].join(''));
                         } else {
+                            const rawRequestPath: unknown = req.path;
+                            const rawHeaders: unknown = req.headers;
+                            const requestPath =
+                                typeof rawRequestPath === 'string' && rawRequestPath.length > 0
+                                    ? rawRequestPath
+                                    : '/';
+                            const headerNames =
+                                rawHeaders && typeof rawHeaders === 'object' ? Object.keys(rawHeaders) : [];
                             Logger.error(
-                                `Unable to get host name from header. Requestor ${req.ip}, url path: '${req.originalUrl}', available headers ${JSON.stringify(req.headers)}`
+                                `Unable to get host name from header. Requestor ${req.ip}, url path: '${requestPath}', available header names ${JSON.stringify(headerNames)}`
                             );
 
                             return res.status(400).send('Bad Request');

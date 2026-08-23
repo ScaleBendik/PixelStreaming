@@ -7,7 +7,10 @@ import { promisify } from 'util';
 import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
 import type { IPlayer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
 import type { InstanceAgentClient, InstanceAgentCommand } from './instance-agent';
-import type { ConnectTicketRuntimeGate } from './connect-ticket-runtime-state';
+import type {
+    ConnectTicketRuntimeGate,
+    DurableManagedViewerEvidenceStatus
+} from './connect-ticket-runtime-state';
 import { RuntimeStatusPublisher, SignallingRuntimeStatusController } from './runtime-status';
 import {
     normalizeInstanceAgentDesiredStateSnapshot,
@@ -16,6 +19,8 @@ import {
 } from './instance-agent-state';
 import {
     clearInstanceAgentRecycleMarkerSnapshot,
+    isInstanceAgentRecycleReplacementProof,
+    readInstanceAgentRecycleMarkerSnapshot,
     resolveInstanceAgentRecycleMarkerPath,
     writeInstanceAgentRecycleMarkerSnapshot
 } from './instance-agent-recycle-state';
@@ -34,6 +39,10 @@ const DEFAULT_RECYCLE_TERMINATE_DELAY_MS = 250;
 const DEFAULT_RECYCLE_SELF_EXIT_DELAY_MS = 5_000;
 const DEFAULT_RECYCLE_READY_TIMEOUT_SECONDS = 120;
 const DEFAULT_DISCONNECT_FAST_POLLING_WINDOW_MS = 120_000;
+const RECONNECT_GRACE_EVIDENCE_RETRY_MS = 1_000;
+const RECONNECT_GRACE_EVIDENCE_RETRY_LOG_INTERVAL = 30;
+const STACK_RECYCLE_RETRY_MS = 5_000;
+const COMMERCIAL_RECYCLE_LAUNCH_MAX_ATTEMPTS = 3;
 const DEFAULT_SHUTDOWN_LOG_ARTIFACT_CAPTURE_TIMEOUT_MS = 30_000;
 const DEFAULT_SHUTDOWN_SCREENSHOT_ARTIFACT_CAPTURE_TIMEOUT_MS = 120_000;
 const COMMAND_SUPERSESSION_CLOCK_SKEW_MS = 5_000;
@@ -66,21 +75,40 @@ export interface ViewerIdleOptions {
         | 'getActiveCommand'
         | 'addDesiredStateListener'
         | 'addCommandListener'
+        | 'isReconnectGraceRecoveryRecyclePending'
+        | 'addReconnectGraceRecoveryListener'
         | 'acknowledgeCommand'
         | 'startCommand'
         | 'completeCommand'
         | 'failCommand'
         | 'captureSessionLogArtifact'
         | 'captureSessionScreenshotArtifact'
+        | 'setReconnectGraceWindow'
+        | 'recordReconnectGraceElapsedEvidence'
         | 'requestFastPolling'
     > | null;
-    connectTicketRuntimeGate?: Pick<ConnectTicketRuntimeGate, 'markTeardownStarted'> | null;
+    connectTicketRuntimeGate?: Pick<
+        ConnectTicketRuntimeGate,
+        'markTeardownStarted' | 'getDurableManagedViewerEvidenceStatus'
+    > | null;
 }
 
 type RuntimeInstanceCommand = InstanceAgentCommand & { status?: string; attemptNumber?: number };
 type ScaleWorldSessionPlayer = {
     scaleWorldSessionId?: string | null;
     scaleWorldSessionRequestId?: string | null;
+    scaleWorldSessionIdentityValidated?: boolean;
+    scaleWorldActiveSessionIdValidated?: boolean;
+};
+type ManagedSessionIdentity = {
+    sessionRequestId: string;
+    activeSessionId?: string;
+};
+type ReconnectGraceWindowState = {
+    lastViewerDisconnectedAtUtc: string;
+    reconnectGraceExpiresAtUtc: string;
+    managedSessionIdentity: ManagedSessionIdentity | null;
+    elapsedEvidenceId: string;
 };
 
 async function readCurrentInstanceIdentity(): Promise<{ instanceId: string; region: string }> {
@@ -365,6 +393,21 @@ function mapStopReason(reason: string): string {
     }
 }
 
+export function resolveFirstViewerTimeoutStopReason(
+    durableManagedViewerEvidenceStatus: DurableManagedViewerEvidenceStatus
+):
+    | 'no-viewer-ever-connected'
+    | 'managed-viewer-history-continuity-lost'
+    | 'managed-viewer-evidence-unavailable' {
+    if (durableManagedViewerEvidenceStatus === 'present') {
+        return 'managed-viewer-history-continuity-lost';
+    }
+    if (durableManagedViewerEvidenceStatus === 'unavailable') {
+        return 'managed-viewer-evidence-unavailable';
+    }
+    return 'no-viewer-ever-connected';
+}
+
 export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdleOptions = {}): void {
     const log = options.logger ?? ((message: string) => Logger.info(message));
     const enabled = parseBoolean(options.enabled ?? process.env.VIEWER_IDLE_STOP_ENABLED ?? true, true);
@@ -466,19 +509,32 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     );
     const recycleRepoRoot = path.resolve(__dirname, '..');
 
-    const recoveredRecycleMarkerAtStartup = recycleMarkerPath.length > 0 && fs.existsSync(recycleMarkerPath);
+    const recoveredRecycleMarkerAtStartup = readInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
+    const recoveredReplacementAtStartup = isInstanceAgentRecycleReplacementProof(
+        recoveredRecycleMarkerAtStartup
+    );
 
     let zeroViewersTimer: NodeJS.Timeout | null = null;
     let firstViewerTimer: NodeJS.Timeout | null = null;
     let transientStatusHeartbeatTimer: NodeJS.Timeout | null = null;
     let reconnectGraceTimer: NodeJS.Timeout | null = null;
     let resetTimer: NodeJS.Timeout | null = null;
+    let reconnectGraceWindowPhase: 'inactive' | 'waiting' | 'persisting_elapsed' | 'elapsed' = 'inactive';
+    let reconnectGraceWindowState: ReconnectGraceWindowState | null = null;
+    let reconnectGraceEvidenceRetryTimer: NodeJS.Timeout | null = null;
+    let reconnectGraceEvidenceRetryAttempts = 0;
+    let reconnectGraceEvidenceContinuation: (() => void) | null = null;
+    let commercialReconnectGraceTeardownCommitted = false;
+    let commercialReconnectGraceCutoffDurable = false;
     let recycleExitFallbackTimer: NodeJS.Timeout | null = null;
+    let recycleLaunchRetryTimer: NodeJS.Timeout | null = null;
+    let recycleLaunchRetryAttempts = 0;
     let stopInFlight = false;
     let hasSeenViewer = server.playerRegistry.count() > 0;
     let hasSeenManagedSessionViewer = false;
     let lastManagedSessionRequestId: string | null = null;
     let lastManagedSessionObservedAtMs: number | null = null;
+    const managedSessionIdentitiesByPlayerId = new Map<string, ManagedSessionIdentity>();
     let currentMaintenanceMode: string | null = null;
     let maintenanceStateInitialized = false;
     let maintenanceRefreshInFlight = false;
@@ -489,7 +545,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         : desiredStatePath.length > 0
           ? readInstanceAgentDesiredStateSnapshot(desiredStatePath, log)
           : normalizeInstanceAgentDesiredStateSnapshot(undefined);
-    const recoveredRecycleTokenAtStartup = recoveredRecycleMarkerAtStartup
+    const recoveredRecycleTokenAtStartup = recoveredReplacementAtStartup
         ? currentDesiredState.recycleRequestedToken
         : null;
     let activeCommand: RuntimeInstanceCommand | null =
@@ -533,6 +589,170 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             heartbeatOnly: options.heartbeatOnly,
             preserveStatusAtUtc: options.preserveStatusAtUtc
         });
+    };
+    const isCommercialReconnectDeadlineLocked = (): boolean =>
+        commercialReconnectGraceTeardownCommitted ||
+        (reconnectGraceWindowPhase === 'persisting_elapsed' &&
+            reconnectGraceWindowState?.managedSessionIdentity !== null &&
+            reconnectGraceWindowState?.managedSessionIdentity !== undefined);
+    const hasManagedReconnectGraceWindow = (): boolean =>
+        (reconnectGraceWindowPhase === 'waiting' || reconnectGraceWindowPhase === 'persisting_elapsed') &&
+        reconnectGraceWindowState?.managedSessionIdentity !== null &&
+        reconnectGraceWindowState?.managedSessionIdentity !== undefined;
+    const restoreRuntimeDerivedStatus = (restoreOptions: { preserveStatusAtUtc?: boolean } = {}): void => {
+        if (isCommercialReconnectDeadlineLocked()) {
+            log(
+                '[idle-stop] Suppressed derived Ready restoration while a commercial reconnect deadline/teardown is authoritative.'
+            );
+            return;
+        }
+
+        runtimeStatusController?.restoreDerivedStatus(restoreOptions);
+    };
+
+    const startReconnectGraceWindow = (
+        startedAtMs: number,
+        delayMs: number,
+        managedSessionIdentity: ManagedSessionIdentity | null
+    ): void => {
+        const normalizedDelayMs = Math.max(0, delayMs);
+        const lastViewerDisconnectedAtUtc = new Date(startedAtMs).toISOString();
+        const reconnectGraceExpiresAtUtc = new Date(startedAtMs + normalizedDelayMs).toISOString();
+        reconnectGraceWindowPhase = 'waiting';
+        commercialReconnectGraceCutoffDurable = false;
+        reconnectGraceWindowState = {
+            lastViewerDisconnectedAtUtc,
+            reconnectGraceExpiresAtUtc,
+            managedSessionIdentity: managedSessionIdentity ? { ...managedSessionIdentity } : null,
+            elapsedEvidenceId: randomUUID()
+        };
+        options.instanceAgentClient?.setReconnectGraceWindow({
+            lastViewerDisconnectedAtUtc,
+            reconnectGraceExpiresAtUtc
+        });
+    };
+    const markReconnectGraceWindowElapsed = (): boolean => {
+        if (reconnectGraceWindowPhase === 'elapsed') {
+            return true;
+        }
+        if (reconnectGraceWindowPhase !== 'waiting' && reconnectGraceWindowPhase !== 'persisting_elapsed') {
+            return false;
+        }
+
+        const elapsedWindow = reconnectGraceWindowState;
+        const managedSessionIdentity = elapsedWindow?.managedSessionIdentity;
+        if (!elapsedWindow || !managedSessionIdentity) {
+            reconnectGraceWindowPhase = 'elapsed';
+            log(
+                '[idle-stop] Reconnect grace elapsed without a connect-ticket-validated session request identity; commercial elapsed evidence was not emitted (fail closed).'
+            );
+            return true;
+        }
+
+        if (!options.instanceAgentClient) {
+            reconnectGraceWindowPhase = 'persisting_elapsed';
+            return false;
+        }
+
+        reconnectGraceWindowPhase = 'persisting_elapsed';
+        const evidenceId = elapsedWindow.elapsedEvidenceId;
+        const recorded = options.instanceAgentClient.recordReconnectGraceElapsedEvidence({
+            evidenceId,
+            sessionRequestId: managedSessionIdentity.sessionRequestId,
+            activeSessionId: managedSessionIdentity.activeSessionId,
+            lastViewerDisconnectedAtUtc: elapsedWindow.lastViewerDisconnectedAtUtc,
+            reconnectGraceExpiresAtUtc: elapsedWindow.reconnectGraceExpiresAtUtc,
+            phase: 'elapsed'
+        });
+        if (recorded) {
+            reconnectGraceWindowPhase = 'elapsed';
+            log(
+                `[idle-stop] Durably recorded reconnect-grace elapsed evidence ${evidenceId} for session request ${managedSessionIdentity.sessionRequestId}${managedSessionIdentity.activeSessionId ? ` and active session ${managedSessionIdentity.activeSessionId}` : ''}.`
+            );
+            return true;
+        } else {
+            return false;
+        }
+    };
+    const clearReconnectGraceWindow = (): void => {
+        if (reconnectGraceWindowPhase === 'persisting_elapsed') {
+            return;
+        }
+        if (reconnectGraceWindowPhase === 'inactive' && !reconnectGraceWindowState) {
+            return;
+        }
+
+        reconnectGraceWindowPhase = 'inactive';
+        reconnectGraceWindowState = null;
+        options.instanceAgentClient?.setReconnectGraceWindow(null);
+    };
+    const scheduleReconnectGraceEvidenceRetry = (): void => {
+        if (reconnectGraceEvidenceRetryTimer) {
+            return;
+        }
+
+        reconnectGraceEvidenceRetryAttempts += 1;
+        if (
+            reconnectGraceEvidenceRetryAttempts === 1 ||
+            reconnectGraceEvidenceRetryAttempts % RECONNECT_GRACE_EVIDENCE_RETRY_LOG_INTERVAL === 0
+        ) {
+            const evidenceId = reconnectGraceWindowState?.elapsedEvidenceId ?? 'unknown';
+            log(
+                `[idle-stop] CRITICAL: Commercial reconnect deadline state for evidence ${evidenceId} is not fully durable; retry ${reconnectGraceEvidenceRetryAttempts} will run in ${RECONNECT_GRACE_EVIDENCE_RETRY_MS} ms and teardown remains blocked.`
+            );
+        }
+
+        reconnectGraceEvidenceRetryTimer = setTimeout(() => {
+            reconnectGraceEvidenceRetryTimer = null;
+            if (!makeCommercialReconnectDeadlineDurable()) {
+                scheduleReconnectGraceEvidenceRetry();
+                return;
+            }
+
+            reconnectGraceEvidenceRetryAttempts = 0;
+            const continuation = reconnectGraceEvidenceContinuation;
+            reconnectGraceEvidenceContinuation = null;
+            continuation?.();
+        }, RECONNECT_GRACE_EVIDENCE_RETRY_MS);
+    };
+    const makeCommercialReconnectDeadlineDurable = (): boolean => {
+        const elapsedWindow = reconnectGraceWindowState;
+        if (elapsedWindow?.managedSessionIdentity) {
+            reconnectGraceWindowPhase = 'persisting_elapsed';
+            if (!markReconnectGraceWindowElapsed()) {
+                return false;
+            }
+
+            // Keep the runtime gate closed to late viewers while the second durable write is retried.
+            reconnectGraceWindowPhase = 'persisting_elapsed';
+            if (!commercialReconnectGraceCutoffDurable) {
+                commercialReconnectGraceCutoffDurable =
+                    options.connectTicketRuntimeGate?.markTeardownStarted({
+                        reason: 'reconnect_grace_elapsed',
+                        occurredAtUtc: elapsedWindow.reconnectGraceExpiresAtUtc
+                    }) === true;
+                if (!commercialReconnectGraceCutoffDurable) {
+                    return false;
+                }
+            }
+
+            commercialReconnectGraceTeardownCommitted = true;
+            reconnectGraceWindowPhase = 'elapsed';
+            return true;
+        }
+
+        return markReconnectGraceWindowElapsed();
+    };
+    const continueAfterReconnectGraceEvidenceIsDurable = (continuation: () => void): void => {
+        if (makeCommercialReconnectDeadlineDurable()) {
+            continuation();
+            return;
+        }
+
+        if (!reconnectGraceEvidenceContinuation) {
+            reconnectGraceEvidenceContinuation = continuation;
+        }
+        scheduleReconnectGraceEvidenceRetry();
     };
 
     const clearZeroTimer = (): void => {
@@ -592,13 +812,20 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         reason: string,
         command?: RuntimeInstanceCommand | null,
         occurredAtUtc?: string | null
-    ): void => {
-        options.connectTicketRuntimeGate?.markTeardownStarted({
-            reason,
-            commandType: command?.commandType,
-            instanceCommandId: command?.instanceCommandId,
-            occurredAtUtc: occurredAtUtc ?? undefined
-        });
+    ): boolean => {
+        const persisted =
+            options.connectTicketRuntimeGate?.markTeardownStarted({
+                reason,
+                commandType: command?.commandType,
+                instanceCommandId: command?.instanceCommandId,
+                occurredAtUtc: occurredAtUtc ?? undefined
+            }) === true;
+        if (!persisted) {
+            log(
+                `[idle-stop] CRITICAL: Teardown cutoff for '${reason}' could not be persisted; managed admission is blocked and destructive teardown must not proceed.`
+            );
+        }
+        return persisted;
     };
     const normalizeOptionalText = (value?: string | null): string | null => {
         const normalized = value?.trim() ?? '';
@@ -653,7 +880,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             : null;
     };
     const hasRecycleLaunchMarker = (): boolean =>
-        recycleMarkerPath.length > 0 && fs.existsSync(recycleMarkerPath);
+        isInstanceAgentRecycleReplacementProof(
+            readInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log)
+        );
     const hasRecycleLaunchInProgress = (): boolean => recycleLaunchRequested || hasRecycleLaunchMarker();
     const isRecoveredRecycleTokenStillInProgress = (token: string | null | undefined): boolean =>
         token === recoveredRecycleTokenAtStartup && hasRecycleLaunchMarker();
@@ -675,28 +904,68 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         canHoldWarmReadyWithoutShutdown() && getActiveShutdownCommand() === null && !hasRecycleIntent();
     const isWarmHoldActive = (): boolean => shouldSuppressNoViewerIdleAutomation() && !hasSeenViewer;
     const shouldResetIntoWarmReady = (): boolean => hasRecycleIntent();
-    const markManagedSessionViewer = (playerId?: string): boolean => {
-        if (!playerId) {
-            return false;
+    const readValidatedManagedSessionViewerIdentity = (playerId?: string): ManagedSessionIdentity | null => {
+        const normalizedPlayerId = normalizeOptionalText(playerId);
+        if (!normalizedPlayerId) {
+            return null;
         }
 
-        const player = server.playerRegistry.get(playerId) as ScaleWorldSessionPlayer | undefined;
-        const sessionId =
-            typeof player?.scaleWorldSessionId === 'string' ? player.scaleWorldSessionId.trim() : '';
-        const sessionRequestId =
-            typeof player?.scaleWorldSessionRequestId === 'string'
-                ? player.scaleWorldSessionRequestId.trim()
-                : '';
-        if (!sessionId && !sessionRequestId) {
-            return false;
+        const player = server.playerRegistry.get(normalizedPlayerId) as ScaleWorldSessionPlayer | undefined;
+        const sessionRequestId = normalizeOptionalText(player?.scaleWorldSessionRequestId);
+        if (!sessionRequestId || player?.scaleWorldSessionIdentityValidated !== true) {
+            return null;
+        }
+
+        const activeSessionId =
+            player.scaleWorldActiveSessionIdValidated === true
+                ? (normalizeOptionalText(player.scaleWorldSessionId) ?? undefined)
+                : undefined;
+        return { sessionRequestId, activeSessionId };
+    };
+    const countManagedSessionViewers = (sessionRequestId?: string): number => {
+        const normalizedSessionRequestId = normalizeOptionalText(sessionRequestId);
+        let count = 0;
+        for (const identity of managedSessionIdentitiesByPlayerId.values()) {
+            if (
+                !normalizedSessionRequestId ||
+                identity.sessionRequestId.toLowerCase() === normalizedSessionRequestId.toLowerCase()
+            ) {
+                count += 1;
+            }
+        }
+        return count;
+    };
+    const hasViewerThatCancelsReconnectGrace = (
+        managedSessionIdentity: ManagedSessionIdentity | null
+    ): boolean =>
+        managedSessionIdentity
+            ? countManagedSessionViewers(managedSessionIdentity.sessionRequestId) > 0
+            : server.playerRegistry.count() > 0;
+    const markManagedSessionViewer = (
+        playerId?: string,
+        useStoredIdentityFallback: boolean = false
+    ): ManagedSessionIdentity | null => {
+        const normalizedPlayerId = normalizeOptionalText(playerId);
+        if (!normalizedPlayerId) {
+            return null;
+        }
+
+        const storedIdentity = managedSessionIdentitiesByPlayerId.get(normalizedPlayerId) ?? null;
+        if (useStoredIdentityFallback) {
+            return storedIdentity;
+        }
+
+        const identity = readValidatedManagedSessionViewerIdentity(normalizedPlayerId);
+        if (!identity) {
+            managedSessionIdentitiesByPlayerId.delete(normalizedPlayerId);
+            return null;
         }
 
         hasSeenManagedSessionViewer = true;
-        if (sessionRequestId) {
-            lastManagedSessionRequestId = sessionRequestId;
-            lastManagedSessionObservedAtMs = Date.now();
-        }
-        return true;
+        lastManagedSessionRequestId = identity.sessionRequestId;
+        lastManagedSessionObservedAtMs = Date.now();
+        managedSessionIdentitiesByPlayerId.set(normalizedPlayerId, identity);
+        return identity;
     };
     const resolveShutdownArtifactSessionRequestId = (
         reason: string,
@@ -894,11 +1163,21 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         return true;
     };
     const clearAllIdleStopTimers = (): void => {
+        if (hasManagedReconnectGraceWindow()) {
+            clearFirstViewerTimer();
+            clearResetTimer();
+            log(
+                '[idle-stop] Preserving the managed commercial reconnect timer across an idle-automation cancellation request.'
+            );
+            return;
+        }
+
         clearZeroTimer();
         clearFirstViewerTimer();
         clearTransientStatusHeartbeat();
         clearReconnectGraceTimer();
         clearResetTimer();
+        clearReconnectGraceWindow();
     };
     const ensureFirstViewerWindow = (): void => {
         if (!maintenanceStateInitialized || isMaintenanceActive() || shouldSuppressNoViewerIdleAutomation()) {
@@ -925,7 +1204,20 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             ) {
                 return;
             }
-            void requestStop('no-viewer-ever-connected');
+
+            const durableManagedViewerEvidenceStatus =
+                options.connectTicketRuntimeGate?.getDurableManagedViewerEvidenceStatus() ?? 'none';
+            const reason = resolveFirstViewerTimeoutStopReason(durableManagedViewerEvidenceStatus);
+            if (reason !== 'no-viewer-ever-connected') {
+                log(
+                    durableManagedViewerEvidenceStatus === 'present'
+                        ? '[idle-stop] CRITICAL: Refusing no-viewer-ever-connected after restart because durable evidence proves a managed viewer was previously admitted. No disconnect boundary is inferred; cleanup is reported with an unsupported continuity-loss reason.'
+                        : '[idle-stop] CRITICAL: Refusing no-viewer-ever-connected because durable managed-viewer evidence cannot be verified. Admission and zero-use classification remain fail closed.'
+                );
+                void requestStop(reason);
+                return;
+            }
+            void requestStop(reason);
         }, firstViewerDelayMs + firstViewerGraceMs);
 
         log(
@@ -1020,9 +1312,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
+        let desiredStateTeardownCutoffDurable = true;
         if (recycleRequestedTokenChanged) {
             if (currentDesiredState.recycleRequestedToken) {
-                markConnectTicketTeardownStarted(
+                desiredStateTeardownCutoffDurable = markConnectTicketTeardownStarted(
                     'desired_state_recycle_request',
                     null,
                     currentDesiredState.updatedAtUtc
@@ -1054,20 +1347,41 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
         }
         if (shutdownRequestedChanged && currentDesiredState.shutdownRequested) {
-            markConnectTicketTeardownStarted(
-                'desired_state_shutdown_request',
-                null,
-                currentDesiredState.updatedAtUtc
-            );
+            desiredStateTeardownCutoffDurable =
+                markConnectTicketTeardownStarted(
+                    'desired_state_shutdown_request',
+                    null,
+                    currentDesiredState.updatedAtUtc
+                ) && desiredStateTeardownCutoffDurable;
         }
 
         log(
             `[idle-stop] Desired state updated from ${source}: warmHold=${currentDesiredState.warmHoldEnabled}, drain=${currentDesiredState.drainEnabled}, shutdown=${currentDesiredState.shutdownRequested}, recycleRequested=${currentDesiredState.recycleRequestedToken ? 'true' : 'false'}, policy=${currentDesiredState.policyVersion}.`
         );
 
+        if (!desiredStateTeardownCutoffDurable) {
+            if (currentDesiredState.shutdownRequested) {
+                void requestStop(resolveDesiredStateShutdownReason());
+            } else if (currentDesiredState.recycleRequestedToken) {
+                startResetWindow(true);
+            }
+            return;
+        }
+
+        if (
+            hasManagedReconnectGraceWindow() &&
+            !currentDesiredState.shutdownRequested &&
+            !currentDesiredState.recycleRequestedToken
+        ) {
+            log(
+                '[idle-stop] Desired-state update leaves the active managed commercial reconnect window unchanged.'
+            );
+            return;
+        }
+
         if (isWarmHoldActive()) {
             clearAllIdleStopTimers();
-            runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+            restoreRuntimeDerivedStatus({ preserveStatusAtUtc: true });
             return;
         }
 
@@ -1077,6 +1391,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         if (reconnectGraceTimer && !shouldResetIntoWarmReady()) {
             clearReconnectGraceTimer();
+            clearReconnectGraceWindow();
             if (!maintenanceStateInitialized || isMaintenanceActive() || server.playerRegistry.count() > 0) {
                 return;
             }
@@ -1087,7 +1402,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             if (canHoldWarmReadyWithoutShutdown()) {
-                runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+                restoreRuntimeDerivedStatus({ preserveStatusAtUtc: true });
                 return;
             }
 
@@ -1097,12 +1412,14 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         if (resetTimer && shouldSuppressNoViewerIdleAutomation()) {
             clearResetTimer();
-            runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+            clearReconnectGraceWindow();
+            restoreRuntimeDerivedStatus({ preserveStatusAtUtc: true });
             return;
         }
 
         if (resetTimer && !shouldResetIntoWarmReady()) {
             clearResetTimer();
+            clearReconnectGraceWindow();
             if (!maintenanceStateInitialized || isMaintenanceActive() || server.playerRegistry.count() > 0) {
                 return;
             }
@@ -1113,7 +1430,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             if (canHoldWarmReadyWithoutShutdown()) {
-                runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+                restoreRuntimeDerivedStatus({ preserveStatusAtUtc: true });
                 return;
             }
 
@@ -1179,15 +1496,32 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         applyDesiredStateSnapshot(readInstanceAgentDesiredStateSnapshot(desiredStatePath, log), 'file');
     };
 
-    const scheduleStop = (reason: string, delayMs: number): void => {
-        if (!maintenanceStateInitialized || isMaintenanceActive()) {
+    const scheduleStop = (
+        reason: string,
+        delayMs: number,
+        startsLastViewerReconnectWindow: boolean = false,
+        managedSessionIdentity: ManagedSessionIdentity | null = null
+    ): void => {
+        if (
+            !isCommercialReconnectDeadlineLocked() &&
+            (!maintenanceStateInitialized || isMaintenanceActive())
+        ) {
+            return;
+        }
+        if (reconnectGraceWindowPhase === 'persisting_elapsed') {
             return;
         }
 
+        if (startsLastViewerReconnectWindow && reconnectGraceWindowPhase !== 'inactive') {
+            return;
+        }
+        if (!startsLastViewerReconnectWindow && reconnectGraceWindowPhase === 'waiting') {
+            clearReconnectGraceWindow();
+        }
         clearReconnectGraceTimer();
-        if (shouldSuppressNoViewerIdleAutomation()) {
+        if (!isCommercialReconnectDeadlineLocked() && shouldSuppressNoViewerIdleAutomation()) {
             clearAllIdleStopTimers();
-            runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+            restoreRuntimeDerivedStatus({ preserveStatusAtUtc: true });
             return;
         }
 
@@ -1197,17 +1531,39 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         startTransientStatusHeartbeat('idle_shutdown_pending', mappedPendingReason);
         const artifactSessionRequestId =
             reason === 'grace-after-last-viewer' ? lastManagedSessionRequestId : null;
+        const scheduledAtMs = startsLastViewerReconnectWindow && delayMs > 0 ? Date.now() : null;
         zeroViewersTimer = setTimeout(() => {
             zeroViewersTimer = null;
+            if (scheduledAtMs !== null) {
+                if (hasViewerThatCancelsReconnectGrace(managedSessionIdentity)) {
+                    clearReconnectGraceWindow();
+                    restoreRuntimeDerivedStatus({ preserveStatusAtUtc: true });
+                    return;
+                }
+                continueAfterReconnectGraceEvidenceIsDurable(() => {
+                    void requestStop(reason, artifactSessionRequestId);
+                });
+                return;
+            }
             void requestStop(reason, artifactSessionRequestId);
         }, delayMs);
+        if (scheduledAtMs !== null) {
+            startReconnectGraceWindow(scheduledAtMs, delayMs, managedSessionIdentity);
+        }
         log(
             `[idle-stop] Scheduled stop in ${delayMs} ms (reason=${reason}, pendingReason=${mappedPendingReason}).`
         );
     };
 
-    const scheduleResetAfterLastViewer = (delayMs: number): void => {
+    const scheduleResetAfterLastViewer = (
+        delayMs: number,
+        startsLastViewerReconnectWindow: boolean = false,
+        managedSessionIdentity: ManagedSessionIdentity | null = null
+    ): void => {
         if (!maintenanceStateInitialized || isMaintenanceActive()) {
+            return;
+        }
+        if (reconnectGraceWindowPhase === 'persisting_elapsed') {
             return;
         }
 
@@ -1220,6 +1576,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         clearTransientStatusHeartbeat();
 
         if (!shouldResetIntoWarmReady()) {
+            if (reconnectGraceWindowPhase === 'waiting') {
+                clearReconnectGraceWindow();
+            }
             return;
         }
 
@@ -1233,27 +1592,39 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
-        publishStatus('reconnect_grace', 'waiting_for_viewer_reconnect');
-        startTransientStatusHeartbeat('reconnect_grace', 'waiting_for_viewer_reconnect');
-
-        if (delayMs <= 0) {
-            startResetWindow();
-            return;
-        }
-
         if (reconnectGraceTimer) {
             return;
         }
 
-        reconnectGraceTimer = setTimeout(() => {
-            reconnectGraceTimer = null;
+        const shouldStartReconnectGraceWindow =
+            startsLastViewerReconnectWindow || reconnectGraceWindowPhase === 'waiting' || hasSeenViewer;
+        if (shouldStartReconnectGraceWindow) {
+            clearReconnectGraceWindow();
+        }
 
-            if (!maintenanceStateInitialized || isMaintenanceActive()) {
+        publishStatus('reconnect_grace', 'waiting_for_viewer_reconnect');
+        startTransientStatusHeartbeat('reconnect_grace', 'waiting_for_viewer_reconnect');
+
+        const finishReconnectGrace = (): void => {
+            if (commercialReconnectGraceTeardownCommitted) {
+                if (currentDesiredState.shutdownRequested || getActiveShutdownCommand()) {
+                    void requestStop(resolveDesiredStateShutdownReason());
+                    return;
+                }
+
+                passiveReconnectRecycleRequested = true;
+                startResetWindow(true);
                 return;
             }
 
-            if (server.playerRegistry.count() > 0) {
-                runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+            if (!maintenanceStateInitialized || isMaintenanceActive()) {
+                clearReconnectGraceWindow();
+                return;
+            }
+
+            if (hasViewerThatCancelsReconnectGrace(managedSessionIdentity)) {
+                clearReconnectGraceWindow();
+                restoreRuntimeDerivedStatus({ preserveStatusAtUtc: true });
                 return;
             }
 
@@ -1264,7 +1635,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
             if (!shouldResetIntoWarmReady()) {
                 if (canHoldWarmReadyWithoutShutdown()) {
-                    runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+                    restoreRuntimeDerivedStatus({ preserveStatusAtUtc: true });
                     return;
                 }
 
@@ -1273,13 +1644,43 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
 
             startResetWindow();
+        };
+
+        if (delayMs <= 0) {
+            finishReconnectGrace();
+            return;
+        }
+
+        const scheduledAtMs = shouldStartReconnectGraceWindow ? Date.now() : null;
+        reconnectGraceTimer = setTimeout(() => {
+            reconnectGraceTimer = null;
+            if (shouldStartReconnectGraceWindow) {
+                if (hasViewerThatCancelsReconnectGrace(managedSessionIdentity)) {
+                    clearReconnectGraceWindow();
+                    restoreRuntimeDerivedStatus({ preserveStatusAtUtc: true });
+                    return;
+                }
+                continueAfterReconnectGraceEvidenceIsDurable(finishReconnectGrace);
+                return;
+            }
+            finishReconnectGrace();
         }, delayMs);
+        if (scheduledAtMs !== null) {
+            startReconnectGraceWindow(scheduledAtMs, delayMs, managedSessionIdentity);
+        }
 
         log(`[idle-stop] Viewer reconnect window active for ${delayMs} ms before warm recycle.`);
     };
 
-    const scheduleWarmHoldReconnectGrace = (delayMs: number): void => {
+    const scheduleWarmHoldReconnectGrace = (
+        delayMs: number,
+        startsLastViewerReconnectWindow: boolean = false,
+        managedSessionIdentity: ManagedSessionIdentity | null = null
+    ): void => {
         if (!maintenanceStateInitialized || isMaintenanceActive()) {
+            return;
+        }
+        if (reconnectGraceWindowPhase === 'persisting_elapsed') {
             return;
         }
 
@@ -1291,16 +1692,43 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         clearFirstViewerTimer();
         clearTransientStatusHeartbeat();
 
+        if (reconnectGraceTimer) {
+            return;
+        }
+
+        const shouldStartReconnectGraceWindow =
+            startsLastViewerReconnectWindow || reconnectGraceWindowPhase === 'waiting' || hasSeenViewer;
+        if (shouldStartReconnectGraceWindow) {
+            clearReconnectGraceWindow();
+        }
+
         publishStatus('reconnect_grace', 'waiting_for_viewer_reconnect');
         startTransientStatusHeartbeat('reconnect_grace', 'waiting_for_viewer_reconnect');
 
         const expireWarmHoldReconnectGrace = (): void => {
-            if (!maintenanceStateInitialized || isMaintenanceActive()) {
+            if (commercialReconnectGraceTeardownCommitted) {
+                if (getActiveShutdownCommand() || currentDesiredState.shutdownRequested) {
+                    void requestStop(resolveDesiredStateShutdownReason());
+                    return;
+                }
+
+                clearTransientStatusHeartbeat();
+                passiveReconnectRecycleRequested = true;
+                log(
+                    '[idle-stop] Reconnect grace elapsed for a validated commercial session. Recycling remains authoritative after durable evidence recording.'
+                );
+                startResetWindow(true);
                 return;
             }
 
-            if (server.playerRegistry.count() > 0) {
-                runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+            if (!maintenanceStateInitialized || isMaintenanceActive()) {
+                clearReconnectGraceWindow();
+                return;
+            }
+
+            if (hasViewerThatCancelsReconnectGrace(managedSessionIdentity)) {
+                clearReconnectGraceWindow();
+                restoreRuntimeDerivedStatus({ preserveStatusAtUtc: true });
                 return;
             }
 
@@ -1316,7 +1744,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
             if (shouldSuppressNoViewerIdleAutomation()) {
                 if (!hasSeenManagedSessionViewer) {
-                    runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+                    restoreRuntimeDerivedStatus({ preserveStatusAtUtc: true });
                     log(
                         '[idle-stop] Warm-held reconnect grace expired without managed session evidence. Restoring derived status without passive recycle.'
                     );
@@ -1325,7 +1753,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
                 clearTransientStatusHeartbeat();
                 passiveReconnectRecycleRequested = true;
-                markConnectTicketTeardownStarted('passive_reconnect_grace_recycle');
+                if (!markConnectTicketTeardownStarted('passive_reconnect_grace_recycle')) {
+                    publishStatus('resetting', 'teardown_cutoff_persistence_failed');
+                    startResetWindow(true);
+                    return;
+                }
                 log(
                     '[idle-stop] Reconnect grace expired without an explicit teardown command. Recycling warm instance for post-session cleanup.'
                 );
@@ -1341,14 +1773,23 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
-        if (reconnectGraceTimer) {
-            return;
-        }
-
+        const scheduledAtMs = shouldStartReconnectGraceWindow ? Date.now() : null;
         reconnectGraceTimer = setTimeout(() => {
             reconnectGraceTimer = null;
+            if (shouldStartReconnectGraceWindow) {
+                if (hasViewerThatCancelsReconnectGrace(managedSessionIdentity)) {
+                    clearReconnectGraceWindow();
+                    restoreRuntimeDerivedStatus({ preserveStatusAtUtc: true });
+                    return;
+                }
+                continueAfterReconnectGraceEvidenceIsDurable(expireWarmHoldReconnectGrace);
+                return;
+            }
             expireWarmHoldReconnectGrace();
         }, delayMs);
+        if (scheduledAtMs !== null) {
+            startReconnectGraceWindow(scheduledAtMs, delayMs, managedSessionIdentity);
+        }
 
         log(
             hasSeenManagedSessionViewer
@@ -1359,27 +1800,39 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
     const scheduleRetryIfStillIdle = (): void => {
         if (
-            stopRetryMs <= 0 ||
-            server.playerRegistry.count() > 0 ||
-            !maintenanceStateInitialized ||
-            isMaintenanceActive()
+            !commercialReconnectGraceTeardownCommitted &&
+            (stopRetryMs <= 0 ||
+                server.playerRegistry.count() > 0 ||
+                !maintenanceStateInitialized ||
+                isMaintenanceActive())
         ) {
             return;
         }
 
         publishStatus('idle_shutdown_pending', 'retry_after_stop_failure');
-        scheduleStop('retry-after-failure', stopRetryMs);
+        scheduleStop('retry-after-failure', stopRetryMs > 0 ? stopRetryMs : STACK_RECYCLE_RETRY_MS);
     };
 
     const restoreAfterReset = (): void => {
+        if (commercialReconnectGraceTeardownCommitted) {
+            resetInFlight = true;
+            publishStatus('resetting', 'commercial_recycle_retry_pending');
+            log(
+                '[idle-stop] CRITICAL: Suppressed logical warm restore after committed commercial teardown; the instance remains non-ready until recycle or stop succeeds.'
+            );
+            scheduleStackRecycleRetry('logical_restore_suppressed');
+            return;
+        }
+
         resetInFlight = false;
         recycleLaunchRequested = false;
         passiveReconnectRecycleRequested = false;
+        clearReconnectGraceWindow();
         clearRecycleExitFallbackTimer();
         clearReconnectGraceTimer();
         clearResetTimer();
         if (server.playerRegistry.count() > 0 || !maintenanceStateInitialized || isMaintenanceActive()) {
-            runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+            restoreRuntimeDerivedStatus({ preserveStatusAtUtc: true });
             return;
         }
 
@@ -1394,22 +1847,80 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
-        runtimeStatusController?.restoreDerivedStatus();
+        restoreRuntimeDerivedStatus();
     };
 
-    const requestStackRecycle = async (): Promise<void> => {
+    const clearStackRecycleRetryTimer = (): void => {
+        if (!recycleLaunchRetryTimer) {
+            return;
+        }
+
+        clearTimeout(recycleLaunchRetryTimer);
+        recycleLaunchRetryTimer = null;
+    };
+
+    const scheduleStackRecycleRetry = (reason: string): void => {
+        if (recycleLaunchRetryTimer) {
+            return;
+        }
+
+        publishStatus('resetting', 'recycle_launch_retry_pending');
+        log(
+            `[idle-stop] Full stack recycle remains pending after '${reason}'; retrying in ${STACK_RECYCLE_RETRY_MS} ms without restoring Ready.`
+        );
+        recycleLaunchRetryTimer = setTimeout(() => {
+            recycleLaunchRetryTimer = null;
+            void requestStackRecycle();
+        }, STACK_RECYCLE_RETRY_MS);
+    };
+
+    const handleStackRecycleLaunchFailure = (message: string): void => {
+        if (!commercialReconnectGraceTeardownCommitted) {
+            log(
+                `[idle-stop] Failed to request full stack recycle: ${message}. Falling back to logical warm restore.`
+            );
+            restoreAfterReset();
+            return;
+        }
+
+        resetInFlight = true;
+        passiveReconnectRecycleRequested = true;
+        recycleLaunchRetryAttempts += 1;
+        publishStatus('resetting', 'commercial_recycle_launch_failed');
+        if (recycleLaunchRetryAttempts >= COMMERCIAL_RECYCLE_LAUNCH_MAX_ATTEMPTS) {
+            clearStackRecycleRetryTimer();
+            log(
+                `[idle-stop] CRITICAL: Full stack recycle failed ${recycleLaunchRetryAttempts} time(s) after committed commercial teardown; escalating to instance stop without restoring Ready.`
+            );
+            void requestStop('commercial_recycle_launch_failed');
+            return;
+        }
+
+        log(
+            `[idle-stop] CRITICAL: Full stack recycle attempt ${recycleLaunchRetryAttempts} failed after committed commercial teardown: ${message}. The instance remains non-ready.`
+        );
+        scheduleStackRecycleRetry('commercial_recycle_launch_failed');
+    };
+
+    async function requestStackRecycle(): Promise<void> {
+        if (reconnectGraceWindowPhase === 'persisting_elapsed') {
+            return;
+        }
         if (recycleLaunchRequested) {
             return;
         }
 
-        if (!maintenanceStateInitialized || isMaintenanceActive() || server.playerRegistry.count() > 0) {
-            runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+        if (
+            !commercialReconnectGraceTeardownCommitted &&
+            (!maintenanceStateInitialized || isMaintenanceActive() || server.playerRegistry.count() > 0)
+        ) {
+            restoreRuntimeDerivedStatus({ preserveStatusAtUtc: true });
             return;
         }
 
         if (!shouldResetIntoWarmReady()) {
             if (canHoldWarmReadyWithoutShutdown()) {
-                runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+                restoreRuntimeDerivedStatus({ preserveStatusAtUtc: true });
                 return;
             }
 
@@ -1422,8 +1933,22 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
+        const commandToStart = getActiveRecycleCommand();
+        if (!commercialReconnectGraceCutoffDurable) {
+            commercialReconnectGraceCutoffDurable = markConnectTicketTeardownStarted(
+                commandToStart ? 'stack_recycle_command_launch' : 'stack_recycle_launch',
+                commandToStart,
+                commandToStart?.requestedAtUtc ?? currentDesiredState.updatedAtUtc
+            );
+            if (!commercialReconnectGraceCutoffDurable) {
+                resetInFlight = true;
+                publishStatus('resetting', 'teardown_cutoff_persistence_failed');
+                scheduleStackRecycleRetry('teardown_cutoff_persistence_failed');
+                return;
+            }
+        }
+
         try {
-            const commandToStart = getActiveRecycleCommand();
             if (commandToStart && options.instanceAgentClient) {
                 try {
                     await options.instanceAgentClient.startCommand(commandToStart, {
@@ -1447,6 +1972,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             const recycleMarker = writeInstanceAgentRecycleMarkerSnapshot(
                 recycleMarkerPath,
                 {
+                    phase: 'intent',
                     requestedAtUtc: new Date().toISOString(),
                     reason: 'post_session_cleanup',
                     recycleId: randomUUID(),
@@ -1483,14 +2009,13 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 recycleLaunchRequested = false;
                 clearRecycleExitFallbackTimer();
                 clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
-                log(
-                    `[idle-stop] Recycle helper process failed to start: ${error.message}. Falling back to logical warm restore.`
-                );
-                restoreAfterReset();
+                handleStackRecycleLaunchFailure(`Recycle helper process failed to start: ${error.message}`);
             });
             recycleProcess.unref();
             pendingImmediateRecycleToken = null;
             recycleLaunchRequested = true;
+            recycleLaunchRetryAttempts = 0;
+            clearStackRecycleRetryTimer();
             clearRecycleExitFallbackTimer();
             recycleExitFallbackTimer = setTimeout(() => {
                 recycleExitFallbackTimer = null;
@@ -1530,16 +2055,24 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                         refreshActiveCommand();
                     });
             }
-            log(
-                `[idle-stop] Failed to request full stack recycle: ${message}. Falling back to logical warm restore.`
-            );
-            restoreAfterReset();
+            handleStackRecycleLaunchFailure(message);
         }
-    };
+    }
 
     const startResetWindow = (skipGrace: boolean = false): void => {
-        if (!maintenanceStateInitialized || isMaintenanceActive() || server.playerRegistry.count() > 0) {
+        if (reconnectGraceWindowPhase === 'persisting_elapsed') {
             return;
+        }
+        if (
+            !commercialReconnectGraceTeardownCommitted &&
+            (!maintenanceStateInitialized || isMaintenanceActive() || server.playerRegistry.count() > 0)
+        ) {
+            clearReconnectGraceWindow();
+            return;
+        }
+
+        if (reconnectGraceWindowPhase === 'waiting') {
+            clearReconnectGraceWindow();
         }
 
         clearReconnectGraceTimer();
@@ -1578,32 +2111,57 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         reason: string,
         artifactSessionRequestId?: string | null
     ): Promise<boolean> => {
+        if (reconnectGraceWindowPhase === 'persisting_elapsed') {
+            return false;
+        }
         if (stopInFlight) return false;
+        const shutdownCommand = getActiveShutdownCommand();
+        if (!commercialReconnectGraceCutoffDurable) {
+            commercialReconnectGraceCutoffDurable = markConnectTicketTeardownStarted(
+                shutdownCommand ? 'stack_shutdown_command_launch' : `stack_shutdown_${reason}`,
+                shutdownCommand,
+                shutdownCommand?.requestedAtUtc ?? currentDesiredState.updatedAtUtc
+            );
+            if (!commercialReconnectGraceCutoffDurable) {
+                publishStatus('idle_shutdown_pending', 'teardown_cutoff_persistence_failed');
+                scheduleStop(reason, STACK_RECYCLE_RETRY_MS);
+                return false;
+            }
+        }
         resetInFlight = false;
         recycleLaunchRequested = false;
         passiveReconnectRecycleRequested = false;
+        if (reconnectGraceWindowPhase === 'waiting') {
+            clearReconnectGraceWindow();
+        }
         clearRecycleExitFallbackTimer();
         clearTransientStatusHeartbeat();
         clearReconnectGraceTimer();
         clearResetTimer();
-        if (!maintenanceStateInitialized || isMaintenanceActive()) {
+        if (
+            !commercialReconnectGraceTeardownCommitted &&
+            (!maintenanceStateInitialized || isMaintenanceActive())
+        ) {
+            clearReconnectGraceWindow();
             return false;
         }
 
-        if (server.playerRegistry.count() > 0) {
+        if (!commercialReconnectGraceTeardownCommitted && server.playerRegistry.count() > 0) {
+            clearReconnectGraceWindow();
             log('[idle-stop] Stop request aborted because viewers are connected.');
-            runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+            restoreRuntimeDerivedStatus({ preserveStatusAtUtc: true });
             return false;
         }
 
-        if (shouldSuppressNoViewerIdleAutomation()) {
+        if (!commercialReconnectGraceTeardownCommitted && shouldSuppressNoViewerIdleAutomation()) {
+            clearReconnectGraceWindow();
             log(
                 `[idle-stop] Stop request '${reason}' ignored because the instance is warm-held without an explicit teardown command.`
             );
             if (hasSeenViewer) {
-                scheduleWarmHoldReconnectGrace(graceMs);
+                scheduleWarmHoldReconnectGrace(graceMs, true);
             } else {
-                runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+                restoreRuntimeDerivedStatus({ preserveStatusAtUtc: true });
             }
             return false;
         }
@@ -1715,8 +2273,65 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     };
 
     const onViewerAdded = (playerId?: string): void => {
+        if (isCommercialReconnectDeadlineLocked()) {
+            const latePlayer = playerId ? server.playerRegistry.get(playerId) : undefined;
+            log(
+                `[idle-stop] Rejecting viewer ${playerId ?? '(unknown)'} because the reconnect deadline has elapsed and commercial teardown is irrevocable.`
+            );
+            try {
+                latePlayer?.protocol.disconnect(4001, 'Connect ticket rejected: reconnect grace has elapsed');
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                log(`[idle-stop] Failed to disconnect late viewer ${playerId ?? '(unknown)'}: ${message}`);
+            }
+            return;
+        }
+
         hasSeenViewer = true;
-        markManagedSessionViewer(playerId);
+        const candidateManagedIdentity = readValidatedManagedSessionViewerIdentity(playerId);
+        const connectedManagedRequestId = managedSessionIdentitiesByPlayerId.values().next()
+            .value?.sessionRequestId;
+        const reconnectWindowManagedRequestId =
+            reconnectGraceWindowPhase === 'waiting'
+                ? reconnectGraceWindowState?.managedSessionIdentity?.sessionRequestId
+                : undefined;
+        const conflictingManagedRequestId = connectedManagedRequestId ?? reconnectWindowManagedRequestId;
+        if (
+            candidateManagedIdentity &&
+            conflictingManagedRequestId &&
+            candidateManagedIdentity.sessionRequestId.toLowerCase() !==
+                conflictingManagedRequestId.toLowerCase()
+        ) {
+            const conflictingPlayer = playerId ? server.playerRegistry.get(playerId) : undefined;
+            log(
+                `[idle-stop] CRITICAL: Rejecting managed viewer ${playerId ?? '(unknown)'} for session request ${candidateManagedIdentity.sessionRequestId}; this instance is already owned by managed request ${conflictingManagedRequestId}.`
+            );
+            try {
+                conflictingPlayer?.protocol.disconnect(
+                    4001,
+                    'Connect ticket rejected: instance is assigned to another managed session'
+                );
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                log(
+                    `[idle-stop] Failed to disconnect conflicting managed viewer ${playerId ?? '(unknown)'}: ${message}`
+                );
+            }
+            return;
+        }
+
+        const managedIdentity = markManagedSessionViewer(playerId);
+        if (
+            !managedIdentity &&
+            reconnectGraceWindowPhase === 'waiting' &&
+            reconnectGraceWindowState?.managedSessionIdentity
+        ) {
+            log(
+                `[idle-stop] Claimless viewer ${playerId ?? '(unknown)'} connected while managed request ${reconnectGraceWindowState.managedSessionIdentity.sessionRequestId} is in reconnect grace; commercial timing is unchanged.`
+            );
+            return;
+        }
+
         failSupersededActiveCommand('viewer_connected');
         resetInFlight = false;
         recycleLaunchRequested = false;
@@ -1727,27 +2342,42 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         clearTransientStatusHeartbeat();
         clearReconnectGraceTimer();
         clearResetTimer();
-        runtimeStatusController?.restoreDerivedStatus({ preserveStatusAtUtc: true });
+        clearReconnectGraceWindow();
+        restoreRuntimeDerivedStatus({ preserveStatusAtUtc: true });
         log(`[idle-stop] Viewer connected (count=${server.playerRegistry.count()}).`);
     };
 
     const onViewerRemoved = (removedPlayerId?: string): void => {
-        markManagedSessionViewer(removedPlayerId);
+        if (isCommercialReconnectDeadlineLocked()) {
+            log(
+                `[idle-stop] Viewer ${removedPlayerId ?? '(unknown)'} disconnected after the reconnect deadline; existing teardown remains authoritative.`
+            );
+            return;
+        }
+
+        const removedManagedSessionIdentity = markManagedSessionViewer(removedPlayerId, true);
+        const normalizedRemovedPlayerId = normalizeOptionalText(removedPlayerId);
+        if (normalizedRemovedPlayerId) {
+            managedSessionIdentitiesByPlayerId.delete(normalizedRemovedPlayerId);
+        }
         const rawCount = server.playerRegistry.count();
         const removedEntryStillPresent =
             typeof removedPlayerId === 'string' && removedPlayerId.length > 0
                 ? server.playerRegistry.has(removedPlayerId)
                 : false;
         const effectiveCount = Math.max(0, rawCount - (removedEntryStillPresent ? 1 : 0));
+        const remainingManagedViewerCount = removedManagedSessionIdentity
+            ? countManagedSessionViewers(removedManagedSessionIdentity.sessionRequestId)
+            : countManagedSessionViewers();
         log(
-            `[idle-stop] Viewer disconnected (count=${effectiveCount}, rawCount=${rawCount}, removedEntryStillPresent=${removedEntryStillPresent}).`
+            `[idle-stop] Viewer disconnected (count=${effectiveCount}, managedCount=${remainingManagedViewerCount}, rawCount=${rawCount}, removedEntryStillPresent=${removedEntryStillPresent}).`
         );
-        if (effectiveCount !== 0) {
+        if (removedManagedSessionIdentity && remainingManagedViewerCount > 0) {
             return;
         }
 
-        const handleZeroViewersAfterRemoval = (): void => {
-            if (server.playerRegistry.count() > 0) {
+        const handleZeroViewersAfterRemoval = (ignoreClaimlessViewers: boolean): void => {
+            if (!ignoreClaimlessViewers && server.playerRegistry.count() > 0) {
                 log(
                     '[idle-stop] Viewer disconnect handling skipped because viewers are connected after registry settled.'
                 );
@@ -1769,7 +2399,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     return;
                 }
 
-                scheduleResetAfterLastViewer(graceMs);
+                scheduleResetAfterLastViewer(graceMs, true, removedManagedSessionIdentity);
                 return;
             }
 
@@ -1786,19 +2416,38 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 options.instanceAgentClient?.requestFastPolling('viewer_disconnected_reconnect_grace', {
                     durationMs: Math.min(Math.max(graceMs, 20_000), DEFAULT_DISCONNECT_FAST_POLLING_WINDOW_MS)
                 });
-                scheduleWarmHoldReconnectGrace(graceMs);
+                scheduleWarmHoldReconnectGrace(graceMs, true, removedManagedSessionIdentity);
                 return;
             }
 
-            scheduleStop('grace-after-last-viewer', graceMs);
+            scheduleStop('grace-after-last-viewer', graceMs, true, removedManagedSessionIdentity);
         };
 
-        if (removedEntryStillPresent) {
-            setTimeout(handleZeroViewersAfterRemoval, 0);
+        if (removedManagedSessionIdentity) {
+            log(
+                `[idle-stop] Last validated managed viewer for session request ${removedManagedSessionIdentity.sessionRequestId} disconnected; starting its commercial reconnect grace independently of ${effectiveCount} claimless viewer(s).`
+            );
+            handleZeroViewersAfterRemoval(true);
             return;
         }
 
-        handleZeroViewersAfterRemoval();
+        if (reconnectGraceWindowPhase === 'waiting' && reconnectGraceWindowState?.managedSessionIdentity) {
+            log(
+                `[idle-stop] Claimless viewer ${removedPlayerId ?? '(unknown)'} disconnected during managed reconnect grace; commercial timing is unchanged.`
+            );
+            return;
+        }
+
+        if (effectiveCount !== 0) {
+            return;
+        }
+
+        if (removedEntryStillPresent) {
+            setTimeout(() => handleZeroViewersAfterRemoval(false), 0);
+            return;
+        }
+
+        handleZeroViewersAfterRemoval(false);
     };
 
     server.playerRegistry.on('added', onViewerAdded);
@@ -1806,6 +2455,28 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     log('[idle-stop] Wired to player registry events.');
 
     if (options.instanceAgentClient) {
+        options.instanceAgentClient.addReconnectGraceRecoveryListener(() => {
+            if (!options.instanceAgentClient?.isReconnectGraceRecoveryRecyclePending()) {
+                return;
+            }
+            if (commercialReconnectGraceTeardownCommitted) {
+                return;
+            }
+
+            commercialReconnectGraceTeardownCommitted = true;
+            commercialReconnectGraceCutoffDurable = false;
+            passiveReconnectRecycleRequested = true;
+            publishStatus('resetting', 'recovered_elapsed_evidence_cleanup');
+            log(
+                '[idle-stop] Recovered reconnect-grace elapsed evidence was acknowledged. Keeping managed admission closed and forcing stack cleanup before Ready can return.'
+            );
+            if (currentDesiredState.shutdownRequested || getActiveShutdownCommand()) {
+                void requestStop('recovered_elapsed_evidence_cleanup');
+                return;
+            }
+
+            startResetWindow(true);
+        });
         options.instanceAgentClient.addDesiredStateListener((nextDesiredState, context) => {
             applyDesiredStateSnapshot(nextDesiredState, `agent:${context.source}`);
         });
@@ -1866,10 +2537,18 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     return;
                 }
 
-                markConnectTicketTeardownStarted(
-                    isShutdownCommand(command) ? 'explicit_shutdown_command' : 'explicit_recycle_command',
-                    command
-                );
+                if (
+                    !markConnectTicketTeardownStarted(
+                        isShutdownCommand(command) ? 'explicit_shutdown_command' : 'explicit_recycle_command',
+                        command,
+                        command.requestedAtUtc
+                    )
+                ) {
+                    log(
+                        `[idle-stop] Command ${command.instanceCommandId} remains unacknowledged until its teardown cutoff can be persisted.`
+                    );
+                    return;
+                }
                 observedCommand = command;
                 try {
                     await options.instanceAgentClient?.acknowledgeCommand(command, {

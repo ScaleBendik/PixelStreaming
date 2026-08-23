@@ -11,6 +11,7 @@ import {
 } from './instance-agent-state';
 import {
     clearInstanceAgentRecycleMarkerSnapshot,
+    isInstanceAgentRecycleReplacementProof,
     readInstanceAgentRecycleMarkerSnapshot,
     resolveInstanceAgentRecycleMarkerPath,
     type InstanceAgentRecycleMarkerSnapshot
@@ -23,6 +24,15 @@ import {
     type InstanceAgentCommandExecutionStatus,
     type InstanceAgentCommandJournalSnapshot
 } from './instance-agent-command-state';
+import {
+    appendInstanceAgentReconnectGraceElapsedEvidence,
+    inspectInstanceAgentReconnectGraceElapsedEvidenceJournal,
+    removeAcknowledgedInstanceAgentReconnectGraceElapsedEvidence,
+    resolveInstanceAgentReconnectGraceElapsedEvidenceJournalPath,
+    rotateInstanceAgentReconnectGraceElapsedEvidenceAfterAttempt,
+    type InstanceAgentReconnectGraceElapsedEvidence
+} from './instance-agent-reconnect-grace-evidence-state';
+import type { ConnectTicketRuntimeGate } from './connect-ticket-runtime-state';
 import {
     createSessionLogArtifactManager,
     type SessionLogArtifactManager,
@@ -41,6 +51,8 @@ const IMDS_DYNAMIC_BASE_URL = 'http://169.254.169.254/latest/dynamic/instance-id
 const DEFAULT_HEARTBEAT_MS = 10_000;
 const DEFAULT_FAST_POLLING_INTERVAL_MS = 2_000;
 const DEFAULT_FAST_POLLING_WINDOW_MS = 20_000;
+const RECONNECT_GRACE_EVIDENCE_NO_ACK_LOG_INTERVAL = 30;
+const RECONNECT_GRACE_EVIDENCE_JOURNAL_FAILURE_LOG_INTERVAL = 30;
 const DEFAULT_DESIRED_STATE_PATH = path.resolve(
     __dirname,
     '..',
@@ -55,6 +67,7 @@ interface InstanceAgentBootstrapResponse {
     heartbeatIntervalSeconds: number;
     desiredState: Partial<InstanceAgentDesiredStateSnapshot>;
     commands?: InstanceAgentCommandResponse[];
+    acknowledgedReconnectGraceElapsedEvidenceId?: string | null;
 }
 
 interface InstanceAgentHeartbeatResponse {
@@ -62,6 +75,7 @@ interface InstanceAgentHeartbeatResponse {
     heartbeatIntervalSeconds: number;
     desiredState: Partial<InstanceAgentDesiredStateSnapshot>;
     commands?: InstanceAgentCommandResponse[];
+    acknowledgedReconnectGraceElapsedEvidenceId?: string | null;
 }
 
 interface InstanceAgentEventBatchResponse {
@@ -112,6 +126,8 @@ interface PendingInstanceAgentEvent {
 interface ScaleWorldSessionPlayer {
     scaleWorldSessionId?: string | null;
     scaleWorldSessionRequestId?: string | null;
+    scaleWorldSessionIdentityValidated?: boolean;
+    scaleWorldActiveSessionIdValidated?: boolean;
 }
 
 interface PlayerSessionContext {
@@ -123,6 +139,11 @@ interface InstanceAgentRuntimeSnapshot {
     status?: string;
     reason?: string;
     version?: string;
+}
+
+export interface InstanceAgentReconnectGraceWindow {
+    lastViewerDisconnectedAtUtc: string;
+    reconnectGraceExpiresAtUtc: string;
 }
 
 interface RuntimeIdentityMetadataOptions {
@@ -170,13 +191,19 @@ export type InstanceAgentCommandListener = (
     context: InstanceAgentCommandListenerContext
 ) => void;
 
+export type InstanceAgentReconnectGraceRecoveryListener = () => void;
+
 export interface InstanceAgentClient {
     recordRuntimeStatus(update: RuntimeStatusUpdate): void;
     recordSessionNetworkPath(update: SessionNetworkPathReport): void;
+    setReconnectGraceWindow(window: InstanceAgentReconnectGraceWindow | null): void;
+    recordReconnectGraceElapsedEvidence(evidence: InstanceAgentReconnectGraceElapsedEvidence): boolean;
     getDesiredState(): InstanceAgentDesiredStateSnapshot;
     getActiveCommand(): InstanceAgentCommandJournalSnapshot | null;
     addDesiredStateListener(listener: InstanceAgentDesiredStateListener): () => void;
     addCommandListener(listener: InstanceAgentCommandListener): () => void;
+    isReconnectGraceRecoveryRecyclePending(): boolean;
+    addReconnectGraceRecoveryListener(listener: InstanceAgentReconnectGraceRecoveryListener): () => void;
     acknowledgeCommand(
         command: InstanceAgentCommand,
         options?: { occurredAtUtc?: string }
@@ -245,6 +272,16 @@ export interface InstanceAgentClientOptions {
     runtimeVersion?: string;
     heartbeatMs?: number;
     desiredStatePath?: string;
+    connectTicketRuntimeGate?: Pick<
+        ConnectTicketRuntimeGate,
+        | 'getReconnectGraceEvidenceJournalBlockReason'
+        | 'setReconnectGraceEvidenceJournalBlock'
+        | 'markTeardownStarted'
+        | 'isCommercialRecoveryRequired'
+        | 'prepareCommercialRecoveryAfterReset'
+        | 'completeCommercialRecoveryAfterReset'
+        | 'getCommercialRecoveryReadyNotBeforeEpochSeconds'
+    >;
     sessionLogArtifacts?: SessionLogArtifactRuntimeOptions;
     sessionScreenshotArtifacts?: SessionScreenshotArtifactRuntimeOptions;
     logger?: (message: string) => void;
@@ -721,14 +758,31 @@ export function wireInstanceAgent(
         DEFAULT_DESIRED_STATE_PATH;
     const recycleMarkerPath = resolveInstanceAgentRecycleMarkerPath(desiredStatePath);
     const commandJournalPath = resolveInstanceAgentCommandJournalPath(desiredStatePath);
+    const reconnectGraceElapsedEvidenceJournalPath =
+        resolveInstanceAgentReconnectGraceElapsedEvidenceJournalPath(desiredStatePath);
     const explicitHeartbeatMs = parseNonNegativeInteger(
         options.heartbeatMs ?? process.env.INSTANCE_AGENT_HEARTBEAT_MS,
         0
     );
 
     let currentDesiredState = readInstanceAgentDesiredStateSnapshot(desiredStatePath, log);
+    const recoveredRecycleMarker = readInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
     let pendingRecycleCompletion: InstanceAgentRecycleMarkerSnapshot | null =
-        readInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
+        isInstanceAgentRecycleReplacementProof(recoveredRecycleMarker) ? recoveredRecycleMarker : null;
+    if (
+        recoveredRecycleMarker &&
+        options.connectTicketRuntimeGate &&
+        !options.connectTicketRuntimeGate.isCommercialRecoveryRequired() &&
+        !options.connectTicketRuntimeGate.markTeardownStarted({
+            reason: 'recovered_recycle_marker',
+            occurredAtUtc:
+                recoveredRecycleMarker.replacementStartedAtUtc ?? recoveredRecycleMarker.requestedAtUtc
+        })
+    ) {
+        throw new Error(
+            'A durable recycle marker exists, but its connect-ticket recovery latch could not be restored.'
+        );
+    }
     let activeCommand = readInstanceAgentCommandJournalSnapshot(commandJournalPath, log);
     let recoveredActiveCommandId = activeCommand?.instanceCommandId ?? null;
     let bootstrapIdentityPromise: Promise<BootstrapIdentity> | null = null;
@@ -742,6 +796,28 @@ export function wireInstanceAgent(
     let fastPollingRestoreTimer: NodeJS.Timeout | null = null;
     let token: string | null = null;
     let runtimeSnapshot: InstanceAgentRuntimeSnapshot = {};
+    let reconnectGraceWindow: InstanceAgentReconnectGraceWindow | null = null;
+    const initialReconnectGraceEvidenceJournalRead = inspectInstanceAgentReconnectGraceElapsedEvidenceJournal(
+        reconnectGraceElapsedEvidenceJournalPath,
+        log
+    );
+    const hadReconnectGraceEvidenceJournalPreflightBlock = Boolean(
+        options.connectTicketRuntimeGate?.getReconnectGraceEvidenceJournalBlockReason()
+    );
+    let reconnectGraceElapsedEvidenceJournalBlocked =
+        initialReconnectGraceEvidenceJournalRead.status === 'invalid' ||
+        (initialReconnectGraceEvidenceJournalRead.status === 'missing' &&
+            hadReconnectGraceEvidenceJournalPreflightBlock);
+    let reconnectGraceElapsedEvidenceJournalFailureAttempts = 0;
+    let reconnectGraceElapsedEvidences =
+        initialReconnectGraceEvidenceJournalRead.status === 'valid'
+            ? initialReconnectGraceEvidenceJournalRead.evidences
+            : [];
+    let reconnectGraceRecoveryRecycleRequired =
+        reconnectGraceElapsedEvidences.length > 0 ||
+        recoveredRecycleMarker !== null ||
+        options.connectTicketRuntimeGate?.isCommercialRecoveryRequired() === true;
+    let reconnectGraceEvidenceCutoffDurableThroughMs = 0;
     let pendingEvents: PendingInstanceAgentEvent[] = [];
     let resetInProgress = false;
     let artifactManager: SessionLogArtifactManager | null = null;
@@ -749,18 +825,48 @@ export function wireInstanceAgent(
     let lastPlayerSessionContext: PlayerSessionContext = {};
     let lastShutdownCommandSessionRequestId: string | undefined;
     const playerSessionContexts = new Map<string, PlayerSessionContext>();
+    const reconnectGraceElapsedEvidenceNoAckAttempts = new Map<string, number>();
     const desiredStateListeners = new Set<InstanceAgentDesiredStateListener>();
     const commandListeners = new Set<InstanceAgentCommandListener>();
+    const reconnectGraceRecoveryListeners = new Set<InstanceAgentReconnectGraceRecoveryListener>();
+
+    const reconnectGraceEvidenceJournalBlockReason =
+        'Commercial session admission is unavailable because local reconnect-grace billing evidence requires operator recovery.';
+    const updateReconnectGraceEvidenceAdmissionBlock = (): void => {
+        options.connectTicketRuntimeGate?.setReconnectGraceEvidenceJournalBlock(
+            reconnectGraceElapsedEvidenceJournalBlocked || reconnectGraceRecoveryRecycleRequired
+                ? reconnectGraceEvidenceJournalBlockReason
+                : null
+        );
+    };
+    if (initialReconnectGraceEvidenceJournalRead.status === 'invalid') {
+        options.connectTicketRuntimeGate?.setReconnectGraceEvidenceJournalBlock(
+            reconnectGraceEvidenceJournalBlockReason
+        );
+    } else if (initialReconnectGraceEvidenceJournalRead.status === 'valid') {
+        reconnectGraceElapsedEvidenceJournalBlocked = false;
+    }
+    updateReconnectGraceEvidenceAdmissionBlock();
 
     if (pendingRecycleCompletion) {
         log(
-            `[instance-agent] Pending recycle marker detected (${pendingRecycleCompletion.recycleId ?? 'unknown'}). Waiting for ready state before emitting reset completion.`
+            `[instance-agent] Replacement-started recycle proof detected (${pendingRecycleCompletion.recycleId}). Waiting for the replacement runtime Ready state before emitting reset completion.`
+        );
+    } else if (recoveredRecycleMarker) {
+        log(
+            `[instance-agent] Recovered pre-launch recycle intent (${recoveredRecycleMarker.recycleId}). Keeping admission blocked and requesting a fresh recycle launch; intent alone is not replacement proof.`
         );
     }
 
     if (activeCommand) {
         log(
             `[instance-agent] Recovered active command ${activeCommand.instanceCommandId} (${activeCommand.commandType}, status=${activeCommand.status}, attempt=${activeCommand.attemptNumber}).`
+        );
+    }
+
+    if (reconnectGraceElapsedEvidences.length > 0) {
+        log(
+            `[instance-agent] Recovered ${reconnectGraceElapsedEvidences.length} unacknowledged reconnect-grace elapsed evidence record(s).`
         );
     }
 
@@ -784,9 +890,16 @@ export function wireInstanceAgent(
         }
 
         const player = server.playerRegistry.get(normalizedPlayerId) as ScaleWorldSessionPlayer | undefined;
+        const sessionRequestIdValidated = player?.scaleWorldSessionIdentityValidated === true;
+        const activeSessionIdValidated = player?.scaleWorldActiveSessionIdValidated === true;
         return {
-            sessionId: normalizeOptionalText(player?.scaleWorldSessionId),
-            sessionRequestId: normalizeOptionalText(player?.scaleWorldSessionRequestId)
+            sessionId:
+                sessionRequestIdValidated && activeSessionIdValidated
+                    ? normalizeOptionalText(player?.scaleWorldSessionId)
+                    : undefined,
+            sessionRequestId: sessionRequestIdValidated
+                ? normalizeOptionalText(player?.scaleWorldSessionRequestId)
+                : undefined
         };
     };
 
@@ -1065,6 +1178,200 @@ export function wireInstanceAgent(
         }
 
         void runTick();
+    };
+
+    const notifyReconnectGraceRecoveryReady = (): void => {
+        if (
+            !reconnectGraceRecoveryRecycleRequired ||
+            reconnectGraceElapsedEvidences.length > 0 ||
+            pendingRecycleCompletion
+        ) {
+            return;
+        }
+
+        for (const listener of reconnectGraceRecoveryListeners) {
+            try {
+                listener();
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                log(`[instance-agent] Reconnect-grace recovery listener failed: ${message}`);
+            }
+        }
+    };
+
+    const ensureReconnectGraceEvidenceCutoffDurable = (): boolean => {
+        if (reconnectGraceElapsedEvidences.length === 0) {
+            return true;
+        }
+
+        const latestExpiryMs = Math.max(
+            ...reconnectGraceElapsedEvidences.map((evidence) =>
+                Date.parse(evidence.reconnectGraceExpiresAtUtc)
+            )
+        );
+        if (reconnectGraceEvidenceCutoffDurableThroughMs >= latestExpiryMs) {
+            return true;
+        }
+
+        const persisted =
+            options.connectTicketRuntimeGate?.markTeardownStarted({
+                reason: 'reconnect_grace_elapsed_evidence_pending',
+                occurredAtUtc: new Date(latestExpiryMs).toISOString()
+            }) === true;
+        if (!persisted) {
+            log(
+                '[instance-agent] CRITICAL: Pending reconnect-grace evidence cannot be replayed because its teardown cutoff/recovery latch is not durable.'
+            );
+            return false;
+        }
+
+        reconnectGraceRecoveryRecycleRequired = true;
+        reconnectGraceEvidenceCutoffDurableThroughMs = latestExpiryMs;
+        updateReconnectGraceEvidenceAdmissionBlock();
+        return true;
+    };
+
+    const refreshReconnectGraceElapsedEvidenceJournalHealth = (): boolean => {
+        const result = inspectInstanceAgentReconnectGraceElapsedEvidenceJournal(
+            reconnectGraceElapsedEvidenceJournalPath,
+            () => undefined
+        );
+        const journalWasExpected =
+            reconnectGraceElapsedEvidenceJournalBlocked || reconnectGraceElapsedEvidences.length > 0;
+        if (result.status === 'invalid' || (result.status === 'missing' && journalWasExpected)) {
+            reconnectGraceElapsedEvidenceJournalBlocked = true;
+            reconnectGraceElapsedEvidenceJournalFailureAttempts += 1;
+            updateReconnectGraceEvidenceAdmissionBlock();
+            if (
+                reconnectGraceElapsedEvidenceJournalFailureAttempts === 1 ||
+                reconnectGraceElapsedEvidenceJournalFailureAttempts %
+                    RECONNECT_GRACE_EVIDENCE_JOURNAL_FAILURE_LOG_INTERVAL ===
+                    0
+            ) {
+                const detail =
+                    result.status === 'invalid'
+                        ? result.error
+                        : 'The journal disappeared after evidence or an invalid state had already been observed.';
+                log(
+                    `[instance-agent] CRITICAL: Reconnect-grace elapsed-evidence journal recovery is blocked (attempt=${reconnectGraceElapsedEvidenceJournalFailureAttempts}): ${detail} The file will not be overwritten or treated as empty; bootstrap, readiness, and managed admission remain blocked until a valid journal is restored.`
+                );
+            }
+            return false;
+        }
+
+        if (result.status === 'valid') {
+            reconnectGraceElapsedEvidences = result.evidences;
+            if (reconnectGraceElapsedEvidenceJournalBlocked) {
+                log(
+                    `[instance-agent] Reconnect-grace elapsed-evidence journal recovered with ${result.evidences.length} pending record(s); bootstrap may resume${reconnectGraceRecoveryRecycleRequired ? ', while managed admission stays blocked through recovery recycle' : ''}.`
+                );
+            }
+            reconnectGraceElapsedEvidenceJournalBlocked = false;
+            reconnectGraceElapsedEvidenceJournalFailureAttempts = 0;
+            updateReconnectGraceEvidenceAdmissionBlock();
+        }
+
+        return true;
+    };
+
+    const handleReconnectGraceElapsedEvidenceResponse = (
+        submittedEvidence: InstanceAgentReconnectGraceElapsedEvidence | null,
+        acknowledgedEvidenceId?: string | null
+    ): void => {
+        const normalizedAcknowledgedEvidenceId = normalizeOptionalText(acknowledgedEvidenceId);
+        if (!submittedEvidence) {
+            if (normalizedAcknowledgedEvidenceId) {
+                log(
+                    `[instance-agent] Ignoring unexpected reconnect-grace elapsed evidence acknowledgement '${normalizedAcknowledgedEvidenceId}' because no evidence was submitted.`
+                );
+            }
+            return;
+        }
+
+        if (
+            normalizedAcknowledgedEvidenceId &&
+            normalizedAcknowledgedEvidenceId !== submittedEvidence.evidenceId
+        ) {
+            log(
+                `[instance-agent] Ignoring reconnect-grace elapsed evidence acknowledgement '${normalizedAcknowledgedEvidenceId}' because it does not exactly match submitted evidence '${submittedEvidence.evidenceId}'.`
+            );
+        }
+
+        if (normalizedAcknowledgedEvidenceId === submittedEvidence.evidenceId) {
+            const acknowledgementCutoffUtc = new Date().toISOString();
+            const acknowledgementCutoffPersisted =
+                options.connectTicketRuntimeGate?.markTeardownStarted({
+                    reason: 'reconnect_grace_elapsed_evidence_acknowledged',
+                    occurredAtUtc: acknowledgementCutoffUtc
+                }) === true;
+            if (!acknowledgementCutoffPersisted) {
+                log(
+                    `[instance-agent] CRITICAL: Evidence '${submittedEvidence.evidenceId}' was acknowledged, but the acknowledgement-time ticket cutoff/recovery latch could not be persisted. The journal record will be retained and replayed.`
+                );
+                return;
+            }
+
+            reconnectGraceRecoveryRecycleRequired = true;
+            reconnectGraceEvidenceCutoffDurableThroughMs = Math.max(
+                reconnectGraceEvidenceCutoffDurableThroughMs,
+                Date.parse(acknowledgementCutoffUtc)
+            );
+            updateReconnectGraceEvidenceAdmissionBlock();
+            const remaining = removeAcknowledgedInstanceAgentReconnectGraceElapsedEvidence(
+                reconnectGraceElapsedEvidenceJournalPath,
+                submittedEvidence.evidenceId,
+                log
+            );
+            if (
+                !remaining ||
+                remaining.some((candidate) => candidate.evidenceId === submittedEvidence.evidenceId)
+            ) {
+                log(
+                    `[instance-agent] Could not durably remove acknowledged reconnect-grace elapsed evidence '${submittedEvidence.evidenceId}'; it will be retried.`
+                );
+                refreshReconnectGraceElapsedEvidenceJournalHealth();
+                return;
+            }
+
+            reconnectGraceElapsedEvidences = remaining;
+            reconnectGraceElapsedEvidenceNoAckAttempts.delete(submittedEvidence.evidenceId);
+            log(
+                `[instance-agent] Removed acknowledged reconnect-grace elapsed evidence '${submittedEvidence.evidenceId}' from the durable journal.`
+            );
+            if (remaining.length > 0) {
+                requestFastPolling('reconnect_grace_elapsed_evidence_pending');
+            } else {
+                notifyReconnectGraceRecoveryReady();
+            }
+            return;
+        }
+
+        const noAckAttempt =
+            (reconnectGraceElapsedEvidenceNoAckAttempts.get(submittedEvidence.evidenceId) ?? 0) + 1;
+        reconnectGraceElapsedEvidenceNoAckAttempts.set(submittedEvidence.evidenceId, noAckAttempt);
+        if (noAckAttempt === 1 || noAckAttempt % RECONNECT_GRACE_EVIDENCE_NO_ACK_LOG_INTERVAL === 0) {
+            log(
+                `[instance-agent] Reconnect-grace elapsed evidence '${submittedEvidence.evidenceId}' was not acknowledged (attempt=${noAckAttempt}); retaining it and advancing the durable retry cursor.`
+            );
+        }
+
+        const rotated = rotateInstanceAgentReconnectGraceElapsedEvidenceAfterAttempt(
+            reconnectGraceElapsedEvidenceJournalPath,
+            submittedEvidence.evidenceId,
+            log
+        );
+        if (!rotated) {
+            log(
+                `[instance-agent] Could not durably advance the reconnect-grace elapsed evidence retry cursor after '${submittedEvidence.evidenceId}'.`
+            );
+            refreshReconnectGraceElapsedEvidenceJournalHealth();
+            return;
+        }
+
+        reconnectGraceElapsedEvidences = rotated;
+        if (rotated.length > 1) {
+            requestFastPolling('reconnect_grace_elapsed_evidence_round_robin');
+        }
     };
 
     const resolveBootstrapIdentity = async (): Promise<BootstrapIdentity> => {
@@ -1350,12 +1657,12 @@ export function wireInstanceAgent(
     });
     artifactManager?.cleanStartupLogs({
         preserveRecycleLogs:
-            pendingRecycleCompletion !== null ||
+            recoveredRecycleMarker !== null ||
             (activeCommand !== null && isRecycleToWarmCommand(activeCommand))
     });
     artifactManager?.cleanStartupQueue({
         preserveQueue:
-            pendingRecycleCompletion !== null ||
+            recoveredRecycleMarker !== null ||
             (activeCommand !== null && isRecycleToWarmCommand(activeCommand))
     });
     screenshotArtifactManager = createSessionScreenshotArtifactManager({
@@ -1371,12 +1678,12 @@ export function wireInstanceAgent(
     });
     screenshotArtifactManager?.cleanStartupScreenshots({
         preserveActiveSession:
-            pendingRecycleCompletion !== null ||
+            recoveredRecycleMarker !== null ||
             (activeCommand !== null && isRecycleToWarmCommand(activeCommand))
     });
     screenshotArtifactManager?.cleanStartupQueue({
         preserveActiveSession:
-            pendingRecycleCompletion !== null ||
+            recoveredRecycleMarker !== null ||
             (activeCommand !== null && isRecycleToWarmCommand(activeCommand))
     });
 
@@ -1563,6 +1870,8 @@ export function wireInstanceAgent(
 
         bootstrapPromise = (async () => {
             const identity = await resolveBootstrapIdentity();
+            const sentAtUtc = new Date().toISOString();
+            const submittedReconnectGraceElapsedEvidence = reconnectGraceElapsedEvidences[0] ?? null;
             const response = await fetch(new URL('/agent/bootstrap', apiBaseUrl).toString(), {
                 method: 'POST',
                 headers: {
@@ -1579,8 +1888,14 @@ export function wireInstanceAgent(
                     currentRuntimeStatus: runtimeSnapshot.status,
                     currentRuntimeReason: runtimeSnapshot.reason,
                     viewerCount: server.playerRegistry.count(),
-                    runtimeReady: runtimeSnapshot.status === 'ready',
-                    streamerHealthy: runtimeSnapshot.status === 'ready',
+                    lastViewerDisconnectedAtUtc: reconnectGraceWindow?.lastViewerDisconnectedAtUtc ?? null,
+                    reconnectGraceExpiresAtUtc: reconnectGraceWindow?.reconnectGraceExpiresAtUtc ?? null,
+                    reconnectGraceElapsedEvidence: submittedReconnectGraceElapsedEvidence,
+                    runtimeReady:
+                        runtimeSnapshot.status === 'ready' && !reconnectGraceRecoveryRecycleRequired,
+                    streamerHealthy:
+                        runtimeSnapshot.status === 'ready' && !reconnectGraceRecoveryRecycleRequired,
+                    sentAtUtc,
                     instanceIdentityDocumentJson: identity.identityDocumentJson,
                     instanceIdentitySignature: identity.identitySignature,
                     bootstrapSharedSecret
@@ -1593,6 +1908,10 @@ export function wireInstanceAgent(
 
             const payload = await parseJsonResponse<InstanceAgentBootstrapResponse>(response);
             token = payload.agentToken;
+            handleReconnectGraceElapsedEvidenceResponse(
+                submittedReconnectGraceElapsedEvidence,
+                payload.acknowledgedReconnectGraceElapsedEvidenceId
+            );
             applyCommands(payload.commands, 'bootstrap');
             applyDesiredState(payload.desiredState, 'bootstrap');
             if (explicitHeartbeatMs <= 0 && payload.heartbeatIntervalSeconds > 0) {
@@ -1616,6 +1935,8 @@ export function wireInstanceAgent(
 
     const sendHeartbeat = async (): Promise<void> => {
         const identity = await resolveBootstrapIdentity();
+        const sentAtUtc = new Date().toISOString();
+        const submittedReconnectGraceElapsedEvidence = reconnectGraceElapsedEvidences[0] ?? null;
         const response = await authorizedFetch('/agent/heartbeat', 'POST', {
             instanceId: identity.instanceId,
             region: identity.region,
@@ -1624,14 +1945,22 @@ export function wireInstanceAgent(
             currentRuntimeStatus: runtimeSnapshot.status,
             currentRuntimeReason: runtimeSnapshot.reason,
             viewerCount: server.playerRegistry.count(),
-            runtimeReady: runtimeSnapshot.status === 'ready',
-            streamerHealthy: runtimeSnapshot.status === 'ready'
+            lastViewerDisconnectedAtUtc: reconnectGraceWindow?.lastViewerDisconnectedAtUtc ?? null,
+            reconnectGraceExpiresAtUtc: reconnectGraceWindow?.reconnectGraceExpiresAtUtc ?? null,
+            reconnectGraceElapsedEvidence: submittedReconnectGraceElapsedEvidence,
+            runtimeReady: runtimeSnapshot.status === 'ready' && !reconnectGraceRecoveryRecycleRequired,
+            streamerHealthy: runtimeSnapshot.status === 'ready' && !reconnectGraceRecoveryRecycleRequired,
+            sentAtUtc
         });
         if (!response.ok) {
             throw new Error(await describeErrorResponse(response, 'Heartbeat'));
         }
 
         const payload = await parseJsonResponse<InstanceAgentHeartbeatResponse>(response);
+        handleReconnectGraceElapsedEvidenceResponse(
+            submittedReconnectGraceElapsedEvidence,
+            payload.acknowledgedReconnectGraceElapsedEvidenceId
+        );
         applyCommands(payload.commands, 'heartbeat');
         applyDesiredState(payload.desiredState, 'heartbeat');
         if (explicitHeartbeatMs <= 0 && payload.heartbeatIntervalSeconds > 0) {
@@ -1730,6 +2059,12 @@ export function wireInstanceAgent(
 
         tickInFlight = true;
         try {
+            if (!refreshReconnectGraceElapsedEvidenceJournalHealth()) {
+                return;
+            }
+            if (!ensureReconnectGraceEvidenceCutoffDurable()) {
+                return;
+            }
             await ensureBootstrap();
             await artifactManager?.drainQueue();
             await screenshotArtifactManager?.drainQueue();
@@ -1810,7 +2145,11 @@ export function wireInstanceAgent(
     });
 
     scheduleHeartbeat(heartbeatMs);
-    void runTick();
+    if (reconnectGraceElapsedEvidences.length > 0) {
+        requestFastPolling('recovered_reconnect_grace_elapsed_evidence');
+    } else {
+        void runTick();
+    }
 
     return {
         recordRuntimeStatus(update: RuntimeStatusUpdate) {
@@ -1824,11 +2163,82 @@ export function wireInstanceAgent(
                 version: normalizeOptionalText(update.version) ?? runtimeSnapshot.version
             };
 
-            if (update.heartbeatOnly === true) {
+            let completedCommercialRecoveryThisUpdate = false;
+            if (
+                nextStatus === 'ready' &&
+                pendingRecycleCompletion &&
+                options.connectTicketRuntimeGate?.isCommercialRecoveryRequired() === true
+            ) {
+                const expectedRecycleId = pendingRecycleCompletion.recycleId;
+                let durableReplacementProof: InstanceAgentRecycleMarkerSnapshot | null = null;
+                try {
+                    const currentMarker = readInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
+                    if (
+                        isInstanceAgentRecycleReplacementProof(currentMarker) &&
+                        currentMarker.recycleId === expectedRecycleId
+                    ) {
+                        durableReplacementProof = currentMarker;
+                    }
+                } catch {
+                    // The marker reader already logged the invalid/unreadable state.
+                }
+                if (!durableReplacementProof) {
+                    log(
+                        `[instance-agent] CRITICAL: Runtime reached Ready, but durable replacement-started proof for recycle ${expectedRecycleId} is missing or changed. Keeping readiness and admission blocked.`
+                    );
+                    return;
+                }
+                pendingRecycleCompletion = durableReplacementProof;
+
+                const readyNotBeforeEpochSeconds =
+                    options.connectTicketRuntimeGate.prepareCommercialRecoveryAfterReset();
+                if (readyNotBeforeEpochSeconds === null) {
+                    log(
+                        '[instance-agent] CRITICAL: Runtime reached Ready after recycle, but the recovery-ready ticket cutoff could not be durably prepared. Keeping the recycle marker, readiness, and admission blocked.'
+                    );
+                    return;
+                }
+                if (Math.floor(Date.now() / 1000) <= readyNotBeforeEpochSeconds) {
+                    log(
+                        `[instance-agent] Runtime reached Ready after recycle, but commercial admission remains blocked through ${new Date(readyNotBeforeEpochSeconds * 1000).toISOString()} so cleanup-era tickets cannot survive the reset.`
+                    );
+                    return;
+                }
+                if (!options.connectTicketRuntimeGate.completeCommercialRecoveryAfterReset()) {
+                    log(
+                        '[instance-agent] CRITICAL: Runtime reached Ready after recycle, but commercial recovery completion was not durable. Keeping the recycle marker, readiness, and admission blocked.'
+                    );
+                    return;
+                }
+
+                reconnectGraceRecoveryRecycleRequired = false;
+                completedCommercialRecoveryThisUpdate = true;
+                updateReconnectGraceEvidenceAdmissionBlock();
+                log(
+                    '[instance-agent] Commercial recovery completion is durable after reset reached Ready; admission may reopen after recycle finalization.'
+                );
+            }
+
+            if (update.heartbeatOnly === true && !completedCommercialRecoveryThisUpdate) {
                 return;
             }
 
-            if (previousStatus === nextStatus && previousReason === nextReason) {
+            if (
+                previousStatus === nextStatus &&
+                previousReason === nextReason &&
+                !completedCommercialRecoveryThisUpdate
+            ) {
+                return;
+            }
+
+            if (
+                nextStatus === 'ready' &&
+                (resetInProgress || pendingRecycleCompletion) &&
+                options.connectTicketRuntimeGate?.isCommercialRecoveryRequired() === true
+            ) {
+                log(
+                    '[instance-agent] CRITICAL: Suppressing reset_completed because commercial recovery is still durable-blocked; pre-launch intent or an unproven replacement Ready cannot release ownership.'
+                );
                 return;
             }
 
@@ -1849,10 +2259,15 @@ export function wireInstanceAgent(
                 resetInProgress = false;
                 pendingRecycleCompletion = null;
                 if (recycleMarker) {
-                    clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
-                    log(
-                        `[instance-agent] Recycle marker ${recycleMarker.recycleId ?? 'unknown'} completed after runtime became ready. Clearing marker and emitting reset_completed.`
-                    );
+                    if (clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log)) {
+                        log(
+                            `[instance-agent] Recycle marker ${recycleMarker.recycleId} completed after the replacement runtime became ready. Clearing marker and emitting reset_completed.`
+                        );
+                    } else {
+                        log(
+                            `[instance-agent] CRITICAL: Replacement recycle ${recycleMarker.recycleId} completed, but its durable marker could not be cleared. The completed replacement remains authoritative; a later restart will recover the marker fail-closed.`
+                        );
+                    }
                 } else {
                     log(
                         '[instance-agent] Reset completed after runtime became ready. Emitting reset_completed.'
@@ -2012,6 +2427,52 @@ export function wireInstanceAgent(
                 update.sessionRequestId ?? update.sessionId
             );
         },
+        setReconnectGraceWindow(window: InstanceAgentReconnectGraceWindow | null) {
+            const nextWindow = window
+                ? {
+                      lastViewerDisconnectedAtUtc: window.lastViewerDisconnectedAtUtc,
+                      reconnectGraceExpiresAtUtc: window.reconnectGraceExpiresAtUtc
+                  }
+                : null;
+            if (
+                reconnectGraceWindow?.lastViewerDisconnectedAtUtc ===
+                    nextWindow?.lastViewerDisconnectedAtUtc &&
+                reconnectGraceWindow?.reconnectGraceExpiresAtUtc === nextWindow?.reconnectGraceExpiresAtUtc
+            ) {
+                return;
+            }
+
+            reconnectGraceWindow = nextWindow;
+            requestFastPolling('reconnect_grace_window_changed');
+        },
+        recordReconnectGraceElapsedEvidence(evidence: InstanceAgentReconnectGraceElapsedEvidence): boolean {
+            if (
+                reconnectGraceElapsedEvidenceJournalBlocked &&
+                !refreshReconnectGraceElapsedEvidenceJournalHealth()
+            ) {
+                return false;
+            }
+
+            const pending = appendInstanceAgentReconnectGraceElapsedEvidence(
+                reconnectGraceElapsedEvidenceJournalPath,
+                evidence,
+                log
+            );
+            if (!pending) {
+                refreshReconnectGraceElapsedEvidenceJournalHealth();
+                return false;
+            }
+
+            reconnectGraceElapsedEvidences = pending;
+            reconnectGraceEvidenceCutoffDurableThroughMs = 0;
+            if (reconnectGraceElapsedEvidenceJournalBlocked) {
+                reconnectGraceElapsedEvidenceJournalBlocked = false;
+                reconnectGraceElapsedEvidenceJournalFailureAttempts = 0;
+                updateReconnectGraceEvidenceAdmissionBlock();
+            }
+            requestFastPolling('reconnect_grace_elapsed_evidence_recorded');
+            return true;
+        },
         getDesiredState() {
             return currentDesiredState;
         },
@@ -2034,6 +2495,31 @@ export function wireInstanceAgent(
             commandListeners.add(listener);
             return () => {
                 commandListeners.delete(listener);
+            };
+        },
+        isReconnectGraceRecoveryRecyclePending() {
+            return (
+                reconnectGraceRecoveryRecycleRequired &&
+                reconnectGraceElapsedEvidences.length === 0 &&
+                !pendingRecycleCompletion
+            );
+        },
+        addReconnectGraceRecoveryListener(listener: InstanceAgentReconnectGraceRecoveryListener) {
+            reconnectGraceRecoveryListeners.add(listener);
+            if (
+                reconnectGraceRecoveryRecycleRequired &&
+                reconnectGraceElapsedEvidences.length === 0 &&
+                !pendingRecycleCompletion
+            ) {
+                try {
+                    listener();
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    log(`[instance-agent] Reconnect-grace recovery listener failed: ${message}`);
+                }
+            }
+            return () => {
+                reconnectGraceRecoveryListeners.delete(listener);
             };
         },
         acknowledgeCommand(command: InstanceAgentCommand, options?: { occurredAtUtc?: string }) {

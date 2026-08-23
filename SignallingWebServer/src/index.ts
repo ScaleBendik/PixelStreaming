@@ -16,12 +16,18 @@ import { Command, Option } from 'commander';
 import { initialize } from 'express-openapi';
 import { ConnectTicketAuthMode, createPlayerVerifyClient } from './ConnectTicketAuth';
 import { createConnectTicketRuntimeGate } from './connect-ticket-runtime-state';
+import {
+    inspectInstanceAgentReconnectGraceElapsedEvidenceJournal,
+    resolveInstanceAgentReconnectGraceElapsedEvidenceJournalPath
+} from './instance-agent-reconnect-grace-evidence-state';
 import { wireViewerIdleStop } from './viewer-idle-stop';
 import { wireInstanceAgent } from './instance-agent';
 import {
     createRuntimeStatusPublisher,
     createSessionNetworkPathReporter,
-    wireSignallingRuntimeStatus
+    wireSignallingRuntimeStatus,
+    type RuntimeStatusPublisher,
+    type RuntimeStatusUpdate
 } from './runtime-status';
 
 type PackageJsonMetadata = { description?: string; version?: string; name?: string };
@@ -696,8 +702,34 @@ if (Number.isNaN(authClockSkewSeconds)) {
 const instanceAgentDesiredStatePath = String(options.instance_agent_desired_state_path || '');
 const connectTicketRuntimeGate = createConnectTicketRuntimeGate({
     desiredStatePath: instanceAgentDesiredStatePath,
+    admissionClockSkewSeconds: Math.max(0, authClockSkewSeconds),
     logger: (message: string) => Logger.info(message)
 });
+const reconnectGraceEvidenceJournalPath = resolveInstanceAgentReconnectGraceElapsedEvidenceJournalPath(
+    instanceAgentDesiredStatePath
+);
+const reconnectGraceEvidenceJournalPreflight = inspectInstanceAgentReconnectGraceElapsedEvidenceJournal(
+    reconnectGraceEvidenceJournalPath,
+    (message: string) => Logger.info(message)
+);
+if (
+    reconnectGraceEvidenceJournalPreflight.status === 'invalid' ||
+    (reconnectGraceEvidenceJournalPreflight.status === 'valid' &&
+        reconnectGraceEvidenceJournalPreflight.evidences.length > 0)
+) {
+    connectTicketRuntimeGate.setReconnectGraceEvidenceJournalBlock(
+        'Commercial session admission is unavailable because local reconnect-grace billing evidence requires operator recovery.'
+    );
+    if (reconnectGraceEvidenceJournalPreflight.status === 'invalid') {
+        Logger.warn(
+            `Commercial session admission is blocked because reconnect-grace evidence journal '${reconnectGraceEvidenceJournalPath}' is invalid or unreadable. The file was left untouched.`
+        );
+    } else {
+        Logger.warn(
+            `Commercial session admission is blocked while ${reconnectGraceEvidenceJournalPreflight.evidences.length} recovered reconnect-grace evidence record(s) are acknowledged and the stack is recycled.`
+        );
+    }
+}
 
 const playerVerifyClient = createPlayerVerifyClient({
     mode: authMode,
@@ -776,6 +808,7 @@ const instanceAgentClient = wireInstanceAgent(signallingServer, {
     ),
     heartbeatMs: options.instance_agent_heartbeat_ms,
     desiredStatePath: instanceAgentDesiredStatePath,
+    connectTicketRuntimeGate,
     sessionLogArtifacts: {
         enabled: options.instance_agent_artifact_upload_enabled || undefined,
         bucketName: options.instance_agent_artifact_bucket || undefined,
@@ -813,16 +846,101 @@ const instanceAgentClient = wireInstanceAgent(signallingServer, {
     },
     logger: (message: string) => Logger.info(message)
 });
-const runtimeStatusPublisher = createRuntimeStatusPublisher({
+const baseRuntimeStatusPublisher = createRuntimeStatusPublisher({
     enabled: options.runtime_status,
     awsCliPath: options.runtime_status_aws_cli_path,
     source: String(options.runtime_status_source || 'signalling-server'),
     version: String(options.runtime_status_version || pjson.version || ''),
-    observer: (update) => {
-        instanceAgentClient?.recordRuntimeStatus(update);
-    },
     logger: (message: string) => Logger.info(message)
 });
+let externallyPublishedCommercialReadinessBlock = false;
+let observedRuntimeStatus: string | null = null;
+let commercialReadinessReleaseTimer: NodeJS.Timeout | null = null;
+let pendingCommercialReadyUpdate: RuntimeStatusUpdate | null = null;
+let runtimeStatusPublisher: RuntimeStatusPublisher | null = null;
+const cancelCommercialReadinessRelease = (): void => {
+    pendingCommercialReadyUpdate = null;
+    if (commercialReadinessReleaseTimer) {
+        clearTimeout(commercialReadinessReleaseTimer);
+        commercialReadinessReleaseTimer = null;
+    }
+};
+const scheduleCommercialReadinessRelease = (
+    readyNotBeforeEpochSeconds: number,
+    update: RuntimeStatusUpdate
+): void => {
+    pendingCommercialReadyUpdate = { ...update, heartbeatOnly: false };
+    if (commercialReadinessReleaseTimer) {
+        return;
+    }
+
+    const delayMs = Math.max(25, (readyNotBeforeEpochSeconds + 1) * 1000 - Date.now());
+    commercialReadinessReleaseTimer = setTimeout(() => {
+        commercialReadinessReleaseTimer = null;
+        const readyUpdate = pendingCommercialReadyUpdate;
+        pendingCommercialReadyUpdate = null;
+        if (readyUpdate) {
+            void runtimeStatusPublisher?.publish(readyUpdate);
+        }
+    }, delayMs);
+    commercialReadinessReleaseTimer.unref();
+};
+runtimeStatusPublisher = baseRuntimeStatusPublisher
+    ? {
+          async publish(update) {
+              const normalizedStatus = update.status.trim().toLowerCase();
+              if (
+                  update.heartbeatOnly === true &&
+                  observedRuntimeStatus &&
+                  normalizedStatus !== observedRuntimeStatus
+              ) {
+                  return baseRuntimeStatusPublisher.publish(update);
+              }
+              if (update.heartbeatOnly !== true) {
+                  observedRuntimeStatus = normalizedStatus;
+                  if (normalizedStatus !== 'ready') {
+                      // Never replay a stale Ready edge if the replacement regresses while the
+                      // admission margin is still being held.
+                      cancelCommercialReadinessRelease();
+                  }
+              }
+
+              // The instance agent must observe the real Ready edge so it can durably finish a
+              // completed recovery recycle. External readiness stays fail-closed until that write succeeds.
+              instanceAgentClient?.recordRuntimeStatus(update);
+              const commercialReadinessBlockReason =
+                  connectTicketRuntimeGate.getReconnectGraceEvidenceJournalBlockReason() ??
+                  (connectTicketRuntimeGate.isCommercialRecoveryRequired()
+                      ? 'commercial session recovery is incomplete'
+                      : null);
+              if (normalizedStatus === 'ready' && commercialReadinessBlockReason) {
+                  const readyNotBeforeEpochSeconds =
+                      connectTicketRuntimeGate.getCommercialRecoveryReadyNotBeforeEpochSeconds();
+                  if (readyNotBeforeEpochSeconds !== null) {
+                      scheduleCommercialReadinessRelease(readyNotBeforeEpochSeconds, update);
+                  }
+                  const wasAlreadyBlocked = externallyPublishedCommercialReadinessBlock;
+                  externallyPublishedCommercialReadinessBlock = true;
+                  return baseRuntimeStatusPublisher.publish({
+                      ...update,
+                      status: 'resetting',
+                      reason: 'commercial_session_recovery_required',
+                      heartbeatOnly: wasAlreadyBlocked ? update.heartbeatOnly : false
+                  });
+              }
+
+              const forceReadyTransition =
+                  normalizedStatus === 'ready' && externallyPublishedCommercialReadinessBlock;
+              if (normalizedStatus === 'ready') {
+                  externallyPublishedCommercialReadinessBlock = false;
+                  cancelCommercialReadinessRelease();
+              }
+              return baseRuntimeStatusPublisher.publish(
+                  forceReadyTransition ? { ...update, heartbeatOnly: false } : update
+              );
+          }
+      }
+    : null;
 const sessionNetworkPathReporter = createSessionNetworkPathReporter({
     enabled: options.runtime_status,
     awsCliPath: options.runtime_status_aws_cli_path,

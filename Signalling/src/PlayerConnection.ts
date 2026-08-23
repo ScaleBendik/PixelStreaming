@@ -36,6 +36,13 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     subscribedStreamer: IStreamer | null;
     // A descriptive string describing the remote address of this connection.
     remoteAddress?: string;
+    // ScaleWorld session identifiers used by runtime telemetry. These may come from query fallback.
+    scaleWorldSessionId?: string;
+    scaleWorldSessionRequestId?: string;
+    // True only when the request id came from a successfully validated connect ticket.
+    scaleWorldSessionIdentityValidated: boolean;
+    // True only when the optional active-session id came from that validated ticket.
+    scaleWorldActiveSessionIdValidated: boolean;
 
     private server: SignallingServer;
     private streamerIdChangeListener: (newId: string) => void;
@@ -55,6 +62,8 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
         this.transport = new WebSocketTransportNJS(ws);
         this.protocol = new SignallingProtocol(this.transport);
         this.remoteAddress = remoteAddress;
+        this.scaleWorldSessionIdentityValidated = false;
+        this.scaleWorldActiveSessionIdValidated = false;
 
         this.transport.on('error', this.onTransportError.bind(this));
         this.transport.on('close', this.onTransportClose.bind(this));

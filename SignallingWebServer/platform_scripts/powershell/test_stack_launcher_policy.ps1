@@ -1456,6 +1456,38 @@ Assert-ContainsText `
     -Message 'Stack recycle must require runtime ready status, not only a running Unreal process.'
 
 Assert-ContainsText `
+    -Content $stackRecycleScript `
+    -Expected "`$marker.phase = 'replacement_started'" `
+    -Message 'Stack recycle must durably distinguish pre-launch intent from replacement-started proof.'
+
+Assert-ContainsText `
+    -Content $instanceAgent `
+    -Expected 'Suppressing reset_completed because commercial recovery is still durable-blocked' `
+    -Message 'Instance agent must not emit reset completion from a Ready edge while only pre-launch intent or otherwise unproven commercial recovery remains.'
+
+$wilburAbsenceProofIndex = $stackRecycleScript.IndexOf("if (-not (Wait-ForProcessAbsence -Label 'wilbur'")
+$unrealAbsenceProofIndex = $stackRecycleScript.IndexOf('if (-not (Wait-ForUnrealAbsence')
+$replacementProofIndex = $stackRecycleScript.IndexOf(
+    '$stackRestartStartedAtUtc = Set-RecycleMarkerReplacementStarted'
+)
+$replacementLaunchIndex = $stackRecycleScript.IndexOf(
+    "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', ('`"{0}`" --recovery'"
+)
+Assert-True `
+    -Condition (
+        $wilburAbsenceProofIndex -ge 0 -and
+        $unrealAbsenceProofIndex -gt $wilburAbsenceProofIndex -and
+        $replacementProofIndex -gt $unrealAbsenceProofIndex -and
+        $replacementLaunchIndex -gt $replacementProofIndex
+    ) `
+    -Message 'Replacement-started proof must be persisted only after old Wilbur and Unreal are absent and before the replacement stack launches.'
+
+Assert-ContainsText `
+    -Content $stackRecycleScript `
+    -Expected '-ExpectedSourcePid $sourcePidToStop' `
+    -Message 'Replacement proof must remain bound to the exact source Wilbur process that the helper stopped.'
+
+Assert-ContainsText `
     -Content $viewerIdleStop `
     -Expected 'recoveredRecycleTokenAtStartup' `
     -Message 'Viewer idle stop must remember recycle tokens recovered with a recycle marker.'

@@ -524,6 +524,71 @@ try {
 } catch {
     # best effort only; Write-RecycleLog will still append if reset fails
 }
+
+function Set-RecycleMarkerReplacementStarted {
+    param(
+        [string]$MarkerPath,
+        [int]$ExpectedSourcePid
+    )
+
+    if ([string]::IsNullOrWhiteSpace($MarkerPath) -or -not (Test-Path -LiteralPath $MarkerPath)) {
+        throw "A durable recycle intent marker is required before replacement can start. Marker='$MarkerPath'."
+    }
+
+    $resolvedMarkerPath = [System.IO.Path]::GetFullPath($MarkerPath)
+    $marker = Get-Content -LiteralPath $resolvedMarkerPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    if (
+        $null -eq $marker -or
+        [int]$marker.schemaVersion -ne 1 -or
+        [string]$marker.phase -cne 'intent' -or
+        [string]::IsNullOrWhiteSpace([string]$marker.recycleId) -or
+        [int]$marker.sourcePid -le 0 -or
+        ($ExpectedSourcePid -gt 0 -and [int]$marker.sourcePid -ne $ExpectedSourcePid)
+    ) {
+        throw "Recycle marker '$resolvedMarkerPath' is not a valid pre-launch intent."
+    }
+
+    $replacementStartedAtUtc = [DateTimeOffset]::UtcNow
+    $marker.phase = 'replacement_started'
+    $marker | Add-Member -NotePropertyName replacementStartedAtUtc -NotePropertyValue $replacementStartedAtUtc.ToString('o') -Force
+    $serializedMarker = $marker | ConvertTo-Json -Depth 10
+    $temporaryPath = '{0}.{1}.{2}.tmp' -f $resolvedMarkerPath, $PID, ([Guid]::NewGuid().ToString('N'))
+    $fileStream = $null
+    try {
+        $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+        $bytes = $utf8NoBom.GetBytes($serializedMarker)
+        $fileStream = [System.IO.FileStream]::new(
+            $temporaryPath,
+            [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::None
+        )
+        $fileStream.Write($bytes, 0, $bytes.Length)
+        $fileStream.Flush($true)
+        $fileStream.Dispose()
+        $fileStream = $null
+        [System.IO.File]::Replace($temporaryPath, $resolvedMarkerPath, $null)
+    } finally {
+        if ($fileStream) {
+            $fileStream.Dispose()
+        }
+        if (Test-Path -LiteralPath $temporaryPath) {
+            Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $persistedMarker = Get-Content -LiteralPath $resolvedMarkerPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    if (
+        [string]$persistedMarker.phase -cne 'replacement_started' -or
+        [string]$persistedMarker.recycleId -cne [string]$marker.recycleId -or
+        [string]::IsNullOrWhiteSpace([string]$persistedMarker.replacementStartedAtUtc)
+    ) {
+        throw "Recycle replacement proof '$resolvedMarkerPath' did not pass its post-write verification."
+    }
+
+    Write-RecycleLog "Durably advanced recycle $($marker.recycleId) from intent to replacement_started after old Wilbur and Unreal were absent."
+    return $replacementStartedAtUtc
+}
 try {
     Write-RecycleLog "Resolved recycle repo root to '$RepoRoot'."
     Write-RecycleLog "Recycle log path is '$script:RecycleLogPath'."
@@ -564,8 +629,10 @@ try {
         throw 'Unreal did not fully stop before stack recycle restart.'
     }
 
+    $stackRestartStartedAtUtc = Set-RecycleMarkerReplacementStarted `
+        -MarkerPath $RecycleMarkerPath `
+        -ExpectedSourcePid $sourcePidToStop
     Write-RecycleLog 'Restarting streamer stack directly via start_streamer_stack.bat --recovery.'
-    $stackRestartStartedAtUtc = [DateTimeOffset]::UtcNow
     Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', ('"{0}" --recovery' -f $stackLauncher) -WorkingDirectory (Split-Path -Parent $stackLauncher) -WindowStyle Hidden | Out-Null
 
     $stackDetected =

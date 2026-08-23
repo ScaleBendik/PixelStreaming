@@ -21,6 +21,18 @@ export interface ConnectTicketAuthSettings {
 type ValidationResult = {
     isValid: boolean;
     reason?: string;
+    identity?: ValidatedConnectTicketIdentity;
+    forceReject?: boolean;
+};
+
+export interface ValidatedConnectTicketIdentity {
+    sessionRequestId: string;
+    activeSessionId?: string;
+}
+
+type AuthenticatedIncomingMessage = http.IncomingMessage & {
+    scaleWorldValidatedConnectTicketIdentity?: ValidatedConnectTicketIdentity;
+    scaleWorldConnectTicketIdentityValidated?: boolean;
 };
 
 const isDnsLabelChar = (charCode: number): boolean =>
@@ -124,6 +136,17 @@ function parseNumericDateClaim(value: unknown): number | null {
     return Math.trunc(value);
 }
 
+function parseGuidClaim(value: unknown): string | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+
+    const normalized = value.trim();
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalized)
+        ? normalized
+        : null;
+}
+
 function validateToken(token: string, host: string, settings: ConnectTicketAuthSettings): ValidationResult {
     const segments = token.split('.');
     if (segments.length !== 3) {
@@ -182,6 +205,22 @@ function validateToken(token: string, host: string, settings: ConnectTicketAuthS
         return { isValid: false, reason: 'Connect ticket instanceId does not match this server.' };
     }
 
+    const sessionRequestId = parseGuidClaim(payload.sessionRequestId) ?? undefined;
+    if (payload.sessionRequestId !== undefined && !sessionRequestId) {
+        return {
+            isValid: false,
+            reason: 'Connect ticket sessionRequestId claim is invalid.'
+        };
+    }
+
+    const activeSessionId = parseGuidClaim(payload.activeSessionId) ?? undefined;
+    if (payload.activeSessionId !== undefined && !activeSessionId) {
+        return {
+            isValid: false,
+            reason: 'Connect ticket activeSessionId claim is invalid.'
+        };
+    }
+
     const routeKeyClaim = typeof payload.routeKey === 'string' ? normalizeRouteKey(payload.routeKey) : '';
     if (!routeKeyClaim) {
         return { isValid: false, reason: 'Connect ticket routeKey is missing or invalid.' };
@@ -195,18 +234,52 @@ function validateToken(token: string, host: string, settings: ConnectTicketAuthS
         };
     }
 
+    const reconnectGraceEvidenceJournalBlockReason = sessionRequestId
+        ? settings.runtimeGate?.getReconnectGraceEvidenceJournalBlockReason()
+        : null;
+    if (reconnectGraceEvidenceJournalBlockReason) {
+        return {
+            isValid: false,
+            reason: reconnectGraceEvidenceJournalBlockReason,
+            forceReject: true
+        };
+    }
+
     const issuedAtEpochSeconds = parseNumericDateClaim(payload.iat) ?? nbf;
     const runtimeRejectReason = settings.runtimeGate?.rejectReasonForTicket({
         issuedAtEpochSeconds,
         expiresAtEpochSeconds: exp,
         tokenId: typeof payload.jti === 'string' ? payload.jti : undefined,
-        subject: typeof payload.sub === 'string' ? payload.sub : undefined
+        subject: typeof payload.sub === 'string' ? payload.sub : undefined,
+        sessionRequestId
     });
     if (runtimeRejectReason) {
-        return { isValid: false, reason: runtimeRejectReason };
+        return { isValid: false, reason: runtimeRejectReason, forceReject: true };
     }
 
-    return { isValid: true };
+    if (sessionRequestId) {
+        const managedViewerEvidenceRejectReason = settings.runtimeGate?.recordManagedViewerAdmission({
+            sessionRequestId,
+            activeSessionId
+        });
+        if (managedViewerEvidenceRejectReason) {
+            return {
+                isValid: false,
+                reason: managedViewerEvidenceRejectReason,
+                forceReject: true
+            };
+        }
+    }
+
+    return {
+        isValid: true,
+        identity: sessionRequestId
+            ? {
+                  sessionRequestId,
+                  activeSessionId
+              }
+            : undefined
+    };
 }
 
 function validateSettings(settings: ConnectTicketAuthSettings): void {
@@ -299,6 +372,9 @@ export function createPlayerVerifyClient(
         info: { req: http.IncomingMessage },
         done: (result: boolean, code?: number, message?: string) => void
     ) => {
+        const authenticatedRequest = info.req as AuthenticatedIncomingMessage;
+        authenticatedRequest.scaleWorldValidatedConnectTicketIdentity = undefined;
+        authenticatedRequest.scaleWorldConnectTicketIdentityValidated = false;
         const host = parseHostFromRequest(info.req);
         const token = parseTicketFromRequest(info.req, host);
         if (!token) {
@@ -316,7 +392,21 @@ export function createPlayerVerifyClient(
 
         const validation = validateToken(token, host, settings);
         if (validation.isValid) {
+            if (validation.identity) {
+                authenticatedRequest.scaleWorldValidatedConnectTicketIdentity = validation.identity;
+                authenticatedRequest.scaleWorldConnectTicketIdentityValidated = true;
+            } else {
+                Logger.warn(
+                    'Validated connect ticket has no sessionRequestId claim; allowing unmanaged access without commercial session identity.'
+                );
+            }
             done(true);
+            return;
+        }
+
+        if (validation.forceReject) {
+            Logger.warn(validation.reason || 'Commercial connect-ticket admission is blocked.');
+            done(false, 503, validation.reason || 'Commercial connect-ticket admission is blocked.');
             return;
         }
 
