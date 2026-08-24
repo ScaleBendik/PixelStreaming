@@ -8,6 +8,7 @@ const crypto = require('node:crypto');
 
 const { createConnectTicketRuntimeGate } = require('../dist/connect-ticket-runtime-state.js');
 const { createPlayerVerifyClient } = require('../dist/ConnectTicketAuth.js');
+const { applyInstanceAgentControlResponse } = require('../dist/instance-agent.js');
 const {
     isInstanceAgentRecycleReplacementProof,
     readInstanceAgentRecycleMarkerSnapshot,
@@ -175,10 +176,7 @@ test('invalid durable managed-viewer evidence blocks startup', (context) => {
             createConnectTicketRuntimeGate({
                 statePath,
                 desiredStatePath: path.join(stateDirectory, 'instance-agent-desired-state.json'),
-                commandJournalPath: path.join(
-                    stateDirectory,
-                    'instance-agent-active-command.json'
-                ),
+                commandJournalPath: path.join(stateDirectory, 'instance-agent-active-command.json'),
                 logger: () => undefined
             }),
         /invalid or unreadable/i
@@ -280,12 +278,89 @@ test('pre-launch recycle intent is not replacement proof after a process restart
 
 test('recovered viewer-use evidence can only disqualify exact no-viewer classification', () => {
     assert.equal(resolveFirstViewerTimeoutStopReason('none'), 'no-viewer-ever-connected');
-    assert.equal(
-        resolveFirstViewerTimeoutStopReason('present'),
-        'managed-viewer-history-continuity-lost'
+    assert.equal(resolveFirstViewerTimeoutStopReason('present'), 'managed-viewer-history-continuity-lost');
+    assert.equal(resolveFirstViewerTimeoutStopReason('unavailable'), 'managed-viewer-evidence-unavailable');
+});
+
+for (const responseSource of ['bootstrap', 'heartbeat']) {
+    test(`${responseSource} installs current desired state before recovered evidence acknowledgement`, () => {
+        const evidence = {
+            evidenceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            sessionRequestId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+            instanceId: 'i-recovery',
+            region: 'eu-north-1',
+            lastViewerDisconnectedAtUtc: '2026-08-24T10:30:00.000Z',
+            reconnectGraceExpiresAtUtc: '2026-08-24T10:35:00.000Z',
+            observedAtUtc: '2026-08-24T10:35:01.000Z'
+        };
+        const response = {
+            commands: [],
+            desiredState: {
+                warmHoldEnabled: true,
+                drainEnabled: false,
+                shutdownRequested: false
+            },
+            acknowledgedReconnectGraceElapsedEvidenceId: evidence.evidenceId
+        };
+        const callOrder = [];
+        let currentDesiredState = { shutdownRequested: true };
+        let recoveryAction = null;
+
+        applyInstanceAgentControlResponse(response, responseSource, evidence, {
+            applyCommands(_commands, source) {
+                callOrder.push(`commands:${source}`);
+            },
+            applyDesiredState(desiredState, source) {
+                callOrder.push(`desired:${source}`);
+                currentDesiredState = desiredState;
+            },
+            handleReconnectGraceElapsedEvidenceResponse(submittedEvidence, acknowledgedEvidenceId) {
+                callOrder.push(`ack:${responseSource}`);
+                assert.equal(submittedEvidence, evidence);
+                assert.equal(acknowledgedEvidenceId, evidence.evidenceId);
+                recoveryAction = currentDesiredState.shutdownRequested ? 'stop' : 'reset';
+            }
+        });
+
+        assert.deepEqual(callOrder, [
+            `commands:${responseSource}`,
+            `desired:${responseSource}`,
+            `ack:${responseSource}`
+        ]);
+        assert.equal(recoveryAction, 'reset');
+    });
+}
+
+test('recovered evidence acknowledgement retains authoritative shutdown intent', () => {
+    let currentDesiredState = { shutdownRequested: false };
+    let recoveryAction = null;
+
+    applyInstanceAgentControlResponse(
+        {
+            commands: [],
+            desiredState: { shutdownRequested: true },
+            acknowledgedReconnectGraceElapsedEvidenceId: 'evidence-shutdown'
+        },
+        'heartbeat',
+        {
+            evidenceId: 'evidence-shutdown',
+            sessionRequestId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+            instanceId: 'i-recovery',
+            region: 'eu-north-1',
+            lastViewerDisconnectedAtUtc: '2026-08-24T10:30:00.000Z',
+            reconnectGraceExpiresAtUtc: '2026-08-24T10:35:00.000Z',
+            observedAtUtc: '2026-08-24T10:35:01.000Z'
+        },
+        {
+            applyCommands() {},
+            applyDesiredState(desiredState) {
+                currentDesiredState = desiredState;
+            },
+            handleReconnectGraceElapsedEvidenceResponse() {
+                recoveryAction = currentDesiredState.shutdownRequested ? 'stop' : 'reset';
+            }
+        }
     );
-    assert.equal(
-        resolveFirstViewerTimeoutStopReason('unavailable'),
-        'managed-viewer-evidence-unavailable'
-    );
+
+    assert.equal(recoveryAction, 'stop');
 });

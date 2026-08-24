@@ -61,27 +61,27 @@ const DEFAULT_DESIRED_STATE_PATH = path.resolve(
 );
 const MAX_PENDING_EVENTS = 100;
 
-interface InstanceAgentBootstrapResponse {
-    agentToken: string;
-    tokenExpiresAtUtc: string;
-    heartbeatIntervalSeconds: number;
+interface InstanceAgentControlResponse {
     desiredState: Partial<InstanceAgentDesiredStateSnapshot>;
-    commands?: InstanceAgentCommandResponse[];
+    commands?: InstanceAgentCommand[];
     acknowledgedReconnectGraceElapsedEvidenceId?: string | null;
 }
 
-interface InstanceAgentHeartbeatResponse {
+interface InstanceAgentBootstrapResponse extends InstanceAgentControlResponse {
+    agentToken: string;
     tokenExpiresAtUtc: string;
     heartbeatIntervalSeconds: number;
-    desiredState: Partial<InstanceAgentDesiredStateSnapshot>;
-    commands?: InstanceAgentCommandResponse[];
-    acknowledgedReconnectGraceElapsedEvidenceId?: string | null;
+}
+
+interface InstanceAgentHeartbeatResponse extends InstanceAgentControlResponse {
+    tokenExpiresAtUtc: string;
+    heartbeatIntervalSeconds: number;
 }
 
 interface InstanceAgentEventBatchResponse {
     acceptedCount: number;
     desiredState: Partial<InstanceAgentDesiredStateSnapshot>;
-    commands?: InstanceAgentCommandResponse[];
+    commands?: InstanceAgentCommand[];
 }
 
 interface InstanceAgentCommandStatusResponse {
@@ -95,18 +95,6 @@ interface InstanceAgentArtifactRegistrationResponse {
     sessionRequestId: string;
     userSessionId?: string;
     registeredAtUtc: string;
-}
-
-interface InstanceAgentCommandResponse {
-    instanceCommandId: string;
-    instanceId: string;
-    region: string;
-    sessionRequestId?: string;
-    commandType: string;
-    idempotencyKey: string;
-    requestedAtUtc: string;
-    timeoutAtUtc?: string;
-    payloadJson?: string;
 }
 
 interface BootstrapIdentity {
@@ -192,6 +180,37 @@ export type InstanceAgentCommandListener = (
 ) => void;
 
 export type InstanceAgentReconnectGraceRecoveryListener = () => void;
+
+export interface InstanceAgentControlResponseHandlers {
+    applyCommands(commands: InstanceAgentCommand[] | null | undefined, source: string): void;
+    applyDesiredState(
+        desiredState: Partial<InstanceAgentDesiredStateSnapshot> | null | undefined,
+        source: string
+    ): void;
+    handleReconnectGraceElapsedEvidenceResponse(
+        submittedEvidence: InstanceAgentReconnectGraceElapsedEvidence | null,
+        acknowledgedEvidenceId?: string | null
+    ): void;
+}
+
+/**
+ * Applies one authoritative control-plane response without exposing recovery listeners to stale
+ * local intent. Evidence acknowledgement can synchronously start recycle/stop work, so it must be
+ * observed only after the response's commands and desired state have replaced persisted state.
+ */
+export function applyInstanceAgentControlResponse(
+    payload: InstanceAgentControlResponse,
+    source: 'bootstrap' | 'heartbeat',
+    submittedEvidence: InstanceAgentReconnectGraceElapsedEvidence | null,
+    handlers: InstanceAgentControlResponseHandlers
+): void {
+    handlers.applyCommands(payload.commands, source);
+    handlers.applyDesiredState(payload.desiredState, source);
+    handlers.handleReconnectGraceElapsedEvidenceResponse(
+        submittedEvidence,
+        payload.acknowledgedReconnectGraceElapsedEvidenceId
+    );
+}
 
 export interface InstanceAgentClient {
     recordRuntimeStatus(update: RuntimeStatusUpdate): void;
@@ -358,9 +377,7 @@ function normalizeEventMetadata(value: Record<string, unknown>): Record<string, 
     return normalized;
 }
 
-function normalizeCommand(
-    value: InstanceAgentCommandResponse | null | undefined
-): InstanceAgentCommand | null {
+function normalizeCommand(value: InstanceAgentCommand | null | undefined): InstanceAgentCommand | null {
     const instanceCommandId = normalizeOptionalText(value?.instanceCommandId);
     const instanceId = normalizeOptionalText(value?.instanceId);
     const region = normalizeOptionalText(value?.region);
@@ -1029,10 +1046,7 @@ export function wireInstanceAgent(
         }
     };
 
-    const applyCommands = (
-        values: InstanceAgentCommandResponse[] | null | undefined,
-        source: string
-    ): void => {
+    const applyCommands = (values: InstanceAgentCommand[] | null | undefined, source: string): void => {
         if (!Array.isArray(values)) {
             return;
         }
@@ -1908,12 +1922,11 @@ export function wireInstanceAgent(
 
             const payload = await parseJsonResponse<InstanceAgentBootstrapResponse>(response);
             token = payload.agentToken;
-            handleReconnectGraceElapsedEvidenceResponse(
-                submittedReconnectGraceElapsedEvidence,
-                payload.acknowledgedReconnectGraceElapsedEvidenceId
-            );
-            applyCommands(payload.commands, 'bootstrap');
-            applyDesiredState(payload.desiredState, 'bootstrap');
+            applyInstanceAgentControlResponse(payload, 'bootstrap', submittedReconnectGraceElapsedEvidence, {
+                applyCommands,
+                applyDesiredState,
+                handleReconnectGraceElapsedEvidenceResponse
+            });
             if (explicitHeartbeatMs <= 0 && payload.heartbeatIntervalSeconds > 0) {
                 scheduleHeartbeat(payload.heartbeatIntervalSeconds * 1000);
             }
@@ -1957,12 +1970,11 @@ export function wireInstanceAgent(
         }
 
         const payload = await parseJsonResponse<InstanceAgentHeartbeatResponse>(response);
-        handleReconnectGraceElapsedEvidenceResponse(
-            submittedReconnectGraceElapsedEvidence,
-            payload.acknowledgedReconnectGraceElapsedEvidenceId
-        );
-        applyCommands(payload.commands, 'heartbeat');
-        applyDesiredState(payload.desiredState, 'heartbeat');
+        applyInstanceAgentControlResponse(payload, 'heartbeat', submittedReconnectGraceElapsedEvidence, {
+            applyCommands,
+            applyDesiredState,
+            handleReconnectGraceElapsedEvidenceResponse
+        });
         if (explicitHeartbeatMs <= 0 && payload.heartbeatIntervalSeconds > 0) {
             scheduleHeartbeat(payload.heartbeatIntervalSeconds * 1000);
         }
