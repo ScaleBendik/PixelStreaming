@@ -553,6 +553,7 @@ function Set-RecycleMarkerReplacementStarted {
     $marker | Add-Member -NotePropertyName replacementStartedAtUtc -NotePropertyValue $replacementStartedAtUtc.ToString('o') -Force
     $serializedMarker = $marker | ConvertTo-Json -Depth 10
     $temporaryPath = '{0}.{1}.{2}.tmp' -f $resolvedMarkerPath, $PID, ([Guid]::NewGuid().ToString('N'))
+    $backupPath = '{0}.{1}.{2}.bak' -f $resolvedMarkerPath, $PID, ([Guid]::NewGuid().ToString('N'))
     $fileStream = $null
     try {
         $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
@@ -567,7 +568,12 @@ function Set-RecycleMarkerReplacementStarted {
         $fileStream.Flush($true)
         $fileStream.Dispose()
         $fileStream = $null
-        [System.IO.File]::Replace($temporaryPath, $resolvedMarkerPath, $null)
+        # Windows PowerShell 5.1 can bind a null File.Replace backup path as an
+        # empty path and fail with "The path is not of a legal form." Keep the
+        # atomic same-volume replacement, but provide a real unique backup path.
+        # Retain that backup until the replacement passes the durable read-back
+        # below so a failed verification leaves recoverable prior evidence.
+        [System.IO.File]::Replace($temporaryPath, $resolvedMarkerPath, $backupPath)
     } finally {
         if ($fileStream) {
             $fileStream.Dispose()
@@ -584,6 +590,13 @@ function Set-RecycleMarkerReplacementStarted {
         [string]::IsNullOrWhiteSpace([string]$persistedMarker.replacementStartedAtUtc)
     ) {
         throw "Recycle replacement proof '$resolvedMarkerPath' did not pass its post-write verification."
+    }
+
+    if (Test-Path -LiteralPath $backupPath) {
+        # Backup cleanup is non-authoritative. Once the replacement marker has
+        # passed read-back, a transient cleanup failure must not strand the
+        # instance between old-stack shutdown and replacement launch.
+        Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
     }
 
     Write-RecycleLog "Durably advanced recycle $($marker.recycleId) from intent to replacement_started after old Wilbur and Unreal were absent."

@@ -1461,6 +1461,21 @@ Assert-ContainsText `
     -Message 'Stack recycle must durably distinguish pre-launch intent from replacement-started proof.'
 
 Assert-ContainsText `
+    -Content $stackRecycleScript `
+    -Expected '[System.IO.File]::Replace($temporaryPath, $resolvedMarkerPath, $backupPath)' `
+    -Message 'Stack recycle marker replacement must supply a valid backup path for Windows PowerShell 5.1.'
+
+Assert-DoesNotContainText `
+    -Content $stackRecycleScript `
+    -Unexpected '[System.IO.File]::Replace($temporaryPath, $resolvedMarkerPath, $null)' `
+    -Message 'Stack recycle must not pass a null backup path to File.Replace on Windows PowerShell 5.1.'
+
+Assert-ContainsText `
+    -Content $stackRecycleScript `
+    -Expected 'Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue' `
+    -Message 'Stack recycle must clean up the replacement backup without blocking launch after durable read-back succeeds.'
+
+Assert-ContainsText `
     -Content $instanceAgent `
     -Expected 'Suppressing reset_completed because commercial recovery is still durable-blocked' `
     -Message 'Instance agent must not emit reset completion from a Ready edge while only pre-launch intent or otherwise unproven commercial recovery remains.'
