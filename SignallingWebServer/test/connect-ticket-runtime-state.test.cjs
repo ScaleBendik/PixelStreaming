@@ -8,7 +8,14 @@ const crypto = require('node:crypto');
 
 const { createConnectTicketRuntimeGate } = require('../dist/connect-ticket-runtime-state.js');
 const { createPlayerVerifyClient } = require('../dist/ConnectTicketAuth.js');
-const { applyInstanceAgentControlResponse } = require('../dist/instance-agent.js');
+const {
+    applyInstanceAgentControlResponse,
+    canExecuteAcknowledgedInstanceCommand
+} = require('../dist/instance-agent.js');
+const {
+    isInstanceAgentCommandExpired,
+    writeInstanceAgentCommandJournalSnapshot
+} = require('../dist/instance-agent-command-state.js');
 const {
     isInstanceAgentRecycleReplacementProof,
     readInstanceAgentRecycleMarkerSnapshot,
@@ -280,6 +287,68 @@ test('recovered viewer-use evidence can only disqualify exact no-viewer classifi
     assert.equal(resolveFirstViewerTimeoutStopReason('none'), 'no-viewer-ever-connected');
     assert.equal(resolveFirstViewerTimeoutStopReason('present'), 'managed-viewer-history-continuity-lost');
     assert.equal(resolveFirstViewerTimeoutStopReason('unavailable'), 'managed-viewer-evidence-unavailable');
+});
+
+test('instance commands fail closed when their timeout is invalid or elapsed', () => {
+    const nowEpochMs = Date.parse('2026-08-24T20:00:00.000Z');
+    assert.equal(isInstanceAgentCommandExpired({}, nowEpochMs), false);
+    assert.equal(
+        isInstanceAgentCommandExpired({ timeoutAtUtc: '2026-08-24T20:00:01.000Z' }, nowEpochMs),
+        false
+    );
+    assert.equal(
+        isInstanceAgentCommandExpired({ timeoutAtUtc: '2026-08-24T20:00:00.000Z' }, nowEpochMs),
+        true
+    );
+    assert.equal(isInstanceAgentCommandExpired({ timeoutAtUtc: 'invalid' }, nowEpochMs), true);
+});
+
+test('only accepted or already-open command acknowledgements authorize execution', () => {
+    const transition = (accepted, commandStatus) => ({
+        accepted,
+        commandStatus,
+        recordedAtUtc: '2026-08-24T20:00:00.000Z'
+    });
+    assert.equal(canExecuteAcknowledgedInstanceCommand(transition(true, 'Acked')), true);
+    assert.equal(canExecuteAcknowledgedInstanceCommand(transition(false, 'Acked')), true);
+    assert.equal(canExecuteAcknowledgedInstanceCommand(transition(false, 'Running')), true);
+    assert.equal(canExecuteAcknowledgedInstanceCommand(transition(true, 'Pending')), false);
+    assert.equal(canExecuteAcknowledgedInstanceCommand(transition(true, 'Completed')), false);
+    assert.equal(canExecuteAcknowledgedInstanceCommand(transition(false, 'Pending')), false);
+    assert.equal(canExecuteAcknowledgedInstanceCommand(transition(false, 'Completed')), false);
+    assert.equal(canExecuteAcknowledgedInstanceCommand(transition(false, 'TimedOut')), false);
+});
+
+test('expired recovered teardown command does not recreate the commercial recovery latch', (context) => {
+    const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'sw-expired-command-gate-'));
+    context.after(() => fs.rmSync(stateDirectory, { recursive: true, force: true }));
+    const commandJournalPath = path.join(stateDirectory, 'instance-agent-active-command.json');
+    writeInstanceAgentCommandJournalSnapshot(
+        commandJournalPath,
+        {
+            instanceCommandId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            instanceId: 'i-expired',
+            region: 'eu-north-1',
+            sessionRequestId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+            commandType: 'Shutdown',
+            idempotencyKey: 'shutdown:expired',
+            requestedAtUtc: '2020-01-01T00:00:00.000Z',
+            timeoutAtUtc: '2020-01-01T00:05:00.000Z',
+            status: 'acked',
+            attemptNumber: 1,
+            ackedAtUtc: '2020-01-01T00:00:01.000Z'
+        },
+        () => undefined
+    );
+
+    const gate = createConnectTicketRuntimeGate({
+        statePath: path.join(stateDirectory, 'connect-ticket-runtime-state.json'),
+        desiredStatePath: path.join(stateDirectory, 'instance-agent-desired-state.json'),
+        commandJournalPath,
+        logger: () => undefined
+    });
+
+    assert.equal(gate.isCommercialRecoveryRequired(), false);
 });
 
 for (const responseSource of ['bootstrap', 'heartbeat']) {

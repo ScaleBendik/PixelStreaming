@@ -21,6 +21,19 @@ export interface InstanceAgentCommandJournalSnapshot {
     startedAtUtc?: string;
 }
 
+export function isInstanceAgentCommandExpired(
+    value: { timeoutAtUtc?: string | null } | null | undefined,
+    nowEpochMs: number = Date.now()
+): boolean {
+    const timeoutAtUtc = normalizeOptionalText(value?.timeoutAtUtc);
+    if (!timeoutAtUtc) {
+        return false;
+    }
+
+    const timeoutEpochMs = Date.parse(timeoutAtUtc);
+    return !Number.isFinite(timeoutEpochMs) || timeoutEpochMs <= nowEpochMs;
+}
+
 function normalizeOptionalText(value: unknown): string | undefined {
     if (typeof value !== 'string') {
         return undefined;

@@ -18,6 +18,7 @@ import {
 } from './instance-agent-recycle-state';
 import {
     clearInstanceAgentCommandJournalSnapshot,
+    isInstanceAgentCommandExpired,
     readInstanceAgentCommandJournalSnapshot,
     resolveInstanceAgentCommandJournalPath,
     writeInstanceAgentCommandJournalSnapshot,
@@ -167,6 +168,13 @@ export interface InstanceAgentCommandTransitionResult {
     accepted: boolean;
     commandStatus: string;
     recordedAtUtc: string;
+}
+
+export function canExecuteAcknowledgedInstanceCommand(
+    result: InstanceAgentCommandTransitionResult | null | undefined
+): boolean {
+    const status = normalizeOptionalText(result?.commandStatus)?.toLowerCase();
+    return status === 'acked' || status === 'running';
 }
 
 export type InstanceAgentDesiredStateListener = (
@@ -801,7 +809,28 @@ export function wireInstanceAgent(
         );
     }
     let activeCommand = readInstanceAgentCommandJournalSnapshot(commandJournalPath, log);
+    if (activeCommand && isInstanceAgentCommandExpired(activeCommand)) {
+        log(
+            `[instance-agent] Clearing expired recovered command ${activeCommand.instanceCommandId}; its timeout was ${activeCommand.timeoutAtUtc ?? 'invalid'}.`
+        );
+        clearInstanceAgentCommandJournalSnapshot(commandJournalPath, log);
+        activeCommand = null;
+    }
     let recoveredActiveCommandId = activeCommand?.instanceCommandId ?? null;
+    let activeCommandConfirmedByApi = activeCommand === null;
+    let desiredStateConfirmedByApi = false;
+    let authoritativeTeardownCommandObserved = false;
+    const getExposedDesiredState = (): InstanceAgentDesiredStateSnapshot =>
+        desiredStateConfirmedByApi
+            ? currentDesiredState
+            : {
+                  ...currentDesiredState,
+                  warmHoldEnabled: true,
+                  drainEnabled: false,
+                  shutdownRequested: false,
+                  recycleRequestedToken: undefined,
+                  message: 'Awaiting authoritative control state before local teardown may resume.'
+              };
     let bootstrapIdentityPromise: Promise<BootstrapIdentity> | null = null;
     let bootstrapPromise: Promise<void> | null = null;
     let tickInFlight = false;
@@ -831,8 +860,10 @@ export function wireInstanceAgent(
             ? initialReconnectGraceEvidenceJournalRead.evidences
             : [];
     let reconnectGraceRecoveryRecycleRequired =
-        reconnectGraceElapsedEvidences.length > 0 ||
-        recoveredRecycleMarker !== null ||
+        reconnectGraceElapsedEvidences.length > 0 || recoveredRecycleMarker !== null;
+    let deferredRecoveredCommercialRecovery =
+        reconnectGraceElapsedEvidences.length === 0 &&
+        recoveredRecycleMarker === null &&
         options.connectTicketRuntimeGate?.isCommercialRecoveryRequired() === true;
     let reconnectGraceEvidenceCutoffDurableThroughMs = 0;
     let pendingEvents: PendingInstanceAgentEvent[] = [];
@@ -995,6 +1026,7 @@ export function wireInstanceAgent(
             },
             log
         );
+        activeCommandConfirmedByApi = true;
 
         return activeCommand;
     };
@@ -1002,7 +1034,22 @@ export function wireInstanceAgent(
     const clearActiveCommand = (): void => {
         activeCommand = null;
         recoveredActiveCommandId = null;
+        activeCommandConfirmedByApi = true;
         clearInstanceAgentCommandJournalSnapshot(commandJournalPath, log);
+    };
+
+    const invalidateRecoveredCommand = (command: InstanceAgentCommand, reason: string): void => {
+        if (activeCommand?.instanceCommandId === command.instanceCommandId) {
+            clearActiveCommand();
+        }
+        log(
+            `[instance-agent] Teardown command ${command.instanceCommandId} was invalidated by ${reason}; destructive execution remains blocked pending authoritative desired-state refresh and commercial recovery.`
+        );
+        deferredRecoveredCommercialRecovery = false;
+        reconnectGraceRecoveryRecycleRequired = true;
+        desiredStateConfirmedByApi = false;
+        updateReconnectGraceEvidenceAdmissionBlock();
+        requestFastPolling('teardown_command_invalidated');
     };
 
     const applyDesiredState = (
@@ -1021,7 +1068,9 @@ export function wireInstanceAgent(
             nextState.policyVersion !== currentDesiredState.policyVersion ||
             nextState.message !== currentDesiredState.message;
 
+        const wasConfirmedByApi = desiredStateConfirmedByApi;
         currentDesiredState = writeInstanceAgentDesiredStateSnapshot(desiredStatePath, nextState, log);
+        desiredStateConfirmedByApi = true;
         if (changed) {
             queueEvent('desired_state_updated', {
                 warmHoldEnabled: nextState.warmHoldEnabled,
@@ -1034,7 +1083,8 @@ export function wireInstanceAgent(
             log(
                 `[instance-agent] Desired state updated from ${source}: warmHold=${currentDesiredState.warmHoldEnabled}, drain=${currentDesiredState.drainEnabled}, shutdown=${currentDesiredState.shutdownRequested}, recycleRequested=${currentDesiredState.recycleRequestedToken ? 'true' : 'false'}, policy=${currentDesiredState.policyVersion}.`
             );
-
+        }
+        if (changed || !wasConfirmedByApi) {
             for (const listener of desiredStateListeners) {
                 try {
                     listener(currentDesiredState, { source });
@@ -1044,6 +1094,23 @@ export function wireInstanceAgent(
                 }
             }
         }
+        if (
+            deferredRecoveredCommercialRecovery &&
+            !authoritativeTeardownCommandObserved &&
+            activeCommand === null &&
+            !currentDesiredState.shutdownRequested &&
+            !currentDesiredState.recycleRequestedToken
+        ) {
+            deferredRecoveredCommercialRecovery = false;
+            reconnectGraceRecoveryRecycleRequired = true;
+            updateReconnectGraceEvidenceAdmissionBlock();
+            log(
+                '[instance-agent] Authoritative control state invalidated recovered local teardown state. Requiring one safe commercial recovery recycle before admission can reopen.'
+            );
+            notifyReconnectGraceRecoveryReady();
+        } else if (!wasConfirmedByApi && reconnectGraceRecoveryRecycleRequired) {
+            notifyReconnectGraceRecoveryReady();
+        }
     };
 
     const applyCommands = (values: InstanceAgentCommand[] | null | undefined, source: string): void => {
@@ -1051,31 +1118,49 @@ export function wireInstanceAgent(
             return;
         }
 
+        const deliverableCommands: InstanceAgentCommand[] = [];
         const openCommandIds = new Set<string>();
-        for (const rawCommand of values) {
-            const commandId = normalizeOptionalText(rawCommand?.instanceCommandId);
-            if (commandId) {
-                openCommandIds.add(commandId);
-            }
-        }
-
-        if (activeCommand && !openCommandIds.has(activeCommand.instanceCommandId)) {
-            log(
-                `[instance-agent] Clearing stale active command ${activeCommand.instanceCommandId} because the API ${source} response no longer lists it as open.`
-            );
-            clearActiveCommand();
-        }
-
-        if (values.length === 0) {
-            return;
-        }
-
         for (const rawCommand of values) {
             const command = normalizeCommand(rawCommand);
             if (!command) {
                 continue;
             }
 
+            if (isInstanceAgentCommandExpired(command)) {
+                log(
+                    `[instance-agent] Ignoring expired command ${command.instanceCommandId} from ${source}; its timeout was ${command.timeoutAtUtc ?? 'invalid'}.`
+                );
+                continue;
+            }
+
+            deliverableCommands.push(command);
+            openCommandIds.add(command.instanceCommandId);
+        }
+        authoritativeTeardownCommandObserved = deliverableCommands.some(
+            (command) => isRecycleToWarmCommand(command) || isShutdownCommand(command)
+        );
+
+        if (activeCommand && !openCommandIds.has(activeCommand.instanceCommandId)) {
+            const commandToInvalidate = activeCommand;
+            const wasTeardownCommand =
+                isRecycleToWarmCommand(commandToInvalidate) || isShutdownCommand(commandToInvalidate);
+            log(
+                `[instance-agent] Clearing stale active command ${activeCommand.instanceCommandId} because the API ${source} response no longer lists it as open.`
+            );
+            if (wasTeardownCommand) {
+                invalidateRecoveredCommand(commandToInvalidate, `${source} response`);
+            } else {
+                clearActiveCommand();
+            }
+        } else if (activeCommand && openCommandIds.has(activeCommand.instanceCommandId)) {
+            activeCommandConfirmedByApi = true;
+        }
+
+        if (deliverableCommands.length === 0) {
+            return;
+        }
+
+        for (const command of deliverableCommands) {
             rememberShutdownCommandSessionContext(command);
             queueEvent('instance_command_received', {
                 instanceCommandId: command.instanceCommandId,
@@ -1513,6 +1598,8 @@ export function wireInstanceAgent(
                 log(
                     `[instance-agent] Recovered open command state during acknowledgement: id=${command.instanceCommandId}, type=${command.commandType}, status=${result.commandStatus}.`
                 );
+            } else {
+                invalidateRecoveredCommand(command, `acknowledgement status ${result.commandStatus}`);
             }
         }
 
@@ -1546,11 +1633,16 @@ export function wireInstanceAgent(
             log(
                 `[instance-agent] Command started: id=${command.instanceCommandId}, type=${command.commandType}, status=${result.commandStatus}.`
             );
-        } else if (normalizeOpenCommandExecutionStatus(result.commandStatus) === 'running') {
-            persistActiveCommand(command, 'running', result.recordedAtUtc);
-            log(
-                `[instance-agent] Recovered running command state during start: id=${command.instanceCommandId}, type=${command.commandType}, status=${result.commandStatus}.`
-            );
+        } else {
+            const recoveredStatus = normalizeOpenCommandExecutionStatus(result.commandStatus);
+            if (recoveredStatus) {
+                persistActiveCommand(command, recoveredStatus, result.recordedAtUtc);
+                log(
+                    `[instance-agent] Recovered open command state during start: id=${command.instanceCommandId}, type=${command.commandType}, status=${result.commandStatus}.`
+                );
+            } else {
+                invalidateRecoveredCommand(command, `start status ${result.commandStatus}`);
+            }
         }
 
         return result;
@@ -2005,6 +2097,7 @@ export function wireInstanceAgent(
     const tryStartRecoveredRecycleCommand = async (): Promise<void> => {
         if (
             !activeCommand ||
+            !activeCommandConfirmedByApi ||
             !isRecycleToWarmCommand(activeCommand) ||
             activeCommand.status !== 'acked' ||
             !pendingRecycleCompletion
@@ -2027,6 +2120,7 @@ export function wireInstanceAgent(
     const tryFinalizeRecoveredActiveCommand = async (): Promise<void> => {
         if (
             !activeCommand ||
+            !activeCommandConfirmedByApi ||
             !isRecycleToWarmCommand(activeCommand) ||
             activeCommand.instanceCommandId !== recoveredActiveCommandId ||
             activeCommand.status !== 'running' ||
@@ -2297,7 +2391,7 @@ export function wireInstanceAgent(
                     userSessionId: recycleMarker?.userSessionId,
                     sessionId: recycleMarker?.sessionId
                 });
-                if (activeCommand && isRecycleToWarmCommand(activeCommand)) {
+                if (activeCommandConfirmedByApi && activeCommand && isRecycleToWarmCommand(activeCommand)) {
                     const commandToComplete = activeCommand;
                     void captureSessionLogArtifact('reset_completed', commandToComplete, {
                         recycleId: recycleMarker?.recycleId,
@@ -2378,7 +2472,7 @@ export function wireInstanceAgent(
                     userSessionId: recycleMarker?.userSessionId,
                     sessionId: recycleMarker?.sessionId
                 });
-                if (activeCommand && isRecycleToWarmCommand(activeCommand)) {
+                if (activeCommandConfirmedByApi && activeCommand && isRecycleToWarmCommand(activeCommand)) {
                     const commandToFail = activeCommand;
                     void captureSessionLogArtifact('reset_cancelled', commandToFail, {
                         recycleId: recycleMarker?.recycleId,
@@ -2486,15 +2580,15 @@ export function wireInstanceAgent(
             return true;
         },
         getDesiredState() {
-            return currentDesiredState;
+            return getExposedDesiredState();
         },
         getActiveCommand() {
-            return activeCommand;
+            return activeCommandConfirmedByApi ? activeCommand : null;
         },
         addDesiredStateListener(listener: InstanceAgentDesiredStateListener) {
             desiredStateListeners.add(listener);
             try {
-                listener(currentDesiredState, { source: 'current' });
+                listener(getExposedDesiredState(), { source: 'current' });
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 log(`[instance-agent] Desired-state listener failed: ${message}`);

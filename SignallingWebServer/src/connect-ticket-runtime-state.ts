@@ -3,7 +3,10 @@ import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { Logger } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
-import { readInstanceAgentCommandJournalSnapshot } from './instance-agent-command-state';
+import {
+    isInstanceAgentCommandExpired,
+    readInstanceAgentCommandJournalSnapshot
+} from './instance-agent-command-state';
 import {
     normalizeInstanceAgentDesiredStateSnapshot,
     readInstanceAgentDesiredStateSnapshot
@@ -473,7 +476,7 @@ export function createConnectTicketRuntimeGate(
     };
 
     const recoveredCommand = readInstanceAgentCommandJournalSnapshot(commandJournalPath, logger);
-    if (isTeardownCommand(recoveredCommand)) {
+    if (isTeardownCommand(recoveredCommand) && !isInstanceAgentCommandExpired(recoveredCommand)) {
         if (
             !markTeardownStarted({
                 occurredAtUtc: recoveredCommand?.requestedAtUtc,

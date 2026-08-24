@@ -6,7 +6,11 @@ import path from 'path';
 import { promisify } from 'util';
 import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
 import type { IPlayer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
-import type { InstanceAgentClient, InstanceAgentCommand } from './instance-agent';
+import {
+    canExecuteAcknowledgedInstanceCommand,
+    type InstanceAgentClient,
+    type InstanceAgentCommand
+} from './instance-agent';
 import type {
     ConnectTicketRuntimeGate,
     DurableManagedViewerEvidenceStatus
@@ -1093,10 +1097,17 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         try {
-            await options.instanceAgentClient.startCommand(commandToStart, {
+            const startResult = await options.instanceAgentClient.startCommand(commandToStart, {
                 occurredAtUtc: new Date().toISOString()
             });
             refreshActiveCommand();
+            if (!canExecuteAcknowledgedInstanceCommand(startResult)) {
+                passiveReconnectRecycleRequested = true;
+                log(
+                    `[idle-stop] Recycle command ${commandToStart.instanceCommandId} became invalid after its recycle was launched (status=${startResult.commandStatus}). The non-destructive cleanup will finish without that command generation.`
+                );
+                return;
+            }
             log(
                 `[idle-stop] Marked recycle command ${commandToStart.instanceCommandId} as started after recycle launch (${reason}).`
             );
@@ -1951,10 +1962,16 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         try {
             if (commandToStart && options.instanceAgentClient) {
                 try {
-                    await options.instanceAgentClient.startCommand(commandToStart, {
+                    const startResult = await options.instanceAgentClient.startCommand(commandToStart, {
                         occurredAtUtc: new Date().toISOString()
                     });
                     refreshActiveCommand();
+                    if (!canExecuteAcknowledgedInstanceCommand(startResult)) {
+                        log(
+                            `[idle-stop] Recycle command ${commandToStart.instanceCommandId} became invalid before execution (status=${startResult.commandStatus}). Continuing the already-committed cleanup without executing that command generation.`
+                        );
+                        passiveReconnectRecycleRequested = true;
+                    }
                 } catch (error) {
                     const message = error instanceof Error ? error.message : String(error);
                     log(
@@ -2171,10 +2188,16 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             const commandToStart = getActiveShutdownCommand();
             if (commandToStart && options.instanceAgentClient) {
                 try {
-                    await options.instanceAgentClient.startCommand(commandToStart, {
+                    const startResult = await options.instanceAgentClient.startCommand(commandToStart, {
                         occurredAtUtc: new Date().toISOString()
                     });
                     refreshActiveCommand();
+                    if (!canExecuteAcknowledgedInstanceCommand(startResult)) {
+                        log(
+                            `[idle-stop] Refusing instance stop because shutdown command ${commandToStart.instanceCommandId} became invalid before execution (status=${startResult.commandStatus}).`
+                        );
+                        return false;
+                    }
                 } catch (error) {
                     const message = error instanceof Error ? error.message : String(error);
                     log(
@@ -2455,6 +2478,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     log('[idle-stop] Wired to player registry events.');
 
     if (options.instanceAgentClient) {
+        const instanceAgentClient = options.instanceAgentClient;
         options.instanceAgentClient.addReconnectGraceRecoveryListener(() => {
             if (!options.instanceAgentClient?.isReconnectGraceRecoveryRecyclePending()) {
                 return;
@@ -2466,12 +2490,12 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             commercialReconnectGraceTeardownCommitted = true;
             commercialReconnectGraceCutoffDurable = false;
             passiveReconnectRecycleRequested = true;
-            publishStatus('resetting', 'recovered_elapsed_evidence_cleanup');
+            publishStatus('resetting', 'recovered_commercial_teardown_cleanup');
             log(
-                '[idle-stop] Recovered reconnect-grace elapsed evidence was acknowledged. Keeping managed admission closed and forcing stack cleanup before Ready can return.'
+                '[idle-stop] Recovered commercial teardown state requires cleanup after authoritative control-state reconciliation. Keeping managed admission closed and forcing stack cleanup before Ready can return.'
             );
             if (currentDesiredState.shutdownRequested || getActiveShutdownCommand()) {
-                void requestStop('recovered_elapsed_evidence_cleanup');
+                void requestStop('recovered_commercial_teardown_cleanup');
                 return;
             }
 
@@ -2551,11 +2575,17 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 }
                 observedCommand = command;
                 try {
-                    await options.instanceAgentClient?.acknowledgeCommand(command, {
+                    const acknowledgement = await instanceAgentClient.acknowledgeCommand(command, {
                         occurredAtUtc: new Date().toISOString()
                     });
                     observedCommand = null;
                     refreshActiveCommand();
+                    if (!canExecuteAcknowledgedInstanceCommand(acknowledgement)) {
+                        log(
+                            `[idle-stop] Refusing to execute teardown command ${command.instanceCommandId} because acknowledgement returned ${acknowledgement.commandStatus}.`
+                        );
+                        return;
+                    }
                     if (server.playerRegistry.count() === 0) {
                         if (isShutdownCommand(command)) {
                             void requestStop('command_shutdown_requested');
