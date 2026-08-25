@@ -47,6 +47,8 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     private server: SignallingServer;
     private streamerIdChangeListener: (newId: string) => void;
     private streamerDisconnectedListener: () => void;
+    private scaleWorldMediaEvidenceCapabilityReported: boolean;
+    private scaleWorldMediaReceivedReported: boolean;
 
     /**
      * Initializes a new connection with given and sane values. Adds listeners for the
@@ -64,6 +66,8 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
         this.remoteAddress = remoteAddress;
         this.scaleWorldSessionIdentityValidated = false;
         this.scaleWorldActiveSessionIdValidated = false;
+        this.scaleWorldMediaEvidenceCapabilityReported = false;
+        this.scaleWorldMediaReceivedReported = false;
 
         this.transport.on('error', this.onTransportError.bind(this));
         this.transport.on('close', this.onTransportClose.bind(this));
@@ -129,8 +133,60 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
         this.protocol.on(Messages.layerPreference.typeName, this.sendToStreamer.bind(this));
 
         this.protocol.on('unhandled', (message: BaseMessage) => {
+            if (this.handleScaleWorldMediaEvidenceMessage(message)) {
+                return;
+            }
+
             Logger.warn(`Unhandled player protocol message: ${JSON.stringify(message)}`);
         });
+    }
+
+    private handleScaleWorldMediaEvidenceMessage(message: BaseMessage): boolean {
+        const isCapability = message.type === 'scaleWorldMediaEvidenceCapability';
+        const isMediaReceived = message.type === 'scaleWorldMediaReceived';
+        if (!isCapability && !isMediaReceived) {
+            return false;
+        }
+
+        if (!this.scaleWorldSessionIdentityValidated || !this.scaleWorldSessionRequestId || !this.playerId) {
+            Logger.warn(
+                `Ignoring ${message.type} from player ${this.playerId || '<unregistered>'} without validated ScaleWorld session identity.`
+            );
+            return true;
+        }
+
+        const evidence = message as BaseMessage & {
+            telemetryVersion?: unknown;
+            proofType?: unknown;
+            videoWidth?: unknown;
+            videoHeight?: unknown;
+            mediaTimeSeconds?: unknown;
+            presentedFrames?: unknown;
+        };
+        const finiteNumber = (value: unknown): number | undefined =>
+            typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+        const metadata = {
+            telemetryVersion: finiteNumber(evidence.telemetryVersion),
+            proofType: evidence.proofType === 'video_frame_callback' ? evidence.proofType : undefined,
+            videoWidth: finiteNumber(evidence.videoWidth),
+            videoHeight: finiteNumber(evidence.videoHeight),
+            mediaTimeSeconds: finiteNumber(evidence.mediaTimeSeconds),
+            presentedFrames: finiteNumber(evidence.presentedFrames)
+        };
+
+        if (isCapability) {
+            if (!this.scaleWorldMediaEvidenceCapabilityReported) {
+                this.scaleWorldMediaEvidenceCapabilityReported = true;
+                this.server.playerRegistry.emit('scaleWorldMediaEvidenceCapable', this.playerId, metadata);
+            }
+            return true;
+        }
+
+        if (!this.scaleWorldMediaReceivedReported) {
+            this.scaleWorldMediaReceivedReported = true;
+            this.server.playerRegistry.emit('scaleWorldMediaReceived', this.playerId, metadata);
+        }
+        return true;
     }
 
     private sendToStreamer(message: BaseMessage): void {

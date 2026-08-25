@@ -2224,6 +2224,48 @@ export function wireInstanceAgent(
         void startSessionScreenshotArtifacts({ playerId, viewerCount }, sessionContext);
         requestFastPolling('viewer_connected');
     });
+    server.playerRegistry.on(
+        'scaleWorldMediaEvidenceCapable',
+        (playerId: string, evidence: Record<string, unknown> = {}) => {
+            const sessionContext = readPlayerSessionContext(playerId);
+            if (!hasPlayerSessionContext(sessionContext)) {
+                return;
+            }
+
+            queueEvent(
+                'viewer_media_evidence_capable',
+                {
+                    playerId,
+                    viewerCount: server.playerRegistry.count(),
+                    ...evidence,
+                    ...buildPlayerSessionMetadata(sessionContext)
+                },
+                getPlayerEventSessionId(sessionContext)
+            );
+            requestFastPolling('viewer_media_evidence_capable');
+        }
+    );
+    server.playerRegistry.on(
+        'scaleWorldMediaReceived',
+        (playerId: string, evidence: Record<string, unknown> = {}) => {
+            const sessionContext = readPlayerSessionContext(playerId);
+            if (!hasPlayerSessionContext(sessionContext)) {
+                return;
+            }
+
+            queueEvent(
+                'viewer_media_received',
+                {
+                    playerId,
+                    viewerCount: server.playerRegistry.count(),
+                    ...evidence,
+                    ...buildPlayerSessionMetadata(sessionContext)
+                },
+                getPlayerEventSessionId(sessionContext)
+            );
+            requestFastPolling('viewer_media_received');
+        }
+    );
     server.playerRegistry.on('removed', (playerId?: string) => {
         const rawCount = server.playerRegistry.count();
         const normalizedPlayerId = normalizeOptionalText(playerId);

@@ -105,6 +105,27 @@ type SessionNetworkPathReport = {
     relayProtocol?: string;
 };
 
+type VideoFrameCallbackMetadata = {
+    mediaTime?: number;
+    presentedFrames?: number;
+};
+
+type VideoElementWithFrameCallback = HTMLVideoElement & {
+    requestVideoFrameCallback?: (
+        callback: (now: number, metadata: VideoFrameCallbackMetadata) => void
+    ) => number;
+};
+
+type ScaleWorldMediaEvidenceMessage = {
+    type: string;
+    telemetryVersion: number;
+    proofType: string;
+    videoWidth?: number;
+    videoHeight?: number;
+    mediaTimeSeconds?: number;
+    presentedFrames?: number;
+};
+
 const getConnectTicketStorageKey = (): string =>
     `sw-connect-ticket:${window.location.host}${window.location.pathname}`;
 
@@ -693,6 +714,65 @@ document.body.onload = function() {
     if (shouldAutoConnect) {
         config.setFlagEnabled(Flags.AutoConnect, true);
     }
+
+    let mediaEvidenceConnectionGeneration = 0;
+    let mediaReceivedGeneration = -1;
+    let mediaFrameCallbackGeneration = -1;
+    const armMediaFrameEvidence = (generation: number): void => {
+        if (
+            generation <= 0 ||
+            generation !== mediaEvidenceConnectionGeneration ||
+            mediaReceivedGeneration === generation ||
+            mediaFrameCallbackGeneration === generation
+        ) {
+            return;
+        }
+
+        const video = stream.webRtcController.videoPlayer.getVideoElement() as VideoElementWithFrameCallback;
+        if (typeof video.requestVideoFrameCallback !== 'function') {
+            return;
+        }
+
+        mediaFrameCallbackGeneration = generation;
+        video.requestVideoFrameCallback((_now, metadata) => {
+            if (
+                generation !== mediaEvidenceConnectionGeneration ||
+                mediaReceivedGeneration === generation
+            ) {
+                return;
+            }
+
+            mediaReceivedGeneration = generation;
+            const message: ScaleWorldMediaEvidenceMessage = {
+                type: 'scaleWorldMediaReceived',
+                telemetryVersion: 1,
+                proofType: 'video_frame_callback',
+                videoWidth: video.videoWidth,
+                videoHeight: video.videoHeight,
+                mediaTimeSeconds: metadata.mediaTime,
+                presentedFrames: metadata.presentedFrames
+            };
+            stream.signallingProtocol.sendMessage(message);
+        });
+    };
+
+    stream.signallingProtocol.transport.addListener('open', () => {
+        mediaEvidenceConnectionGeneration += 1;
+        mediaFrameCallbackGeneration = -1;
+        const video = stream.webRtcController.videoPlayer.getVideoElement() as VideoElementWithFrameCallback;
+        if (typeof video.requestVideoFrameCallback === 'function') {
+            const message: ScaleWorldMediaEvidenceMessage = {
+                type: 'scaleWorldMediaEvidenceCapability',
+                telemetryVersion: 1,
+                proofType: 'video_frame_callback'
+            };
+            stream.signallingProtocol.sendMessage(message);
+            armMediaFrameEvidence(mediaEvidenceConnectionGeneration);
+        }
+    });
+    stream.addEventListener('videoInitialized', () => {
+        armMediaFrameEvidence(mediaEvidenceConnectionGeneration);
+    });
 
     const sessionNetworkPathRuntimeId = reconnectContext?.sessionId?.trim() || '';
     const sessionNetworkPathRequestId = reconnectContext?.sessionRequestId?.trim() || '';
