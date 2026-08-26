@@ -26,6 +26,7 @@ import { SignallingServer } from './SignallingServer';
  * subscribed to.
  */
 export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
+    private static readonly minimumConfirmedVideoBytes = 256_000;
     // The unique id of this player connection.
     playerId: string;
     // The websocket transport used by this connection.
@@ -49,6 +50,7 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     private streamerDisconnectedListener: () => void;
     private scaleWorldMediaEvidenceCapabilityReported: boolean;
     private scaleWorldMediaReceivedReported: boolean;
+    private scaleWorldMediaFlowObservedReported: boolean;
 
     /**
      * Initializes a new connection with given and sane values. Adds listeners for the
@@ -68,6 +70,7 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
         this.scaleWorldActiveSessionIdValidated = false;
         this.scaleWorldMediaEvidenceCapabilityReported = false;
         this.scaleWorldMediaReceivedReported = false;
+        this.scaleWorldMediaFlowObservedReported = false;
 
         this.transport.on('error', this.onTransportError.bind(this));
         this.transport.on('close', this.onTransportClose.bind(this));
@@ -144,7 +147,8 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     private handleScaleWorldMediaEvidenceMessage(message: BaseMessage): boolean {
         const isCapability = message.type === 'scaleWorldMediaEvidenceCapability';
         const isMediaReceived = message.type === 'scaleWorldMediaReceived';
-        if (!isCapability && !isMediaReceived) {
+        const isMediaFlowObserved = message.type === 'scaleWorldMediaFlowObserved';
+        if (!isCapability && !isMediaReceived && !isMediaFlowObserved) {
             return false;
         }
 
@@ -162,6 +166,11 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             videoHeight?: unknown;
             mediaTimeSeconds?: unknown;
             presentedFrames?: unknown;
+            observationWindowMs?: unknown;
+            videoBytesReceivedDelta?: unknown;
+            videoPacketsReceivedDelta?: unknown;
+            videoFramesDecodedDelta?: unknown;
+            firstFramePresented?: unknown;
         };
         const finiteNumber = (value: unknown): number | undefined =>
             typeof value === 'number' && Number.isFinite(value) ? value : undefined;
@@ -173,6 +182,62 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             mediaTimeSeconds: finiteNumber(evidence.mediaTimeSeconds),
             presentedFrames: finiteNumber(evidence.presentedFrames)
         };
+
+        if (isMediaFlowObserved) {
+            const boundedCounter = (value: unknown, maximum: number): number | undefined => {
+                const parsed = finiteNumber(value);
+                return parsed !== undefined &&
+                    Number.isSafeInteger(parsed) &&
+                    parsed >= 0 &&
+                    parsed <= maximum
+                    ? parsed
+                    : undefined;
+            };
+            const observationWindowMs = boundedCounter(evidence.observationWindowMs, 60_000);
+            const videoBytesReceivedDelta = boundedCounter(
+                evidence.videoBytesReceivedDelta,
+                1_000_000_000_000
+            );
+            const videoPacketsReceivedDelta = boundedCounter(
+                evidence.videoPacketsReceivedDelta,
+                1_000_000_000
+            );
+            const videoFramesDecodedDelta = boundedCounter(evidence.videoFramesDecodedDelta, 1_000_000_000);
+            const firstFramePresented = evidence.firstFramePresented === true;
+            if (
+                evidence.proofType !== 'webrtc_stats_window' ||
+                observationWindowMs === undefined ||
+                observationWindowMs < 5_000 ||
+                videoBytesReceivedDelta === undefined ||
+                videoPacketsReceivedDelta === undefined ||
+                videoFramesDecodedDelta === undefined
+            ) {
+                Logger.warn(
+                    `Ignoring invalid ScaleWorld media-flow observation from player ${this.playerId}.`
+                );
+                return true;
+            }
+
+            if (!this.scaleWorldMediaFlowObservedReported) {
+                this.scaleWorldMediaFlowObservedReported = true;
+                const flowConfirmed =
+                    firstFramePresented &&
+                    videoBytesReceivedDelta >= PlayerConnection.minimumConfirmedVideoBytes &&
+                    videoPacketsReceivedDelta > 0 &&
+                    videoFramesDecodedDelta > 0;
+                this.server.playerRegistry.emit('scaleWorldMediaFlowObserved', this.playerId, {
+                    telemetryVersion: finiteNumber(evidence.telemetryVersion),
+                    proofType: evidence.proofType,
+                    observationWindowMs,
+                    videoBytesReceivedDelta,
+                    videoPacketsReceivedDelta,
+                    videoFramesDecodedDelta,
+                    firstFramePresented,
+                    flowStatus: flowConfirmed ? 'confirmed' : 'not_confirmed'
+                });
+            }
+            return true;
+        }
 
         if (isCapability) {
             if (!this.scaleWorldMediaEvidenceCapabilityReported) {

@@ -95,6 +95,11 @@ type AggregatedStatsLike = {
     transportStats?: {
         selectedCandidatePairId?: string;
     };
+    inboundVideoStats?: {
+        bytesReceived?: number;
+        packetsReceived?: number;
+        framesDecoded?: number;
+    };
 };
 
 type SessionNetworkPathReport = {
@@ -124,7 +129,42 @@ type ScaleWorldMediaEvidenceMessage = {
     videoHeight?: number;
     mediaTimeSeconds?: number;
     presentedFrames?: number;
+    observationWindowMs?: number;
+    videoBytesReceivedDelta?: number;
+    videoPacketsReceivedDelta?: number;
+    videoFramesDecodedDelta?: number;
+    firstFramePresented?: boolean;
 };
+
+type MediaFlowCounters = {
+    bytesReceived: number;
+    packetsReceived: number;
+    framesDecoded: number;
+};
+
+const MEDIA_FLOW_OBSERVATION_WINDOW_MS = 10_000;
+
+const toNonNegativeCounter = (value: number | undefined): number =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 0
+        ? Math.floor(value)
+        : 0;
+
+const readMediaFlowCounters = (
+    aggregatedStats: AggregatedStatsLike
+): MediaFlowCounters => ({
+    bytesReceived: toNonNegativeCounter(
+        aggregatedStats.inboundVideoStats?.bytesReceived
+    ),
+    packetsReceived: toNonNegativeCounter(
+        aggregatedStats.inboundVideoStats?.packetsReceived
+    ),
+    framesDecoded: toNonNegativeCounter(
+        aggregatedStats.inboundVideoStats?.framesDecoded
+    )
+});
+
+const counterDelta = (current: number, baseline: number): number =>
+    Math.max(0, current - baseline);
 
 const getConnectTicketStorageKey = (): string =>
     `sw-connect-ticket:${window.location.host}${window.location.pathname}`;
@@ -718,6 +758,14 @@ document.body.onload = function() {
     let mediaEvidenceConnectionGeneration = 0;
     let mediaReceivedGeneration = -1;
     let mediaFrameCallbackGeneration = -1;
+    let mediaFlowObservationGeneration = -1;
+    let mediaFlowObservationReportedGeneration = -1;
+    let mediaFlowObservationStartedAtMs = 0;
+    let mediaFlowObservationBaseline: MediaFlowCounters = {
+        bytesReceived: 0,
+        packetsReceived: 0,
+        framesDecoded: 0
+    };
     const armMediaFrameEvidence = (generation: number): void => {
         if (
             generation <= 0 ||
@@ -759,6 +807,9 @@ document.body.onload = function() {
     stream.signallingProtocol.transport.addListener('open', () => {
         mediaEvidenceConnectionGeneration += 1;
         mediaFrameCallbackGeneration = -1;
+        mediaFlowObservationGeneration = -1;
+        mediaFlowObservationReportedGeneration = -1;
+        mediaFlowObservationStartedAtMs = 0;
         const video = stream.webRtcController.videoPlayer.getVideoElement() as VideoElementWithFrameCallback;
         if (typeof video.requestVideoFrameCallback === 'function') {
             const message: ScaleWorldMediaEvidenceMessage = {
@@ -772,6 +823,59 @@ document.body.onload = function() {
     });
     stream.addEventListener('videoInitialized', () => {
         armMediaFrameEvidence(mediaEvidenceConnectionGeneration);
+    });
+
+    stream.addEventListener('statsReceived', (event) => {
+        const generation = mediaEvidenceConnectionGeneration;
+        if (
+            generation <= 0 ||
+            mediaFlowObservationReportedGeneration === generation
+        ) {
+            return;
+        }
+
+        const aggregatedStats = (event as Event & {
+            data?: { aggregatedStats?: AggregatedStatsLike };
+        }).data?.aggregatedStats;
+        if (!aggregatedStats) {
+            return;
+        }
+
+        const nowMs = Date.now();
+        const counters = readMediaFlowCounters(aggregatedStats);
+        if (mediaFlowObservationGeneration !== generation) {
+            mediaFlowObservationGeneration = generation;
+            mediaFlowObservationStartedAtMs = nowMs;
+            mediaFlowObservationBaseline = counters;
+            return;
+        }
+
+        const observationWindowMs = nowMs - mediaFlowObservationStartedAtMs;
+        if (observationWindowMs < MEDIA_FLOW_OBSERVATION_WINDOW_MS) {
+            return;
+        }
+
+        mediaFlowObservationReportedGeneration = generation;
+        const message: ScaleWorldMediaEvidenceMessage = {
+            type: 'scaleWorldMediaFlowObserved',
+            telemetryVersion: 1,
+            proofType: 'webrtc_stats_window',
+            observationWindowMs,
+            videoBytesReceivedDelta: counterDelta(
+                counters.bytesReceived,
+                mediaFlowObservationBaseline.bytesReceived
+            ),
+            videoPacketsReceivedDelta: counterDelta(
+                counters.packetsReceived,
+                mediaFlowObservationBaseline.packetsReceived
+            ),
+            videoFramesDecodedDelta: counterDelta(
+                counters.framesDecoded,
+                mediaFlowObservationBaseline.framesDecoded
+            ),
+            firstFramePresented: mediaReceivedGeneration === generation
+        };
+        stream.signallingProtocol.sendMessage(message);
     });
 
     const sessionNetworkPathRuntimeId = reconnectContext?.sessionId?.trim() || '';
