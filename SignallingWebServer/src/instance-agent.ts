@@ -135,6 +135,31 @@ export interface InstanceAgentReconnectGraceWindow {
     reconnectGraceExpiresAtUtc: string;
 }
 
+export function normalizeInstanceAgentReconnectGraceWindowForReport(
+    window: InstanceAgentReconnectGraceWindow | null,
+    currentRuntimeStatus: string | undefined,
+    viewerCount: number
+): InstanceAgentReconnectGraceWindow | null {
+    const normalizedStatus = normalizeOptionalText(currentRuntimeStatus)?.toLowerCase();
+    const disconnectedAtMs = window ? Date.parse(window.lastViewerDisconnectedAtUtc) : Number.NaN;
+    const expiresAtMs = window ? Date.parse(window.reconnectGraceExpiresAtUtc) : Number.NaN;
+    if (
+        !window ||
+        viewerCount !== 0 ||
+        (normalizedStatus !== 'reconnect_grace' && normalizedStatus !== 'idle_shutdown_pending') ||
+        !Number.isFinite(disconnectedAtMs) ||
+        !Number.isFinite(expiresAtMs) ||
+        expiresAtMs <= disconnectedAtMs
+    ) {
+        return null;
+    }
+
+    return {
+        lastViewerDisconnectedAtUtc: window.lastViewerDisconnectedAtUtc,
+        reconnectGraceExpiresAtUtc: window.reconnectGraceExpiresAtUtc
+    };
+}
+
 interface RuntimeIdentityMetadataOptions {
     configuredLane?: string;
     configuredAgentVersion?: string;
@@ -1298,6 +1323,25 @@ export function wireInstanceAgent(
         }
     };
 
+    const resolveReconnectGraceWindowForReport = (
+        viewerCount: number
+    ): InstanceAgentReconnectGraceWindow | null => {
+        const nextWindow = normalizeInstanceAgentReconnectGraceWindowForReport(
+            reconnectGraceWindow,
+            runtimeSnapshot.status,
+            viewerCount
+        );
+        if (reconnectGraceWindow && !nextWindow) {
+            const normalizedStatus = normalizeOptionalText(runtimeSnapshot.status) ?? 'unknown';
+            const readyDiagnostic = normalizedStatus.toLowerCase() === 'ready' ? ' Ready' : '';
+            log(
+                `[instance-agent] Cleared inconsistent live reconnect-grace telemetry before a${readyDiagnostic} report (runtimeStatus=${normalizedStatus}, viewerCount=${viewerCount}); durable elapsed evidence is retained independently.`
+            );
+            reconnectGraceWindow = null;
+        }
+        return nextWindow;
+    };
+
     const ensureReconnectGraceEvidenceCutoffDurable = (): boolean => {
         if (reconnectGraceElapsedEvidences.length === 0) {
             return true;
@@ -1978,6 +2022,8 @@ export function wireInstanceAgent(
             const identity = await resolveBootstrapIdentity();
             const sentAtUtc = new Date().toISOString();
             const submittedReconnectGraceElapsedEvidence = reconnectGraceElapsedEvidences[0] ?? null;
+            const viewerCount = server.playerRegistry.count();
+            const reportedReconnectGraceWindow = resolveReconnectGraceWindowForReport(viewerCount);
             const response = await fetch(new URL('/agent/bootstrap', apiBaseUrl).toString(), {
                 method: 'POST',
                 headers: {
@@ -1993,9 +2039,11 @@ export function wireInstanceAgent(
                     runtimeVersion: configuredRuntimeVersion ?? runtimeSnapshot.version,
                     currentRuntimeStatus: runtimeSnapshot.status,
                     currentRuntimeReason: runtimeSnapshot.reason,
-                    viewerCount: server.playerRegistry.count(),
-                    lastViewerDisconnectedAtUtc: reconnectGraceWindow?.lastViewerDisconnectedAtUtc ?? null,
-                    reconnectGraceExpiresAtUtc: reconnectGraceWindow?.reconnectGraceExpiresAtUtc ?? null,
+                    viewerCount,
+                    lastViewerDisconnectedAtUtc:
+                        reportedReconnectGraceWindow?.lastViewerDisconnectedAtUtc ?? null,
+                    reconnectGraceExpiresAtUtc:
+                        reportedReconnectGraceWindow?.reconnectGraceExpiresAtUtc ?? null,
                     reconnectGraceElapsedEvidence: submittedReconnectGraceElapsedEvidence,
                     runtimeReady:
                         runtimeSnapshot.status === 'ready' && !reconnectGraceRecoveryRecycleRequired,
@@ -2042,6 +2090,8 @@ export function wireInstanceAgent(
         const identity = await resolveBootstrapIdentity();
         const sentAtUtc = new Date().toISOString();
         const submittedReconnectGraceElapsedEvidence = reconnectGraceElapsedEvidences[0] ?? null;
+        const viewerCount = server.playerRegistry.count();
+        const reportedReconnectGraceWindow = resolveReconnectGraceWindowForReport(viewerCount);
         const response = await authorizedFetch('/agent/heartbeat', 'POST', {
             instanceId: identity.instanceId,
             region: identity.region,
@@ -2049,9 +2099,9 @@ export function wireInstanceAgent(
             runtimeVersion: configuredRuntimeVersion ?? runtimeSnapshot.version,
             currentRuntimeStatus: runtimeSnapshot.status,
             currentRuntimeReason: runtimeSnapshot.reason,
-            viewerCount: server.playerRegistry.count(),
-            lastViewerDisconnectedAtUtc: reconnectGraceWindow?.lastViewerDisconnectedAtUtc ?? null,
-            reconnectGraceExpiresAtUtc: reconnectGraceWindow?.reconnectGraceExpiresAtUtc ?? null,
+            viewerCount,
+            lastViewerDisconnectedAtUtc: reportedReconnectGraceWindow?.lastViewerDisconnectedAtUtc ?? null,
+            reconnectGraceExpiresAtUtc: reportedReconnectGraceWindow?.reconnectGraceExpiresAtUtc ?? null,
             reconnectGraceElapsedEvidence: submittedReconnectGraceElapsedEvidence,
             runtimeReady: runtimeSnapshot.status === 'ready' && !reconnectGraceRecoveryRecycleRequired,
             streamerHealthy: runtimeSnapshot.status === 'ready' && !reconnectGraceRecoveryRecycleRequired,

@@ -10,7 +10,8 @@ const { createConnectTicketRuntimeGate } = require('../dist/connect-ticket-runti
 const { createPlayerVerifyClient } = require('../dist/ConnectTicketAuth.js');
 const {
     applyInstanceAgentControlResponse,
-    canExecuteAcknowledgedInstanceCommand
+    canExecuteAcknowledgedInstanceCommand,
+    normalizeInstanceAgentReconnectGraceWindowForReport
 } = require('../dist/instance-agent.js');
 const {
     isInstanceAgentCommandExpired,
@@ -21,7 +22,11 @@ const {
     readInstanceAgentRecycleMarkerSnapshot,
     writeInstanceAgentRecycleMarkerSnapshot
 } = require('../dist/instance-agent-recycle-state.js');
-const { resolveFirstViewerTimeoutStopReason } = require('../dist/viewer-idle-stop.js');
+const { resolveFirstViewerTimeoutStopReason, wireViewerIdleStop } = require('../dist/viewer-idle-stop.js');
+const {
+    appendInstanceAgentReconnectGraceElapsedEvidence,
+    readInstanceAgentReconnectGraceElapsedEvidenceJournal
+} = require('../dist/instance-agent-reconnect-grace-evidence-state.js');
 
 function signConnectTicket(payload, signingKey) {
     const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
@@ -31,6 +36,191 @@ function signConnectTicket(payload, signingKey) {
     const signature = crypto.createHmac('sha256', signingKey).update(signingInput).digest('base64url');
     return `${signingInput}.${signature}`;
 }
+
+function createViewerIdleHarness(graceMs = 1_234) {
+    const listeners = { added: [], removed: [] };
+    const playerId = 'managed-player';
+    const player = {
+        scaleWorldSessionId: '11111111-1111-4111-8111-111111111111',
+        scaleWorldSessionRequestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        scaleWorldSessionIdentityValidated: true,
+        scaleWorldActiveSessionIdValidated: true,
+        protocol: { disconnect() {} }
+    };
+    const players = new Map([[playerId, player]]);
+    const scheduledTimeouts = [];
+    const publishedWindows = [];
+    const elapsedEvidences = [];
+    const originalSetTimeout = global.setTimeout;
+    global.setTimeout = (callback, delay) => {
+        const timer = { callback, delay };
+        scheduledTimeouts.push(timer);
+        return timer;
+    };
+
+    const server = {
+        playerRegistry: {
+            count: () => players.size,
+            get: (id) => players.get(id),
+            has: (id) => players.has(id),
+            on(event, listener) {
+                listeners[event].push(listener);
+            }
+        }
+    };
+    const instanceAgentClient = {
+        getDesiredState: () => ({
+            warmHoldEnabled: true,
+            drainEnabled: false,
+            shutdownRequested: false,
+            policyVersion: 'test'
+        }),
+        getActiveCommand: () => null,
+        addDesiredStateListener() {},
+        addCommandListener() {},
+        isReconnectGraceRecoveryRecyclePending: () => false,
+        addReconnectGraceRecoveryListener() {},
+        acknowledgeCommand: async () => ({ accepted: false, commandStatus: 'missing' }),
+        startCommand: async () => ({ accepted: false, commandStatus: 'missing' }),
+        completeCommand: async () => ({ accepted: false, commandStatus: 'missing' }),
+        failCommand: async () => ({ accepted: false, commandStatus: 'missing' }),
+        captureSessionLogArtifact: async () => undefined,
+        captureSessionScreenshotArtifact: async () => undefined,
+        setReconnectGraceWindow(window) {
+            publishedWindows.push(window ? { ...window } : null);
+        },
+        recordReconnectGraceElapsedEvidence(evidence) {
+            elapsedEvidences.push({ ...evidence });
+            return true;
+        },
+        requestFastPolling() {}
+    };
+
+    wireViewerIdleStop(server, {
+        graceMs,
+        resetGraceMs: 60_000,
+        firstViewerGraceMs: 60_000,
+        idleStatusHeartbeatMs: 0,
+        maintenanceRefreshMs: 0,
+        desiredStateRefreshMs: 0,
+        instanceAgentClient,
+        connectTicketRuntimeGate: {
+            markTeardownStarted: () => true,
+            getDurableManagedViewerEvidenceStatus: () => 'present'
+        },
+        logger: () => undefined
+    });
+    for (const listener of listeners.added) listener(playerId);
+
+    return {
+        playerId,
+        player,
+        players,
+        listeners,
+        scheduledTimeouts,
+        publishedWindows,
+        elapsedEvidences,
+        restoreTimers() {
+            global.setTimeout = originalSetTimeout;
+        },
+        removeViewer() {
+            for (const listener of listeners.removed) listener(playerId);
+            players.delete(playerId);
+        },
+        reconnectViewer() {
+            players.set(playerId, player);
+            for (const listener of listeners.added) listener(playerId);
+        }
+    };
+}
+
+test('live reconnect-grace report is accepted only for the matching zero-viewer lifecycle', () => {
+    const window = {
+        lastViewerDisconnectedAtUtc: '2026-08-29T18:37:47.000Z',
+        reconnectGraceExpiresAtUtc: '2026-08-29T18:42:47.000Z'
+    };
+
+    assert.deepEqual(
+        normalizeInstanceAgentReconnectGraceWindowForReport(window, 'reconnect_grace', 0),
+        window
+    );
+    assert.deepEqual(
+        normalizeInstanceAgentReconnectGraceWindowForReport(window, 'idle_shutdown_pending', 0),
+        window
+    );
+    assert.equal(normalizeInstanceAgentReconnectGraceWindowForReport(window, 'ready', 0), null);
+    assert.equal(normalizeInstanceAgentReconnectGraceWindowForReport(window, 'resetting', 0), null);
+    assert.equal(normalizeInstanceAgentReconnectGraceWindowForReport(window, 'reconnect_grace', 1), null);
+});
+
+test('viewer reconnect cancels one immutable live reconnect-grace pair and publishes null', () => {
+    const harness = createViewerIdleHarness();
+    try {
+        harness.removeViewer();
+        const startedWindow = harness.publishedWindows.at(-1);
+        assert.ok(startedWindow);
+        assert.equal(
+            Date.parse(startedWindow.reconnectGraceExpiresAtUtc) -
+                Date.parse(startedWindow.lastViewerDisconnectedAtUtc),
+            1_234
+        );
+
+        harness.reconnectViewer();
+
+        assert.equal(harness.publishedWindows.at(-1), null);
+        assert.deepEqual(harness.publishedWindows[0], startedWindow);
+        assert.equal(harness.elapsedEvidences.length, 0);
+    } finally {
+        harness.restoreTimers();
+    }
+});
+
+test('grace expiry records durable evidence and clears live telemetry before reset begins', () => {
+    const harness = createViewerIdleHarness();
+    const originalExistsSync = fs.existsSync;
+    try {
+        harness.removeViewer();
+        const graceTimer = harness.scheduledTimeouts.find((timer) => timer.delay === 1_234);
+        assert.ok(graceTimer);
+        fs.existsSync = () => false;
+
+        graceTimer.callback();
+
+        assert.equal(harness.elapsedEvidences.length, 1);
+        assert.equal(harness.publishedWindows.at(-1), null);
+        assert.equal(
+            harness.elapsedEvidences[0].reconnectGraceExpiresAtUtc,
+            harness.publishedWindows[0].reconnectGraceExpiresAtUtc
+        );
+    } finally {
+        fs.existsSync = originalExistsSync;
+        harness.restoreTimers();
+    }
+});
+
+test('durable elapsed evidence replays independently without recreating a live window', (context) => {
+    const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'sw-reconnect-grace-evidence-'));
+    context.after(() => fs.rmSync(stateDirectory, { recursive: true, force: true }));
+    const journalPath = path.join(stateDirectory, 'reconnect-grace-evidence.json');
+    const evidence = {
+        evidenceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        sessionRequestId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        activeSessionId: '11111111-1111-4111-8111-111111111111',
+        lastViewerDisconnectedAtUtc: '2026-08-29T18:37:47.000Z',
+        reconnectGraceExpiresAtUtc: '2026-08-29T18:42:47.000Z',
+        phase: 'elapsed'
+    };
+
+    assert.deepEqual(
+        appendInstanceAgentReconnectGraceElapsedEvidence(journalPath, evidence, () => undefined),
+        [evidence]
+    );
+    assert.deepEqual(
+        readInstanceAgentReconnectGraceElapsedEvidenceJournal(journalPath, () => undefined),
+        [evidence]
+    );
+    assert.equal(normalizeInstanceAgentReconnectGraceWindowForReport(null, 'ready', 0), null);
+});
 
 test('managed viewer evidence survives restart and rotates only after durable recovery', (context) => {
     const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'sw-connect-ticket-gate-'));

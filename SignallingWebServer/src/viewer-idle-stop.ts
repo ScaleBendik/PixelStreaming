@@ -749,6 +749,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     };
     const continueAfterReconnectGraceEvidenceIsDurable = (continuation: () => void): void => {
         if (makeCommercialReconnectDeadlineDurable()) {
+            clearReconnectGraceWindow();
             continuation();
             return;
         }
@@ -2088,9 +2089,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
-        if (reconnectGraceWindowPhase === 'waiting') {
-            clearReconnectGraceWindow();
-        }
+        clearReconnectGraceWindow();
 
         clearReconnectGraceTimer();
         clearZeroTimer();
@@ -2148,9 +2147,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         resetInFlight = false;
         recycleLaunchRequested = false;
         passiveReconnectRecycleRequested = false;
-        if (reconnectGraceWindowPhase === 'waiting') {
-            clearReconnectGraceWindow();
-        }
+        clearReconnectGraceWindow();
         clearRecycleExitFallbackTimer();
         clearTransientStatusHeartbeat();
         clearReconnectGraceTimer();
