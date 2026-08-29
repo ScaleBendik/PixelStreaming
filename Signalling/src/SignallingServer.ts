@@ -312,6 +312,17 @@ export class SignallingServer {
         const newStreamer = new StreamerConnection(this, ws, request.socket.remoteAddress);
         newStreamer.maxSubscribers = this.config.maxSubscribers || 0;
 
+        // The streamer protocol requires config -> identify -> endpointId. In particular,
+        // Pixel Streaming 2 may initialize its EpicRtc room as soon as identify arrives,
+        // so sending identify first can race application of the ICE-server configuration.
+        const message: Messages.config = MessageHelpers.createMessage(
+            Messages.config,
+            this.protocolConfigStreamer
+        );
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        message.peerConnectionOptions = this.protocolConfigStreamer['peerConnectionOptions'];
+        newStreamer.sendMessage(message);
+
         // add it to the registry and when the transport closes, remove it.
         this.streamerRegistry.add(newStreamer);
         newStreamer.transport.on('close', () => {
@@ -322,16 +333,6 @@ export class SignallingServer {
                 request.socket.remoteAddress
             );
         });
-
-        // because peer connection options is a general field with all optional fields
-        // it doesnt play nice with mergePartial so we just add it verbatim
-        const message: Messages.config = MessageHelpers.createMessage(
-            Messages.config,
-            this.protocolConfigStreamer
-        );
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        message.peerConnectionOptions = this.protocolConfigStreamer['peerConnectionOptions'];
-        newStreamer.sendMessage(message);
     }
 
     private onPlayerConnected(ws: wslib.WebSocket, request: http.IncomingMessage) {

@@ -111,6 +111,7 @@ $viewerIdleStopPath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\
 $connectTicketAuthPath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\src\ConnectTicketAuth.ts')
 $connectTicketRuntimeStatePath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\src\connect-ticket-runtime-state.ts')
 $instanceAgentPath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\src\instance-agent.ts')
+$signallingServerPath = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..\Signalling\src\SignallingServer.ts')
 $repoSyncPath = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
 $repoHeadPublisherPath = Join-Path $PSScriptRoot 'publish_repo_head_tags.ps1'
 $deliveryModeResolverPath = Join-Path $PSScriptRoot 'resolve_pixelstreaming_delivery_mode_from_instance_tag.ps1'
@@ -140,6 +141,7 @@ $viewerIdleStop = [System.IO.File]::ReadAllText($viewerIdleStopPath)
 $connectTicketAuth = [System.IO.File]::ReadAllText($connectTicketAuthPath)
 $connectTicketRuntimeState = [System.IO.File]::ReadAllText($connectTicketRuntimeStatePath)
 $instanceAgent = [System.IO.File]::ReadAllText($instanceAgentPath)
+$signallingServer = [System.IO.File]::ReadAllText($signallingServerPath)
 $repoSync = [System.IO.File]::ReadAllText($repoSyncPath)
 $repoHeadPublisher = [System.IO.File]::ReadAllText($repoHeadPublisherPath)
 $deliveryModeResolver = [System.IO.File]::ReadAllText($deliveryModeResolverPath)
@@ -169,8 +171,18 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $stackLauncher `
-    -Expected 'if not defined STACK_LAUNCH_UNREAL_BEFORE_WILBUR set "STACK_LAUNCH_UNREAL_BEFORE_WILBUR=true"' `
-    -Message 'Stack launcher should start Unreal before waiting for Wilbur by default while preserving the env override.'
+    -Expected 'if not defined STACK_LAUNCH_UNREAL_BEFORE_WILBUR set "STACK_LAUNCH_UNREAL_BEFORE_WILBUR=false"' `
+    -Message 'Stack launcher must wait for Wilbur readiness before starting Unreal while preserving the env override.'
+
+$streamerConfigSendIndex = $signallingServer.IndexOf('newStreamer.sendMessage(message);')
+$streamerRegistryAddIndex = $signallingServer.IndexOf('this.streamerRegistry.add(newStreamer);')
+Assert-True `
+    -Condition (
+        $streamerConfigSendIndex -ge 0 -and
+        $streamerConfigSendIndex -eq $signallingServer.LastIndexOf('newStreamer.sendMessage(message);') -and
+        $streamerRegistryAddIndex -gt $streamerConfigSendIndex
+    ) `
+    -Message 'Streamer handshake must send exactly one config before registry add sends identify.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
