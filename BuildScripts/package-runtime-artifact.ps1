@@ -7,7 +7,7 @@ param(
     [ValidateSet("full", "runtime")]
     [string]$BuildScope = "full",
     [string]$ContractVersion,
-    [string[]]$Capabilities = @("runtime-status-v1", "instance-agent-bootstrap-v1", "unreal-prerequisite-preflight-v1"),
+    [string[]]$Capabilities = @("runtime-status-v1", "instance-agent-bootstrap-v1", "unreal-prerequisite-preflight-v1", "webrtc-port-bank-rotation-v1"),
     [switch]$SkipBuild,
     [switch]$SkipNodeModules,
     [switch]$AllowDirty,
@@ -373,10 +373,12 @@ $artifactCapabilities = @(
         ForEach-Object { $_.ToLowerInvariant() } |
         Sort-Object -Unique
 )
-if ($artifactCapabilities -notcontains 'unreal-prerequisite-preflight-v1') {
-    $artifactCapabilities += 'unreal-prerequisite-preflight-v1'
-    $artifactCapabilities = @($artifactCapabilities | Sort-Object -Unique)
+foreach ($requiredCapability in @('unreal-prerequisite-preflight-v1', 'webrtc-port-bank-rotation-v1')) {
+    if ($artifactCapabilities -notcontains $requiredCapability) {
+        $artifactCapabilities += $requiredCapability
+    }
 }
+$artifactCapabilities = @($artifactCapabilities | Sort-Object -Unique)
 
 $outputRoot = Normalize-Optional $OutputRoot
 if (-not $outputRoot) {
@@ -460,6 +462,7 @@ Copy-RequiredDirectory -RelativePath "SignallingWebServer\dist" -DestinationRoot
 Copy-RequiredDirectory -RelativePath "SignallingWebServer\www" -DestinationRoot $stageRoot
 Copy-RequiredDirectory -RelativePath "SignallingWebServer\platform_scripts" -DestinationRoot $stageRoot -ExtraRobocopyArguments @("/XD", "node", "coturn")
 Copy-RequiredFile -RelativePath "SignallingWebServer\platform_scripts\powershell\unreal_prerequisite.psm1" -DestinationRoot $stageRoot
+Copy-RequiredFile -RelativePath "SignallingWebServer\platform_scripts\powershell\webrtc_port_bank.psm1" -DestinationRoot $stageRoot
 Copy-OptionalFile -RelativePath "SignallingWebServer\README.md" -DestinationRoot $stageRoot
 
 $nodeRuntimeSource = Join-Path $repoRootPath "SignallingWebServer\platform_scripts\cmd\node"
