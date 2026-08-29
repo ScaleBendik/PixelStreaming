@@ -120,8 +120,6 @@ $runtimeInstallerPath = Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.
 $updateModePath = Join-Path $PSScriptRoot 'invoke_update_mode.ps1'
 $unrealPrerequisiteModulePath = Join-Path $PSScriptRoot 'unreal_prerequisite.psm1'
 $unrealPrerequisiteTestPath = Join-Path $PSScriptRoot 'test_unreal_prerequisite.ps1'
-$webRtcPortBankModulePath = Join-Path $PSScriptRoot 'webrtc_port_bank.psm1'
-$webRtcPortBankTestPath = Join-Path $PSScriptRoot 'test_webrtc_port_bank.ps1'
 $provisioningModePath = Join-Path $PSScriptRoot 'invoke_provisioning_mode.ps1'
 $stopSupersededRootPath = Join-Path $PSScriptRoot 'stop_superseded_root_processes.ps1'
 $packageRuntimeArtifactPath = Join-Path $buildScriptsRoot 'package-runtime-artifact.ps1'
@@ -151,8 +149,6 @@ $runtimeInstaller = [System.IO.File]::ReadAllText($runtimeInstallerPath)
 $updateMode = [System.IO.File]::ReadAllText($updateModePath)
 $unrealPrerequisiteModule = [System.IO.File]::ReadAllText($unrealPrerequisiteModulePath)
 $unrealPrerequisiteTest = [System.IO.File]::ReadAllText($unrealPrerequisiteTestPath)
-$webRtcPortBankModule = [System.IO.File]::ReadAllText($webRtcPortBankModulePath)
-$webRtcPortBankTest = [System.IO.File]::ReadAllText($webRtcPortBankTestPath)
 $provisioningMode = [System.IO.File]::ReadAllText($provisioningModePath)
 $stopSupersededRoot = [System.IO.File]::ReadAllText($stopSupersededRootPath)
 $packageRuntimeArtifact = [System.IO.File]::ReadAllText($packageRuntimeArtifactPath)
@@ -749,16 +745,6 @@ Assert-ContainsText `
     -Message 'New runtime artifacts must declare the prerequisite-preflight capability that makes the helper mandatory.'
 
 Assert-ContainsText `
-    -Content $packageRuntimeArtifact `
-    -Expected 'Copy-RequiredFile -RelativePath "SignallingWebServer\platform_scripts\powershell\webrtc_port_bank.psm1" -DestinationRoot $stageRoot' `
-    -Message 'Runtime artifact packaging must explicitly include the WebRTC port-bank helper.'
-
-Assert-ContainsText `
-    -Content $packageRuntimeArtifact `
-    -Expected "'webrtc-port-bank-rotation-v1'" `
-    -Message 'New runtime artifacts must declare the WebRTC port-bank capability that makes the helper mandatory.'
-
-Assert-ContainsText `
     -Content $runtimeInstaller `
     -Expected '"SWupdate.ps1"' `
     -Message 'Runtime artifact installer must reject bundles missing root SWupdate.ps1.'
@@ -775,16 +761,6 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $runtimeInstaller `
-    -Expected '"SignallingWebServer\platform_scripts\powershell\webrtc_port_bank.psm1"' `
-    -Message 'Runtime artifact installer must know the capability-gated WebRTC port-bank helper path.'
-
-Assert-ContainsText `
-    -Content $runtimeInstaller `
-    -Expected "if (@(`$ExpectedManifest.Capabilities) -contains 'webrtc-port-bank-rotation-v1') {" `
-    -Message 'Runtime artifact installer must require the WebRTC port-bank helper only for manifests that declare its capability.'
-
-Assert-ContainsText `
-    -Content $runtimeInstaller `
     -Expected 'capabilities = @($Manifest.Capabilities)' `
     -Message 'Runtime installer completion markers must preserve artifact capabilities for later self-consistency checks.'
 
@@ -797,16 +773,6 @@ Assert-ContainsText `
     -Content $prepareForBake `
     -Expected "if (`$capabilities -contains 'unreal-prerequisite-preflight-v1') {" `
     -Message 'AMI bake validation must require the helper for new prerequisite-aware artifacts while accepting legacy rollback artifacts.'
-
-Assert-ContainsText `
-    -Content $prepareForBake `
-    -Expected "'SignallingWebServer\platform_scripts\powershell\webrtc_port_bank.psm1'" `
-    -Message 'AMI bake preparation must know the capability-gated WebRTC port-bank helper path.'
-
-Assert-ContainsText `
-    -Content $prepareForBake `
-    -Expected "if (`$capabilities -contains 'webrtc-port-bank-rotation-v1') {" `
-    -Message 'AMI bake validation must require the helper for port-bank-aware artifacts while accepting legacy rollback artifacts.'
 
 $runtimeInstallerPolicyModule = New-SelectedFunctionModule `
     -Content $runtimeInstaller `
@@ -895,37 +861,6 @@ try {
     Assert-True `
         -Condition $newArtifactAcceptedWithHelper `
         -Message 'A prerequisite-aware artifact must pass validation after its declared helper is present.'
-
-    $portBankAwareManifest = [ordered]@{}
-    foreach ($entry in $prerequisiteAwareManifest.GetEnumerator()) {
-        $portBankAwareManifest[$entry.Key] = $entry.Value
-    }
-    $portBankAwareManifest.capabilities = @($prerequisiteAwareManifest.capabilities) + 'webrtc-port-bank-rotation-v1'
-    $portBankAwareManifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $runtimePolicyTestRoot 'manifest.json') -Encoding ASCII
-    $portBankAwareExpectedManifest = [pscustomobject]@{
-        BundleId = $portBankAwareManifest.bundleId
-        RuntimeZipKey = $portBankAwareManifest.runtimeZipKey
-        RuntimeZipSha256 = $portBankAwareManifest.runtimeZipSha256
-        Capabilities = @($portBankAwareManifest.capabilities)
-    }
-
-    $portBankArtifactAcceptedWithoutHelper = & $runtimeInstallerPolicyModule {
-        param($BundleRoot, $Manifest)
-        Test-InstalledRuntimeBundle -BundleRoot $BundleRoot -ExpectedManifest $Manifest
-    } $runtimePolicyTestRoot $portBankAwareExpectedManifest
-    Assert-True `
-        -Condition (-not $portBankArtifactAcceptedWithoutHelper) `
-        -Message 'A port-bank-aware artifact must fail validation when its declared helper is missing.'
-
-    $portBankHelperPath = Join-Path $runtimePolicyTestRoot 'SignallingWebServer\platform_scripts\powershell\webrtc_port_bank.psm1'
-    Set-Content -LiteralPath $portBankHelperPath -Value '' -Encoding ASCII
-    $portBankArtifactAcceptedWithHelper = & $runtimeInstallerPolicyModule {
-        param($BundleRoot, $Manifest)
-        Test-InstalledRuntimeBundle -BundleRoot $BundleRoot -ExpectedManifest $Manifest
-    } $runtimePolicyTestRoot $portBankAwareExpectedManifest
-    Assert-True `
-        -Condition $portBankArtifactAcceptedWithHelper `
-        -Message 'A port-bank-aware artifact must pass validation after its declared helper is present.'
 } finally {
     if ($null -ne $runtimeInstallerPolicyModule) {
         Remove-Module $runtimeInstallerPolicyModule.Name -Force -ErrorAction SilentlyContinue
@@ -1209,41 +1144,6 @@ Assert-MatchesText `
     -Content $unrealLauncher `
     -Pattern 'Assert-ScaleWorldUnrealPrerequisite.*?Start-Process -FilePath \$processPath' `
     -Message 'Normal Unreal startup must run its check-only prerequisite guard before launching the bootstrap executable.'
-
-Assert-MatchesText `
-    -Content $unrealLauncher `
-    -Pattern 'Select-ScaleWorldWebRtcPortBank.*?-PixelStreamingWebRTCMinPort=.*?-PixelStreamingWebRTCMaxPort=.*?Start-Process -FilePath \$processPath' `
-    -Message 'Every normal Unreal launch must reserve a durable WebRTC port bank and pass its exact range before starting the process.'
-
-Assert-ContainsText `
-    -Content $unrealLauncher `
-    -Expected "else { 660 }" `
-    -Message 'The default WebRTC bank cooldown must exceed the observed ten-minute stale allocation window.'
-
-Assert-ContainsText `
-    -Content $unrealLauncher `
-    -Expected "Join-Path `$installBase 'state\webrtc-port-bank.json'" `
-    -Message 'Port-bank state must persist outside replaceable runtime releases by default.'
-
-Assert-ContainsText `
-    -Content $unrealLauncher `
-    -Expected 'AdditionalArgs cannot override PixelStreamingWebRTCMinPort or PixelStreamingWebRTCMaxPort while port-bank rotation is enabled.' `
-    -Message 'Manual port-range arguments must not defeat rotation while the safety feature is enabled.'
-
-Assert-ContainsText `
-    -Content $webRtcPortBankModule `
-    -Expected 'webrtc_port_bank_exhausted' `
-    -Message 'The allocator must fail closed when every bank is still cooling.'
-
-Assert-ContainsText `
-    -Content $webRtcPortBankModule `
-    -Expected 'legacy_default_reservation' `
-    -Message 'The first upgraded launch must avoid the lowest legacy/default port bank.'
-
-Assert-ContainsText `
-    -Content $webRtcPortBankTest `
-    -Expected 'Changing the bank geometry over live durable state must fail closed.' `
-    -Message 'Focused port-bank tests must protect safe state migration behavior.'
 
 Assert-DoesNotContainText `
     -Content $unrealLauncher `

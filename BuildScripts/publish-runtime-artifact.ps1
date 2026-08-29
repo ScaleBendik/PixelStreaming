@@ -8,7 +8,7 @@ param(
     [ValidateSet("full", "runtime")]
     [string]$BuildScope = "full",
     [string]$ContractVersion,
-    [string[]]$Capabilities = @("runtime-status-v1", "instance-agent-bootstrap-v1", "unreal-prerequisite-preflight-v1", "webrtc-port-bank-rotation-v1"),
+    [string[]]$Capabilities = @("runtime-status-v1", "instance-agent-bootstrap-v1"),
     [int]$MaxSequence = 999,
     [switch]$SkipBuild,
     [switch]$SkipNodeModules,

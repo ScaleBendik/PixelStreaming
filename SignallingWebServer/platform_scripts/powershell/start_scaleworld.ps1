@@ -10,38 +10,12 @@ param(
     [int]$ResX = $(if ($env:SCALEWORLD_RES_X) { [int]$env:SCALEWORLD_RES_X } else { 2240 }),
     [int]$ResY = $(if ($env:SCALEWORLD_RES_Y) { [int]$env:SCALEWORLD_RES_Y } else { 1260 }),
     [int]$Fps = $(if ($env:SCALEWORLD_PIXEL_STREAMING_FPS) { [int]$env:SCALEWORLD_PIXEL_STREAMING_FPS } else { 30 }),
-    [string]$WebRtcPortBankRotationEnabled = $(if ($env:SCALEWORLD_WEBRTC_PORT_BANK_ROTATION_ENABLED) { $env:SCALEWORLD_WEBRTC_PORT_BANK_ROTATION_ENABLED } else { 'true' }),
-    [string]$WebRtcPortBankStatePath = $(if ($env:SCALEWORLD_WEBRTC_PORT_BANK_STATE_PATH) { $env:SCALEWORLD_WEBRTC_PORT_BANK_STATE_PATH } else { '' }),
-    [int]$WebRtcPortRangeMin = $(if ($env:SCALEWORLD_WEBRTC_PORT_RANGE_MIN) { [int]$env:SCALEWORLD_WEBRTC_PORT_RANGE_MIN } else { 49152 }),
-    [int]$WebRtcPortRangeMax = $(if ($env:SCALEWORLD_WEBRTC_PORT_RANGE_MAX) { [int]$env:SCALEWORLD_WEBRTC_PORT_RANGE_MAX } else { 65535 }),
-    [int]$WebRtcPortBankSize = $(if ($env:SCALEWORLD_WEBRTC_PORT_BANK_SIZE) { [int]$env:SCALEWORLD_WEBRTC_PORT_BANK_SIZE } else { 256 }),
-    [int]$WebRtcPortBankReuseCooldownSeconds = $(if ($env:SCALEWORLD_WEBRTC_PORT_BANK_REUSE_COOLDOWN_SECONDS) { [int]$env:SCALEWORLD_WEBRTC_PORT_BANK_REUSE_COOLDOWN_SECONDS } else { 660 }),
-    [int]$WebRtcPortBankLockTimeoutSeconds = $(if ($env:SCALEWORLD_WEBRTC_PORT_BANK_LOCK_TIMEOUT_SECONDS) { [int]$env:SCALEWORLD_WEBRTC_PORT_BANK_LOCK_TIMEOUT_SECONDS } else { 30 }),
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$AdditionalArgs
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-
-function ConvertTo-ScaleWorldStrictBoolean {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Value,
-        [Parameter(Mandatory = $true)]
-        [string]$SettingName
-    )
-
-    switch ($Value.Trim().ToLowerInvariant()) {
-        'true' { return $true }
-        '1' { return $true }
-        'false' { return $false }
-        '0' { return $false }
-        default {
-            throw "webrtc_port_bank_configuration_invalid: $SettingName must be true, false, 1, or 0; got '$Value'."
-        }
-    }
-}
 
 $helperScriptPath = Join-Path $PSScriptRoot 'scaleworld_process_helpers.ps1'
 if (-not (Test-Path -LiteralPath $helperScriptPath)) {
@@ -94,55 +68,6 @@ $arguments = @(
     "-PixelStreamingIP=$PixelStreamingIp",
     "-PixelStreamingPort=$PixelStreamingPort"
 )
-
-if ($AdditionalArgs) {
-    $manualPortRangeArguments = @(
-        $AdditionalArgs |
-            Where-Object { $_ -match '^-PixelStreamingWebRTC(?:Min|Max)Port(?:=|$)' }
-    )
-} else {
-    $manualPortRangeArguments = @()
-}
-
-$portBankRotationEnabled = ConvertTo-ScaleWorldStrictBoolean `
-    -Value $WebRtcPortBankRotationEnabled `
-    -SettingName 'SCALEWORLD_WEBRTC_PORT_BANK_ROTATION_ENABLED'
-
-if ($portBankRotationEnabled) {
-    if ($manualPortRangeArguments.Count -gt 0) {
-        throw "webrtc_port_bank_configuration_invalid: AdditionalArgs cannot override PixelStreamingWebRTCMinPort or PixelStreamingWebRTCMaxPort while port-bank rotation is enabled."
-    }
-
-    $portBankModulePath = Join-Path $PSScriptRoot 'webrtc_port_bank.psm1'
-    if (-not (Test-Path -LiteralPath $portBankModulePath -PathType Leaf)) {
-        throw "webrtc_port_bank_helper_missing: ScaleWorld WebRTC port-bank helper '$portBankModulePath' was not found."
-    }
-    Import-Module $portBankModulePath -Force -ErrorAction Stop
-
-    if ([string]::IsNullOrWhiteSpace($WebRtcPortBankStatePath)) {
-        $installBase = if ($env:SCALEWORLD_INSTALL_BASE) {
-            [System.IO.Path]::GetFullPath($env:SCALEWORLD_INSTALL_BASE)
-        } else {
-            Split-Path -Parent $installRootPath
-        }
-        $WebRtcPortBankStatePath = Join-Path $installBase 'state\webrtc-port-bank.json'
-    }
-
-    $portBank = Select-ScaleWorldWebRtcPortBank `
-        -StatePath $WebRtcPortBankStatePath `
-        -RangeMin $WebRtcPortRangeMin `
-        -RangeMax $WebRtcPortRangeMax `
-        -BankSize $WebRtcPortBankSize `
-        -ReuseCooldownSeconds $WebRtcPortBankReuseCooldownSeconds `
-        -LockTimeoutSeconds $WebRtcPortBankLockTimeoutSeconds
-    $arguments += @(
-        "-PixelStreamingWebRTCMinPort=$($portBank.MinPort)",
-        "-PixelStreamingWebRTCMaxPort=$($portBank.MaxPort)"
-    )
-    Write-Output ("Selected WebRTC port bank generation={0} bank={1}/{2} ports={3}-{4} reuseCooldownSeconds={5} state='{6}'." -f $portBank.Generation, ($portBank.BankIndex + 1), $portBank.BankCount, $portBank.MinPort, $portBank.MaxPort, $portBank.ReuseCooldownSeconds, $portBank.StatePath)
-} else {
-    Write-Warning 'WebRTC port-bank rotation is disabled; Unreal will use its default or explicitly supplied WebRTC port range.'
-}
 
 if ($AdditionalArgs) {
     $arguments += $AdditionalArgs

@@ -52,8 +52,7 @@ Minimum manifest shape:
   "capabilities": [
     "runtime-status-v1",
     "instance-agent-bootstrap-v1",
-    "unreal-prerequisite-preflight-v1",
-    "webrtc-port-bank-rotation-v1"
+    "unreal-prerequisite-preflight-v1"
   ],
   "compatibility": {
     "api": {
@@ -233,45 +232,6 @@ activatable for rollback; its older completion marker may also omit capability
 metadata. This compatibility rule does not make a legacy updater
 prerequisite-aware, so converge the new runtime before an engine upgrade that
 depends on the preflight.
-
-### WebRTC port-bank rotation
-
-New runtime bundles also include
-`SignallingWebServer\platform_scripts\powershell\webrtc_port_bank.psm1` and
-declare `webrtc-port-bank-rotation-v1`. Runtime install and AMI-bake validation
-require the helper when that capability is declared. Older schema-v1 artifacts
-without the capability remain valid rollback targets.
-
-`start_scaleworld.ps1` reserves a generation-specific Unreal WebRTC UDP bank
-before every actual Unreal launch and supplies
-`-PixelStreamingWebRTCMinPort=<bank-min>` and
-`-PixelStreamingWebRTCMaxPort=<bank-max>`. The durable allocator state defaults
-to `C:\PixelStreaming\state\webrtc-port-bank.json`, outside the replaceable
-runtime bundle. The lowest legacy/default bank is reserved on every allocation,
-which also protects a re-enable after a rollback that used Unreal's default
-ports. State writes use an exclusive lock and an atomic, write-through
-replacement. A state file missing after its durable lock marker was created,
-corrupt/incompatible state, lock timeout, an unsafe cooldown, or exhaustion of
-every cooling bank stops the launch instead of silently restarting or reusing a
-bank. Absence of both state and lock marker is the expected first-launch case.
-
-Defaults use the existing UDP media range `49152-65535`, 256 ports per bank (64
-configured banks: one legacy reserve and 63 rotating banks), and an 11-minute
-(`660` second) no-reuse window. The supported overrides are:
-
-- `SCALEWORLD_WEBRTC_PORT_BANK_ROTATION_ENABLED` (`true` by default; `false` is
-  the rollback switch)
-- `SCALEWORLD_WEBRTC_PORT_BANK_STATE_PATH`
-- `SCALEWORLD_WEBRTC_PORT_RANGE_MIN`
-- `SCALEWORLD_WEBRTC_PORT_RANGE_MAX`
-- `SCALEWORLD_WEBRTC_PORT_BANK_SIZE`
-- `SCALEWORLD_WEBRTC_PORT_BANK_REUSE_COOLDOWN_SECONDS` (minimum `600`)
-- `SCALEWORLD_WEBRTC_PORT_BANK_LOCK_TIMEOUT_SECONDS`
-
-Changing range geometry while durable state exists is intentionally rejected.
-Stop the stack and explicitly migrate/remove allocator state only as an approved
-operational action. While rotation is enabled, additional launcher arguments may
-not override the Unreal min/max port flags.
 
 Update mode derives the required x64 Visual C++ runtime version from the signed
 Microsoft installer bundled with the exact Unreal release at

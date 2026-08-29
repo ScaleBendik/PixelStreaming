@@ -254,9 +254,6 @@ function Get-RequiredRuntimeFiles {
     if (@($ExpectedManifest.Capabilities) -contains 'unreal-prerequisite-preflight-v1') {
         $requiredFiles += "SignallingWebServer\platform_scripts\powershell\unreal_prerequisite.psm1"
     }
-    if (@($ExpectedManifest.Capabilities) -contains 'webrtc-port-bank-rotation-v1') {
-        $requiredFiles += "SignallingWebServer\platform_scripts\powershell\webrtc_port_bank.psm1"
-    }
 
     return @($requiredFiles)
 }

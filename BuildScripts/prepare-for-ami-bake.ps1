@@ -306,9 +306,6 @@ function Test-RuntimeLaunchRoot {
     if ($capabilities -contains 'unreal-prerequisite-preflight-v1') {
         $requiredPaths += 'SignallingWebServer\platform_scripts\powershell\unreal_prerequisite.psm1'
     }
-    if ($capabilities -contains 'webrtc-port-bank-rotation-v1') {
-        $requiredPaths += 'SignallingWebServer\platform_scripts\powershell\webrtc_port_bank.psm1'
-    }
 
     foreach ($relativePath in $requiredPaths) {
         $scriptPath = Join-Path $RuntimeRoot $relativePath
