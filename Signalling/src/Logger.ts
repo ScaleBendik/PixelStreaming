@@ -6,6 +6,7 @@ import winston from 'winston';
 import 'winston-daily-rotate-file';
 import { TransformableInfo } from 'logform';
 import { BaseMessage, ILogger, overrideLogger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
+import { redactSensitiveLogValue } from './LogRedaction';
 
 const { combine, timestamp, printf, colorize, splat } = winston.format;
 
@@ -137,11 +138,12 @@ function createConsoleFormat() {
 }
 
 function formatMessageForConsole(message: BaseMessage) {
+    const redactedMessage = redactSensitiveLogValue(message) as BaseMessage;
     switch (logMessagesToConsole) {
         case 'verbose':
-            return stringify(message);
+            return stringify(redactedMessage);
         case 'formatted':
-            return beautify(message);
+            return beautify(redactedMessage);
         default:
             return `[${message.type}]`;
     }
@@ -178,10 +180,11 @@ function createFileFormat() {
             });
         } else if (isLogObject(logObj.message)) {
             const { timestamp, level, message } = logObj;
+            const redactedMessage = redactSensitiveLogValue(message) as IProtoLogObj;
             return JSON.stringify({
                 timestamp,
                 level,
-                ...message
+                ...redactedMessage
             });
         }
         return '';

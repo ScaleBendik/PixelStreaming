@@ -11,6 +11,7 @@ import { PlayerRegistry } from './PlayerRegistry';
 import { IceCandidateMonitor, IceCandidateMonitorOptions } from './IceCandidateMonitor';
 import { Messages, MessageHelpers, SignallingProtocol } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
 import { stringify } from './Utils';
+import { redactSensitiveLogValue } from './LogRedaction';
 
 const SCALEWORLD_SESSION_ID_PARAM = 'sm_session_id';
 const SCALEWORLD_SESSION_REQUEST_ID_PARAM = 'sm_session_request_id';
@@ -221,7 +222,7 @@ export class SignallingServer {
      * @param config - A collection of options for this server.
      */
     constructor(config: IServerConfig) {
-        Logger.debug('Started SignallingServer with config: %s', stringify(config));
+        Logger.debug('Started SignallingServer with config: %s', stringify(redactSensitiveLogValue(config)));
 
         this.config = config;
         this.streamerRegistry = new StreamerRegistry();
