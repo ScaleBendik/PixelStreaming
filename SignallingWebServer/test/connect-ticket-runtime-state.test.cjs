@@ -11,15 +11,18 @@ const { createPlayerVerifyClient } = require('../dist/ConnectTicketAuth.js');
 const {
     applyInstanceAgentControlResponse,
     canExecuteAcknowledgedInstanceCommand,
-    normalizeInstanceAgentReconnectGraceWindowForReport
+    normalizeInstanceAgentReconnectGraceWindowForReport,
+    wireInstanceAgent
 } = require('../dist/instance-agent.js');
 const {
     isInstanceAgentCommandExpired,
     writeInstanceAgentCommandJournalSnapshot
 } = require('../dist/instance-agent-command-state.js');
 const {
+    clearInstanceAgentRecycleMarkerSnapshot,
     isInstanceAgentRecycleReplacementProof,
     readInstanceAgentRecycleMarkerSnapshot,
+    resolveInstanceAgentRecycleMarkerPath,
     writeInstanceAgentRecycleMarkerSnapshot
 } = require('../dist/instance-agent-recycle-state.js');
 const { resolveFirstViewerTimeoutStopReason, wireViewerIdleStop } = require('../dist/viewer-idle-stop.js');
@@ -470,6 +473,467 @@ test('pre-launch recycle intent is not replacement proof after a process restart
             5678
         ),
         true
+    );
+});
+
+test('tokenless passive recycle marker never adopts an unchanged newer desired recycle token', (context) => {
+    const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'sw-tokenless-marker-new-token-'));
+    context.after(() => fs.rmSync(stateDirectory, { recursive: true, force: true }));
+    const desiredStatePath = path.join(stateDirectory, 'instance-agent-desired-state.json');
+    const markerPath = path.join(stateDirectory, 'instance-agent-recycle-marker.json');
+    const desiredRecycleToken = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const desiredState = {
+        warmHoldEnabled: true,
+        drainEnabled: false,
+        shutdownRequested: false,
+        recycleRequestedToken: desiredRecycleToken,
+        policyVersion: 'token-b',
+        updatedAtUtc: '2026-08-30T01:00:02.000Z'
+    };
+    const marker = writeInstanceAgentRecycleMarkerSnapshot(
+        markerPath,
+        {
+            phase: 'replacement_started',
+            requestedAtUtc: '2026-08-30T01:00:00.000Z',
+            replacementStartedAtUtc: '2026-08-30T01:00:01.000Z',
+            reason: 'passive_post_session_cleanup',
+            recycleId: 'passive-recycle-a',
+            sourcePid: process.pid + 10_000
+        },
+        () => undefined
+    );
+    assert.equal(marker.recycleRequestedToken, undefined);
+    assert.equal(isInstanceAgentRecycleReplacementProof(marker), true);
+
+    const listeners = { added: [], removed: [] };
+    const scheduledTimeouts = [];
+    const recycleTokenChecks = [];
+    const teardownStarts = [];
+    let desiredStateListener = null;
+    const originalSetTimeout = global.setTimeout;
+    global.setTimeout = (callback, delay) => {
+        const timer = { callback, delay };
+        scheduledTimeouts.push(timer);
+        return timer;
+    };
+
+    try {
+        wireViewerIdleStop(
+            {
+                playerRegistry: {
+                    count: () => 0,
+                    get: () => undefined,
+                    has: () => false,
+                    on(event, listener) {
+                        listeners[event].push(listener);
+                    }
+                }
+            },
+            {
+                firstViewerGraceMs: 0,
+                resetGraceMs: 0,
+                idleStatusHeartbeatMs: 0,
+                maintenanceRefreshMs: 0,
+                desiredStateRefreshMs: 0,
+                desiredStatePath,
+                instanceAgentClient: {
+                    getDesiredState: () => desiredState,
+                    getActiveCommand: () => null,
+                    addDesiredStateListener(listener) {
+                        desiredStateListener = listener;
+                    },
+                    addCommandListener() {},
+                    isReconnectGraceRecoveryRecyclePending: () => false,
+                    addReconnectGraceRecoveryListener() {},
+                    acknowledgeCommand: async () => ({ accepted: false, commandStatus: 'missing' }),
+                    startCommand: async () => ({ accepted: false, commandStatus: 'missing' }),
+                    completeCommand: async () => ({ accepted: false, commandStatus: 'missing' }),
+                    failCommand: async () => ({ accepted: false, commandStatus: 'missing' }),
+                    captureSessionLogArtifact: async () => undefined,
+                    captureSessionScreenshotArtifact: async () => undefined,
+                    setReconnectGraceWindow() {},
+                    recordReconnectGraceElapsedEvidence: () => true,
+                    requestFastPolling() {}
+                },
+                connectTicketRuntimeGate: {
+                    markTeardownStarted(options) {
+                        teardownStarts.push(options);
+                        return false;
+                    },
+                    getDurableManagedViewerEvidenceStatus: () => 'none',
+                    getRecycleTokenCompletionStatus(token) {
+                        recycleTokenChecks.push(token);
+                        return 'open';
+                    }
+                },
+                logger: () => undefined
+            }
+        );
+
+        assert.equal(typeof desiredStateListener, 'function');
+        desiredStateListener(desiredState, { source: 'unchanged-token-b' });
+        assert.equal(teardownStarts.length, 0);
+        assert.equal(scheduledTimeouts.length, 0);
+
+        assert.equal(
+            clearInstanceAgentRecycleMarkerSnapshot(markerPath, () => undefined, marker.recycleId),
+            true
+        );
+        desiredStateListener(desiredState, { source: 'unchanged-token-b-after-marker-cleanup' });
+
+        assert.equal(teardownStarts.length, 1);
+        assert.equal(teardownStarts[0].reason, 'stack_recycle_launch');
+        assert.equal(scheduledTimeouts.length, 1);
+        assert.ok(recycleTokenChecks.filter((token) => token === desiredRecycleToken).length >= 2);
+    } finally {
+        global.setTimeout = originalSetTimeout;
+    }
+});
+
+test('tokenful reset completion retries marker durability and survives acceptance until Ready reconciliation', async (context) => {
+    const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'sw-reset-completion-reconcile-'));
+    context.after(() => fs.rmSync(stateDirectory, { recursive: true, force: true }));
+    const desiredStatePath = path.join(stateDirectory, 'instance-agent-desired-state.json');
+    const markerPath = resolveInstanceAgentRecycleMarkerPath(desiredStatePath);
+    const recycleToken = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const desiredWithRecycle = {
+        warmHoldEnabled: true,
+        drainEnabled: false,
+        shutdownRequested: false,
+        recycleRequestedToken: recycleToken,
+        policyVersion: 'resetting-token'
+    };
+    const desiredAfterReady = {
+        warmHoldEnabled: true,
+        drainEnabled: false,
+        shutdownRequested: false,
+        policyVersion: 'ready-token-cleared'
+    };
+    fs.writeFileSync(desiredStatePath, JSON.stringify(desiredWithRecycle));
+    writeInstanceAgentRecycleMarkerSnapshot(
+        markerPath,
+        {
+            phase: 'replacement_started',
+            requestedAtUtc: '2026-08-30T01:10:00.000Z',
+            replacementStartedAtUtc: '2026-08-30T01:10:01.000Z',
+            reason: 'post_session_cleanup',
+            recycleId: 'recycle-ready-heartbeat',
+            sourcePid: process.pid + 10_000,
+            recycleRequestedToken: recycleToken
+        },
+        () => undefined
+    );
+
+    const originalFetch = global.fetch;
+    const originalSetTimeout = global.setTimeout;
+    const originalSetInterval = global.setInterval;
+    const originalClearInterval = global.clearInterval;
+    const originalRenameSync = fs.renameSync;
+    const eventUploads = [];
+    const requestPaths = [];
+    let commercialRecoveryRequired = true;
+    let commercialRecoveryCompletionCalls = 0;
+    let failFirstCompletionMarkerRewrite = true;
+    global.setTimeout = (callback, delay) => ({ callback, delay });
+    global.setInterval = (callback, delay) => ({ callback, delay });
+    global.clearInterval = () => undefined;
+    fs.renameSync = (sourcePath, destinationPath) => {
+        if (
+            failFirstCompletionMarkerRewrite &&
+            path.resolve(destinationPath) === path.resolve(markerPath)
+        ) {
+            const candidate = JSON.parse(fs.readFileSync(sourcePath, 'utf8'));
+            if (candidate.resetCompletedAtUtc) {
+                failFirstCompletionMarkerRewrite = false;
+                const error = new Error('Simulated transient completion-marker rename failure.');
+                error.code = 'EIO';
+                throw error;
+            }
+        }
+        return originalRenameSync(sourcePath, destinationPath);
+    };
+    global.fetch = async (url, init = {}) => {
+        const requestPath = new URL(url).pathname;
+        if (requestPath.startsWith('/agent/')) {
+            requestPaths.push(requestPath);
+        }
+        if (requestPath === '/agent/bootstrap') {
+            return new Response(
+                JSON.stringify({
+                    agentToken: 'test-agent-token',
+                    tokenExpiresAtUtc: '2026-08-30T02:10:00.000Z',
+                    heartbeatIntervalSeconds: 3600,
+                    commands: [],
+                    desiredState: desiredWithRecycle
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+
+        if (requestPath === '/agent/events/batch') {
+            const body = JSON.parse(init.body);
+            const resetCompletion = body.events.find((event) => event.eventType === 'reset_completed');
+            assert.ok(resetCompletion);
+            assert.equal(fs.existsSync(markerPath), true);
+            eventUploads.push(resetCompletion);
+            const desiredState = eventUploads.length === 1 ? desiredWithRecycle : desiredAfterReady;
+            return new Response(
+                JSON.stringify({
+                    acceptedCount: body.events.length,
+                    commands: [],
+                    desiredState
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+
+        if (requestPath === '/agent/heartbeat') {
+            const body = JSON.parse(init.body);
+            assert.equal(body.currentRuntimeStatus, 'ready');
+            assert.equal(body.runtimeReady, true);
+            assert.equal(fs.existsSync(markerPath), true);
+            return new Response(
+                JSON.stringify({
+                    tokenExpiresAtUtc: '2026-08-30T02:10:00.000Z',
+                    heartbeatIntervalSeconds: 3600,
+                    commands: [],
+                    desiredState: desiredAfterReady
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+
+        throw new Error(`Unexpected instance-agent request: ${requestPath}`);
+    };
+
+    try {
+        const client = wireInstanceAgent(
+            {
+                playerRegistry: {
+                    count: () => 0,
+                    get: () => undefined,
+                    has: () => false,
+                    on() {}
+                }
+            },
+            {
+                enabled: true,
+                apiBaseUrl: 'https://instance-agent.test',
+                instanceId: 'i-reset-completion-test',
+                region: 'eu-north-1',
+                heartbeatMs: 3_600_000,
+                desiredStatePath,
+                connectTicketRuntimeGate: {
+                    getReconnectGraceEvidenceJournalBlockReason: () => null,
+                    setReconnectGraceEvidenceJournalBlock() {},
+                    markTeardownStarted: () => true,
+                    isCommercialRecoveryRequired: () => commercialRecoveryRequired,
+                    prepareCommercialRecoveryAfterReset: () => 0,
+                    completeCommercialRecoveryAfterReset(token) {
+                        assert.equal(token, recycleToken);
+                        commercialRecoveryCompletionCalls += 1;
+                        commercialRecoveryRequired = false;
+                        return true;
+                    },
+                    getRecycleTokenCompletionStatus: () => 'completed',
+                    getCommercialRecoveryReadyNotBeforeEpochSeconds: () => null
+                },
+                logger: () => undefined
+            }
+        );
+        assert.ok(client);
+        client.recordRuntimeStatus({
+            status: 'ready',
+            reason: 'replacement_runtime_ready',
+            source: 'test',
+            version: 'test-runtime'
+        });
+        assert.equal(commercialRecoveryRequired, false);
+        assert.equal(commercialRecoveryCompletionCalls, 1);
+        assert.equal(failFirstCompletionMarkerRewrite, false);
+        assert.equal(readInstanceAgentRecycleMarkerSnapshot(markerPath, () => undefined).resetCompletedAtUtc, undefined);
+
+        client.recordRuntimeStatus({
+            status: 'ready',
+            reason: 'replacement_runtime_ready',
+            source: 'test',
+            version: 'test-runtime',
+            heartbeatOnly: true
+        });
+        const retriedCompletionMarker = readInstanceAgentRecycleMarkerSnapshot(
+            markerPath,
+            () => undefined
+        );
+        assert.ok(retriedCompletionMarker.resetCompletedAtUtc);
+        assert.equal(commercialRecoveryCompletionCalls, 1);
+
+        for (let attempt = 0; attempt < 100 && fs.existsSync(markerPath); attempt += 1) {
+            await new Promise((resolve) => setImmediate(resolve));
+        }
+
+        assert.deepEqual(requestPaths, [
+            '/agent/bootstrap',
+            '/agent/events/batch',
+            '/agent/heartbeat',
+            '/agent/events/batch'
+        ]);
+        assert.equal(eventUploads.length, 2);
+        assert.equal(eventUploads[0].metadata.recycleRequestedToken, recycleToken);
+        assert.equal(eventUploads[1].metadata.recycleRequestedToken, recycleToken);
+        assert.equal(eventUploads[1].occurredAtUtc, eventUploads[0].occurredAtUtc);
+        assert.equal(eventUploads[0].occurredAtUtc, retriedCompletionMarker.resetCompletedAtUtc);
+        assert.equal(commercialRecoveryCompletionCalls, 1);
+        assert.equal(fs.existsSync(markerPath), false);
+    } finally {
+        global.fetch = originalFetch;
+        global.setTimeout = originalSetTimeout;
+        global.setInterval = originalSetInterval;
+        global.clearInterval = originalClearInterval;
+        fs.renameSync = originalRenameSync;
+    }
+});
+
+test('completed recycle token survives marker cleanup and process restart while a new token remains open', (context) => {
+    const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'sw-completed-recycle-token-'));
+    context.after(() => fs.rmSync(stateDirectory, { recursive: true, force: true }));
+    const desiredStatePath = path.join(stateDirectory, 'instance-agent-desired-state.json');
+    const runtimeStatePath = path.join(stateDirectory, 'connect-ticket-runtime-state.json');
+    const commandPath = path.join(stateDirectory, 'instance-agent-active-command.json');
+    const markerPath = path.join(stateDirectory, 'instance-agent-recycle-marker.json');
+    const completedToken = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const newToken = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    let now = 1_000;
+    const gateOptions = {
+        statePath: runtimeStatePath,
+        desiredStatePath,
+        commandJournalPath: commandPath,
+        nowEpochSeconds: () => now,
+        logger: () => undefined
+    };
+    const gate = createConnectTicketRuntimeGate(gateOptions);
+    assert.equal(gate.markTeardownStarted({ occurredAtUtc: new Date(now * 1_000).toISOString() }), true);
+    const readyNotBefore = gate.prepareCommercialRecoveryAfterReset();
+    assert.ok(Number.isInteger(readyNotBefore));
+    now = readyNotBefore + 1;
+    assert.equal(gate.completeCommercialRecoveryAfterReset(completedToken), true);
+    assert.equal(gate.getRecycleTokenCompletionStatus(completedToken), 'completed');
+    assert.equal(gate.getRecycleTokenCompletionStatus(completedToken.replaceAll('-', '')), 'completed');
+    assert.equal(gate.getRecycleTokenCompletionStatus(newToken), 'open');
+
+    const marker = writeInstanceAgentRecycleMarkerSnapshot(
+        markerPath,
+        {
+            phase: 'replacement_started',
+            requestedAtUtc: '2026-08-29T23:53:23.818Z',
+            replacementStartedAtUtc: '2026-08-29T23:53:26.638Z',
+            resetCompletedAtUtc: '2026-08-29T23:54:18.008Z',
+            reason: 'post_session_cleanup',
+            recycleId: 'recycle-completed',
+            sourcePid: 1234,
+            recycleRequestedToken: completedToken
+        },
+        () => undefined
+    );
+    assert.equal(marker.schemaVersion, 2);
+    assert.equal(marker.resetCompletedAtUtc, '2026-08-29T23:54:18.008Z');
+    assert.equal(
+        clearInstanceAgentRecycleMarkerSnapshot(markerPath, () => undefined, 'wrong-recycle'),
+        false
+    );
+    assert.equal(fs.existsSync(markerPath), true);
+    assert.equal(
+        clearInstanceAgentRecycleMarkerSnapshot(markerPath, () => undefined, marker.recycleId),
+        true
+    );
+
+    fs.writeFileSync(
+        desiredStatePath,
+        JSON.stringify({
+            warmHoldEnabled: true,
+            drainEnabled: false,
+            shutdownRequested: false,
+            recycleRequestedToken: completedToken.replaceAll('-', ''),
+            policyVersion: 'completed-token-restart'
+        })
+    );
+    const restartedGate = createConnectTicketRuntimeGate(gateOptions);
+    assert.equal(restartedGate.isCommercialRecoveryRequired(), false);
+    assert.equal(restartedGate.getRecycleTokenCompletionStatus(completedToken), 'completed');
+    assert.equal(
+        restartedGate.rejectReasonForTicket({
+            issuedAtEpochSeconds: now + 1,
+            expiresAtEpochSeconds: now + 100
+        }),
+        null
+    );
+
+    fs.writeFileSync(
+        desiredStatePath,
+        JSON.stringify({
+            warmHoldEnabled: true,
+            drainEnabled: false,
+            shutdownRequested: false,
+            recycleRequestedToken: newToken.replaceAll('-', ''),
+            policyVersion: 'new-token-restart'
+        })
+    );
+    const newTokenGate = createConnectTicketRuntimeGate(gateOptions);
+    assert.equal(newTokenGate.getRecycleTokenCompletionStatus(newToken), 'open');
+    assert.equal(newTokenGate.isCommercialRecoveryRequired(), true);
+});
+
+test('incomplete recycle token stays retryable and transient fence reads recover without restart', (context) => {
+    const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'sw-recycle-token-retry-'));
+    context.after(() => fs.rmSync(stateDirectory, { recursive: true, force: true }));
+    const desiredStatePath = path.join(stateDirectory, 'instance-agent-desired-state.json');
+    const runtimeStatePath = path.join(stateDirectory, 'connect-ticket-runtime-state.json');
+    const token = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    let now = 2_000;
+    const gate = createConnectTicketRuntimeGate({
+        statePath: runtimeStatePath,
+        desiredStatePath,
+        commandJournalPath: path.join(stateDirectory, 'instance-agent-active-command.json'),
+        nowEpochSeconds: () => now,
+        logger: () => undefined
+    });
+    assert.equal(gate.markTeardownStarted({ occurredAtUtc: new Date(now * 1_000).toISOString() }), true);
+    const readyNotBefore = gate.prepareCommercialRecoveryAfterReset();
+    assert.ok(Number.isInteger(readyNotBefore));
+    now = readyNotBefore;
+    assert.equal(gate.completeCommercialRecoveryAfterReset(token), false);
+    assert.equal(gate.getRecycleTokenCompletionStatus(token), 'open');
+    now += 1;
+    assert.equal(gate.completeCommercialRecoveryAfterReset(token), true);
+    assert.equal(gate.getRecycleTokenCompletionStatus(token), 'completed');
+
+    fs.writeFileSync(
+        desiredStatePath,
+        JSON.stringify({
+            warmHoldEnabled: true,
+            drainEnabled: false,
+            shutdownRequested: false,
+            recycleRequestedToken: token.replaceAll('-', ''),
+            policyVersion: 'transient-fence-read'
+        })
+    );
+    const durableState = fs.readFileSync(runtimeStatePath, 'utf8');
+    fs.writeFileSync(runtimeStatePath, '{invalid');
+    assert.equal(gate.getRecycleTokenCompletionStatus(token), 'unavailable');
+    assert.match(
+        gate.rejectReasonForTicket({
+            issuedAtEpochSeconds: now + 1,
+            expiresAtEpochSeconds: now + 100
+        }) ?? '',
+        /fence|invalid|unreadable/i
+    );
+    fs.writeFileSync(runtimeStatePath, durableState);
+    assert.equal(gate.getRecycleTokenCompletionStatus(token), 'completed');
+    assert.equal(
+        gate.rejectReasonForTicket({
+            issuedAtEpochSeconds: now + 1,
+            expiresAtEpochSeconds: now + 100
+        }),
+        null
     );
 });
 

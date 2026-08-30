@@ -8,7 +8,11 @@ param(
     [ValidateSet("full", "runtime")]
     [string]$BuildScope = "full",
     [string]$ContractVersion,
-    [string[]]$Capabilities = @("runtime-status-v1", "instance-agent-bootstrap-v1"),
+    [string[]]$Capabilities = @(
+        "runtime-status-v1",
+        "instance-agent-bootstrap-v1",
+        "recycle-token-correlation-v1"
+    ),
     [int]$MaxSequence = 999,
     [switch]$SkipBuild,
     [switch]$SkipNodeModules,

@@ -7,7 +7,12 @@ param(
     [ValidateSet("full", "runtime")]
     [string]$BuildScope = "full",
     [string]$ContractVersion,
-    [string[]]$Capabilities = @("runtime-status-v1", "instance-agent-bootstrap-v1", "unreal-prerequisite-preflight-v1"),
+    [string[]]$Capabilities = @(
+        "runtime-status-v1",
+        "instance-agent-bootstrap-v1",
+        "recycle-token-correlation-v1",
+        "unreal-prerequisite-preflight-v1"
+    ),
     [switch]$SkipBuild,
     [switch]$SkipNodeModules,
     [switch]$AllowDirty,

@@ -11,6 +11,9 @@ import {
     normalizeInstanceAgentDesiredStateSnapshot,
     readInstanceAgentDesiredStateSnapshot
 } from './instance-agent-state';
+import { normalizeInstanceAgentRecycleToken } from './instance-agent-recycle-state';
+
+const MAX_COMPLETED_RECYCLE_TOKENS = 128;
 
 export interface ConnectTicketRuntimeTicket {
     issuedAtEpochSeconds: number | null;
@@ -33,6 +36,7 @@ export interface ManagedViewerAdmissionIdentity {
 }
 
 export type DurableManagedViewerEvidenceStatus = 'none' | 'present' | 'unavailable';
+export type RecycleTokenCompletionStatus = 'completed' | 'open' | 'unavailable';
 
 export interface ConnectTicketRuntimeGate {
     rejectReasonForTicket(ticket: ConnectTicketRuntimeTicket): string | null;
@@ -41,7 +45,8 @@ export interface ConnectTicketRuntimeGate {
     markTeardownStarted(options?: ConnectTicketTeardownStartOptions): boolean;
     isCommercialRecoveryRequired(): boolean;
     prepareCommercialRecoveryAfterReset(): number | null;
-    completeCommercialRecoveryAfterReset(): boolean;
+    completeCommercialRecoveryAfterReset(recycleRequestedToken?: string | null): boolean;
+    getRecycleTokenCompletionStatus(token: string | null | undefined): RecycleTokenCompletionStatus;
     getCommercialRecoveryReadyNotBeforeEpochSeconds(): number | null;
     getReconnectGraceEvidenceJournalBlockReason(): string | null;
     setReconnectGraceEvidenceJournalBlock(reason: string | null): void;
@@ -59,6 +64,7 @@ interface ConnectTicketRuntimeStateSnapshot {
     managedViewerSessionRequestId?: string;
     managedViewerActiveSessionId?: string;
     managedViewerFirstAdmittedAtUtc?: string;
+    completedRecycleTokens?: string[];
 }
 
 type ConnectTicketRuntimeStateReadResult =
@@ -132,10 +138,23 @@ function isTeardownCommand(command: { commandType?: string | null } | null | und
     return commandType === 'recycletowarm' || commandType === 'shutdown';
 }
 
+function isRecycleToWarmCommand(command: { commandType?: string | null } | null | undefined): boolean {
+    return (command?.commandType?.trim().toLowerCase() ?? '') === 'recycletowarm';
+}
+
 function normalizeRuntimeStateSnapshot(
     value: Partial<ConnectTicketRuntimeStateSnapshot> | null | undefined
 ): ConnectTicketRuntimeStateSnapshot {
     const cutoff = normalizeOptionalEpochSeconds(value?.rejectTicketsIssuedAtOrBeforeEpochSeconds);
+    const completedRecycleTokens = Array.isArray(value?.completedRecycleTokens)
+        ? Array.from(
+              new Set(
+                  value.completedRecycleTokens
+                      .map((token) => normalizeInstanceAgentRecycleToken(token))
+                      .filter((token): token is string => Boolean(token))
+              )
+          ).slice(-MAX_COMPLETED_RECYCLE_TOKENS)
+        : [];
     return {
         rejectTicketsIssuedAtOrBeforeEpochSeconds: cutoff,
         rejectTicketsIssuedAtOrBeforeUtc:
@@ -151,7 +170,8 @@ function normalizeRuntimeStateSnapshot(
         ),
         managedViewerSessionRequestId: normalizeOptionalGuid(value?.managedViewerSessionRequestId),
         managedViewerActiveSessionId: normalizeOptionalGuid(value?.managedViewerActiveSessionId),
-        managedViewerFirstAdmittedAtUtc: normalizeOptionalText(value?.managedViewerFirstAdmittedAtUtc)
+        managedViewerFirstAdmittedAtUtc: normalizeOptionalText(value?.managedViewerFirstAdmittedAtUtc),
+        completedRecycleTokens: completedRecycleTokens.length > 0 ? completedRecycleTokens : undefined
     };
 }
 
@@ -220,6 +240,15 @@ function parsePersistedRuntimeStateSnapshot(value: unknown): ConnectTicketRuntim
         return null;
     }
     if (managedViewerActiveSessionId !== undefined && !normalizeOptionalGuid(managedViewerActiveSessionId)) {
+        return null;
+    }
+
+    const completedRecycleTokens = candidate.completedRecycleTokens;
+    if (
+        completedRecycleTokens !== undefined &&
+        (!Array.isArray(completedRecycleTokens) ||
+            completedRecycleTokens.some((token) => !normalizeInstanceAgentRecycleToken(token)))
+    ) {
         return null;
     }
 
@@ -428,6 +457,23 @@ export function createConnectTicketRuntimeGate(
             : Math.floor(Date.now() / 1000);
     };
     const nowUtc = (): string => toUtcIsoString(nowEpochSeconds());
+    const recycleTokenFenceFailureReason =
+        'Connect tickets are blocked because the completed recycle-token fence is invalid or unreadable.';
+    const completedRecycleTokenStatus = (token: string | null | undefined): RecycleTokenCompletionStatus => {
+        const normalizedToken = normalizeInstanceAgentRecycleToken(token);
+        if (!normalizedToken) {
+            return 'open';
+        }
+
+        const state = inspectRuntimeStateSnapshot(statePath, logger);
+        if (state.status !== 'valid') {
+            return 'unavailable';
+        }
+
+        return state.snapshot.completedRecycleTokens?.includes(normalizedToken) === true
+            ? 'completed'
+            : 'open';
+    };
 
     const markTeardownStarted = (startOptions: ConnectTicketTeardownStartOptions = {}): boolean => {
         const currentEpochSeconds = nowEpochSeconds();
@@ -476,7 +522,17 @@ export function createConnectTicketRuntimeGate(
     };
 
     const recoveredCommand = readInstanceAgentCommandJournalSnapshot(commandJournalPath, logger);
-    if (isTeardownCommand(recoveredCommand) && !isInstanceAgentCommandExpired(recoveredCommand)) {
+    const recoveredCommandTokenStatus = isRecycleToWarmCommand(recoveredCommand)
+        ? completedRecycleTokenStatus(recoveredCommand?.instanceCommandId)
+        : 'open';
+    if (recoveredCommandTokenStatus === 'unavailable') {
+        throw new Error(recycleTokenFenceFailureReason);
+    }
+    if (
+        isTeardownCommand(recoveredCommand) &&
+        !isInstanceAgentCommandExpired(recoveredCommand) &&
+        recoveredCommandTokenStatus !== 'completed'
+    ) {
         if (
             !markTeardownStarted({
                 occurredAtUtc: recoveredCommand?.requestedAtUtc,
@@ -494,7 +550,16 @@ export function createConnectTicketRuntimeGate(
     if (desiredStatePath) {
         const desiredState = readInstanceAgentDesiredStateSnapshot(desiredStatePath, logger);
         const normalizedDesiredState = normalizeInstanceAgentDesiredStateSnapshot(desiredState);
-        if (normalizedDesiredState.recycleRequestedToken || normalizedDesiredState.shutdownRequested) {
+        const desiredRecycleTokenStatus = completedRecycleTokenStatus(
+            normalizedDesiredState.recycleRequestedToken
+        );
+        if (desiredRecycleTokenStatus === 'unavailable') {
+            throw new Error(recycleTokenFenceFailureReason);
+        }
+        if (
+            (normalizedDesiredState.recycleRequestedToken && desiredRecycleTokenStatus !== 'completed') ||
+            normalizedDesiredState.shutdownRequested
+        ) {
             if (
                 !markTeardownStarted({
                     occurredAtUtc: normalizedDesiredState.updatedAtUtc,
@@ -512,20 +577,35 @@ export function createConnectTicketRuntimeGate(
 
     return {
         rejectReasonForTicket(ticket: ConnectTicketRuntimeTicket): string | null {
-            if (runtimeStatePersistenceFailureReason) {
-                return runtimeStatePersistenceFailureReason;
-            }
-
             const activeCommand = readInstanceAgentCommandJournalSnapshot(commandJournalPath, logger);
-            if (isTeardownCommand(activeCommand)) {
+            const activeRecycleTokenStatus = isRecycleToWarmCommand(activeCommand)
+                ? completedRecycleTokenStatus(activeCommand?.instanceCommandId)
+                : 'open';
+            if (activeRecycleTokenStatus === 'unavailable') {
+                return recycleTokenFenceFailureReason;
+            }
+            if (isTeardownCommand(activeCommand) && activeRecycleTokenStatus !== 'completed') {
                 return 'Connect ticket cannot be used while session teardown is in progress.';
             }
 
             if (desiredStatePath) {
                 const desiredState = readInstanceAgentDesiredStateSnapshot(desiredStatePath, logger);
-                if (desiredState.recycleRequestedToken || desiredState.shutdownRequested) {
+                const desiredRecycleTokenStatus = completedRecycleTokenStatus(
+                    desiredState.recycleRequestedToken
+                );
+                if (desiredRecycleTokenStatus === 'unavailable') {
+                    return recycleTokenFenceFailureReason;
+                }
+                if (
+                    (desiredState.recycleRequestedToken && desiredRecycleTokenStatus !== 'completed') ||
+                    desiredState.shutdownRequested
+                ) {
                     return 'Connect ticket cannot be used while session teardown is in progress.';
                 }
+            }
+
+            if (runtimeStatePersistenceFailureReason) {
+                return runtimeStatePersistenceFailureReason;
             }
 
             const state = inspectRuntimeStateSnapshot(statePath, logger);
@@ -638,6 +718,7 @@ export function createConnectTicketRuntimeGate(
             return state.snapshot.managedViewerSessionRequestId ? 'present' : 'none';
         },
         markTeardownStarted,
+        getRecycleTokenCompletionStatus: completedRecycleTokenStatus,
         isCommercialRecoveryRequired(): boolean {
             if (runtimeStatePersistenceFailureReason) {
                 return true;
@@ -693,7 +774,7 @@ export function createConnectTicketRuntimeGate(
             runtimeStatePersistenceFailureReason = null;
             return readyNotBeforeEpochSeconds;
         },
-        completeCommercialRecoveryAfterReset(): boolean {
+        completeCommercialRecoveryAfterReset(recycleRequestedToken?: string | null): boolean {
             const state = inspectRuntimeStateSnapshot(statePath, logger);
             if (state.status !== 'valid') {
                 runtimeStatePersistenceFailureReason =
@@ -701,7 +782,16 @@ export function createConnectTicketRuntimeGate(
                 return false;
             }
 
+            const normalizedRecycleToken = normalizeInstanceAgentRecycleToken(recycleRequestedToken);
             if (state.snapshot.commercialRecoveryRequired !== true) {
+                if (
+                    normalizedRecycleToken &&
+                    state.snapshot.completedRecycleTokens?.includes(normalizedRecycleToken) !== true
+                ) {
+                    runtimeStatePersistenceFailureReason =
+                        'Connect tickets are blocked because commercial recovery completed without its recycle token fence.';
+                    return false;
+                }
                 runtimeStatePersistenceFailureReason = null;
                 return true;
             }
@@ -718,6 +808,9 @@ export function createConnectTicketRuntimeGate(
                 managedViewerSessionRequestId: undefined,
                 managedViewerActiveSessionId: undefined,
                 managedViewerFirstAdmittedAtUtc: undefined,
+                completedRecycleTokens: normalizedRecycleToken
+                    ? [...(state.snapshot.completedRecycleTokens ?? []), normalizedRecycleToken]
+                    : state.snapshot.completedRecycleTokens,
                 updatedAtUtc: nowUtc()
             });
             if (!writeRuntimeStateSnapshot(statePath, completedSnapshot, logger)) {

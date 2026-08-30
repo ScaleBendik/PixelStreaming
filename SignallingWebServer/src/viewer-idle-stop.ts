@@ -24,8 +24,10 @@ import {
 import {
     clearInstanceAgentRecycleMarkerSnapshot,
     isInstanceAgentRecycleReplacementProof,
+    normalizeInstanceAgentRecycleToken,
     readInstanceAgentRecycleMarkerSnapshot,
     resolveInstanceAgentRecycleMarkerPath,
+    type InstanceAgentRecycleMarkerSnapshot,
     writeInstanceAgentRecycleMarkerSnapshot
 } from './instance-agent-recycle-state';
 
@@ -93,7 +95,7 @@ export interface ViewerIdleOptions {
     > | null;
     connectTicketRuntimeGate?: Pick<
         ConnectTicketRuntimeGate,
-        'markTeardownStarted' | 'getDurableManagedViewerEvidenceStatus'
+        'markTeardownStarted' | 'getDurableManagedViewerEvidenceStatus' | 'getRecycleTokenCompletionStatus'
     > | null;
 }
 
@@ -497,6 +499,38 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     const runtimeStatusPublisher = options.runtimeStatusPublisher ?? null;
     const runtimeStatusController = options.runtimeStatusController ?? null;
     const recycleMarkerPath = resolveInstanceAgentRecycleMarkerPath(desiredStatePath);
+    let recycleTokenFenceReadFailure: string | null = null;
+    const completedRecycleTokenStatus = (
+        token: string | null | undefined
+    ): 'completed' | 'open' | 'unavailable' => {
+        const normalizedToken = token?.trim() ?? '';
+        if (!normalizedToken) {
+            return 'open';
+        }
+
+        const status =
+            options.connectTicketRuntimeGate?.getRecycleTokenCompletionStatus(normalizedToken) ??
+            'unavailable';
+        if (status !== 'unavailable') {
+            recycleTokenFenceReadFailure = null;
+            return status;
+        }
+
+        if (recycleTokenFenceReadFailure === null) {
+            log(
+                '[idle-stop] CRITICAL: Completed recycle-token fence is unavailable. Refusing destructive recycle-token replay until durable state is readable.'
+            );
+            recycleTokenFenceReadFailure = 'unavailable';
+        }
+        return 'unavailable';
+    };
+    const recycleTokensMatch = (
+        left: string | null | undefined,
+        right: string | null | undefined
+    ): boolean => {
+        const normalizedLeft = normalizeInstanceAgentRecycleToken(left);
+        return Boolean(normalizedLeft && normalizedLeft === normalizeInstanceAgentRecycleToken(right));
+    };
     const recycleHelperScriptPath = path.resolve(
         __dirname,
         '..',
@@ -533,6 +567,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     let recycleExitFallbackTimer: NodeJS.Timeout | null = null;
     let recycleLaunchRetryTimer: NodeJS.Timeout | null = null;
     let recycleLaunchRetryAttempts = 0;
+    let recycleLaunchInFlight = false;
     let stopInFlight = false;
     let hasSeenViewer = server.playerRegistry.count() > 0;
     let hasSeenManagedSessionViewer = false;
@@ -550,7 +585,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
           ? readInstanceAgentDesiredStateSnapshot(desiredStatePath, log)
           : normalizeInstanceAgentDesiredStateSnapshot(undefined);
     const recoveredRecycleTokenAtStartup = recoveredReplacementAtStartup
-        ? currentDesiredState.recycleRequestedToken
+        ? (recoveredRecycleMarkerAtStartup?.recycleRequestedToken ?? null)
         : null;
     let activeCommand: RuntimeInstanceCommand | null =
         options.instanceAgentClient?.getActiveCommand() ?? null;
@@ -562,7 +597,19 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     let desiredStateShutdownResumeRequested = false;
 
     if (server.playerRegistry.count() === 0 && currentDesiredState.recycleRequestedToken) {
-        if (currentDesiredState.recycleRequestedToken === recoveredRecycleTokenAtStartup) {
+        const tokenStatus = completedRecycleTokenStatus(currentDesiredState.recycleRequestedToken);
+        if (tokenStatus === 'completed') {
+            log(
+                `[idle-stop] Recycle request token ${currentDesiredState.recycleRequestedToken} was already completed durably. Suppressing duplicate recycle after startup.`
+            );
+        } else if (tokenStatus === 'unavailable') {
+            pendingImmediateRecycleToken = currentDesiredState.recycleRequestedToken;
+            log(
+                `[idle-stop] Recycle request token ${currentDesiredState.recycleRequestedToken} remains fenced pending durable-state recovery.`
+            );
+        } else if (
+            recycleTokensMatch(currentDesiredState.recycleRequestedToken, recoveredRecycleTokenAtStartup)
+        ) {
             log(
                 `[idle-stop] Recycle request token ${currentDesiredState.recycleRequestedToken} was loaded on startup while a recycle marker is still present. Treating it as already launched and waiting for instance-agent completion.`
             );
@@ -872,8 +919,15 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     };
     const getActiveRecycleCommand = () => {
         const currentActiveCommand = readActiveCommand();
-        return isRecycleToWarmCommand(currentActiveCommand) &&
-            commandMatchesCurrentManagedSession(currentActiveCommand)
+        if (
+            !currentActiveCommand ||
+            !isRecycleToWarmCommand(currentActiveCommand) ||
+            !commandMatchesCurrentManagedSession(currentActiveCommand)
+        ) {
+            return null;
+        }
+
+        return completedRecycleTokenStatus(currentActiveCommand.instanceCommandId) === 'open'
             ? currentActiveCommand
             : null;
     };
@@ -890,14 +944,15 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         );
     const hasRecycleLaunchInProgress = (): boolean => recycleLaunchRequested || hasRecycleLaunchMarker();
     const isRecoveredRecycleTokenStillInProgress = (token: string | null | undefined): boolean =>
-        token === recoveredRecycleTokenAtStartup && hasRecycleLaunchMarker();
+        recycleTokensMatch(token, recoveredRecycleTokenAtStartup) && hasRecycleLaunchMarker();
     const canHoldWarmReadyWithoutShutdown = (): boolean =>
         currentDesiredState.warmHoldEnabled &&
         !currentDesiredState.drainEnabled &&
         !currentDesiredState.shutdownRequested;
     const hasPendingImmediateRecycle = (): boolean =>
         pendingImmediateRecycleToken !== null &&
-        pendingImmediateRecycleToken === currentDesiredState.recycleRequestedToken;
+        recycleTokensMatch(pendingImmediateRecycleToken, currentDesiredState.recycleRequestedToken) &&
+        completedRecycleTokenStatus(pendingImmediateRecycleToken) !== 'completed';
     const hasImmediateRecycleRequest = (): boolean =>
         hasPendingImmediateRecycle() && !hasRecycleLaunchInProgress();
     const hasPassiveReconnectRecycleRequest = (): boolean =>
@@ -1094,6 +1149,21 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             !options.instanceAgentClient ||
             !hasRecycleLaunchInProgress()
         ) {
+            return;
+        }
+        let launchedRecycleMarker: InstanceAgentRecycleMarkerSnapshot | null = null;
+        try {
+            launchedRecycleMarker = readInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
+        } catch {
+            return;
+        }
+        if (
+            !launchedRecycleMarker ||
+            !recycleTokensMatch(commandToStart.instanceCommandId, launchedRecycleMarker.recycleRequestedToken)
+        ) {
+            log(
+                `[idle-stop] Leaving recycle command ${commandToStart.instanceCommandId} open because the launched recycle marker belongs to a different or passive token.`
+            );
             return;
         }
 
@@ -1320,30 +1390,50 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         if (!changed) {
-            tryResumeDesiredStateShutdown();
+            if (tryResumeDesiredStateShutdown()) {
+                return;
+            }
+            if (
+                !resetInFlight &&
+                hasPendingImmediateRecycle() &&
+                server.playerRegistry.count() === 0 &&
+                maintenanceStateInitialized &&
+                !isMaintenanceActive() &&
+                shouldResetIntoWarmReady()
+            ) {
+                startResetWindow(true);
+            }
             return;
         }
 
         let desiredStateTeardownCutoffDurable = true;
         if (recycleRequestedTokenChanged) {
             if (currentDesiredState.recycleRequestedToken) {
-                desiredStateTeardownCutoffDurable = markConnectTicketTeardownStarted(
-                    'desired_state_recycle_request',
-                    null,
-                    currentDesiredState.updatedAtUtc
-                );
-                if (isRecoveredRecycleTokenStillInProgress(currentDesiredState.recycleRequestedToken)) {
+                const tokenStatus = completedRecycleTokenStatus(currentDesiredState.recycleRequestedToken);
+                if (tokenStatus === 'completed') {
+                    pendingImmediateRecycleToken = null;
+                    log(
+                        `[idle-stop] Ignoring already-completed recycle request token ${currentDesiredState.recycleRequestedToken}; only a new token may launch another stack recycle.`
+                    );
+                } else if (tokenStatus === 'unavailable') {
+                    pendingImmediateRecycleToken = currentDesiredState.recycleRequestedToken;
+                } else {
+                    desiredStateTeardownCutoffDurable = markConnectTicketTeardownStarted(
+                        'desired_state_recycle_request',
+                        null,
+                        currentDesiredState.updatedAtUtc
+                    );
+                }
+                if (
+                    tokenStatus === 'open' &&
+                    isRecoveredRecycleTokenStillInProgress(currentDesiredState.recycleRequestedToken)
+                ) {
                     pendingImmediateRecycleToken = null;
                     log(
                         `[idle-stop] Ignoring recovered recycle request token ${currentDesiredState.recycleRequestedToken} because this process started after that recycle was already launched.`
                     );
-                } else {
+                } else if (tokenStatus === 'open') {
                     pendingImmediateRecycleToken = currentDesiredState.recycleRequestedToken;
-                    if (currentDesiredState.recycleRequestedToken === recoveredRecycleTokenAtStartup) {
-                        log(
-                            `[idle-stop] Recovered recycle request token ${currentDesiredState.recycleRequestedToken} is active again after its recycle marker cleared.`
-                        );
-                    }
                     if (hasRecycleLaunchInProgress()) {
                         log(
                             `[idle-stop] Recycle request token ${currentDesiredState.recycleRequestedToken} matches an in-progress recycle. Waiting for recycle completion before reuse.`
@@ -1918,7 +2008,29 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         if (reconnectGraceWindowPhase === 'persisting_elapsed') {
             return;
         }
-        if (recycleLaunchRequested) {
+        if (recycleLaunchInFlight || recycleLaunchRequested) {
+            return;
+        }
+
+        let existingRecycleMarker: InstanceAgentRecycleMarkerSnapshot | null = null;
+        try {
+            existingRecycleMarker = readInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
+        } catch {
+            log(
+                '[idle-stop] CRITICAL: Refusing to launch a stack recycle because the durable recycle marker is unreadable.'
+            );
+            resetInFlight = true;
+            publishStatus('resetting', 'recycle_marker_unavailable');
+            scheduleStackRecycleRetry('recycle_marker_unavailable');
+            return;
+        }
+        if (isInstanceAgentRecycleReplacementProof(existingRecycleMarker)) {
+            log(
+                `[idle-stop] Replacement recycle ${existingRecycleMarker.recycleId} is still in progress. Refusing to overwrite its durable marker with another launch.`
+            );
+            resetInFlight = true;
+            publishStatus('resetting', 'replacement_recycle_in_progress');
+            scheduleStackRecycleRetry('replacement_recycle_in_progress');
             return;
         }
 
@@ -1932,6 +2044,8 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
         if (!shouldResetIntoWarmReady()) {
             if (canHoldWarmReadyWithoutShutdown()) {
+                resetInFlight = false;
+                clearStackRecycleRetryTimer();
                 restoreRuntimeDerivedStatus({ preserveStatusAtUtc: true });
                 return;
             }
@@ -1946,6 +2060,29 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         const commandToStart = getActiveRecycleCommand();
+        const recycleRequestedToken =
+            commandToStart?.instanceCommandId ??
+            (hasPendingImmediateRecycle()
+                ? (currentDesiredState.recycleRequestedToken ?? undefined)
+                : undefined);
+        const recycleRequestedTokenStatus = recycleRequestedToken
+            ? completedRecycleTokenStatus(recycleRequestedToken)
+            : 'open';
+        if (recycleRequestedTokenStatus !== 'open') {
+            log(
+                `[idle-stop] Refusing to launch recycle token ${recycleRequestedToken} because its durable completion state is not open.`
+            );
+            if (recycleRequestedTokenStatus === 'unavailable') {
+                resetInFlight = true;
+                publishStatus('resetting', 'recycle_token_fence_unavailable');
+                scheduleStackRecycleRetry('recycle_token_fence_unavailable');
+            } else {
+                pendingImmediateRecycleToken = null;
+                resetInFlight = false;
+                clearStackRecycleRetryTimer();
+            }
+            return;
+        }
         if (!commercialReconnectGraceCutoffDurable) {
             commercialReconnectGraceCutoffDurable = markConnectTicketTeardownStarted(
                 commandToStart ? 'stack_recycle_command_launch' : 'stack_recycle_launch',
@@ -1960,6 +2097,8 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
         }
 
+        let recycleMarker: InstanceAgentRecycleMarkerSnapshot | null = null;
+        recycleLaunchInFlight = true;
         try {
             if (commandToStart && options.instanceAgentClient) {
                 try {
@@ -1981,19 +2120,32 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 }
             }
 
+            const markerAfterCommandTransition = readInstanceAgentRecycleMarkerSnapshot(
+                recycleMarkerPath,
+                log
+            );
+            if (isInstanceAgentRecycleReplacementProof(markerAfterCommandTransition)) {
+                recycleLaunchInFlight = false;
+                resetInFlight = true;
+                publishStatus('resetting', 'replacement_recycle_in_progress');
+                scheduleStackRecycleRetry('replacement_recycle_in_progress');
+                return;
+            }
+
             if (!fs.existsSync(recycleHelperScriptPath)) {
                 throw new Error(`Recycle helper script '${recycleHelperScriptPath}' was not found.`);
             }
             if (!fs.existsSync(recycleLauncherScriptPath)) {
                 throw new Error(`Recycle launcher script '${recycleLauncherScriptPath}' was not found.`);
             }
-            const recycleMarker = writeInstanceAgentRecycleMarkerSnapshot(
+            recycleMarker = writeInstanceAgentRecycleMarkerSnapshot(
                 recycleMarkerPath,
                 {
                     phase: 'intent',
                     requestedAtUtc: new Date().toISOString(),
                     reason: 'post_session_cleanup',
                     recycleId: randomUUID(),
+                    recycleRequestedToken,
                     sessionRequestId: resolveRecycleMarkerSessionRequestId(commandToStart) ?? undefined,
                     sourcePid: process.pid
                 },
@@ -2026,10 +2178,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             recycleProcess.on('error', (error) => {
                 recycleLaunchRequested = false;
                 clearRecycleExitFallbackTimer();
-                clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
+                clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log, recycleMarker?.recycleId);
                 handleStackRecycleLaunchFailure(`Recycle helper process failed to start: ${error.message}`);
             });
             recycleProcess.unref();
+            recycleLaunchInFlight = false;
             pendingImmediateRecycleToken = null;
             recycleLaunchRequested = true;
             recycleLaunchRetryAttempts = 0;
@@ -2050,11 +2203,14 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 `[idle-stop] Requested full stack recycle (${recycleMarker.recycleId ?? 'unknown'}) via '${recycleLauncherScriptPath}'.`
             );
         } catch (error) {
+            recycleLaunchInFlight = false;
             recycleLaunchRequested = false;
             clearRecycleExitFallbackTimer();
-            clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
+            if (recycleMarker) {
+                clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log, recycleMarker.recycleId);
+            }
             const message = error instanceof Error ? error.message : String(error);
-            const commandToFail = getActiveRecycleCommand();
+            const commandToFail = commandToStart;
             if (options.instanceAgentClient && commandToFail) {
                 void options.instanceAgentClient
                     .failCommand(commandToFail, {
@@ -2512,10 +2668,6 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     return;
                 }
 
-                if (trackedCommand && trackedCommand.instanceCommandId === command.instanceCommandId) {
-                    return;
-                }
-
                 if (!isRecycleToWarmCommand(command) && !isShutdownCommand(command)) {
                     log(
                         `[idle-stop] Unsupported instance command ${command.instanceCommandId} (${command.commandType}). Reporting failure.`
@@ -2535,6 +2687,43 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     } finally {
                         refreshActiveCommand();
                     }
+                    return;
+                }
+
+                if (isRecycleToWarmCommand(command)) {
+                    const tokenStatus = completedRecycleTokenStatus(command.instanceCommandId);
+                    if (tokenStatus === 'unavailable') {
+                        log(
+                            `[idle-stop] Recycle command ${command.instanceCommandId} remains unacknowledged because its durable completion fence is unavailable.`
+                        );
+                        return;
+                    }
+                    if (tokenStatus === 'completed') {
+                        log(
+                            `[idle-stop] Suppressing already-completed recycle command ${command.instanceCommandId} and reconciling its terminal control-plane state without launching another stack recycle.`
+                        );
+                        try {
+                            await options.instanceAgentClient?.completeCommand(command, {
+                                occurredAtUtc: new Date().toISOString(),
+                                resultJson: JSON.stringify({
+                                    status: 'ready',
+                                    reason: 'duplicate_recycle_token_suppressed',
+                                    source: 'completed_recycle_token_fence'
+                                })
+                            });
+                        } catch (error) {
+                            const message = error instanceof Error ? error.message : String(error);
+                            log(
+                                `[idle-stop] Failed to reconcile already-completed recycle command ${command.instanceCommandId}: ${message}`
+                            );
+                        } finally {
+                            refreshActiveCommand();
+                        }
+                        return;
+                    }
+                }
+
+                if (trackedCommand && trackedCommand.instanceCommandId === command.instanceCommandId) {
                     return;
                 }
 

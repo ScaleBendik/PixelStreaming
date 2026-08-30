@@ -1521,12 +1521,17 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $viewerIdleStop `
+    -Expected 'recoveredRecycleMarkerAtStartup?.recycleRequestedToken ?? null' `
+    -Message 'A tokenless passive marker must never adopt a newer desired-state recycle token.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
     -Expected 'isRecoveredRecycleTokenStillInProgress' `
     -Message 'Viewer idle stop must scope recovered recycle suppression to the live recycle marker.'
 
 Assert-ContainsText `
     -Content $viewerIdleStop `
-    -Expected 'token === recoveredRecycleTokenAtStartup && hasRecycleLaunchMarker()' `
+    -Expected 'recycleTokensMatch(token, recoveredRecycleTokenAtStartup) && hasRecycleLaunchMarker()' `
     -Message 'Viewer idle stop must only suppress a recovered recycle token while its recycle marker still exists.'
 
 Assert-ContainsText `
@@ -1541,8 +1546,161 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $viewerIdleStop `
-    -Expected 'is active again after its recycle marker cleared' `
-    -Message 'Viewer idle stop must re-arm a recovered recycle token if the API reintroduces it after marker cleanup.'
+    -Expected 'only a new token may launch another stack recycle' `
+    -Message 'Viewer idle stop must durably suppress a completed recycle token after its transient marker clears.'
+
+Assert-DoesNotContainText `
+    -Content $viewerIdleStop `
+    -Unexpected 'is active again after its recycle marker cleared' `
+    -Message 'Viewer idle stop must never re-arm the same completed recycle token merely because its transient marker cleared.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected 'recycleRequestedToken,' `
+    -Message 'Recycle intent markers must retain the triggering token across process replacement.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected 'getRecycleTokenCompletionStatus' `
+    -Message 'Desired-state and command recycle paths must consult the durable completed-token fence.'
+
+Assert-ContainsText `
+    -Content $instanceAgent `
+    -Expected 'Recovered legacy tokenless recycle marker' `
+    -Message 'Replacement recovery must explicitly detect legacy tokenless markers.'
+
+Assert-ContainsText `
+    -Content $instanceAgent `
+    -Expected 'ensureCompletedRecycleMarkerEventQueued' `
+    -Message 'A retained recycle marker must reconstruct reset completion until control-plane acknowledgement.'
+
+Assert-ContainsText `
+    -Content $instanceAgent `
+    -Expected 'responseRecycleToken === acceptedRecycleToken' `
+    -Message 'An accepted tokenful reset completion must remain pending while desired state still advertises the same recycle token.'
+
+Assert-ContainsText `
+    -Content $instanceAgent `
+    -Expected 'if (acceptedResetCompletion && !resetCompletionStillNeedsControlReconciliation)' `
+    -Message 'A durable recycle marker may clear only after event acceptance and exact-token desired-state reconciliation.'
+
+Assert-ContainsText `
+    -Content $instanceAgent `
+    -Expected 'shouldRetryPendingReadyRecycleCompletion' `
+    -Message 'An identical Ready heartbeat must retry pending completion-marker durability after commercial recovery was already released.'
+
+Assert-ContainsText `
+    -Content $instanceAgent `
+    -Expected 'options.connectTicketRuntimeGate?.isCommercialRecoveryRequired() !== true' `
+    -Message 'Ready heartbeat retry bypass must remain limited to a pending marker whose commercial recovery fence is already complete.'
+
+$runTickIndex = $instanceAgent.IndexOf('const runTick = async (): Promise<void> =>')
+$firstResetCompletionFlushIndex = if ($runTickIndex -ge 0) {
+    $instanceAgent.IndexOf('await flushEvents();', $runTickIndex)
+} else {
+    -1
+}
+$readyHeartbeatIndex = if ($firstResetCompletionFlushIndex -ge 0) {
+    $instanceAgent.IndexOf('await sendHeartbeat();', $firstResetCompletionFlushIndex)
+} else {
+    -1
+}
+$resetCompletionReplayIndex = if ($readyHeartbeatIndex -ge 0) {
+    $instanceAgent.IndexOf('ensureCompletedRecycleMarkerEventQueued();', $readyHeartbeatIndex)
+} else {
+    -1
+}
+$replayedResetCompletionFlushIndex = if ($resetCompletionReplayIndex -ge 0) {
+    $instanceAgent.IndexOf('await flushEvents();', $resetCompletionReplayIndex)
+} else {
+    -1
+}
+Assert-True `
+    -Condition (
+        $runTickIndex -ge 0 -and
+        $firstResetCompletionFlushIndex -gt $runTickIndex -and
+        $readyHeartbeatIndex -gt $firstResetCompletionFlushIndex -and
+        $resetCompletionReplayIndex -gt $readyHeartbeatIndex -and
+        $replayedResetCompletionFlushIndex -gt $resetCompletionReplayIndex
+    ) `
+    -Message 'Reset completion reconciliation must upload once, send Ready, replay stable evidence, and upload again in that order.'
+
+Assert-ContainsText `
+    -Content $instanceAgent `
+    -Expected 'resetCompletedAtUtc' `
+    -Message 'Reset-completion replay must retain a stable durable occurrence timestamp.'
+
+Assert-ContainsText `
+    -Content $instanceAgent `
+    -Expected 'only the marker-owned token may complete it' `
+    -Message 'A completed marker must not terminalize a newer active recycle command.'
+
+Assert-ContainsText `
+    -Content $instanceAgent `
+    -Expected 'recoveredRecycleMarker.schemaVersion === 1' `
+    -Message 'Only legacy tokenless markers require the migration fail-closed guard.'
+
+Assert-ContainsText `
+    -Content $instanceAgent `
+    -Expected 'ownership cannot be proven' `
+    -Message 'A legacy tokenless marker must fail closed rather than adopt a newer destructive token.'
+
+Assert-ContainsText `
+    -Content $stackRecycleScript `
+    -Expected 'schemaVersion -ne 1 -and [int]$marker.schemaVersion -ne 2' `
+    -Message 'The recycle helper must accept legacy marker schema 1 and current marker schema 2 during migration.'
+
+$atomicRecycleCompletionIndex = $connectTicketRuntimeState.IndexOf(
+    'completeCommercialRecoveryAfterReset(recycleRequestedToken?'
+)
+$completedRecycleTokenWriteIndex = if ($atomicRecycleCompletionIndex -ge 0) {
+    $connectTicketRuntimeState.IndexOf(
+        'completedRecycleTokens: normalizedRecycleToken',
+        $atomicRecycleCompletionIndex
+    )
+} else {
+    -1
+}
+$atomicRecycleStateWriteIndex = if ($completedRecycleTokenWriteIndex -ge 0) {
+    $connectTicketRuntimeState.IndexOf(
+        'writeRuntimeStateSnapshot(statePath, completedSnapshot',
+        $completedRecycleTokenWriteIndex
+    )
+} else {
+    -1
+}
+Assert-True `
+    -Condition (
+        $atomicRecycleCompletionIndex -ge 0 -and
+        $completedRecycleTokenWriteIndex -gt $atomicRecycleCompletionIndex -and
+        $atomicRecycleStateWriteIndex -gt $completedRecycleTokenWriteIndex
+    ) `
+    -Message 'Completed recycle token fencing and commercial admission release must share one atomic durable state write.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected 'recycleLaunchInFlight = true' `
+    -Message 'Stack recycle launch must acquire an in-process mutex before awaiting command transition.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected 'launchedRecycleMarker.recycleRequestedToken' `
+    -Message 'A launched recycle may start only the command token owned by its durable marker.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected 'const commandToFail = commandToStart' `
+    -Message 'A recycle launch failure must report against the command captured before launch, never a newer command.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected "scheduleStackRecycleRetry('replacement_recycle_in_progress')" `
+    -Message 'A new recycle token must remain pending while an earlier replacement marker is active.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected 'const COMMERCIAL_RECYCLE_LAUNCH_MAX_ATTEMPTS = 3' `
+    -Message 'Commercial recycle launch failure escalation must remain explicitly bounded.'
 
 Assert-ContainsText `
     -Content $viewerIdleStop `

@@ -4,18 +4,21 @@ import fs from 'fs';
 import path from 'path';
 import { Logger } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
 
-const RECYCLE_MARKER_SCHEMA_VERSION = 1;
+const LEGACY_RECYCLE_MARKER_SCHEMA_VERSION = 1;
+const RECYCLE_MARKER_SCHEMA_VERSION = 2;
 
 export type InstanceAgentRecycleMarkerPhase = 'intent' | 'replacement_started';
 
 export interface InstanceAgentRecycleMarkerSnapshot {
-    schemaVersion: typeof RECYCLE_MARKER_SCHEMA_VERSION;
+    schemaVersion: typeof LEGACY_RECYCLE_MARKER_SCHEMA_VERSION | typeof RECYCLE_MARKER_SCHEMA_VERSION;
     phase: InstanceAgentRecycleMarkerPhase;
     requestedAtUtc: string;
     reason: string;
     recycleId: string;
     sourcePid: number;
     replacementStartedAtUtc?: string;
+    resetCompletedAtUtc?: string;
+    recycleRequestedToken?: string;
     sessionRequestId?: string;
     userSessionId?: string;
     sessionId?: string;
@@ -30,6 +33,16 @@ function normalizeOptionalText(value: unknown): string | undefined {
 
     const normalized = value.trim();
     return normalized.length > 0 ? normalized : undefined;
+}
+
+export function normalizeInstanceAgentRecycleToken(value: unknown): string | undefined {
+    const normalized = normalizeOptionalText(value);
+    if (!normalized) {
+        return undefined;
+    }
+
+    const compactGuid = normalized.replace(/-/g, '');
+    return /^[0-9a-f]{32}$/i.test(compactGuid) ? compactGuid.toLowerCase() : normalized;
 }
 
 function normalizeRequiredTimestamp(value: unknown): string | null {
@@ -68,31 +81,40 @@ export function normalizeInstanceAgentRecycleMarkerSnapshot(
     const phase = value?.phase === 'intent' || value?.phase === 'replacement_started' ? value.phase : null;
     const requestedAtUtc = normalizeRequiredTimestamp(value?.requestedAtUtc);
     const replacementStartedAtUtc = normalizeRequiredTimestamp(value?.replacementStartedAtUtc);
+    const resetCompletedAtUtc = normalizeRequiredTimestamp(value?.resetCompletedAtUtc);
     const reason = normalizeOptionalText(value?.reason);
     const recycleId = normalizeOptionalText(value?.recycleId);
     const sourcePid = normalizeRequiredPositiveInteger(value?.sourcePid);
     if (
-        value?.schemaVersion !== RECYCLE_MARKER_SCHEMA_VERSION ||
+        (value?.schemaVersion !== LEGACY_RECYCLE_MARKER_SCHEMA_VERSION &&
+            value?.schemaVersion !== RECYCLE_MARKER_SCHEMA_VERSION) ||
         !phase ||
         !requestedAtUtc ||
         !reason ||
         !recycleId ||
         sourcePid === null ||
-        (phase === 'intent' && value?.replacementStartedAtUtc !== undefined) ||
+        (phase === 'intent' &&
+            (value?.replacementStartedAtUtc !== undefined || value?.resetCompletedAtUtc !== undefined)) ||
         (phase === 'replacement_started' &&
-            (!replacementStartedAtUtc || Date.parse(replacementStartedAtUtc) < Date.parse(requestedAtUtc)))
+            (!replacementStartedAtUtc ||
+                Date.parse(replacementStartedAtUtc) < Date.parse(requestedAtUtc) ||
+                (value?.resetCompletedAtUtc !== undefined &&
+                    (!resetCompletedAtUtc ||
+                        Date.parse(resetCompletedAtUtc) < Date.parse(replacementStartedAtUtc)))))
     ) {
         return null;
     }
 
     return {
-        schemaVersion: RECYCLE_MARKER_SCHEMA_VERSION,
+        schemaVersion: value.schemaVersion,
         phase,
         requestedAtUtc,
         reason,
         recycleId,
         sourcePid,
         replacementStartedAtUtc: phase === 'replacement_started' ? replacementStartedAtUtc! : undefined,
+        resetCompletedAtUtc: phase === 'replacement_started' ? (resetCompletedAtUtc ?? undefined) : undefined,
+        recycleRequestedToken: normalizeOptionalText(value?.recycleRequestedToken),
         sessionRequestId: normalizeOptionalText(value?.sessionRequestId),
         userSessionId: normalizeOptionalText(value?.userSessionId),
         sessionId: normalizeOptionalText(value?.sessionId)
@@ -244,10 +266,25 @@ export function writeInstanceAgentRecycleMarkerSnapshot(
 
 export function clearInstanceAgentRecycleMarkerSnapshot(
     filePath: string,
-    logger: (message: string) => void = (message) => Logger.info(message)
+    logger: (message: string) => void = (message) => Logger.info(message),
+    expectedRecycleId?: string
 ): boolean {
     const normalizedPath = path.resolve(filePath);
     try {
+        const normalizedExpectedRecycleId = normalizeOptionalText(expectedRecycleId);
+        if (normalizedExpectedRecycleId) {
+            const currentMarker = readInstanceAgentRecycleMarkerSnapshot(normalizedPath, logger);
+            if (!currentMarker) {
+                return true;
+            }
+            if (currentMarker.recycleId !== normalizedExpectedRecycleId) {
+                logger(
+                    `[instance-agent-recycle-state] Refusing to clear recycle marker '${normalizedPath}' because recycle ${currentMarker.recycleId} replaced expected recycle ${normalizedExpectedRecycleId}.`
+                );
+                return false;
+            }
+        }
+
         fs.unlinkSync(normalizedPath);
         return fsyncContainingDirectoryAfterMetadataChange(normalizedPath, logger);
     } catch (error) {

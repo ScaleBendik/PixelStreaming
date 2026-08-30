@@ -539,7 +539,7 @@ function Set-RecycleMarkerReplacementStarted {
     $marker = Get-Content -LiteralPath $resolvedMarkerPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
     if (
         $null -eq $marker -or
-        [int]$marker.schemaVersion -ne 1 -or
+        ([int]$marker.schemaVersion -ne 1 -and [int]$marker.schemaVersion -ne 2) -or
         [string]$marker.phase -cne 'intent' -or
         [string]::IsNullOrWhiteSpace([string]$marker.recycleId) -or
         [int]$marker.sourcePid -le 0 -or

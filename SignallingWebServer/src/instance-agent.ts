@@ -12,9 +12,11 @@ import {
 import {
     clearInstanceAgentRecycleMarkerSnapshot,
     isInstanceAgentRecycleReplacementProof,
+    normalizeInstanceAgentRecycleToken,
     readInstanceAgentRecycleMarkerSnapshot,
     resolveInstanceAgentRecycleMarkerPath,
-    type InstanceAgentRecycleMarkerSnapshot
+    type InstanceAgentRecycleMarkerSnapshot,
+    writeInstanceAgentRecycleMarkerSnapshot
 } from './instance-agent-recycle-state';
 import {
     clearInstanceAgentCommandJournalSnapshot,
@@ -332,6 +334,7 @@ export interface InstanceAgentClientOptions {
         | 'isCommercialRecoveryRequired'
         | 'prepareCommercialRecoveryAfterReset'
         | 'completeCommercialRecoveryAfterReset'
+        | 'getRecycleTokenCompletionStatus'
         | 'getCommercialRecoveryReadyNotBeforeEpochSeconds'
     >;
     sessionLogArtifacts?: SessionLogArtifactRuntimeOptions;
@@ -816,7 +819,24 @@ export function wireInstanceAgent(
     );
 
     let currentDesiredState = readInstanceAgentDesiredStateSnapshot(desiredStatePath, log);
+    let activeCommand = readInstanceAgentCommandJournalSnapshot(commandJournalPath, log);
+    if (activeCommand && isInstanceAgentCommandExpired(activeCommand)) {
+        log(
+            `[instance-agent] Clearing expired recovered command ${activeCommand.instanceCommandId}; its timeout was ${activeCommand.timeoutAtUtc ?? 'invalid'}.`
+        );
+        clearInstanceAgentCommandJournalSnapshot(commandJournalPath, log);
+        activeCommand = null;
+    }
     const recoveredRecycleMarker = readInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
+    if (
+        isInstanceAgentRecycleReplacementProof(recoveredRecycleMarker) &&
+        recoveredRecycleMarker.schemaVersion === 1 &&
+        !normalizeInstanceAgentRecycleToken(recoveredRecycleMarker.recycleRequestedToken)
+    ) {
+        throw new Error(
+            `Recovered legacy tokenless recycle marker ${recoveredRecycleMarker.recycleId}; its destructive request ownership cannot be proven, so recovery is failing closed instead of binding a possibly newer desired-state or command token.`
+        );
+    }
     let pendingRecycleCompletion: InstanceAgentRecycleMarkerSnapshot | null =
         isInstanceAgentRecycleReplacementProof(recoveredRecycleMarker) ? recoveredRecycleMarker : null;
     if (
@@ -832,14 +852,6 @@ export function wireInstanceAgent(
         throw new Error(
             'A durable recycle marker exists, but its connect-ticket recovery latch could not be restored.'
         );
-    }
-    let activeCommand = readInstanceAgentCommandJournalSnapshot(commandJournalPath, log);
-    if (activeCommand && isInstanceAgentCommandExpired(activeCommand)) {
-        log(
-            `[instance-agent] Clearing expired recovered command ${activeCommand.instanceCommandId}; its timeout was ${activeCommand.timeoutAtUtc ?? 'invalid'}.`
-        );
-        clearInstanceAgentCommandJournalSnapshot(commandJournalPath, log);
-        activeCommand = null;
     }
     let recoveredActiveCommandId = activeCommand?.instanceCommandId ?? null;
     let activeCommandConfirmedByApi = activeCommand === null;
@@ -892,6 +904,8 @@ export function wireInstanceAgent(
         options.connectTicketRuntimeGate?.isCommercialRecoveryRequired() === true;
     let reconnectGraceEvidenceCutoffDurableThroughMs = 0;
     let pendingEvents: PendingInstanceAgentEvent[] = [];
+    let completedRecycleMarkerAwaitingEventAck: InstanceAgentRecycleMarkerSnapshot | null = null;
+    let acknowledgedRecycleMarkerToClear: InstanceAgentRecycleMarkerSnapshot | null = null;
     let resetInProgress = false;
     let artifactManager: SessionLogArtifactManager | null = null;
     let screenshotArtifactManager: SessionScreenshotArtifactManager | null = null;
@@ -943,16 +957,74 @@ export function wireInstanceAgent(
         );
     }
 
-    const queueEvent = (eventType: string, metadata: Record<string, unknown>, sessionId?: string): void => {
+    const queueEvent = (
+        eventType: string,
+        metadata: Record<string, unknown>,
+        sessionId?: string,
+        occurredAtUtc?: string
+    ): void => {
         pendingEvents.push({
             eventType,
-            occurredAtUtc: new Date().toISOString(),
+            occurredAtUtc: normalizeOptionalText(occurredAtUtc) ?? new Date().toISOString(),
             sessionId: normalizeOptionalText(sessionId),
             metadata: normalizeEventMetadata(metadata)
         });
 
         if (pendingEvents.length > MAX_PENDING_EVENTS) {
             pendingEvents = pendingEvents.slice(pendingEvents.length - MAX_PENDING_EVENTS);
+        }
+    };
+
+    const ensureCompletedRecycleMarkerEventQueued = (): void => {
+        const marker = completedRecycleMarkerAwaitingEventAck;
+        if (
+            !marker ||
+            pendingEvents.some(
+                (event) =>
+                    event.eventType === 'reset_completed' && event.metadata.recycleId === marker.recycleId
+            )
+        ) {
+            return;
+        }
+
+        queueEvent(
+            'reset_completed',
+            {
+                status: 'ready',
+                reason: 'reset_completed_event_ack_retry',
+                source: 'instance_agent_recovery',
+                version: runtimeSnapshot.version,
+                recycleId: marker.recycleId,
+                recycleReason: marker.reason,
+                recycleRequestedAtUtc: marker.requestedAtUtc,
+                recycleRequestedToken: marker.recycleRequestedToken,
+                sessionRequestId: marker.sessionRequestId,
+                userSessionId: marker.userSessionId,
+                sessionId: marker.sessionId
+            },
+            marker.sessionId,
+            marker.resetCompletedAtUtc
+        );
+        log(
+            `[instance-agent] Re-queued reset_completed for recycle ${marker.recycleId} while waiting for control-plane acknowledgement.`
+        );
+    };
+
+    const tryClearAcknowledgedRecycleMarker = (): void => {
+        const marker = acknowledgedRecycleMarkerToClear;
+        if (!marker) {
+            return;
+        }
+
+        if (clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log, marker.recycleId)) {
+            acknowledgedRecycleMarkerToClear = null;
+            log(
+                `[instance-agent] Recycle marker ${marker.recycleId} cleared after reset_completed was acknowledged by the control plane.`
+            );
+        } else {
+            log(
+                `[instance-agent] CRITICAL: reset_completed was acknowledged for recycle ${marker.recycleId}, but its durable marker could not be cleared. Retrying without replaying the stack recycle.`
+            );
         }
     };
 
@@ -1173,7 +1245,21 @@ export function wireInstanceAgent(
                 `[instance-agent] Clearing stale active command ${activeCommand.instanceCommandId} because the API ${source} response no longer lists it as open.`
             );
             if (wasTeardownCommand) {
-                invalidateRecoveredCommand(commandToInvalidate, `${source} response`);
+                const recycleTokenStatus = isRecycleToWarmCommand(commandToInvalidate)
+                    ? (options.connectTicketRuntimeGate?.getRecycleTokenCompletionStatus(
+                          commandToInvalidate.instanceCommandId
+                      ) ?? 'unavailable')
+                    : 'open';
+                if (recycleTokenStatus === 'completed') {
+                    log(
+                        `[instance-agent] Recovered recycle command ${commandToInvalidate.instanceCommandId} is already completed durably. Clearing its local journal without requesting another recovery recycle.`
+                    );
+                    clearActiveCommand();
+                } else if (recycleTokenStatus === 'unavailable') {
+                    requestFastPolling('recycle_token_fence_unavailable');
+                } else {
+                    invalidateRecoveredCommand(commandToInvalidate, `${source} response`);
+                }
             } else {
                 clearActiveCommand();
             }
@@ -1714,7 +1800,9 @@ export function wireInstanceAgent(
                 instanceCommandId: command.instanceCommandId,
                 commandStatus: result.commandStatus
             });
-            clearActiveCommand();
+            if (activeCommand?.instanceCommandId === command.instanceCommandId) {
+                clearActiveCommand();
+            }
             log(
                 `[instance-agent] Command completed: id=${command.instanceCommandId}, status=${result.commandStatus}.`
             );
@@ -1759,7 +1847,9 @@ export function wireInstanceAgent(
                 failureCode,
                 failureMessage: normalizeOptionalText(options.failureMessage)
             });
-            clearActiveCommand();
+            if (activeCommand?.instanceCommandId === command.instanceCommandId) {
+                clearActiveCommand();
+            }
             log(
                 `[instance-agent] Command failed: id=${command.instanceCommandId}, status=${result.commandStatus}, failureCode=${failureCode}.`
             );
@@ -2139,9 +2229,42 @@ export function wireInstanceAgent(
         }
 
         const payload = await parseJsonResponse<InstanceAgentEventBatchResponse>(response);
-        pendingEvents = pendingEvents.slice(Math.max(0, payload.acceptedCount));
+        const acceptedCount = Math.min(eventsToSend.length, Math.max(0, payload.acceptedCount));
+        const acceptedEvents = eventsToSend.slice(0, acceptedCount);
+        pendingEvents = pendingEvents.slice(acceptedCount);
+        const acceptedCompletedRecycleMarker = completedRecycleMarkerAwaitingEventAck;
+        const acceptedResetCompletion = Boolean(
+            acceptedCompletedRecycleMarker &&
+                acceptedEvents.some(
+                    (event) =>
+                        event.eventType === 'reset_completed' &&
+                        event.metadata.recycleId === acceptedCompletedRecycleMarker.recycleId
+                )
+        );
+        const acceptedRecycleToken = normalizeInstanceAgentRecycleToken(
+            acceptedCompletedRecycleMarker?.recycleRequestedToken
+        );
+        const responseRecycleToken = normalizeInstanceAgentRecycleToken(
+            payload.desiredState?.recycleRequestedToken
+        );
+        const resetCompletionStillNeedsControlReconciliation = Boolean(
+            acceptedResetCompletion && acceptedRecycleToken && responseRecycleToken === acceptedRecycleToken
+        );
+        if (acceptedResetCompletion && !resetCompletionStillNeedsControlReconciliation) {
+            acknowledgedRecycleMarkerToClear = acceptedCompletedRecycleMarker;
+            completedRecycleMarkerAwaitingEventAck = null;
+            tryClearAcknowledgedRecycleMarker();
+        } else if (resetCompletionStillNeedsControlReconciliation) {
+            log(
+                `[instance-agent] reset_completed for recycle ${acceptedCompletedRecycleMarker?.recycleId ?? 'unknown'} was accepted, but desired state still requests its token. Retaining the durable marker through a Ready heartbeat and replaying the same completion evidence.`
+            );
+        }
         applyCommands(payload.commands, 'events');
         applyDesiredState(payload.desiredState, 'events');
+        if (resetCompletionStillNeedsControlReconciliation) {
+            ensureCompletedRecycleMarkerEventQueued();
+            requestFastPolling('reset_completed_control_reconciliation');
+        }
     };
 
     const tryStartRecoveredRecycleCommand = async (): Promise<void> => {
@@ -2151,6 +2274,15 @@ export function wireInstanceAgent(
             !isRecycleToWarmCommand(activeCommand) ||
             activeCommand.status !== 'acked' ||
             !pendingRecycleCompletion
+        ) {
+            return;
+        }
+        const pendingRecycleToken = normalizeInstanceAgentRecycleToken(
+            pendingRecycleCompletion.recycleRequestedToken
+        );
+        if (
+            !pendingRecycleToken ||
+            normalizeInstanceAgentRecycleToken(activeCommand.instanceCommandId) !== pendingRecycleToken
         ) {
             return;
         }
@@ -2184,15 +2316,23 @@ export function wireInstanceAgent(
         if ((runtimeSnapshot.status?.trim().toLowerCase() ?? '') !== 'ready') {
             return;
         }
+        const commandToFinalize = activeCommand;
+        if (
+            (options.connectTicketRuntimeGate?.getRecycleTokenCompletionStatus(
+                commandToFinalize.instanceCommandId
+            ) ?? 'unavailable') !== 'completed'
+        ) {
+            return;
+        }
 
         try {
-            await captureSessionLogArtifact('reset_recovered_ready', activeCommand, {
+            await captureSessionLogArtifact('reset_recovered_ready', commandToFinalize, {
                 source: 'ready_recovery'
             }).catch(() => undefined);
-            await captureSessionScreenshotArtifact('reset_recovered_ready', activeCommand, {
+            await captureSessionScreenshotArtifact('reset_recovered_ready', commandToFinalize, {
                 source: 'ready_recovery'
             }).catch(() => undefined);
-            await completeCommand(activeCommand, {
+            await completeCommand(commandToFinalize, {
                 resultJson: JSON.stringify({
                     status: runtimeSnapshot.status,
                     reason: runtimeSnapshot.reason,
@@ -2203,7 +2343,7 @@ export function wireInstanceAgent(
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             log(
-                `[instance-agent] Failed to finalize recovered recycle command ${activeCommand.instanceCommandId}: ${message}`
+                `[instance-agent] Failed to finalize recovered recycle command ${commandToFinalize.instanceCommandId}: ${message}`
             );
         }
     };
@@ -2222,13 +2362,17 @@ export function wireInstanceAgent(
                 return;
             }
             await ensureBootstrap();
+            ensureCompletedRecycleMarkerEventQueued();
             await artifactManager?.drainQueue();
             await screenshotArtifactManager?.drainQueue();
+            ensureCompletedRecycleMarkerEventQueued();
             await flushEvents();
             await sendHeartbeat();
+            ensureCompletedRecycleMarkerEventQueued();
             await flushEvents();
             await tryStartRecoveredRecycleCommand();
             await tryFinalizeRecoveredActiveCommand();
+            tryClearAcknowledgedRecycleMarker();
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             log(`[instance-agent] Tick failed: ${message}`);
@@ -2389,12 +2533,17 @@ export function wireInstanceAgent(
                 options.connectTicketRuntimeGate?.isCommercialRecoveryRequired() === true
             ) {
                 const expectedRecycleId = pendingRecycleCompletion.recycleId;
+                const expectedRecycleToken = normalizeInstanceAgentRecycleToken(
+                    pendingRecycleCompletion.recycleRequestedToken
+                );
                 let durableReplacementProof: InstanceAgentRecycleMarkerSnapshot | null = null;
                 try {
                     const currentMarker = readInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
                     if (
                         isInstanceAgentRecycleReplacementProof(currentMarker) &&
-                        currentMarker.recycleId === expectedRecycleId
+                        currentMarker.recycleId === expectedRecycleId &&
+                        normalizeInstanceAgentRecycleToken(currentMarker.recycleRequestedToken) ===
+                            expectedRecycleToken
                     ) {
                         durableReplacementProof = currentMarker;
                     }
@@ -2423,7 +2572,11 @@ export function wireInstanceAgent(
                     );
                     return;
                 }
-                if (!options.connectTicketRuntimeGate.completeCommercialRecoveryAfterReset()) {
+                if (
+                    !options.connectTicketRuntimeGate.completeCommercialRecoveryAfterReset(
+                        durableReplacementProof.recycleRequestedToken
+                    )
+                ) {
                     log(
                         '[instance-agent] CRITICAL: Runtime reached Ready after recycle, but commercial recovery completion was not durable. Keeping the recycle marker, readiness, and admission blocked.'
                     );
@@ -2438,14 +2591,23 @@ export function wireInstanceAgent(
                 );
             }
 
-            if (update.heartbeatOnly === true && !completedCommercialRecoveryThisUpdate) {
+            const shouldRetryPendingReadyRecycleCompletion =
+                nextStatus === 'ready' &&
+                pendingRecycleCompletion !== null &&
+                options.connectTicketRuntimeGate?.isCommercialRecoveryRequired() !== true;
+            if (
+                update.heartbeatOnly === true &&
+                !completedCommercialRecoveryThisUpdate &&
+                !shouldRetryPendingReadyRecycleCompletion
+            ) {
                 return;
             }
 
             if (
                 previousStatus === nextStatus &&
                 previousReason === nextReason &&
-                !completedCommercialRecoveryThisUpdate
+                !completedCommercialRecoveryThisUpdate &&
+                !shouldRetryPendingReadyRecycleCompletion
             ) {
                 return;
             }
@@ -2474,38 +2636,74 @@ export function wireInstanceAgent(
                     sessionRequestId: activeCommand?.sessionRequestId
                 });
             } else if ((resetInProgress || pendingRecycleCompletion) && nextStatus === 'ready') {
-                const recycleMarker = pendingRecycleCompletion;
+                let recycleMarker = pendingRecycleCompletion;
+                if (recycleMarker && !recycleMarker.resetCompletedAtUtc) {
+                    try {
+                        recycleMarker = writeInstanceAgentRecycleMarkerSnapshot(
+                            recycleMarkerPath,
+                            {
+                                ...recycleMarker,
+                                resetCompletedAtUtc: new Date().toISOString()
+                            },
+                            log
+                        );
+                    } catch {
+                        log(
+                            `[instance-agent] CRITICAL: Runtime reached Ready for recycle ${recycleMarker.recycleId}, but its stable reset-completion timestamp could not be persisted. Retaining the marker and retrying before event emission.`
+                        );
+                        return;
+                    }
+                }
+                const recycleMarkerToken = normalizeInstanceAgentRecycleToken(
+                    recycleMarker?.recycleRequestedToken
+                );
+                const activeCommandBelongsToRecycleMarker =
+                    !recycleMarker ||
+                    Boolean(
+                        activeCommand &&
+                            isRecycleToWarmCommand(activeCommand) &&
+                            recycleMarkerToken &&
+                            normalizeInstanceAgentRecycleToken(activeCommand.instanceCommandId) ===
+                                recycleMarkerToken
+                    );
+                const correlatedActiveCommand = activeCommandBelongsToRecycleMarker ? activeCommand : null;
                 resetInProgress = false;
                 pendingRecycleCompletion = null;
                 if (recycleMarker) {
-                    if (clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log)) {
-                        log(
-                            `[instance-agent] Recycle marker ${recycleMarker.recycleId} completed after the replacement runtime became ready. Clearing marker and emitting reset_completed.`
-                        );
-                    } else {
-                        log(
-                            `[instance-agent] CRITICAL: Replacement recycle ${recycleMarker.recycleId} completed, but its durable marker could not be cleared. The completed replacement remains authoritative; a later restart will recover the marker fail-closed.`
-                        );
-                    }
+                    completedRecycleMarkerAwaitingEventAck = recycleMarker;
+                    log(
+                        `[instance-agent] Recycle marker ${recycleMarker.recycleId} completed after the replacement runtime became ready. Retaining it until reset_completed is acknowledged by the control plane.`
+                    );
                 } else {
                     log(
                         '[instance-agent] Reset completed after runtime became ready. Emitting reset_completed.'
                     );
                 }
-                queueEvent('reset_completed', {
-                    status: nextStatus,
-                    reason: nextReason,
-                    source: update.source,
-                    version: update.version,
-                    recycleId: recycleMarker?.recycleId,
-                    recycleReason: recycleMarker?.reason,
-                    recycleRequestedAtUtc: recycleMarker?.requestedAtUtc,
-                    sessionRequestId: activeCommand?.sessionRequestId ?? recycleMarker?.sessionRequestId,
-                    userSessionId: recycleMarker?.userSessionId,
-                    sessionId: recycleMarker?.sessionId
-                });
-                if (activeCommandConfirmedByApi && activeCommand && isRecycleToWarmCommand(activeCommand)) {
-                    const commandToComplete = activeCommand;
+                queueEvent(
+                    'reset_completed',
+                    {
+                        status: nextStatus,
+                        reason: nextReason,
+                        source: update.source,
+                        version: update.version,
+                        recycleId: recycleMarker?.recycleId,
+                        recycleReason: recycleMarker?.reason,
+                        recycleRequestedAtUtc: recycleMarker?.requestedAtUtc,
+                        recycleRequestedToken: recycleMarker?.recycleRequestedToken,
+                        sessionRequestId:
+                            correlatedActiveCommand?.sessionRequestId ?? recycleMarker?.sessionRequestId,
+                        userSessionId: recycleMarker?.userSessionId,
+                        sessionId: recycleMarker?.sessionId
+                    },
+                    undefined,
+                    recycleMarker?.resetCompletedAtUtc
+                );
+                if (
+                    activeCommandConfirmedByApi &&
+                    correlatedActiveCommand &&
+                    isRecycleToWarmCommand(correlatedActiveCommand)
+                ) {
+                    const commandToComplete = correlatedActiveCommand;
                     void captureSessionLogArtifact('reset_completed', commandToComplete, {
                         recycleId: recycleMarker?.recycleId,
                         recycleReason: recycleMarker?.reason,
@@ -2535,10 +2733,22 @@ export function wireInstanceAgent(
                         );
                     });
                 } else {
+                    if (
+                        recycleMarker &&
+                        activeCommandConfirmedByApi &&
+                        activeCommand &&
+                        isRecycleToWarmCommand(activeCommand) &&
+                        !activeCommandBelongsToRecycleMarker
+                    ) {
+                        log(
+                            `[instance-agent] Recycle ${recycleMarker.recycleId} completed without terminalizing newer recycle command ${activeCommand.instanceCommandId}; only the marker-owned token may complete it.`
+                        );
+                    }
                     const recycleSessionMetadata = {
                         recycleId: recycleMarker?.recycleId,
                         recycleReason: recycleMarker?.reason,
                         recycleRequestedAtUtc: recycleMarker?.requestedAtUtc,
+                        recycleRequestedToken: recycleMarker?.recycleRequestedToken,
                         sessionRequestId: recycleMarker?.sessionRequestId,
                         userSessionId: recycleMarker?.userSessionId,
                         sessionId: recycleMarker?.sessionId,
@@ -2562,9 +2772,22 @@ export function wireInstanceAgent(
             ) {
                 resetInProgress = false;
                 const recycleMarker = pendingRecycleCompletion;
+                const recycleMarkerToken = normalizeInstanceAgentRecycleToken(
+                    recycleMarker?.recycleRequestedToken
+                );
+                const activeCommandBelongsToRecycleMarker =
+                    !recycleMarker ||
+                    Boolean(
+                        activeCommand &&
+                            isRecycleToWarmCommand(activeCommand) &&
+                            recycleMarkerToken &&
+                            normalizeInstanceAgentRecycleToken(activeCommand.instanceCommandId) ===
+                                recycleMarkerToken
+                    );
+                const correlatedActiveCommand = activeCommandBelongsToRecycleMarker ? activeCommand : null;
                 pendingRecycleCompletion = null;
                 if (recycleMarker) {
-                    clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log);
+                    clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log, recycleMarker.recycleId);
                     log(
                         `[instance-agent] Cancelling pending recycle marker ${recycleMarker.recycleId ?? 'unknown'} because runtime entered '${nextStatus}'.`
                     );
@@ -2581,12 +2804,18 @@ export function wireInstanceAgent(
                     recycleId: recycleMarker?.recycleId,
                     recycleReason: recycleMarker?.reason,
                     recycleRequestedAtUtc: recycleMarker?.requestedAtUtc,
-                    sessionRequestId: activeCommand?.sessionRequestId ?? recycleMarker?.sessionRequestId,
+                    recycleRequestedToken: recycleMarker?.recycleRequestedToken,
+                    sessionRequestId:
+                        correlatedActiveCommand?.sessionRequestId ?? recycleMarker?.sessionRequestId,
                     userSessionId: recycleMarker?.userSessionId,
                     sessionId: recycleMarker?.sessionId
                 });
-                if (activeCommandConfirmedByApi && activeCommand && isRecycleToWarmCommand(activeCommand)) {
-                    const commandToFail = activeCommand;
+                if (
+                    activeCommandConfirmedByApi &&
+                    correlatedActiveCommand &&
+                    isRecycleToWarmCommand(correlatedActiveCommand)
+                ) {
+                    const commandToFail = correlatedActiveCommand;
                     void captureSessionLogArtifact('reset_cancelled', commandToFail, {
                         recycleId: recycleMarker?.recycleId,
                         recycleReason: recycleMarker?.reason,
@@ -2613,6 +2842,16 @@ export function wireInstanceAgent(
                             `[instance-agent] Failed to report recycle command cancellation for ${commandToFail.instanceCommandId}: ${message}`
                         );
                     });
+                } else if (
+                    recycleMarker &&
+                    activeCommandConfirmedByApi &&
+                    activeCommand &&
+                    isRecycleToWarmCommand(activeCommand) &&
+                    !activeCommandBelongsToRecycleMarker
+                ) {
+                    log(
+                        `[instance-agent] Recycle ${recycleMarker.recycleId} was cancelled without failing newer recycle command ${activeCommand.instanceCommandId}; only the marker-owned token may fail it.`
+                    );
                 }
             }
 
