@@ -76,7 +76,7 @@ export class WebRtcPlayerController {
     datachannelOptions: RTCDataChannelInit;
     videoPlayer: VideoPlayer;
     streamController: StreamController;
-    peerConnectionController: PeerConnectionController;
+    peerConnectionController: PeerConnectionController | null = null;
     inputClassesFactory: InputClassesFactory;
     freezeFrameController: FreezeFrameController;
     shouldShowPlayOverlay = true;
@@ -111,6 +111,12 @@ export class WebRtcPlayerController {
     keepalive: KeepaliveMonitor;
     playerId: string | null = null;
     hasCompletedInitialVideo: boolean;
+    private signallingConnectionGeneration = 0;
+    private peerConnectionGeneration = 0;
+    private subscribedSignallingConnectionGeneration = -1;
+    private activeSubscribedStreamerId = '';
+    private isApplyingAutomaticStreamerSelection = false;
+    private offerProcessing: Promise<void> = Promise.resolve();
 
     /**
      *
@@ -209,6 +215,9 @@ export class WebRtcPlayerController {
             this.handleIceCandidate(iceCandidateMessage.candidate);
         });
         this.protocol.transport.addListener('open', () => {
+            this.signallingConnectionGeneration++;
+            this.subscribedSignallingConnectionGeneration = -1;
+            this.activeSubscribedStreamerId = '';
             const BrowserSendOffer = this.config.isFlagEnabled(Flags.BrowserSendOffer);
             if (!BrowserSendOffer) {
                 const message = MessageHelpers.createMessage(Messages.listStreamers);
@@ -254,6 +263,10 @@ export class WebRtcPlayerController {
                 window.clearInterval(this.statsTimerHandle);
             }
 
+            this.subscribedSignallingConnectionGeneration = -1;
+            this.activeSubscribedStreamerId = '';
+            this.closePeerConnection();
+
             // reset the stream quality icon.
             this.setVideoEncoderAvgQP(0);
 
@@ -298,16 +311,7 @@ export class WebRtcPlayerController {
         this.isReconnecting = false;
 
         this.config._addOnOptionSettingChangedListener(OptionParameters.StreamerId, (streamerid) => {
-            if (streamerid === undefined || streamerid === '') {
-                return;
-            }
-
-            // close the current peer connection and create a new one
-            this.peerConnectionController.peerConnection.close();
-            this.peerConnectionController.createPeerConnection(this.peerConfig, this.preferredCodec);
-            this.subscribedStream = streamerid;
-            const message = MessageHelpers.createMessage(Messages.subscribe, { streamerId: streamerid });
-            this.protocol.sendMessage(message);
+            this.handleStreamerSelectionChanged(streamerid);
         });
 
         this.config._addOnOptionSettingChangedListener(
@@ -1068,6 +1072,203 @@ export class WebRtcPlayerController {
         }
     }
 
+    private isCurrentPeerConnection(controller: PeerConnectionController, generation: number): boolean {
+        return this.peerConnectionController === controller && this.peerConnectionGeneration === generation;
+    }
+
+    private replacePeerConnectionController(
+        peerConfig: RTCConfiguration,
+        startBrowserOffer: boolean
+    ): PeerConnectionController {
+        const previousController = this.peerConnectionController;
+        const controller = new PeerConnectionController(peerConfig, this.config, this.preferredCodec);
+        const generation = ++this.peerConnectionGeneration;
+
+        // Publish the replacement generation before closing the old connection. Browser close
+        // callbacks and already-queued promise continuations are therefore stale before they run.
+        this.peerConnectionController = controller;
+        this.offerProcessing = Promise.resolve();
+
+        controller.onVideoStats = (event: AggregatedStats) => {
+            if (this.isCurrentPeerConnection(controller, generation)) {
+                this.handleVideoStats(event);
+            }
+        };
+
+        controller.onLatencyCalculated = (latencyInfo: LatencyInfo) => {
+            if (this.isCurrentPeerConnection(controller, generation)) {
+                this.pixelStreaming._onLatencyCalculated(latencyInfo);
+            }
+        };
+
+        controller.onSendWebRTCOffer = (offer: RTCSessionDescriptionInit) => {
+            if (this.isCurrentPeerConnection(controller, generation)) {
+                this.handleSendWebRTCOffer(offer);
+            }
+        };
+
+        controller.onSetLocalDescription = (sdp: RTCSessionDescriptionInit) => {
+            if (!this.isCurrentPeerConnection(controller, generation)) {
+                return;
+            }
+
+            if (sdp.type === 'offer') {
+                this.handleSendWebRTCOffer(sdp);
+            } else if (sdp.type === 'answer') {
+                this.handleSendWebRTCAnswer(sdp);
+            } else {
+                Logger.Error(
+                    `PeerConnectionController onSetLocalDescription was called with unexpected type ${sdp.type}`
+                );
+            }
+        };
+
+        controller.onSetRemoteDescription = (sdp: RTCSessionDescriptionInit) => {
+            if (!this.isCurrentPeerConnection(controller, generation)) {
+                return;
+            }
+
+            if (sdp.type === 'offer') {
+                this.pixelStreaming._onWebRtcSdpOffer(sdp);
+            } else if (sdp.type === 'answer') {
+                this.pixelStreaming._onWebRtcSdpAnswer(sdp);
+            } else {
+                Logger.Error(
+                    `PeerConnectionController onSetRemoteDescription was called with unexpected type ${sdp.type}`
+                );
+            }
+        };
+
+        controller.onPeerIceCandidate = (peerConnectionIceEvent: RTCPeerConnectionIceEvent) => {
+            if (this.isCurrentPeerConnection(controller, generation)) {
+                this.handleSendIceCandidate(peerConnectionIceEvent);
+            }
+        };
+
+        controller.onDataChannel = (datachannelEvent: RTCDataChannelEvent) => {
+            if (this.isCurrentPeerConnection(controller, generation)) {
+                this.handleDataChannel(datachannelEvent);
+            }
+        };
+
+        controller.showTextOverlayConnecting = () => {
+            if (this.isCurrentPeerConnection(controller, generation)) {
+                this.pixelStreaming._onWebRtcConnecting();
+            }
+        };
+        controller.showTextOverlaySetupFailure = () => {
+            if (this.isCurrentPeerConnection(controller, generation)) {
+                this.pixelStreaming._onWebRtcFailed();
+            }
+        };
+
+        let webRtcConnectedSent = false;
+        controller.onIceConnectionStateChange = () => {
+            if (!this.isCurrentPeerConnection(controller, generation)) {
+                return;
+            }
+
+            // Browsers emit "connected" when getting first connection and "completed" when finishing
+            // candidate checking. However, sometimes browsers can skip "connected" and only emit "completed".
+            // Therefore need to check both cases and emit onWebRtcConnected only once on the first hit.
+            if (
+                !webRtcConnectedSent &&
+                ['connected', 'completed'].includes(controller.peerConnection?.iceConnectionState)
+            ) {
+                this.pixelStreaming._onWebRtcConnected();
+                webRtcConnectedSent = true;
+            }
+        };
+
+        controller.onTrack = (trackEvent: RTCTrackEvent) => {
+            if (this.isCurrentPeerConnection(controller, generation)) {
+                this.streamController.handleOnTrack(trackEvent);
+            }
+        };
+
+        previousController?.close();
+
+        const BrowserSendOffer = this.config.isFlagEnabled(Flags.BrowserSendOffer);
+        if (startBrowserOffer && BrowserSendOffer) {
+            this.sendrecvDataChannelController.createDataChannel(
+                controller.peerConnection,
+                'cirrus',
+                this.datachannelOptions
+            );
+            this.sendrecvDataChannelController.handleOnMessage = (ev: MessageEvent<ArrayBuffer>) =>
+                this.handleOnMessage(ev);
+            void controller.createOffer(this.sdpConstraints, this.config);
+        }
+
+        return controller;
+    }
+
+    private retirePeerConnectionController(): void {
+        const previousController = this.peerConnectionController;
+        if (!previousController) {
+            return;
+        }
+
+        // Invalidate the generation before close(), since close can synchronously dispatch state events.
+        this.peerConnectionGeneration++;
+        this.peerConnectionController = null;
+        this.offerProcessing = Promise.resolve();
+        previousController.close();
+    }
+
+    private handleStreamerSelectionChanged(streamerId: string): void {
+        if (!streamerId) {
+            return;
+        }
+
+        const streamerIdOptions = this.config.getSettingOption(OptionParameters.StreamerId).options;
+        if (!streamerIdOptions.includes(streamerId)) {
+            Logger.Info(`Ignoring unavailable streamer selection ${streamerId}.`);
+            return;
+        }
+
+        this.subscribedStream = streamerId;
+        if (!this.protocol?.isConnected()) {
+            return;
+        }
+
+        if (!this.peerConnectionController && !this.peerConfig) {
+            Logger.Info(`Deferring streamer selection ${streamerId} until peer configuration arrives.`);
+            return;
+        }
+
+        const alreadySubscribedForConnection =
+            this.subscribedSignallingConnectionGeneration === this.signallingConnectionGeneration &&
+            this.activeSubscribedStreamerId === streamerId;
+        if (this.isApplyingAutomaticStreamerSelection && alreadySubscribedForConnection) {
+            Logger.Info(`Ignoring duplicate automatic subscription to streamer ${streamerId}.`);
+            return;
+        }
+
+        // Explicitly selecting the active id is an intentional retry. A different id is also a
+        // new media generation. In both cases, retire the old browser peer before subscribing.
+        if (
+            !this.peerConnectionController ||
+            alreadySubscribedForConnection ||
+            this.activeSubscribedStreamerId !== ''
+        ) {
+            this.replacePeerConnectionController(this.peerConfig, false);
+        }
+
+        const message = MessageHelpers.createMessage(Messages.subscribe, { streamerId });
+        try {
+            this.protocol.sendMessage(message);
+            // Commit the de-duplication marker only after the transport accepted the send. A
+            // synchronous WebSocket send failure must leave a later same-id retry available.
+            this.subscribedSignallingConnectionGeneration = this.signallingConnectionGeneration;
+            this.activeSubscribedStreamerId = streamerId;
+        } catch (error) {
+            this.subscribedSignallingConnectionGeneration = -1;
+            this.activeSubscribedStreamerId = '';
+            Logger.Error(`Failed to subscribe to streamer ${streamerId} - ${error}`);
+        }
+    }
+
     /**
      * This will start the handshake to the signalling server
      * @param peerConfig  - RTC Configuration Options from the Signaling server
@@ -1093,100 +1294,7 @@ export class WebRtcPlayerController {
             }
         }
 
-        // set up the peer connection controller
-        this.peerConnectionController = new PeerConnectionController(
-            this.peerConfig,
-            this.config,
-            this.preferredCodec
-        );
-
-        // set up peer connection controller video stats
-        this.peerConnectionController.onVideoStats = (event: AggregatedStats) => {
-            this.handleVideoStats(event);
-        };
-
-        /* Set event handler for latency information is calculated, handle the event by propogating to the PixelStreaming API */
-        this.peerConnectionController.onLatencyCalculated = (latencyInfo: LatencyInfo) => {
-            this.pixelStreaming._onLatencyCalculated(latencyInfo);
-        };
-
-        /* When our PeerConnection wants to send an offer call our handler */
-        this.peerConnectionController.onSendWebRTCOffer = (offer: RTCSessionDescriptionInit) => {
-            this.handleSendWebRTCOffer(offer);
-        };
-
-        /* Set event handler for when local description is set */
-        this.peerConnectionController.onSetLocalDescription = (sdp: RTCSessionDescriptionInit) => {
-            if (sdp.type === 'offer') {
-                this.handleSendWebRTCOffer(sdp);
-            } else if (sdp.type === 'answer') {
-                this.handleSendWebRTCAnswer(sdp);
-            } else {
-                Logger.Error(
-                    `PeerConnectionController onSetLocalDescription was called with unexpected type ${sdp.type}`
-                );
-            }
-        };
-
-        /* Event handler for when PeerConnection's remote description is set */
-        this.peerConnectionController.onSetRemoteDescription = (sdp: RTCSessionDescriptionInit) => {
-            if (sdp.type === 'offer') {
-                this.pixelStreaming._onWebRtcSdpOffer(sdp);
-            } else if (sdp.type === 'answer') {
-                this.pixelStreaming._onWebRtcSdpAnswer(sdp);
-            } else {
-                Logger.Error(
-                    `PeerConnectionController onSetRemoteDescription was called with unexpected type ${sdp.type}`
-                );
-            }
-        };
-
-        /* When the Peer Connection ice candidate is added have it handled */
-        this.peerConnectionController.onPeerIceCandidate = (
-            peerConnectionIceEvent: RTCPeerConnectionIceEvent
-        ) => this.handleSendIceCandidate(peerConnectionIceEvent);
-
-        /* When the Peer Connection has a data channel created for it by the browser, handle it */
-        this.peerConnectionController.onDataChannel = (datachannelEvent: RTCDataChannelEvent) =>
-            this.handleDataChannel(datachannelEvent);
-
-        // set up webRtc text overlays
-        this.peerConnectionController.showTextOverlayConnecting = () =>
-            this.pixelStreaming._onWebRtcConnecting();
-        this.peerConnectionController.showTextOverlaySetupFailure = () =>
-            this.pixelStreaming._onWebRtcFailed();
-        let webRtcConnectedSent = false;
-        this.peerConnectionController.onIceConnectionStateChange = () => {
-            // Browsers emit "connected" when getting first connection and "completed" when finishing
-            // candidate checking. However, sometimes browsers can skip "connected" and only emit "completed".
-            // Therefore need to check both cases and emit onWebRtcConnected only once on the first hit.
-            if (
-                !webRtcConnectedSent &&
-                ['connected', 'completed'].includes(
-                    this.peerConnectionController.peerConnection.iceConnectionState
-                )
-            ) {
-                this.pixelStreaming._onWebRtcConnected();
-                webRtcConnectedSent = true;
-            }
-        };
-
-        /* RTC Peer Connection on Track event -> handle on track */
-        this.peerConnectionController.onTrack = (trackEvent: RTCTrackEvent) =>
-            this.streamController.handleOnTrack(trackEvent);
-
-        const BrowserSendOffer = this.config.isFlagEnabled(Flags.BrowserSendOffer);
-        if (BrowserSendOffer) {
-            // If browser is sending the offer, create an offer and send it to the streamer
-            this.sendrecvDataChannelController.createDataChannel(
-                this.peerConnectionController.peerConnection,
-                'cirrus',
-                this.datachannelOptions
-            );
-            this.sendrecvDataChannelController.handleOnMessage = (ev: MessageEvent<ArrayBuffer>) =>
-                this.handleOnMessage(ev);
-            this.peerConnectionController.createOffer(this.sdpConstraints, this.config);
-        }
+        this.replacePeerConnectionController(this.peerConfig, true);
     }
 
     /**
@@ -1234,6 +1342,20 @@ export class WebRtcPlayerController {
     handleStreamerListMessage(messageStreamerList: Messages.streamerList) {
         Logger.Info(`Got streamer list ${messageStreamerList.ids}`);
 
+        const activeStreamerDisappeared =
+            this.subscribedSignallingConnectionGeneration === this.signallingConnectionGeneration &&
+            this.activeSubscribedStreamerId !== '' &&
+            !messageStreamerList.ids.includes(this.activeSubscribedStreamerId);
+        if (activeStreamerDisappeared) {
+            // A streamer id can be reused after an Unreal/signalling process recycle. Treat its
+            // disappearance as the end of the current media generation so reappearance of the
+            // same string creates and subscribes a fresh RTCPeerConnection.
+            Logger.Info(`Subscribed streamer ${this.activeSubscribedStreamerId} disappeared.`);
+            this.subscribedSignallingConnectionGeneration = -1;
+            this.activeSubscribedStreamerId = '';
+            this.retirePeerConnectionController();
+        }
+
         let wantedStreamerId: string = '';
 
         // get the current selected streamer id option
@@ -1278,7 +1400,12 @@ export class WebRtcPlayerController {
         if (autoSelectedStreamerId) {
             this.reconnectAttempt = 0;
             this.isReconnecting = false;
-            this.config.setOptionSettingValue(OptionParameters.StreamerId, autoSelectedStreamerId);
+            this.isApplyingAutomaticStreamerSelection = true;
+            try {
+                this.config.setOptionSettingValue(OptionParameters.StreamerId, autoSelectedStreamerId);
+            } finally {
+                this.isApplyingAutomaticStreamerSelection = false;
+            }
         } else {
             // no auto selected streamer.
             // if we're waiting for a streamer then try reconnecting
@@ -1313,6 +1440,10 @@ export class WebRtcPlayerController {
         this.reconnectAttempt = 0;
         this.isReconnecting = false;
         this.enableAutoReconnect = false;
+        // The server did not accept the subscription, so a later retry of the same
+        // streamer id must not be mistaken for a duplicate successful subscription.
+        this.subscribedSignallingConnectionGeneration = -1;
+        this.activeSubscribedStreamerId = '';
         this.pixelStreaming._onSubscribeFailed(subscribeFailedMessage.message);
     }
 
@@ -1344,6 +1475,10 @@ export class WebRtcPlayerController {
         // restore the old change notifier.
         streamerListOptions.onChange = oldOnChange;
 
+        if (this.activeSubscribedStreamerId === this.subscribedStream) {
+            this.activeSubscribedStreamerId = newID;
+        }
+
         // remember which stream we're subscribe to
         this.subscribedStream = streamerIDChangedMessage.newID;
 
@@ -1362,6 +1497,13 @@ export class WebRtcPlayerController {
     handleWebRtcAnswer(Answer: Messages.answer) {
         Logger.Info(`Got answer sdp ${Answer.sdp}`);
 
+        const controller = this.peerConnectionController;
+        const generation = this.peerConnectionGeneration;
+        if (!controller) {
+            Logger.Error('Ignoring WebRTC answer because there is no active peer connection.');
+            return;
+        }
+
         // Extract the player id if it is present
         if (Answer.playerId) {
             this.playerId = Answer.playerId;
@@ -1372,8 +1514,11 @@ export class WebRtcPlayerController {
             type: 'answer'
         };
 
-        this.peerConnectionController.receiveAnswer(sdpAnswer);
-        this.handlePostWebrtcNegotiation();
+        void controller.receiveAnswer(sdpAnswer).then((applied) => {
+            if (applied && this.isCurrentPeerConnection(controller, generation)) {
+                this.handlePostWebrtcNegotiation();
+            }
+        });
     }
 
     /**
@@ -1383,53 +1528,75 @@ export class WebRtcPlayerController {
     handleWebRtcOffer(Offer: Messages.offer) {
         Logger.Info(`Got offer sdp ${Offer.sdp}`);
 
-        // Extract the player id if it is present
-        if (Offer.playerId) {
-            this.playerId = Offer.playerId;
+        const controller = this.peerConnectionController;
+        const generation = this.peerConnectionGeneration;
+        if (!controller) {
+            Logger.Error('Ignoring WebRTC offer because there is no active peer connection.');
+            return;
         }
 
-        this.isUsingSFU = Offer.sfu ? Offer.sfu : false;
-        this.isUsingSVC = Offer.scalabilityMode ? Offer.scalabilityMode != 'L1T1' : false;
-        if (this.isUsingSFU || this.isUsingSVC) {
-            // Disable negotiating with the sfu as the sfu only supports one codec at a time
-            this.peerConnectionController.preferredCodec = '';
-        }
+        // Offers can arrive back-to-back when subscriptions race or a streamer renegotiates.
+        // Process them in wire order. Each step checks the captured peer generation before and
+        // after its asynchronous browser operations, so a superseded offer becomes a no-op.
+        this.offerProcessing = this.offerProcessing
+            .then(async () => {
+                if (!this.isCurrentPeerConnection(controller, generation)) {
+                    return;
+                }
 
-        // NOTE: These two settings configurations are done outside of an if(this.isUsingSFU) so that users
-        // can switch between a default and SFU stream and have the settings reconfigure appropriately
+                // Extract the player id if it is present
+                if (Offer.playerId) {
+                    this.playerId = Offer.playerId;
+                }
 
-        const scalabilityMode = Offer.scalabilityMode ? Offer.scalabilityMode : 'L1T1';
-        let availableQualities = ['Default'];
-        if (this.isUsingSFU) {
-            if (!this.isUsingSVC) {
-                // User is using an SFU without any temporal scalability. Just offer easily readable names
-                availableQualities = ['High', 'Medium', 'Low'];
-            } else {
-                // User is using SVC. Generate all available options.
-                availableQualities = [];
-                const maxSpatialLayers = +scalabilityMode[1];
-                const maxTemporalLayers = +scalabilityMode[3];
-                for (let s = 1; s <= maxSpatialLayers; s++) {
-                    for (let t = 1; t <= maxTemporalLayers; t++) {
-                        availableQualities.push(`S${s}T${t}`);
+                this.isUsingSFU = Offer.sfu ? Offer.sfu : false;
+                this.isUsingSVC = Offer.scalabilityMode ? Offer.scalabilityMode != 'L1T1' : false;
+                if (this.isUsingSFU || this.isUsingSVC) {
+                    // Disable negotiating with the sfu as the sfu only supports one codec at a time
+                    controller.preferredCodec = '';
+                }
+
+                // NOTE: These two settings configurations are done outside of an if(this.isUsingSFU) so that users
+                // can switch between a default and SFU stream and have the settings reconfigure appropriately
+
+                const scalabilityMode = Offer.scalabilityMode ? Offer.scalabilityMode : 'L1T1';
+                let availableQualities = ['Default'];
+                if (this.isUsingSFU) {
+                    if (!this.isUsingSVC) {
+                        // User is using an SFU without any temporal scalability. Just offer easily readable names
+                        availableQualities = ['High', 'Medium', 'Low'];
+                    } else {
+                        // User is using SVC. Generate all available options.
+                        availableQualities = [];
+                        const maxSpatialLayers = +scalabilityMode[1];
+                        const maxTemporalLayers = +scalabilityMode[3];
+                        for (let s = 1; s <= maxSpatialLayers; s++) {
+                            for (let t = 1; t <= maxTemporalLayers; t++) {
+                                availableQualities.push(`S${s}T${t}`);
+                            }
+                        }
                     }
                 }
-            }
-        }
 
-        // Update the possible video quality options
-        this.config.setOptionSettingOptions(OptionParameters.PreferredQuality, availableQualities);
+                // Update the possible video quality options
+                this.config.setOptionSettingOptions(OptionParameters.PreferredQuality, availableQualities);
 
-        // Update the selected video quality with the highest possible resolution
-        this.config.setOptionSettingValue(OptionParameters.PreferredQuality, availableQualities[0]);
+                // Update the selected video quality with the highest possible resolution
+                this.config.setOptionSettingValue(OptionParameters.PreferredQuality, availableQualities[0]);
 
-        const sdpOffer: RTCSessionDescriptionInit = {
-            sdp: Offer.sdp,
-            type: 'offer'
-        };
+                const sdpOffer: RTCSessionDescriptionInit = {
+                    sdp: Offer.sdp,
+                    type: 'offer'
+                };
 
-        this.peerConnectionController.receiveOffer(sdpOffer, this.config);
-        this.handlePostWebrtcNegotiation();
+                const applied = await controller.receiveOffer(sdpOffer, this.config);
+                if (applied && this.isCurrentPeerConnection(controller, generation)) {
+                    this.handlePostWebrtcNegotiation();
+                }
+            })
+            .catch((error) => {
+                Logger.Error(`Failed to process WebRTC offer - ${error}`);
+            });
     }
 
     /**
@@ -1437,6 +1604,14 @@ export class WebRtcPlayerController {
      * @param DataChannels - The message from the SFU containing the data channels ids
      */
     handleWebRtcSFUPeerDatachannels(DataChannels: Messages.peerDataChannels) {
+        const controller = this.peerConnectionController;
+        const generation = this.peerConnectionGeneration;
+        const peerConnection = controller?.peerConnection;
+        if (!controller || !peerConnection) {
+            Logger.Info('Ignoring SFU data channels because there is no active peer connection.');
+            return;
+        }
+
         const SendOptions: RTCDataChannelInit = {
             ordered: true,
             negotiated: true,
@@ -1446,7 +1621,7 @@ export class WebRtcPlayerController {
         const unidirectional = DataChannels.sendStreamId != DataChannels.recvStreamId;
 
         this.sendrecvDataChannelController.createDataChannel(
-            this.peerConnectionController.peerConnection,
+            peerConnection,
             unidirectional ? 'send-datachannel' : 'datachannel',
             SendOptions
         );
@@ -1458,19 +1633,25 @@ export class WebRtcPlayerController {
                 id: DataChannels.recvStreamId
             };
 
-            this.recvDataChannelController.createDataChannel(
-                this.peerConnectionController.peerConnection,
-                'recv-datachannel',
-                RecvOptions
-            );
-            this.recvDataChannelController.handleOnOpen = () =>
-                this.protocol.sendMessage(MessageHelpers.createMessage(Messages.peerDataChannelsReady));
+            this.recvDataChannelController.createDataChannel(peerConnection, 'recv-datachannel', RecvOptions);
+            this.recvDataChannelController.handleOnOpen = () => {
+                if (this.isCurrentPeerConnection(controller, generation)) {
+                    this.protocol.sendMessage(MessageHelpers.createMessage(Messages.peerDataChannelsReady));
+                }
+            };
             // If we're uni-directional, only the recv data channel should handle incoming messages
-            this.recvDataChannelController.handleOnMessage = (ev: MessageEvent) => this.handleOnMessage(ev);
+            this.recvDataChannelController.handleOnMessage = (ev: MessageEvent) => {
+                if (this.isCurrentPeerConnection(controller, generation)) {
+                    this.handleOnMessage(ev);
+                }
+            };
         } else {
             // else our primary datachannel is send/recv so it can handle incoming messages
-            this.sendrecvDataChannelController.handleOnMessage = (ev: MessageEvent) =>
-                this.handleOnMessage(ev);
+            this.sendrecvDataChannelController.handleOnMessage = (ev: MessageEvent) => {
+                if (this.isCurrentPeerConnection(controller, generation)) {
+                    this.handleOnMessage(ev);
+                }
+            };
         }
     }
 
@@ -1508,7 +1689,15 @@ export class WebRtcPlayerController {
             sdpMLineIndex: 0
         });
 
-        this.peerConnectionController.handleOnIce(remoteIceCandidate);
+        const controller = this.peerConnectionController;
+        if (!controller) {
+            Logger.Error('Ignoring ICE candidate because there is no active peer connection.');
+            return;
+        }
+
+        // The captured controller applies this only to its captured RTCPeerConnection and
+        // catches a close/replacement race internally.
+        void controller.handleOnIce(remoteIceCandidate);
     }
 
     /**
@@ -1621,7 +1810,7 @@ export class WebRtcPlayerController {
      * Close the peer connection
      */
     closePeerConnection() {
-        this.peerConnectionController?.close();
+        this.retirePeerConnectionController();
     }
 
     /**
@@ -1636,7 +1825,7 @@ export class WebRtcPlayerController {
      * Fires a Video Stats Event in the RTC Peer Connection
      */
     getStats() {
-        this.peerConnectionController.generateStats();
+        this.peerConnectionController?.generateStats();
     }
 
     /**

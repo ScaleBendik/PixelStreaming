@@ -19,7 +19,6 @@ PixelStreamingApplicationStyles.applyStyleSheet();
 declare global {
     interface Window { pixelStreaming: PixelStreaming; }
 }
-
 const CONNECT_TICKET_PARAM = 'ct';
 
 const RECONNECT_REGION_PARAM = 'sm_region';
@@ -144,6 +143,7 @@ type MediaFlowCounters = {
 };
 
 const MEDIA_FLOW_OBSERVATION_WINDOW_MS = 10_000;
+const MEDIA_START_STALE_TIMEOUT_MS = 10_000;
 const MEDIA_PRESENTATION_GUARD_VERSION = 2;
 
 const toNonNegativeCounter = (value: number | undefined): number =>
@@ -764,10 +764,47 @@ document.body.onload = function() {
     let mediaFlowObservationGeneration = -1;
     let mediaFlowObservationReportedGeneration = -1;
     let mediaFlowObservationStartedAtMs = 0;
+    let mediaStartStaleTimer: number | null = null;
+    let mediaStartStalePromptGeneration = -1;
     let mediaFlowObservationBaseline: MediaFlowCounters = {
         bytesReceived: 0,
         packetsReceived: 0,
         framesDecoded: 0
+    };
+    const clearMediaStartStaleTimer = (): void => {
+        if (mediaStartStaleTimer !== null) {
+            window.clearTimeout(mediaStartStaleTimer);
+            mediaStartStaleTimer = null;
+        }
+    };
+    const clearMediaStartStalePrompt = (generation: number): void => {
+        if (mediaStartStalePromptGeneration !== generation) {
+            return;
+        }
+        if (application?.currentOverlay === application.errorOverlay) {
+            application.hideCurrentOverlay();
+        }
+        mediaStartStalePromptGeneration = -1;
+    };
+    const armMediaStartStaleTimer = (generation: number): void => {
+        clearMediaStartStaleTimer();
+        mediaStartStaleTimer = window.setTimeout(() => {
+            mediaStartStaleTimer = null;
+            if (
+                generation !== mediaEvidenceConnectionGeneration ||
+                mediaReceivedGeneration === generation
+            ) {
+                return;
+            }
+
+            mediaStartStalePromptGeneration = generation;
+            application?.showErrorOverlay(
+                'This session encountered an issue.<br>' +
+                    'please end it by clicking "end session" in the session manager,<br>' +
+                    'and start a new one.<br><br>' +
+                    'We are sorry for the inconvenience'
+            );
+        }, MEDIA_START_STALE_TIMEOUT_MS);
     };
     const armMediaFrameEvidence = (generation: number): void => {
         if (
@@ -794,6 +831,8 @@ document.body.onload = function() {
             }
 
             application?.onMediaPresented();
+            clearMediaStartStaleTimer();
+            clearMediaStartStalePrompt(generation);
             mediaReceivedGeneration = generation;
             const message: ScaleWorldMediaEvidenceMessage = {
                 type: 'scaleWorldMediaReceived',
@@ -815,6 +854,8 @@ document.body.onload = function() {
         mediaFlowObservationGeneration = -1;
         mediaFlowObservationReportedGeneration = -1;
         mediaFlowObservationStartedAtMs = 0;
+        clearMediaStartStaleTimer();
+        mediaStartStalePromptGeneration = -1;
         // Keep the UI latch and the evidence latch on the same signalling generation. This is
         // also the final reset after any reconnect transition, so an old generation's last stats
         // sample cannot suppress progress for the replacement connection.
@@ -833,6 +874,9 @@ document.body.onload = function() {
     });
     stream.addEventListener('videoInitialized', () => {
         armMediaFrameEvidence(mediaEvidenceConnectionGeneration);
+    });
+    stream.addEventListener('webRtcConnected', () => {
+        armMediaStartStaleTimer(mediaEvidenceConnectionGeneration);
     });
 
     stream.addEventListener('statsReceived', (event) => {
@@ -958,6 +1002,8 @@ document.body.onload = function() {
     }
 
     stream.addEventListener('webRtcDisconnected', (event) => {
+        clearMediaStartStaleTimer();
+        mediaStartStalePromptGeneration = -1;
         const eventData = (event as { data?: { eventString?: string } }).data;
         const reason = eventData?.eventString ?? '';
         if (isInactivityDisconnectReason(reason)) {

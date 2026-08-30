@@ -2,6 +2,7 @@ import { mockRTCRtpReceiver, unmockRTCRtpReceiver } from '../__test__/mockRTCRtp
 import {
     Config,
     NumericParameters,
+    OptionParameters,
 } from '../Config/Config';
 import { PixelStreaming } from './PixelStreaming';
 import { SettingsChangedEvent, StreamerListMessageEvent, WebRtcConnectedEvent, WebRtcSdpEvent } from '../Util/EventEmitter';
@@ -112,7 +113,7 @@ describe('PixelStreaming', () => {
     });
 
     it('should connect to signalling server when connect is called', () => {
-        const config = new Config({ initialSettings: {ss: mockSignallingUrl}});
+        const config = new Config({ initialSettings: {ss: mockSignallingUrl, AutoConnect: false}});
         const pixelStreaming = new PixelStreaming(config);
         
         expect(webSocketSpyFunctions.constructorSpy).not.toHaveBeenCalled();
@@ -151,7 +152,7 @@ describe('PixelStreaming', () => {
     });
 
     it('should connect immediately to signalling server if reconnect is called and connection is not up', () => {
-        const config = new Config({ initialSettings: {ss: mockSignallingUrl}});
+        const config = new Config({ initialSettings: {ss: mockSignallingUrl, AutoConnect: false}});
         const pixelStreaming = new PixelStreaming(config);
 
         expect(webSocketSpyFunctions.constructorSpy).not.toHaveBeenCalled();
@@ -267,6 +268,202 @@ describe('PixelStreaming', () => {
         );
     });
 
+    it('should subscribe once per signalling generation and negotiate media after a 71 ms reconnect', async () => {
+        const config = new Config({
+            initialSettings: {
+                ss: mockSignallingUrl,
+                AutoConnect: true,
+                MaxReconnectAttempts: 0
+            }
+        });
+        const pixelStreaming = new PixelStreaming(config);
+
+        const countSubscribeMessages = () =>
+            (webSocketSpyFunctions.sendSpy as jest.Mock).mock.calls.filter(([message]) =>
+                String(message).includes('"type":"subscribe"')
+            ).length;
+
+        triggerWebSocketOpen();
+        triggerConfigMessage();
+        triggerStreamerListMessage(streamerIdList);
+        triggerStreamerListMessage(streamerIdList);
+
+        expect(rtcPeerConnectionSpyFunctions.constructorSpy).toHaveBeenCalledTimes(1);
+        expect(rtcPeerConnectionSpyFunctions.closeSpy).not.toHaveBeenCalled();
+        expect(countSubscribeMessages()).toBe(1);
+
+        webSocketTriggerFunctions.triggerRemoteClose?.();
+        expect(rtcPeerConnectionSpyFunctions.closeSpy).toHaveBeenCalledTimes(1);
+
+        jest.advanceTimersByTime(71);
+        pixelStreaming.reconnect();
+        triggerWebSocketOpen();
+        triggerConfigMessage();
+        triggerStreamerListMessage(streamerIdList);
+        triggerStreamerListMessage(streamerIdList);
+
+        expect(rtcPeerConnectionSpyFunctions.constructorSpy).toHaveBeenCalledTimes(2);
+        expect(rtcPeerConnectionSpyFunctions.closeSpy).toHaveBeenCalledTimes(1);
+        expect(countSubscribeMessages()).toBe(2);
+
+        const replacementController = pixelStreaming.webRtcController.peerConnectionController!;
+        const trackHandlerSpy = jest.spyOn(pixelStreaming.webRtcController.streamController, 'handleOnTrack');
+        triggerSdpOfferMessage();
+        await flushPromises();
+        replacementController.onTrack(
+            new RTCTrackEvent('track', {
+                track: new MediaStreamTrack(),
+                streams: [new MediaStream()]
+            } as RTCTrackEventInit)
+        );
+
+        expect(rtcPeerConnectionSpyFunctions.setRemoteDescriptionSpy).toHaveBeenCalled();
+        expect(rtcPeerConnectionSpyFunctions.setLocalDescriptionSpy).toHaveBeenCalled();
+        expect(trackHandlerSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should replace the peer connection and retry an explicitly selected active streamer id', () => {
+        const config = new Config({ initialSettings: { ss: mockSignallingUrl, AutoConnect: true } });
+        new PixelStreaming(config);
+
+        triggerWebSocketOpen();
+        triggerConfigMessage();
+        triggerStreamerListMessage(streamerIdList);
+        config.setOptionSettingValue(OptionParameters.StreamerId, streamerId);
+
+        const subscribeMessages = (webSocketSpyFunctions.sendSpy as jest.Mock).mock.calls.filter(
+            ([message]) => String(message).includes('"type":"subscribe"')
+        );
+        expect(subscribeMessages).toHaveLength(2);
+        expect(rtcPeerConnectionSpyFunctions.constructorSpy).toHaveBeenCalledTimes(2);
+        expect(rtcPeerConnectionSpyFunctions.closeSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should create a new peer and resubscribe when the same streamer id disappears and reappears', () => {
+        const config = new Config({ initialSettings: { ss: mockSignallingUrl, AutoConnect: true } });
+        new PixelStreaming(config);
+
+        triggerWebSocketOpen();
+        triggerConfigMessage();
+        triggerStreamerListMessage(streamerIdList);
+        triggerStreamerListMessage([]);
+
+        expect(rtcPeerConnectionSpyFunctions.closeSpy).toHaveBeenCalledTimes(1);
+
+        triggerStreamerListMessage(streamerIdList);
+
+        const subscribeMessages = (webSocketSpyFunctions.sendSpy as jest.Mock).mock.calls.filter(
+            ([message]) => String(message).includes('"type":"subscribe"')
+        );
+        expect(subscribeMessages).toHaveLength(2);
+        expect(rtcPeerConnectionSpyFunctions.constructorSpy).toHaveBeenCalledTimes(2);
+        expect(rtcPeerConnectionSpyFunctions.closeSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should leave the same streamer id retryable when subscribe send throws', () => {
+        const config = new Config({ initialSettings: { ss: mockSignallingUrl, AutoConnect: true } });
+        new PixelStreaming(config);
+        let rejectNextSubscribe = true;
+        (webSocketSpyFunctions.sendSpy as jest.Mock).mockImplementation((message: string) => {
+            if (rejectNextSubscribe && String(message).includes('"type":"subscribe"')) {
+                rejectNextSubscribe = false;
+                throw new Error('mock send failure');
+            }
+        });
+
+        triggerWebSocketOpen();
+        triggerConfigMessage();
+        triggerStreamerListMessage(streamerIdList);
+        config.setOptionSettingValue(OptionParameters.StreamerId, streamerId);
+
+        const attemptedSubscribeMessages = (webSocketSpyFunctions.sendSpy as jest.Mock).mock.calls.filter(
+            ([message]) => String(message).includes('"type":"subscribe"')
+        );
+        expect(attemptedSubscribeMessages).toHaveLength(2);
+    });
+
+    it('should allow the same streamer subscription to be retried after subscribe failed', () => {
+        const config = new Config({ initialSettings: { ss: mockSignallingUrl, AutoConnect: true } });
+        new PixelStreaming(config);
+
+        triggerWebSocketOpen();
+        triggerConfigMessage();
+        triggerStreamerListMessage(streamerIdList);
+        triggerSignallingMessage(
+            MessageHelpers.createMessage(Messages.subscribeFailed, { message: 'mock failure' })
+        );
+        config.setOptionSettingValue(OptionParameters.StreamerId, streamerId);
+
+        const subscribeMessages = (webSocketSpyFunctions.sendSpy as jest.Mock).mock.calls.filter(
+            ([message]) => String(message).includes('"type":"subscribe"')
+        );
+        expect(subscribeMessages).toHaveLength(2);
+        expect(rtcPeerConnectionSpyFunctions.constructorSpy).toHaveBeenCalledTimes(1);
+        expect(rtcPeerConnectionSpyFunctions.closeSpy).not.toHaveBeenCalled();
+    });
+
+    it('should replace the peer connection once when intentionally changing streamers', () => {
+        const config = new Config({ initialSettings: { ss: mockSignallingUrl, AutoConnect: true } });
+        new PixelStreaming(config);
+        const secondStreamerId = 'MOCK_PIXEL_STREAMING_2';
+
+        triggerWebSocketOpen();
+        triggerConfigMessage();
+        triggerStreamerListMessage(streamerIdList);
+        triggerStreamerListMessage([streamerId, secondStreamerId]);
+
+        config.setOptionSettingValue(OptionParameters.StreamerId, secondStreamerId);
+
+        const subscribeMessages = (webSocketSpyFunctions.sendSpy as jest.Mock).mock.calls
+            .map(([message]) => String(message))
+            .filter((message) => message.includes('"type":"subscribe"'));
+        expect(subscribeMessages).toHaveLength(2);
+        expect(subscribeMessages[0]).toContain(streamerId);
+        expect(subscribeMessages[1]).toContain(secondStreamerId);
+        expect(rtcPeerConnectionSpyFunctions.constructorSpy).toHaveBeenCalledTimes(2);
+        expect(rtcPeerConnectionSpyFunctions.closeSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should ignore a late SFU data-channel message after the peer is retired', () => {
+        const config = new Config({ initialSettings: { ss: mockSignallingUrl, AutoConnect: true } });
+        const pixelStreaming = new PixelStreaming(config);
+
+        triggerWebSocketOpen();
+        triggerConfigMessage();
+        triggerStreamerListMessage(streamerIdList);
+        pixelStreaming.webRtcController.closePeerConnection();
+
+        expect(() =>
+            triggerSignallingMessage(
+                MessageHelpers.createMessage(Messages.peerDataChannels, {
+                    sendStreamId: 1,
+                    recvStreamId: 2
+                })
+            )
+        ).not.toThrow();
+    });
+
+    it('should preserve the peer connection when the subscribed streamer id is renamed', () => {
+        const config = new Config({ initialSettings: { ss: mockSignallingUrl, AutoConnect: true } });
+        new PixelStreaming(config);
+        const renamedStreamerId = 'MOCK_PIXEL_STREAMING_RENAMED';
+
+        triggerWebSocketOpen();
+        triggerConfigMessage();
+        triggerStreamerListMessage(streamerIdList);
+        triggerSignallingMessage(
+            MessageHelpers.createMessage(Messages.streamerIdChanged, { newID: renamedStreamerId })
+        );
+        triggerStreamerListMessage([renamedStreamerId]);
+
+        const subscribeMessages = (webSocketSpyFunctions.sendSpy as jest.Mock).mock.calls.filter(
+            ([message]) => String(message).includes('"type":"subscribe"')
+        );
+        expect(subscribeMessages).toHaveLength(1);
+        expect(rtcPeerConnectionSpyFunctions.constructorSpy).toHaveBeenCalledTimes(1);
+        expect(rtcPeerConnectionSpyFunctions.closeSpy).not.toHaveBeenCalled();
+    });
+
     it('should not auto select a streamer if receiving multiple streamers in streamerList message', () => {
         const config = new Config({ initialSettings: {ss: mockSignallingUrl, AutoConnect: true}});
         const streamerId2 = "MOCK_2_PIXEL_STREAMING";
@@ -292,7 +489,7 @@ describe('PixelStreaming', () => {
         );
     });
 
-    it('should set remoteDescription and emit webRtcSdp event when an offer is received', () => {
+    it('should set remoteDescription and emit webRtcSdp event when an offer is received', async () => {
         const config = new Config({ initialSettings: {ss: mockSignallingUrl, AutoConnect: true}});
         const eventSpy = jest.fn();
         const pixelStreaming = new PixelStreaming(config);
@@ -305,11 +502,99 @@ describe('PixelStreaming', () => {
         expect(eventSpy).not.toHaveBeenCalled();
         
         triggerSdpOfferMessage();
+        await flushPromises();
         
         expect(rtcPeerConnectionSpyFunctions.setRemoteDescriptionSpy).toHaveBeenCalledWith(expect.objectContaining({
             sdp
         }));
         expect(eventSpy).toHaveBeenCalledWith(new WebRtcSdpEvent());
+    });
+
+    it('should serialize overlapping offers for the current peer connection', async () => {
+        const config = new Config({ initialSettings: { ss: mockSignallingUrl, AutoConnect: true } });
+        const pixelStreaming = new PixelStreaming(config);
+
+        triggerWebSocketOpen();
+        triggerConfigMessage();
+        triggerStreamerListMessage(streamerIdList);
+
+        const peerConnection = pixelStreaming.webRtcController.peerConnectionController!.peerConnection;
+        let resolveFirstRemoteDescription: () => void = () => undefined;
+        const setRemoteDescriptionSpy = jest
+            .fn()
+            .mockImplementationOnce(
+                () =>
+                    new Promise<void>((resolve) => {
+                        resolveFirstRemoteDescription = resolve;
+                    })
+            )
+            .mockResolvedValue(undefined);
+        peerConnection.setRemoteDescription = setRemoteDescriptionSpy;
+
+        triggerSdpOfferMessage();
+        triggerSdpOfferMessage();
+        await flushPromises();
+
+        expect(setRemoteDescriptionSpy).toHaveBeenCalledTimes(1);
+
+        resolveFirstRemoteDescription();
+        await flushPromises();
+
+        expect(setRemoteDescriptionSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('should fence late offer, track, and stats callbacks from a superseded peer generation', async () => {
+        const config = new Config({ initialSettings: { ss: mockSignallingUrl, AutoConnect: true } });
+        const pixelStreaming = new PixelStreaming(config);
+        const sdpEventSpy = jest.fn();
+        const statsEventSpy = jest.fn();
+        pixelStreaming.addEventListener('webRtcSdp', sdpEventSpy);
+        pixelStreaming.addEventListener('statsReceived', statsEventSpy);
+
+        triggerWebSocketOpen();
+        triggerConfigMessage();
+        triggerStreamerListMessage(streamerIdList);
+        const secondStreamerId = 'MOCK_PIXEL_STREAMING_2';
+        triggerStreamerListMessage([streamerId, secondStreamerId]);
+
+        const previousController = pixelStreaming.webRtcController.peerConnectionController!;
+        let resolveRemoteDescription: () => void = () => undefined;
+        previousController.peerConnection.setRemoteDescription = jest.fn(
+            () =>
+                new Promise<void>((resolve) => {
+                    resolveRemoteDescription = resolve;
+                })
+        );
+        let resolveStats: (stats: RTCStatsReport) => void = () => undefined;
+        previousController.peerConnection.getStats = jest.fn(
+            () =>
+                new Promise<RTCStatsReport>((resolve) => {
+                    resolveStats = resolve;
+                })
+        );
+        const trackHandlerSpy = jest.spyOn(pixelStreaming.webRtcController.streamController, 'handleOnTrack');
+
+        triggerSdpOfferMessage();
+        previousController.generateStats();
+        await flushPromises();
+        config.setOptionSettingValue(OptionParameters.StreamerId, secondStreamerId);
+
+        const stream = new MediaStream();
+        const track = new MediaStreamTrack();
+        previousController.onTrack(
+            new RTCTrackEvent('track', {
+                track,
+                streams: [stream]
+            } as RTCTrackEventInit)
+        );
+        resolveRemoteDescription();
+        resolveStats(new Map() as unknown as RTCStatsReport);
+        await flushPromises();
+
+        expect(trackHandlerSpy).not.toHaveBeenCalled();
+        expect(rtcPeerConnectionSpyFunctions.setLocalDescriptionSpy).not.toHaveBeenCalled();
+        expect(sdpEventSpy).not.toHaveBeenCalled();
+        expect(statsEventSpy).not.toHaveBeenCalled();
     });
 
     it('should add an ICE candidate when receiving a iceCandidate message', () => {
@@ -378,6 +663,8 @@ describe('PixelStreaming', () => {
         pixelStreaming.addEventListener("statsReceived", statsSpy);
 
         establishMockedPixelStreamingConnection();
+
+        await flushPromises();
 
         expect(statsSpy).not.toHaveBeenCalled();
         

@@ -60,8 +60,13 @@ export class PeerConnectionController {
      * Create an offer for the Web RTC handshake and send the offer to the signaling server via websocket
      * @param offerOptions - RTC Offer Options
      */
-    async createOffer(offerOptions: RTCOfferOptions, config: Config) {
+    async createOffer(offerOptions: RTCOfferOptions, config: Config): Promise<boolean> {
         Logger.Info('Create Offer');
+
+        const peerConnection = this.peerConnection;
+        if (!peerConnection) {
+            return false;
+        }
 
         const isLocalhostConnection = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
         const isHttpsConnection = location.protocol === 'https:';
@@ -78,26 +83,56 @@ export class PeerConnectionController {
             );
         }
 
-        this.setupTransceiversAsync(useMic, useCamera).finally(() => {
-            this.peerConnection
-                ?.createOffer(offerOptions)
-                .then((offer: RTCSessionDescriptionInit) => {
-                    this.showTextOverlayConnecting();
-                    offer.sdp = this.mungeSDP(offer.sdp, useMic);
-                    this.peerConnection?.setLocalDescription(offer);
-                    this.onSendWebRTCOffer(offer);
-                })
-                .catch(() => {
-                    this.showTextOverlaySetupFailure();
-                });
-        });
+        try {
+            try {
+                await this.setupTransceiversAsync(useMic, useCamera);
+            } catch (error) {
+                // Preserve the existing best-effort transceiver setup behavior. A media-device
+                // failure should not prevent receive-only negotiation from continuing.
+                if (peerConnection === this.peerConnection) {
+                    Logger.Error(`setupTransceiversAsync() failed - ${error}`);
+                }
+            }
+            if (peerConnection !== this.peerConnection) {
+                return false;
+            }
+
+            const offer = await peerConnection.createOffer(offerOptions);
+            if (peerConnection !== this.peerConnection) {
+                return false;
+            }
+
+            this.showTextOverlayConnecting();
+            if (peerConnection !== this.peerConnection) {
+                return false;
+            }
+            offer.sdp = this.mungeSDP(offer.sdp, useMic);
+            await peerConnection.setLocalDescription(offer);
+            if (peerConnection !== this.peerConnection) {
+                return false;
+            }
+
+            this.onSendWebRTCOffer(offer);
+            return true;
+        } catch (error) {
+            if (peerConnection === this.peerConnection) {
+                this.showTextOverlaySetupFailure();
+                Logger.Error(`createOffer() failed - ${error}`);
+            }
+            return false;
+        }
     }
 
     /**
      * Receive offer from UE side and process it as the remote description of this peer connection
      */
-    async receiveOffer(offer: RTCSessionDescriptionInit, config: Config) {
+    async receiveOffer(offer: RTCSessionDescriptionInit, config: Config): Promise<boolean> {
         Logger.Info('Receive Offer');
+
+        const peerConnection = this.peerConnection;
+        if (!peerConnection) {
+            return false;
+        }
 
         // If UE or JSStreamer did send abs-capture-time RTP header extension to a non-Chrome browser
         // then remove it from the SDP because if Firefox detects it in offer or answer it will fail to connect
@@ -110,9 +145,17 @@ export class PeerConnectionController {
             );
         }
 
-        this.peerConnection?.setRemoteDescription(offer).then(() => {
+        try {
+            await peerConnection.setRemoteDescription(offer);
+            if (peerConnection !== this.peerConnection) {
+                return false;
+            }
+
             // Fire event for when remote offer description is set
             this.onSetRemoteDescription(offer);
+            if (peerConnection !== this.peerConnection) {
+                return false;
+            }
 
             const isLocalhostConnection =
                 location.hostname === 'localhost' || location.hostname === '127.0.0.1';
@@ -135,91 +178,155 @@ export class PeerConnectionController {
                 OptionParameters.PreferredCodec,
                 this.fuzzyIntersectUEAndBrowserCodecs(offer)
             );
+            if (peerConnection !== this.peerConnection) {
+                return false;
+            }
 
-            this.setupTransceiversAsync(useMic, useCamera).finally(() => {
-                this.peerConnection
-                    ?.createAnswer()
-                    .then((Answer: RTCSessionDescriptionInit) => {
-                        Answer.sdp = this.mungeSDP(Answer.sdp, useMic);
-                        return this.peerConnection?.setLocalDescription(Answer);
-                    })
-                    .then(() => {
-                        this.onSetLocalDescription(this.peerConnection?.localDescription);
-                    })
-                    .catch((err) => {
-                        Logger.Error(`createAnswer() failed - ${err}`);
-                    });
-            });
-        });
+            try {
+                await this.setupTransceiversAsync(useMic, useCamera);
+            } catch (error) {
+                // Preserve the existing best-effort transceiver setup behavior. A media-device
+                // failure should not prevent receive-only negotiation from continuing.
+                if (peerConnection === this.peerConnection) {
+                    Logger.Error(`setupTransceiversAsync() failed - ${error}`);
+                }
+            }
+            if (peerConnection !== this.peerConnection) {
+                return false;
+            }
+
+            const answer = await peerConnection.createAnswer();
+            if (peerConnection !== this.peerConnection) {
+                return false;
+            }
+
+            answer.sdp = this.mungeSDP(answer.sdp, useMic);
+            await peerConnection.setLocalDescription(answer);
+            if (peerConnection !== this.peerConnection) {
+                return false;
+            }
+
+            this.onSetLocalDescription(peerConnection.localDescription ?? answer);
+            return true;
+        } catch (error) {
+            if (peerConnection === this.peerConnection) {
+                Logger.Error(`receiveOffer() failed - ${error}`);
+            }
+            return false;
+        }
     }
 
     /**
      * Set the Remote Descriptor from the signaling server to the RTC Peer Connection
      * @param answer - RTC Session Descriptor from the Signaling Server
      */
-    receiveAnswer(answer: RTCSessionDescriptionInit) {
-        this.peerConnection?.setRemoteDescription(answer);
+    async receiveAnswer(answer: RTCSessionDescriptionInit): Promise<boolean> {
+        const peerConnection = this.peerConnection;
+        if (!peerConnection) {
+            return false;
+        }
 
-        // Add our list of preferred codecs, in order of preference
-        this.config.setOptionSettingOptions(
-            OptionParameters.PreferredCodec,
-            this.fuzzyIntersectUEAndBrowserCodecs(answer)
-        );
+        try {
+            await peerConnection.setRemoteDescription(answer);
+            if (peerConnection !== this.peerConnection) {
+                return false;
+            }
+
+            // Add our list of preferred codecs, in order of preference
+            this.config.setOptionSettingOptions(
+                OptionParameters.PreferredCodec,
+                this.fuzzyIntersectUEAndBrowserCodecs(answer)
+            );
+            return true;
+        } catch (error) {
+            if (peerConnection === this.peerConnection) {
+                Logger.Error(`receiveAnswer() failed - ${error}`);
+            }
+            return false;
+        }
     }
 
     /**
      * Generate Aggregated Stats and then fire a onVideo Stats event
      */
     generateStats() {
-        this.peerConnection?.getStats().then((statsData: RTCStatsReport) => {
-            this.aggregatedStats.processStats(statsData);
+        const peerConnection = this.peerConnection;
+        const aggregatedStats = this.aggregatedStats;
+        if (!peerConnection) {
+            return;
+        }
+        const isCurrentStatsGeneration = () =>
+            peerConnection === this.peerConnection && aggregatedStats === this.aggregatedStats;
 
-            this.onVideoStats(this.aggregatedStats);
+        peerConnection
+            .getStats()
+            .then((statsData: RTCStatsReport) => {
+                if (!isCurrentStatsGeneration()) {
+                    return;
+                }
 
-            // Calculate latency using stats and video receivers and then call the handling function
-            const latencyInfo: LatencyInfo = this.latencyCalculator.calculate(
-                this.aggregatedStats,
-                this.peerConnection.getReceivers()
-            );
-            this.onLatencyCalculated(latencyInfo);
+                aggregatedStats.processStats(statsData);
+                if (!isCurrentStatsGeneration()) {
+                    return;
+                }
 
-            // Update the preferred codec selection based on what was actually negotiated
-            if (this.updateCodecSelection && !!this.aggregatedStats.inboundVideoStats.codecId) {
-                // Construct the qualified codec name from the mimetype and fmtp
-                const codecStats: CodecStats | undefined = this.aggregatedStats.codecs.get(
-                    this.aggregatedStats.inboundVideoStats.codecId
+                this.onVideoStats(aggregatedStats);
+                if (!isCurrentStatsGeneration()) {
+                    return;
+                }
+
+                // Calculate latency using stats and video receivers and then call the handling function
+                const latencyInfo: LatencyInfo = this.latencyCalculator.calculate(
+                    aggregatedStats,
+                    peerConnection.getReceivers()
                 );
-
-                if (codecStats === undefined) {
+                this.onLatencyCalculated(latencyInfo);
+                if (!isCurrentStatsGeneration()) {
                     return;
                 }
 
-                const codecShortname = codecStats.mimeType.replace('video/', '');
-                let fullCodecName = codecShortname;
-                if (codecStats.sdpFmtpLine && codecStats.sdpFmtpLine.trim() !== '') {
-                    fullCodecName = `${codecShortname} ${codecStats.sdpFmtpLine.trim()}`;
-                }
+                // Update the preferred codec selection based on what was actually negotiated
+                if (this.updateCodecSelection && !!aggregatedStats.inboundVideoStats.codecId) {
+                    // Construct the qualified codec name from the mimetype and fmtp
+                    const codecStats: CodecStats | undefined = aggregatedStats.codecs.get(
+                        aggregatedStats.inboundVideoStats.codecId
+                    );
 
-                const allBrowserCodecs: string[] = this.config.getSettingOption(
-                    OptionParameters.PreferredCodec
-                ).options;
+                    if (codecStats === undefined) {
+                        return;
+                    }
 
-                // The list of codecs directly contains the one that was negotiated, select that
-                if (allBrowserCodecs.includes(fullCodecName)) {
-                    this.config.setOptionSettingValue(OptionParameters.PreferredCodec, fullCodecName);
-                    return;
-                }
+                    const codecShortname = codecStats.mimeType.replace('video/', '');
+                    let fullCodecName = codecShortname;
+                    if (codecStats.sdpFmtpLine && codecStats.sdpFmtpLine.trim() !== '') {
+                        fullCodecName = `${codecShortname} ${codecStats.sdpFmtpLine.trim()}`;
+                    }
 
-                // If we couldn't match on the full name, try to match on just the codec shortname
-                const filteredList = allBrowserCodecs.filter(
-                    (option: string) => option.indexOf(codecShortname) !== -1
-                );
-                if (filteredList.length > 0) {
-                    this.config.setOptionSettingValue(OptionParameters.PreferredCodec, filteredList[0]);
-                    return;
+                    const allBrowserCodecs: string[] = this.config.getSettingOption(
+                        OptionParameters.PreferredCodec
+                    ).options;
+
+                    // The list of codecs directly contains the one that was negotiated, select that
+                    if (allBrowserCodecs.includes(fullCodecName)) {
+                        this.config.setOptionSettingValue(OptionParameters.PreferredCodec, fullCodecName);
+                        return;
+                    }
+
+                    // If we couldn't match on the full name, try to match on just the codec shortname
+                    const filteredList = allBrowserCodecs.filter(
+                        (option: string) => option.indexOf(codecShortname) !== -1
+                    );
+                    if (filteredList.length > 0) {
+                        this.config.setOptionSettingValue(OptionParameters.PreferredCodec, filteredList[0]);
+                        return;
+                    }
                 }
-            }
-        });
+            })
+            .catch((error) => {
+                if (isCurrentStatsGeneration()) {
+                    Logger.Error(`getStats() failed - ${error}`);
+                }
+            });
     }
 
     /**
@@ -227,8 +334,15 @@ export class PeerConnectionController {
      */
     close() {
         if (this.peerConnection) {
-            this.peerConnection.close();
+            const peerConnection = this.peerConnection;
             this.peerConnection = null;
+            peerConnection.onsignalingstatechange = null;
+            peerConnection.oniceconnectionstatechange = null;
+            peerConnection.onicegatheringstatechange = null;
+            peerConnection.ontrack = null;
+            peerConnection.onicecandidate = null;
+            peerConnection.ondatachannel = null;
+            peerConnection.close();
         }
     }
 
@@ -279,7 +393,7 @@ export class PeerConnectionController {
      * When a Ice Candidate is received add to the RTC Peer Connection
      * @param iceCandidate - RTC Ice Candidate from the Signaling Server
      */
-    handleOnIce(iceCandidate: RTCIceCandidate) {
+    async handleOnIce(iceCandidate: RTCIceCandidate): Promise<boolean> {
         Logger.Info('peerconnection handleOnIce');
 
         // // if forcing TURN, reject any candidates not relay
@@ -289,11 +403,24 @@ export class PeerConnectionController {
                 Logger.Info(
                     `Dropping candidate because it was not TURN relay. | Type= ${iceCandidate.type} | Protocol= ${iceCandidate.protocol} | Address=${iceCandidate.address} | Port=${iceCandidate.port} |`
                 );
-                return;
+                return false;
             }
         }
 
-        this.peerConnection?.addIceCandidate(iceCandidate);
+        const peerConnection = this.peerConnection;
+        if (!peerConnection) {
+            return false;
+        }
+
+        try {
+            await peerConnection.addIceCandidate(iceCandidate);
+            return peerConnection === this.peerConnection;
+        } catch (error) {
+            if (peerConnection === this.peerConnection) {
+                Logger.Error(`addIceCandidate() failed - ${error}`);
+            }
+            return false;
+        }
     }
 
     /**
