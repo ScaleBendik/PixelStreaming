@@ -119,6 +119,19 @@ export class WebServer {
             }
         }
 
+        // HTML entry points select the browser bundle for a specific runtime release. Require a
+        // fresh entry point on navigation instead of reusing one from an HTTP/intermediary cache;
+        // the generated script URL carries a compilation hash and can be cached independently.
+        // This cannot replace code in a document that is already open and reconnecting in place.
+        app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+            if (req.path === '/' || path.extname(req.path).toLowerCase() === '.html') {
+                res.setHeader('Cache-Control', 'no-store, max-age=0');
+                res.setHeader('Pragma', 'no-cache');
+                res.setHeader('Expires', '0');
+            }
+            next();
+        });
+
         app.use(express.static(config.root));
 
         const limiter = RateLimit({

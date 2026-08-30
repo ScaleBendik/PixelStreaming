@@ -125,6 +125,7 @@ type ScaleWorldMediaEvidenceMessage = {
     type: string;
     telemetryVersion: number;
     proofType: string;
+    mediaPresentationGuardVersion: number;
     videoWidth?: number;
     videoHeight?: number;
     mediaTimeSeconds?: number;
@@ -143,6 +144,7 @@ type MediaFlowCounters = {
 };
 
 const MEDIA_FLOW_OBSERVATION_WINDOW_MS = 10_000;
+const MEDIA_PRESENTATION_GUARD_VERSION = 2;
 
 const toNonNegativeCounter = (value: number | undefined): number =>
     typeof value === 'number' && Number.isFinite(value) && value >= 0
@@ -797,6 +799,7 @@ document.body.onload = function() {
                 type: 'scaleWorldMediaReceived',
                 telemetryVersion: 1,
                 proofType: 'video_frame_callback',
+                mediaPresentationGuardVersion: MEDIA_PRESENTATION_GUARD_VERSION,
                 videoWidth: video.videoWidth,
                 videoHeight: video.videoHeight,
                 mediaTimeSeconds: metadata.mediaTime,
@@ -812,12 +815,17 @@ document.body.onload = function() {
         mediaFlowObservationGeneration = -1;
         mediaFlowObservationReportedGeneration = -1;
         mediaFlowObservationStartedAtMs = 0;
+        // Keep the UI latch and the evidence latch on the same signalling generation. This is
+        // also the final reset after any reconnect transition, so an old generation's last stats
+        // sample cannot suppress progress for the replacement connection.
+        application?.onConnectionAttemptStarted();
         const video = stream.webRtcController.videoPlayer.getVideoElement() as VideoElementWithFrameCallback;
         if (typeof video.requestVideoFrameCallback === 'function') {
             const message: ScaleWorldMediaEvidenceMessage = {
                 type: 'scaleWorldMediaEvidenceCapability',
                 telemetryVersion: 1,
-                proofType: 'video_frame_callback'
+                proofType: 'video_frame_callback',
+                mediaPresentationGuardVersion: MEDIA_PRESENTATION_GUARD_VERSION
             };
             stream.signallingProtocol.sendMessage(message);
             armMediaFrameEvidence(mediaEvidenceConnectionGeneration);
@@ -829,10 +837,7 @@ document.body.onload = function() {
 
     stream.addEventListener('statsReceived', (event) => {
         const generation = mediaEvidenceConnectionGeneration;
-        if (
-            generation <= 0 ||
-            mediaFlowObservationReportedGeneration === generation
-        ) {
+        if (generation <= 0) {
             return;
         }
 
@@ -845,6 +850,16 @@ document.body.onload = function() {
 
         const nowMs = Date.now();
         const counters = readMediaFlowCounters(aggregatedStats);
+        // Re-assert the generation-scoped first-frame proof from the independent stats cadence.
+        // This closes a narrow ordering window where a later connection-progress callback can
+        // repaint the overlay after the one-shot frame callback already ran. It also replays a
+        // frame observed during bootstrap once the Application UI reference exists.
+        if (mediaReceivedGeneration === generation && counters.framesDecoded > 0) {
+            application?.onMediaPresented();
+        }
+        if (mediaFlowObservationReportedGeneration === generation) {
+            return;
+        }
         if (mediaFlowObservationGeneration !== generation) {
             mediaFlowObservationGeneration = generation;
             mediaFlowObservationStartedAtMs = nowMs;
@@ -862,6 +877,7 @@ document.body.onload = function() {
             type: 'scaleWorldMediaFlowObserved',
             telemetryVersion: 1,
             proofType: 'webrtc_stats_window',
+            mediaPresentationGuardVersion: MEDIA_PRESENTATION_GUARD_VERSION,
             observationWindowMs,
             videoBytesReceivedDelta: counterDelta(
                 counters.bytesReceived,
@@ -976,6 +992,11 @@ document.body.onload = function() {
         stream,
         onColorModeChanged: (isLightMode) => PixelStreamingApplicationStyles.setColorMode(isLightMode)
     });
+    // A frame callback is normally impossible before explicit connect below, but preserve the
+    // invariant if bootstrap ordering changes or an embedder initiates the stream early.
+    if (mediaReceivedGeneration === mediaEvidenceConnectionGeneration) {
+        application.onMediaPresented();
+    }
     document.body.appendChild(application.rootElement);
 
     if (shouldAutoConnect) {

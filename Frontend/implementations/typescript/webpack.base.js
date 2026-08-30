@@ -21,6 +21,10 @@ module.exports = {
           template: `./src/${page}.html`,
           filename: `${page}.html`,
           chunks: [page],
+          // Keep the stable bundle filename for compatibility, but make every generated HTML
+          // entry point reference the exact webpack compilation. Combined with no-store HTML
+          // responses, a recycled runtime cannot silently reuse the previous player bundle.
+          hash: true,
     }), )),
 
     module: {

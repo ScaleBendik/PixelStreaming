@@ -18,11 +18,6 @@ function normalizeLogKey(key: string): string {
     return key.replace(/[^a-z0-9]/gi, '').toLowerCase();
 }
 
-function isPlainObject(value: object): boolean {
-    const prototype = Object.getPrototypeOf(value) as object | null;
-    return prototype === Object.prototype || prototype === null;
-}
-
 function redactSensitiveLogValueInternal(value: unknown, seen: WeakMap<object, unknown>): unknown {
     if (value === null || typeof value !== 'object') {
         return value;
@@ -42,10 +37,10 @@ function redactSensitiveLogValueInternal(value: unknown, seen: WeakMap<object, u
         return redacted;
     }
 
-    if (!isPlainObject(value)) {
-        return value;
-    }
-
+    // Protocol messages may be generated class instances rather than plain object literals.
+    // Their enumerable fields are exactly what the logger serializes, so clone and inspect those
+    // fields as well; otherwise a nested generated `config` message can bypass credential
+    // redaction even though the surrounding log envelope is a plain object.
     const redacted: Record<string, unknown> = {};
     seen.set(value, redacted);
     for (const [key, item] of Object.entries(value)) {

@@ -84,6 +84,7 @@ export interface UIOptions {
 export class Application {
     private isInitialAutoConnectPending: boolean;
     private hasPresentedMediaForCurrentConnection = false;
+    private isConnectionProgressOverlayActive = false;
 
     stream: PixelStreaming;
 
@@ -179,11 +180,13 @@ export class Application {
         }
 
         this.showTextOverlay(text);
+        this.isConnectionProgressOverlayActive = true;
     }
 
     private beginConnectionAttempt() {
         this.hasPresentedMediaForCurrentConnection = false;
         this.showTextOverlay('Opening stream...');
+        this.isConnectionProgressOverlayActive = true;
     }
 
     private showOpeningStreamOverlay() {
@@ -509,6 +512,9 @@ export class Application {
      */
     hideCurrentOverlay() {
         if (this.currentOverlay != null) {
+            if (this.currentOverlay === this.infoOverlay) {
+                this.isConnectionProgressOverlayActive = false;
+            }
             this.currentOverlay.hide();
             this.currentOverlay = null;
         }
@@ -538,6 +544,7 @@ export class Application {
      */
     showTextOverlay(text: string) {
         this.hideCurrentOverlay();
+        this.isConnectionProgressOverlayActive = false;
         this.infoOverlay.update(text);
         this.infoOverlay.show();
         this.currentOverlay = this.infoOverlay;
@@ -722,8 +729,14 @@ export class Application {
      */
     onMediaPresented() {
         this.hasPresentedMediaForCurrentConnection = true;
-        if (this.currentOverlay === this.infoOverlay) {
-            this.hideCurrentOverlay();
+        if (this.isConnectionProgressOverlayActive) {
+            // Treat the overlay's own visibility as authoritative as well as our bookkeeping. A
+            // late transition must not leave progress over video, but generic info remains valid.
+            this.infoOverlay.hide();
+            this.isConnectionProgressOverlayActive = false;
+            if (this.currentOverlay === this.infoOverlay) {
+                this.currentOverlay = null;
+            }
         }
     }
 

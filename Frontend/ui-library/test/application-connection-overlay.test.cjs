@@ -26,6 +26,7 @@ function createOverlay() {
 function createApplication() {
     const application = Object.create(Application.prototype);
     application.hasPresentedMediaForCurrentConnection = false;
+    application.isConnectionProgressOverlayActive = false;
     application.isInitialAutoConnectPending = false;
     application.currentOverlay = null;
     application.disconnectOverlay = createOverlay();
@@ -79,6 +80,46 @@ test('current-generation presented-frame evidence clears progress and latches it
     assert.equal(application.currentOverlay, null);
     assert.equal(application.infoOverlay.visible, false);
     assert.equal(application.infoOverlay.showCount, 1);
+});
+
+test('a repeated current-generation media proof clears a progress overlay repainted by late ordering', () => {
+    const application = createApplication();
+
+    application.onMediaPresented();
+    // Simulate an out-of-order callback clearing the UI latch without a new transport generation.
+    application.hasPresentedMediaForCurrentConnection = false;
+    application.onWebRtcSdp();
+    assert.equal(application.infoOverlay.visible, true);
+
+    application.onMediaPresented();
+
+    assert.equal(application.currentOverlay, null);
+    assert.equal(application.infoOverlay.visible, false);
+});
+
+test('presented-frame evidence repairs a visible progress overlay with stale bookkeeping', () => {
+    const application = createApplication();
+
+    application.infoOverlay.show();
+    application.currentOverlay = null;
+    application.isConnectionProgressOverlayActive = true;
+    application.onMediaPresented();
+
+    assert.equal(application.currentOverlay, null);
+    assert.equal(application.infoOverlay.visible, false);
+});
+
+test('repeated media proof preserves a later generic informational overlay', () => {
+    const application = createApplication();
+
+    application.onWebRtcSdp();
+    application.onMediaPresented();
+    application.showTextOverlay('Waiting for a streamer to become available.');
+    application.onMediaPresented();
+
+    assert.equal(application.currentOverlay, application.infoOverlay);
+    assert.equal(application.infoOverlay.visible, true);
+    assert.equal(application.infoOverlay.text, 'Waiting for a streamer to become available.');
 });
 
 test('disconnect plus reconnect resets the media latch for the next connection', () => {

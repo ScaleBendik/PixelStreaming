@@ -52,3 +52,25 @@ test('preserves cycles in the logging copy without retaining secrets', () => {
     assert.equal(redacted.password, '[REDACTED]');
     assert.equal(redacted.self, redacted);
 });
+
+test('redacts enumerable fields on generated protocol-message class instances', () => {
+    class GeneratedConfigMessage {
+        constructor() {
+            this.type = 'config';
+            this.peerConnectionOptions = {
+                iceServers: [
+                    {
+                        urls: ['turn:turn.example.test:3478'],
+                        username: 'generated-turn-user',
+                        credential: 'generated-turn-secret'
+                    }
+                ]
+            };
+        }
+    }
+
+    const redacted = redactSensitiveLogValue(new GeneratedConfigMessage());
+
+    assert.equal(redacted.peerConnectionOptions.iceServers[0].username, '[REDACTED]');
+    assert.equal(redacted.peerConnectionOptions.iceServers[0].credential, '[REDACTED]');
+});

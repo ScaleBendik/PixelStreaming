@@ -162,6 +162,7 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
         const evidence = message as BaseMessage & {
             telemetryVersion?: unknown;
             proofType?: unknown;
+            mediaPresentationGuardVersion?: unknown;
             videoWidth?: unknown;
             videoHeight?: unknown;
             mediaTimeSeconds?: unknown;
@@ -177,6 +178,7 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
         const metadata = {
             telemetryVersion: finiteNumber(evidence.telemetryVersion),
             proofType: evidence.proofType === 'video_frame_callback' ? evidence.proofType : undefined,
+            mediaPresentationGuardVersion: evidence.mediaPresentationGuardVersion === 2 ? 2 : undefined,
             videoWidth: finiteNumber(evidence.videoWidth),
             videoHeight: finiteNumber(evidence.videoHeight),
             mediaTimeSeconds: finiteNumber(evidence.mediaTimeSeconds),
@@ -228,6 +230,8 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
                 this.server.playerRegistry.emit('scaleWorldMediaFlowObserved', this.playerId, {
                     telemetryVersion: finiteNumber(evidence.telemetryVersion),
                     proofType: evidence.proofType,
+                    mediaPresentationGuardVersion:
+                        evidence.mediaPresentationGuardVersion === 2 ? 2 : undefined,
                     observationWindowMs,
                     videoBytesReceivedDelta,
                     videoPacketsReceivedDelta,
