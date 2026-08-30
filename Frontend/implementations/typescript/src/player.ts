@@ -721,6 +721,7 @@ document.body.onload = function() {
 
     // Create the main Pixel Streaming object for interfacing with the web-API of Pixel Streaming
     const stream = new PixelStreaming(config);
+    let application: Application | null = null;
     if (connectTicket) {
         stream.setSignallingUrlBuilder(() => {
             const rawSignallingUrl = config.getTextSettingValue(TextParameters.SignallingServerUrl);
@@ -790,6 +791,7 @@ document.body.onload = function() {
                 return;
             }
 
+            application?.onMediaPresented();
             mediaReceivedGeneration = generation;
             const message: ScaleWorldMediaEvidenceMessage = {
                 type: 'scaleWorldMediaReceived',
@@ -970,7 +972,7 @@ document.body.onload = function() {
         }
     });
 
-    const application = new Application({
+    application = new Application({
         stream,
         onColorModeChanged: (isLightMode) => PixelStreamingApplicationStyles.setColorMode(isLightMode)
     });

@@ -83,6 +83,7 @@ export interface UIOptions {
  */
 export class Application {
     private isInitialAutoConnectPending: boolean;
+    private hasPresentedMediaForCurrentConnection = false;
 
     stream: PixelStreaming;
 
@@ -167,8 +168,26 @@ export class Application {
         }
     }
 
-    private showOpeningStreamOverlay() {
+    private showConnectionProgressOverlay(text: string) {
+        if (
+            this.hasPresentedMediaForCurrentConnection ||
+            (this.currentOverlay !== null &&
+                this.currentOverlay !== this.infoOverlay &&
+                this.currentOverlay !== this.connectOverlay)
+        ) {
+            return;
+        }
+
+        this.showTextOverlay(text);
+    }
+
+    private beginConnectionAttempt() {
+        this.hasPresentedMediaForCurrentConnection = false;
         this.showTextOverlay('Opening stream...');
+    }
+
+    private showOpeningStreamOverlay() {
+        this.showConnectionProgressOverlay('Opening stream...');
     }
 
     public createOverlays(): void {
@@ -337,6 +356,8 @@ export class Application {
             this.onVideoEncoderAvgQP(avgQP)
         );
         this.stream.addEventListener('webRtcSdp', () => this.onWebRtcSdp());
+        this.stream.addEventListener('streamConnect', () => this.onConnectionAttemptStarted());
+        this.stream.addEventListener('streamReconnect', () => this.onConnectionAttemptStarted());
         this.stream.addEventListener('webRtcAutoConnect', () => this.onWebRtcAutoConnect());
         this.stream.addEventListener('webRtcConnecting', () => this.onWebRtcConnecting());
         this.stream.addEventListener('webRtcConnected', () => this.onWebRtcConnected());
@@ -589,14 +610,21 @@ export class Application {
      * Show the webRtcAutoConnect Overlay and connect
      */
     onWebRtcAutoConnect() {
-        this.showOpeningStreamOverlay();
+        this.beginConnectionAttempt();
+    }
+
+    /**
+     * Reset connection-scoped media state when a new signalling/WebRTC attempt begins.
+     */
+    onConnectionAttemptStarted() {
+        this.beginConnectionAttempt();
     }
 
     /**
      * Set up functionality to happen when receiving a webRTC answer
      */
     onWebRtcSdp() {
-        this.showTextOverlay('WebRTC Connection Negotiated');
+        this.showConnectionProgressOverlay('WebRTC Connection Negotiated');
     }
 
     /**
@@ -626,6 +654,8 @@ export class Application {
      * @param allowClickToReconnect - true if we want to allow the user to click to reconnect. Otherwise it's just a message.
      */
     onDisconnect(eventString: string, allowClickToReconnect: boolean) {
+        this.hasPresentedMediaForCurrentConnection = false;
+
         if (this.isInitialAutoConnectPending && !allowClickToReconnect && !eventString.trim()) {
             this.showOpeningStreamOverlay();
             this.statsPanel?.onDisconnect();
@@ -660,6 +690,7 @@ export class Application {
      * Handles when Web Rtc fails to connect
      */
     onWebRtcFailed() {
+        this.hasPresentedMediaForCurrentConnection = false;
         this.showErrorOverlay('Unable to setup video');
     }
 
@@ -675,12 +706,25 @@ export class Application {
     }
 
     onPlayStreamError(message: string) {
+        this.hasPresentedMediaForCurrentConnection = false;
         this.showErrorOverlay(message);
     }
 
     /* eslint-disable-next-line @typescript-eslint/no-unused-vars */
     onPlayStreamRejected(onRejectedReason: unknown) {
+        this.hasPresentedMediaForCurrentConnection = false;
         this.showPlayOverlay();
+    }
+
+    /**
+     * Record positive, current-connection browser media evidence. Progress overlays are no longer
+     * allowed to repaint until a disconnect or a new connection attempt resets this latch.
+     */
+    onMediaPresented() {
+        this.hasPresentedMediaForCurrentConnection = true;
+        if (this.currentOverlay === this.infoOverlay) {
+            this.hideCurrentOverlay();
+        }
     }
 
     onVideoInitialized() {
