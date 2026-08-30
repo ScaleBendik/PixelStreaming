@@ -30,6 +30,7 @@ const {
     appendInstanceAgentReconnectGraceElapsedEvidence,
     readInstanceAgentReconnectGraceElapsedEvidenceJournal
 } = require('../dist/instance-agent-reconnect-grace-evidence-state.js');
+const { createSessionLogArtifactManager } = require('../dist/session-log-artifacts.js');
 
 function signConnectTicket(payload, signingKey) {
     const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
@@ -638,10 +639,7 @@ test('tokenful reset completion retries marker durability and survives acceptanc
     global.setInterval = (callback, delay) => ({ callback, delay });
     global.clearInterval = () => undefined;
     fs.renameSync = (sourcePath, destinationPath) => {
-        if (
-            failFirstCompletionMarkerRewrite &&
-            path.resolve(destinationPath) === path.resolve(markerPath)
-        ) {
+        if (failFirstCompletionMarkerRewrite && path.resolve(destinationPath) === path.resolve(markerPath)) {
             const candidate = JSON.parse(fs.readFileSync(sourcePath, 'utf8'));
             if (candidate.resetCompletedAtUtc) {
                 failFirstCompletionMarkerRewrite = false;
@@ -751,7 +749,10 @@ test('tokenful reset completion retries marker durability and survives acceptanc
         assert.equal(commercialRecoveryRequired, false);
         assert.equal(commercialRecoveryCompletionCalls, 1);
         assert.equal(failFirstCompletionMarkerRewrite, false);
-        assert.equal(readInstanceAgentRecycleMarkerSnapshot(markerPath, () => undefined).resetCompletedAtUtc, undefined);
+        assert.equal(
+            readInstanceAgentRecycleMarkerSnapshot(markerPath, () => undefined).resetCompletedAtUtc,
+            undefined
+        );
 
         client.recordRuntimeStatus({
             status: 'ready',
@@ -760,10 +761,7 @@ test('tokenful reset completion retries marker durability and survives acceptanc
             version: 'test-runtime',
             heartbeatOnly: true
         });
-        const retriedCompletionMarker = readInstanceAgentRecycleMarkerSnapshot(
-            markerPath,
-            () => undefined
-        );
+        const retriedCompletionMarker = readInstanceAgentRecycleMarkerSnapshot(markerPath, () => undefined);
         assert.ok(retriedCompletionMarker.resetCompletedAtUtc);
         assert.equal(commercialRecoveryCompletionCalls, 1);
 
@@ -1086,4 +1084,157 @@ test('recovered evidence acknowledgement retains authoritative shutdown intent',
     );
 
     assert.equal(recoveryAction, 'stop');
+});
+
+function normalizeLifecycleLogPath(filePath) {
+    const resolved = path.resolve(filePath);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function captureLifecycleLogFingerprint(filePath, kind = 'wilbur_log') {
+    const stat = fs.statSync(filePath);
+    return {
+        kind,
+        normalizedPath: normalizeLifecycleLogPath(filePath),
+        sizeBytes: stat.size,
+        modifiedAtUtc: stat.mtime.toISOString(),
+        fileIdentity: `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`
+    };
+}
+
+function createLifecycleLogArtifactHarness(context, overrides = {}) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'scaleworld-log-retention-'));
+    const queuePath = path.join(root, 'queue');
+    const logFolder = path.join(root, 'logs');
+    fs.mkdirSync(logFolder, { recursive: true });
+    context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const manager = createSessionLogArtifactManager({
+        enabled: true,
+        bucketName: 'test-artifact-bucket',
+        objectPrefix: 'test-artifacts',
+        queuePath,
+        logFolder,
+        includeWilburLogs: true,
+        includeWatchdogLogs: false,
+        includeUnrealLogs: false,
+        includeStackRecycleLog: false,
+        includeRuntimeStatusSnapshot: false,
+        cleanupSessionLogsAfterUpload: true,
+        cleanupLifecycleLogsOnStartup: true,
+        awsCliExecutor: async (_executable, args) => ({
+            stdout: args[0] === 's3api' ? '{}' : '',
+            stderr: ''
+        }),
+        registerArtifact: async () => undefined,
+        logger: () => undefined,
+        ...overrides
+    });
+    assert.ok(manager);
+
+    return { root, queuePath, logFolder, manager };
+}
+
+function enqueueLifecycleLogArtifact(queuePath, logPath, capturedLogFiles) {
+    const id = crypto.randomUUID();
+    const createdAtUtc = new Date().toISOString();
+    const bundlePath = path.join(queuePath, 'bundles', `${id}.diagnostic-bundle.tar.gz`);
+    fs.mkdirSync(path.dirname(bundlePath), { recursive: true });
+    fs.writeFileSync(bundlePath, 'test bundle');
+    const record = {
+        id,
+        status: 'pending_upload',
+        createdAtUtc,
+        updatedAtUtc: createdAtUtc,
+        attempts: 0,
+        localPath: bundlePath,
+        bucketName: 'test-artifact-bucket',
+        objectKey: `test/${id}.diagnostic-bundle.tar.gz`,
+        request: {
+            instanceId: 'i-log-test',
+            region: 'eu-north-1',
+            artifactType: 'diagnostic_bundle',
+            bucketName: 'test-artifact-bucket',
+            objectKey: `test/${id}.diagnostic-bundle.tar.gz`,
+            metadata: { logPath: path.basename(logPath) }
+        }
+    };
+    if (capturedLogFiles !== undefined) {
+        record.capturedLogFiles = capturedLogFiles;
+    }
+    fs.writeFileSync(path.join(queuePath, `${id}.json`), JSON.stringify(record));
+}
+
+test('startup cleanup preserves active lifecycle logs', (context) => {
+    const { logFolder, manager, root } = createLifecycleLogArtifactHarness(context, {
+        watchdogLogPath: path.join(os.tmpdir(), `scaleworld-watchdog-${crypto.randomUUID()}.log`)
+    });
+    const serverLog = path.join(logFolder, 'server-2026-08-30.log');
+    const auditLog = path.join(logFolder, '.audit.json');
+    const watchdogLog = path.join(root, 'scaleworld-watchdog.log');
+    fs.writeFileSync(serverLog, 'server-active');
+    fs.writeFileSync(auditLog, 'audit-active');
+    fs.writeFileSync(watchdogLog, 'watchdog-active');
+
+    manager.cleanStartupLogs();
+
+    assert.equal(fs.readFileSync(serverLog, 'utf8'), 'server-active');
+    assert.equal(fs.readFileSync(auditLog, 'utf8'), 'audit-active');
+    assert.equal(fs.readFileSync(watchdogLog, 'utf8'), 'watchdog-active');
+});
+
+test('successful upload prunes an exact unchanged captured lifecycle log', async (context) => {
+    const { logFolder, queuePath, manager } = createLifecycleLogArtifactHarness(context);
+    const logPath = path.join(logFolder, 'server-2026-08-30.log');
+    fs.writeFileSync(logPath, 'captured generation A');
+    enqueueLifecycleLogArtifact(queuePath, logPath, [captureLifecycleLogFingerprint(logPath)]);
+
+    await manager.drainQueue();
+
+    assert.equal(fs.statSync(logPath).size, 0);
+});
+
+test('successful upload skips a captured lifecycle log that was appended after capture', async (context) => {
+    const { logFolder, queuePath, manager } = createLifecycleLogArtifactHarness(context);
+    const logPath = path.join(logFolder, 'server-2026-08-30.log');
+    fs.writeFileSync(logPath, 'captured generation A');
+    const fingerprint = captureLifecycleLogFingerprint(logPath);
+    enqueueLifecycleLogArtifact(queuePath, logPath, [fingerprint]);
+    fs.appendFileSync(logPath, '\nreplacement activity');
+
+    await manager.drainQueue();
+
+    assert.match(fs.readFileSync(logPath, 'utf8'), /replacement activity/);
+});
+
+test('generation A upload cannot prune a replacement generation B file at the same path', async (context) => {
+    const { logFolder, queuePath, manager, root } = createLifecycleLogArtifactHarness(context);
+    const logPath = path.join(logFolder, 'server-2026-08-30.log');
+    fs.writeFileSync(logPath, 'generation-A');
+    const fingerprint = captureLifecycleLogFingerprint(logPath);
+    enqueueLifecycleLogArtifact(queuePath, logPath, [fingerprint]);
+
+    fs.unlinkSync(logPath);
+    fs.writeFileSync(path.join(root, 'file-id-spacer.log'), 'spacer');
+    fs.writeFileSync(logPath, 'generation-B');
+    const capturedMtime = new Date(fingerprint.modifiedAtUtc);
+    fs.utimesSync(logPath, capturedMtime, capturedMtime);
+
+    await manager.drainQueue();
+
+    assert.equal(fs.readFileSync(logPath, 'utf8'), 'generation-B');
+});
+
+test('legacy queue records without captured fingerprints never trigger broad log pruning', async (context) => {
+    const { logFolder, queuePath, manager } = createLifecycleLogArtifactHarness(context);
+    const capturedLog = path.join(logFolder, 'server-2026-08-30.log');
+    const unrelatedLog = path.join(logFolder, 'server-2026-08-29.log');
+    fs.writeFileSync(capturedLog, 'legacy captured content');
+    fs.writeFileSync(unrelatedLog, 'must survive');
+    enqueueLifecycleLogArtifact(queuePath, capturedLog, undefined);
+
+    await manager.drainQueue();
+
+    assert.equal(fs.readFileSync(capturedLog, 'utf8'), 'legacy captured content');
+    assert.equal(fs.readFileSync(unrelatedLog, 'utf8'), 'must survive');
 });

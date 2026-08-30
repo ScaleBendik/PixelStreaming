@@ -34,6 +34,7 @@ interface BundleEntry {
     modifiedAtUtc?: string;
     tailBytes?: number;
     truncatedStart?: boolean;
+    sourceFingerprint?: CapturedLogFingerprint;
     error?: string;
 }
 
@@ -48,6 +49,14 @@ interface CollectedBundle {
     files: BundleFile[];
 }
 
+interface CapturedLogFingerprint {
+    kind: string;
+    normalizedPath: string;
+    sizeBytes: number;
+    modifiedAtUtc: string;
+    fileIdentity?: string;
+}
+
 interface ArtifactQueueRecord {
     id: string;
     status: QueueRecordStatus;
@@ -59,6 +68,12 @@ interface ArtifactQueueRecord {
     bucketName: string;
     objectKey: string;
     request: SessionLogArtifactRegistrationRequest;
+    capturedLogFiles?: CapturedLogFingerprint[];
+}
+
+interface AwsCliResult {
+    stdout: string;
+    stderr: string;
 }
 
 export interface SessionLogArtifactRuntimeOptions {
@@ -125,6 +140,7 @@ export interface SessionLogArtifactCaptureContext {
 export interface SessionLogArtifactManagerOptions extends SessionLogArtifactRuntimeOptions {
     registerArtifact: (request: SessionLogArtifactRegistrationRequest) => Promise<void>;
     getCurrentInstanceIdentity?: () => Promise<{ instanceId: string; region: string }>;
+    awsCliExecutor?: (executable: string, args: string[]) => Promise<AwsCliResult>;
     logger?: (message: string) => void;
 }
 
@@ -388,40 +404,6 @@ function discoverStackRecycleLogCandidates(repoRoot: string): LogCandidate[] {
     ];
 }
 
-function discoverSessionCleanupCandidates(
-    options: SessionLogArtifactManagerOptions,
-    repoRoot: string,
-    logFolder: string
-): LogCandidate[] {
-    const candidates = parseBoolean(
-        options.includeWilburLogs ?? process.env.INSTANCE_AGENT_ARTIFACT_INCLUDE_WILBUR_LOGS,
-        true
-    )
-        ? [...discoverWilburSessionLogCandidates(logFolder)]
-        : [];
-
-    if (
-        parseBoolean(
-            options.includeUnrealLogs ?? process.env.INSTANCE_AGENT_ARTIFACT_INCLUDE_UNREAL_LOGS,
-            true
-        )
-    ) {
-        for (const directory of discoverUnrealLogDirectories(options, repoRoot)) {
-            candidates.push(...listAllFiles(directory, 'unreal_log'));
-        }
-    }
-
-    const deduped = new Map<string, LogCandidate>();
-    for (const candidate of candidates) {
-        const key = path.normalize(candidate.path).toLowerCase();
-        if (!deduped.has(key)) {
-            deduped.set(key, candidate);
-        }
-    }
-
-    return Array.from(deduped.values());
-}
-
 function discoverLogCandidates(
     options: SessionLogArtifactManagerOptions,
     repoRoot: string,
@@ -557,6 +539,39 @@ function allocateArchivePath(candidate: LogCandidate, usedArchivePaths: Set<stri
     return archivePath;
 }
 
+function isLifecycleLogKind(kind: string): boolean {
+    return (
+        kind === 'wilbur_log' ||
+        kind === 'watchdog_log' ||
+        kind === 'stack_recycle_log' ||
+        kind === 'stack_recycle_launch_log' ||
+        kind === 'unreal_log'
+    );
+}
+
+function buildFileIdentity(stat: fs.Stats): string {
+    return `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
+}
+
+function buildCapturedLogFingerprint(candidate: LogCandidate, stat: fs.Stats): CapturedLogFingerprint {
+    return {
+        kind: candidate.kind,
+        normalizedPath: normalizePathForComparison(candidate.path),
+        sizeBytes: stat.size,
+        modifiedAtUtc: stat.mtime.toISOString(),
+        fileIdentity: buildFileIdentity(stat)
+    };
+}
+
+function fileStatMatchesFingerprint(stat: fs.Stats, fingerprint: CapturedLogFingerprint): boolean {
+    return (
+        stat.isFile() &&
+        stat.size === fingerprint.sizeBytes &&
+        stat.mtime.toISOString() === fingerprint.modifiedAtUtc &&
+        (!fingerprint.fileIdentity || buildFileIdentity(stat) === fingerprint.fileIdentity)
+    );
+}
+
 function collectBundleFiles(candidates: LogCandidate[], maxBundleBytes: number): CollectedBundle {
     const entries: BundleEntry[] = [];
     const files: BundleFile[] = [];
@@ -570,8 +585,8 @@ function collectBundleFiles(candidates: LogCandidate[], maxBundleBytes: number):
         }
 
         try {
-            const stat = fs.statSync(candidate.path);
-            if (!stat.isFile()) {
+            const statBeforeRead = fs.statSync(candidate.path);
+            if (!statBeforeRead.isFile()) {
                 entries.push({
                     kind: candidate.kind,
                     path: candidate.path,
@@ -583,6 +598,7 @@ function collectBundleFiles(candidates: LogCandidate[], maxBundleBytes: number):
 
             const bytesForEntry = Math.max(0, Math.min(maxEntryBytes, remainingBytes));
             const tail = bytesForEntry > 0 ? readTailBytes(candidate.path, bytesForEntry) : undefined;
+            const statAfterRead = fs.statSync(candidate.path);
             const archivePath =
                 tail && tail.tailBytes > 0 ? allocateArchivePath(candidate, usedArchivePaths) : undefined;
             if (tail) {
@@ -594,17 +610,26 @@ function collectBundleFiles(candidates: LogCandidate[], maxBundleBytes: number):
                 path: candidate.path,
                 archivePath,
                 exists: true,
-                sizeBytes: stat.size,
-                modifiedAtUtc: stat.mtime.toISOString(),
+                sizeBytes: statBeforeRead.size,
+                modifiedAtUtc: statBeforeRead.mtime.toISOString(),
                 tailBytes: tail?.tailBytes ?? 0,
-                truncatedStart: tail?.truncatedStart ?? stat.size > 0
+                truncatedStart: tail?.truncatedStart ?? statBeforeRead.size > 0,
+                sourceFingerprint:
+                    archivePath &&
+                    isLifecycleLogKind(candidate.kind) &&
+                    fileStatMatchesFingerprint(
+                        statAfterRead,
+                        buildCapturedLogFingerprint(candidate, statBeforeRead)
+                    )
+                        ? buildCapturedLogFingerprint(candidate, statBeforeRead)
+                        : undefined
             });
 
             if (archivePath && tail) {
                 files.push({
                     archivePath,
                     content: tail.content,
-                    modifiedAtUtc: stat.mtime.toISOString()
+                    modifiedAtUtc: statBeforeRead.mtime.toISOString()
                 });
             }
         } catch (error) {
@@ -620,67 +645,56 @@ function collectBundleFiles(candidates: LogCandidate[], maxBundleBytes: number):
     return { entries, files };
 }
 
-function pruneLocalLogFile(filePath: string): 'deleted' | 'truncated' | 'missing' | 'failed' {
-    try {
-        const stat = fs.statSync(filePath);
-        if (!stat.isFile()) {
-            return 'missing';
-        }
-    } catch {
-        return 'missing';
-    }
-
-    try {
-        fs.truncateSync(filePath, 0);
-        return 'truncated';
-    } catch {
-        try {
-            fs.unlinkSync(filePath);
-            return 'deleted';
-        } catch {
-            return 'failed';
-        }
-    }
-}
-
-function pruneLocalLogCandidates(
-    candidates: LogCandidate[],
+function pruneCapturedLogFiles(
+    fingerprints: CapturedLogFingerprint[] | undefined,
     log: (message: string) => void,
     reason: string
 ): void {
-    let deleted = 0;
     let truncated = 0;
+    let changed = 0;
     let failed = 0;
     let missing = 0;
-    const deduped = new Map<string, LogCandidate>();
+    const deduped = new Map<string, CapturedLogFingerprint>();
 
-    for (const candidate of candidates) {
-        const key = path.normalize(candidate.path).toLowerCase();
-        if (!deduped.has(key)) {
-            deduped.set(key, candidate);
+    for (const fingerprint of fingerprints ?? []) {
+        if (!deduped.has(fingerprint.normalizedPath)) {
+            deduped.set(fingerprint.normalizedPath, fingerprint);
         }
     }
 
-    for (const candidate of deduped.values()) {
-        switch (pruneLocalLogFile(candidate.path)) {
-            case 'deleted':
-                deleted += 1;
-                break;
-            case 'truncated':
-                truncated += 1;
-                break;
-            case 'failed':
-                failed += 1;
-                break;
-            case 'missing':
+    for (const fingerprint of deduped.values()) {
+        let fileDescriptor: number | undefined;
+        try {
+            fileDescriptor = fs.openSync(fingerprint.normalizedPath, 'r+');
+            const currentStat = fs.fstatSync(fileDescriptor);
+            if (!fileStatMatchesFingerprint(currentStat, fingerprint)) {
+                changed += 1;
+                continue;
+            }
+
+            fs.ftruncateSync(fileDescriptor, 0);
+            truncated += 1;
+        } catch (error) {
+            const code = isRecordLike(error) ? normalizeOptionalText(error.code) : undefined;
+            if (code === 'ENOENT') {
                 missing += 1;
-                break;
+            } else {
+                failed += 1;
+            }
+        } finally {
+            if (fileDescriptor !== undefined) {
+                try {
+                    fs.closeSync(fileDescriptor);
+                } catch {
+                    failed += 1;
+                }
+            }
         }
     }
 
-    if (failed > 0) {
+    if (changed > 0 || failed > 0) {
         log(
-            `[session-artifacts] Log cleanup '${reason}' had failures: deleted=${deleted}, truncated=${truncated}, missing=${missing}, failed=${failed}.`
+            `[session-artifacts] Fingerprinted log cleanup '${reason}': truncated=${truncated}, changed=${changed}, missing=${missing}, failed=${failed}.`
         );
     }
 }
@@ -803,6 +817,8 @@ function readQueueRecord(filePath: string): ArtifactQueueRecord | null {
             record.request.metadata = {};
         }
 
+        record.capturedLogFiles = normalizeCapturedLogFingerprints(record.capturedLogFiles);
+
         return record;
     } catch {
         return null;
@@ -811,6 +827,47 @@ function readQueueRecord(filePath: string): ArtifactQueueRecord | null {
 
 function isRecordLike(value: unknown): value is Record<string, unknown> {
     return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function normalizeCapturedLogFingerprints(value: unknown): CapturedLogFingerprint[] | undefined {
+    if (!Array.isArray(value) || value.length === 0) {
+        return undefined;
+    }
+
+    const normalized: CapturedLogFingerprint[] = [];
+    for (const item of value) {
+        if (!isRecordLike(item)) {
+            return undefined;
+        }
+
+        const kind = normalizeOptionalText(item.kind);
+        const normalizedPath = normalizeOptionalText(item.normalizedPath);
+        const sizeBytes = item.sizeBytes;
+        const modifiedAtUtc = normalizeOptionalText(item.modifiedAtUtc);
+        const modifiedAtMs = modifiedAtUtc ? Date.parse(modifiedAtUtc) : Number.NaN;
+        if (
+            !kind ||
+            !isLifecycleLogKind(kind) ||
+            !normalizedPath ||
+            typeof sizeBytes !== 'number' ||
+            !Number.isSafeInteger(sizeBytes) ||
+            sizeBytes < 0 ||
+            !modifiedAtUtc ||
+            !Number.isFinite(modifiedAtMs)
+        ) {
+            return undefined;
+        }
+
+        normalized.push({
+            kind,
+            normalizedPath: normalizePathForComparison(normalizedPath),
+            sizeBytes,
+            modifiedAtUtc: new Date(modifiedAtMs).toISOString(),
+            fileIdentity: normalizeOptionalText(item.fileIdentity)
+        });
+    }
+
+    return normalized;
 }
 
 function getFileModifiedMs(filePath: string): number | null {
@@ -985,6 +1042,7 @@ function appendRegion(args: string[], region: string | undefined): string[] {
 }
 
 async function headObject(
+    executeAwsCli: (executable: string, args: string[]) => Promise<AwsCliResult>,
     awsCliPath: string,
     region: string | undefined,
     bucketName: string,
@@ -994,7 +1052,7 @@ async function headObject(
         ['s3api', 'head-object', '--bucket', bucketName, '--key', objectKey, '--output', 'json'],
         region
     );
-    const { stdout } = await execFileAsync(awsCliPath, args, { windowsHide: true });
+    const { stdout } = await executeAwsCli(awsCliPath, args);
     const parsed = JSON.parse(stdout || '{}') as {
         ETag?: unknown;
         VersionId?: unknown;
@@ -1041,6 +1099,15 @@ export function createSessionLogArtifactManager(
     const awsRegion =
         normalizeOptionalText(options.awsRegion) ??
         normalizeOptionalText(process.env.INSTANCE_AGENT_ARTIFACT_AWS_REGION);
+    const executeAwsCli =
+        options.awsCliExecutor ??
+        (async (executable: string, args: string[]): Promise<AwsCliResult> => {
+            const result = await execFileAsync(executable, args, { windowsHide: true });
+            return {
+                stdout: String(result.stdout ?? ''),
+                stderr: String(result.stderr ?? '')
+            };
+        });
     const queuePath =
         resolvePathMaybeRelative(options.queuePath, repoRoot) ??
         resolvePathMaybeRelative(process.env.INSTANCE_AGENT_ARTIFACT_QUEUE_PATH, repoRoot) ??
@@ -1245,12 +1312,12 @@ export function createSessionLogArtifactManager(
         cleanStaleBundleFiles(nowMs, preservedLocalPaths);
     };
 
-    const cleanSessionLogs = (reason: string): void => {
+    const cleanCapturedSessionLogs = (record: ArtifactQueueRecord, reason: string): void => {
         if (!cleanupSessionLogsAfterUpload) {
             return;
         }
 
-        pruneLocalLogCandidates(discoverSessionCleanupCandidates(options, repoRoot, logFolder), log, reason);
+        pruneCapturedLogFiles(record.capturedLogFiles, log, reason);
     };
 
     const cleanStartupLogs = (startupOptions?: { preserveRecycleLogs?: boolean }): void => {
@@ -1258,29 +1325,9 @@ export function createSessionLogArtifactManager(
             return;
         }
 
-        const candidates: LogCandidate[] = [
-            ...discoverSessionCleanupCandidates(options, repoRoot, logFolder)
-        ];
-        if (
-            parseBoolean(
-                options.includeWatchdogLogs ?? process.env.INSTANCE_AGENT_ARTIFACT_INCLUDE_WATCHDOG_LOGS,
-                true
-            )
-        ) {
-            candidates.push(discoverWatchdogLogCandidate(options, repoRoot));
-        }
-
-        if (
-            parseBoolean(
-                options.includeStackRecycleLog ??
-                    process.env.INSTANCE_AGENT_ARTIFACT_INCLUDE_STACK_RECYCLE_LOG,
-                true
-            )
-        ) {
-            candidates.push(...discoverStackRecycleLogCandidates(repoRoot));
-        }
-
-        pruneLocalLogCandidates(candidates, log, 'startup_lifecycle');
+        log(
+            '[session-artifacts] Startup lifecycle log cleanup skipped; active logs are retained until an exact captured fingerprint is uploaded.'
+        );
     };
 
     const uploadRecord = async (record: ArtifactQueueRecord): Promise<void> => {
@@ -1297,7 +1344,7 @@ export function createSessionLogArtifactManager(
             ],
             awsRegion ?? record.request.region
         );
-        const { stderr } = await execFileAsync(awsCliPath, args, { windowsHide: true });
+        const { stderr } = await executeAwsCli(awsCliPath, args);
         if (stderr && stderr.trim().length > 0) {
             log(`[session-artifacts] AWS CLI upload stderr: ${truncateText(stderr.trim(), 500)}`);
         }
@@ -1306,6 +1353,7 @@ export function createSessionLogArtifactManager(
         record.request.uploadedAtUtc = new Date().toISOString();
         try {
             const head = await headObject(
+                executeAwsCli,
                 awsCliPath,
                 awsRegion ?? record.request.region,
                 record.bucketName,
@@ -1323,7 +1371,7 @@ export function createSessionLogArtifactManager(
 
         updateRecord(record);
         log(`[session-artifacts] Uploaded ${record.localPath} to ${destination}.`);
-        cleanSessionLogs('after_upload');
+        cleanCapturedSessionLogs(record, 'after_upload');
     };
 
     const registerRecord = async (record: ArtifactQueueRecord): Promise<void> => {
@@ -1335,7 +1383,6 @@ export function createSessionLogArtifactManager(
             log(
                 `[session-artifacts] Uploaded uncorrelated lifecycle artifact ${record.objectKey}; skipped session artifact registration.`
             );
-            cleanSessionLogs('after_uncorrelated_upload');
             return;
         }
 
@@ -1344,7 +1391,6 @@ export function createSessionLogArtifactManager(
         deleteFileIfWithin(record.localPath, queuePath);
 
         log(`[session-artifacts] Registered artifact ${record.objectKey}.`);
-        cleanSessionLogs('after_registration');
     };
 
     const drainQueueCore = async (): Promise<void> => {
@@ -1509,7 +1555,10 @@ export function createSessionLogArtifactManager(
             localPath,
             bucketName,
             objectKey,
-            request
+            request,
+            capturedLogFiles: collected.entries.flatMap((entry) =>
+                entry.sourceFingerprint ? [entry.sourceFingerprint] : []
+            )
         };
 
         updateRecord(record);
