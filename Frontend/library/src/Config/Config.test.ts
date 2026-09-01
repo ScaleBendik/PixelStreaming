@@ -46,6 +46,9 @@ describe('Config', () => {
         expect(Object.keys(settings)).toEqual(
             expect.arrayContaining(allParameters)
         );
+        expect(
+            config.getNumericSettingValue(NumericParameters.WebRTCMaxBitrate)
+        ).toEqual(30000);
     });
 
     it('should populate given initial setting values', () => {

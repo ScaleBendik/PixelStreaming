@@ -10,6 +10,7 @@ param(
     [int]$ResX = $(if ($env:SCALEWORLD_RES_X) { [int]$env:SCALEWORLD_RES_X } else { 2240 }),
     [int]$ResY = $(if ($env:SCALEWORLD_RES_Y) { [int]$env:SCALEWORLD_RES_Y } else { 1260 }),
     [int]$Fps = $(if ($env:SCALEWORLD_PIXEL_STREAMING_FPS) { [int]$env:SCALEWORLD_PIXEL_STREAMING_FPS } else { 30 }),
+    [int]$MaxBitrateKbps = $(if ($env:SCALEWORLD_PIXEL_STREAMING_MAX_BITRATE_KBPS) { [int]$env:SCALEWORLD_PIXEL_STREAMING_MAX_BITRATE_KBPS } else { 30000 }),
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$AdditionalArgs
 )
@@ -52,6 +53,7 @@ $prerequisiteStatus = Assert-ScaleWorldUnrealPrerequisite -UnrealRoot $installRo
 Write-Output ("Verified Unreal Visual C++ prerequisite required={0} installed={1}." -f $prerequisiteStatus.RequiredVersion, $prerequisiteStatus.InstalledVersion)
 
 $runtimeMatcher = Get-ScaleWorldRuntimeProcessMatcher -InstallRoot $installRootPath -ExecutableName $ExecutableName -RuntimeProcessPattern $RuntimeProcessPattern -IncludeLauncherExecutable $false
+$maxBitrateBps = $MaxBitrateKbps * 1000
 
 $arguments = @(
     "-PixelStreamingEncoderCodec=$EncoderCodec",
@@ -59,6 +61,7 @@ $arguments = @(
     '-PixelStreamingEncoderTargetBitrate=-1',
     '-PixelStreaming2.Encoder.LatencyMode=LOW_LATENCY',
     "-PixelStreaming2.WebRTC.Fps=$Fps",
+    "-PixelStreaming2.WebRTC.MaxBitrate=$maxBitrateBps",
     '-RenderOffScreen',
     "-ResX=$ResX",
     "-ResY=$ResY",

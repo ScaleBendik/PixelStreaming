@@ -1079,6 +1079,16 @@ Assert-ContainsText `
     -Message 'Stack startup must pass computed Unreal startup arguments to the direct Unreal launcher.'
 
 Assert-ContainsText `
+    -Content $unrealLauncher `
+    -Expected '[int]$MaxBitrateKbps = $(if ($env:SCALEWORLD_PIXEL_STREAMING_MAX_BITRATE_KBPS) { [int]$env:SCALEWORLD_PIXEL_STREAMING_MAX_BITRATE_KBPS } else { 30000 })' `
+    -Message 'Unreal startup must default Pixel Streaming WebRTC max bitrate to 30000 kbps while retaining an environment override.'
+
+Assert-ContainsText `
+    -Content $unrealLauncher `
+    -Expected '"-PixelStreaming2.WebRTC.MaxBitrate=$maxBitrateBps"' `
+    -Message 'Unreal startup must pass the configured WebRTC max bitrate to Pixel Streaming 2.'
+
+Assert-ContainsText `
     -Content $stackLauncher `
     -Expected '-LauncherGraceSeconds %SCALEWORLD_RUNTIME_PROCESS_WAIT_SECONDS%' `
     -Message 'Launcher freshness detection must use the same window as the strict Unreal runtime wait.'

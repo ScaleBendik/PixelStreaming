@@ -786,7 +786,7 @@ export class Config {
                 500000 /*max*/,
                 settings && Object.prototype.hasOwnProperty.call(settings, NumericParameters.WebRTCMaxBitrate)
                     ? settings[NumericParameters.WebRTCMaxBitrate]
-                    : 25000 /*value*/,
+                    : 30000 /*value*/,
                 useUrlParams
             )
         );
