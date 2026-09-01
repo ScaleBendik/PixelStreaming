@@ -1050,6 +1050,31 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $stackLauncher `
+    -Expected 'set "SCALEWORLD_UNREAL_PREMIUM_INSTANCE_ARG=-ScaleWorldPremium"' `
+    -Message 'Premium startup must expose the stable Unreal-readable premium command-line marker.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'set "SCALEWORLD_STANDARD_ENCODER_CODEC=vp9"' `
+    -Message 'Standard startup must retain VP9 as its configurable codec default.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'set "SCALEWORLD_PREMIUM_ENCODER_CODEC=AV1"' `
+    -Message 'Premium startup must use AV1 as its configurable codec default.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'SCALEWORLD_UNREAL_STARTUP_ARGS:%SCALEWORLD_UNREAL_PREMIUM_INSTANCE_ARG%=' `
+    -Message 'Stack recovery must remove an inherited premium marker before re-evaluating the current service-class tag.'
+
+Assert-MatchesText `
+    -Content $stackLauncher `
+    -Pattern 'if /i "!RESOLVED_SERVICE_CLASS!"=="premium" \(.+!SCALEWORLD_UNREAL_PREMIUM_INSTANCE_ARG!.+set "SCALEWORLD_DEFAULT_ENCODER_CODEC=!SCALEWORLD_PREMIUM_ENCODER_CODEC!".+\) else \(.+set "SCALEWORLD_DEFAULT_ENCODER_CODEC=!SCALEWORLD_STANDARD_ENCODER_CODEC!"' `
+    -Message 'Premium must receive the Unreal marker and premium codec default while Standard receives the standard codec default.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
     -Expected 'call :apply_unreal_provisioning_startup_args' `
     -Message 'Stack startup must apply Unreal provisioning warmup arguments after the provisioning bootstrap check.'
 
@@ -1082,6 +1107,16 @@ Assert-ContainsText `
     -Content $unrealLauncher `
     -Expected '[int]$MaxBitrateKbps = $(if ($env:SCALEWORLD_PIXEL_STREAMING_MAX_BITRATE_KBPS) { [int]$env:SCALEWORLD_PIXEL_STREAMING_MAX_BITRATE_KBPS } else { 30000 })' `
     -Message 'Unreal startup must default Pixel Streaming WebRTC max bitrate to 30000 kbps while retaining an environment override.'
+
+Assert-MatchesText `
+    -Content $unrealLauncher `
+    -Pattern 'if \(\$env:SCALEWORLD_ENCODER_CODEC\).+elseif \(\$env:SCALEWORLD_DEFAULT_ENCODER_CODEC\).+''vp9''' `
+    -Message 'Unreal startup must prefer an explicit codec override, then the service-class default, and finally VP9.'
+
+Assert-ContainsText `
+    -Content $unrealLauncher `
+    -Expected '"-PixelStreamingEncoderCodec=$EncoderCodec"' `
+    -Message 'Unreal startup must pass the resolved active encoder codec to Pixel Streaming.'
 
 Assert-ContainsText `
     -Content $unrealLauncher `

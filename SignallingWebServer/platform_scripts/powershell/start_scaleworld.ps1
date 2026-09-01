@@ -6,7 +6,15 @@ param(
     [int]$RuntimeProcessWaitSeconds = $(if ($env:SCALEWORLD_RUNTIME_PROCESS_WAIT_SECONDS) { [int]$env:SCALEWORLD_RUNTIME_PROCESS_WAIT_SECONDS } else { 120 }),
     [string]$PixelStreamingIp = $(if ($env:SCALEWORLD_PIXEL_STREAMING_IP) { $env:SCALEWORLD_PIXEL_STREAMING_IP } else { 'localhost' }),
     [int]$PixelStreamingPort = $(if ($env:SCALEWORLD_PIXEL_STREAMING_PORT) { [int]$env:SCALEWORLD_PIXEL_STREAMING_PORT } else { 8888 }),
-    [string]$EncoderCodec = $(if ($env:SCALEWORLD_ENCODER_CODEC) { $env:SCALEWORLD_ENCODER_CODEC } else { 'vp9' }),
+    [string]$EncoderCodec = $(
+        if ($env:SCALEWORLD_ENCODER_CODEC) {
+            $env:SCALEWORLD_ENCODER_CODEC
+        } elseif ($env:SCALEWORLD_DEFAULT_ENCODER_CODEC) {
+            $env:SCALEWORLD_DEFAULT_ENCODER_CODEC
+        } else {
+            'vp9'
+        }
+    ),
     [int]$ResX = $(if ($env:SCALEWORLD_RES_X) { [int]$env:SCALEWORLD_RES_X } else { 2240 }),
     [int]$ResY = $(if ($env:SCALEWORLD_RES_Y) { [int]$env:SCALEWORLD_RES_Y } else { 1260 }),
     [int]$Fps = $(if ($env:SCALEWORLD_PIXEL_STREAMING_FPS) { [int]$env:SCALEWORLD_PIXEL_STREAMING_FPS } else { 30 }),
