@@ -1120,6 +1120,16 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $unrealLauncher `
+    -Expected '"-ScaleWorldEntitlementManifest=`"$RuntimeEntitlementManifestPath`""' `
+    -Message 'Unreal startup must expose the stable runtime entitlement manifest path.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'SCALEWORLD_RUNTIME_ENTITLEMENT_MANIFEST_PATH=C:\ProgramData\ScaleWorld\runtime-entitlement-manifest.json' `
+    -Message 'Stack startup must share one stable runtime entitlement manifest path with Wilbur and Unreal.'
+
+Assert-ContainsText `
+    -Content $unrealLauncher `
     -Expected '"-PixelStreaming2.WebRTC.MaxBitrate=$maxBitrateBps"' `
     -Message 'Unreal startup must pass the configured WebRTC max bitrate to Pixel Streaming 2.'
 

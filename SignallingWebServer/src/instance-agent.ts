@@ -47,6 +47,17 @@ import {
     type SessionScreenshotArtifactManager,
     type SessionScreenshotArtifactRuntimeOptions
 } from './session-screenshot-artifacts';
+import {
+    createFailedRuntimeEntitlementProjection,
+    createProjectedRuntimeEntitlementProjection,
+    createUnassignedRuntimeEntitlementProjection,
+    hasSameRuntimeEntitlementProjection,
+    resolveRuntimeEntitlementManifestPath,
+    runtimeEntitlementProjectionReport,
+    writeRuntimeEntitlementProjection,
+    type RuntimeEntitlementManifestApiResponse,
+    type RuntimeEntitlementProjectionFile
+} from './runtime-entitlement-projection';
 
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
 const IMDS_METADATA_BASE_URL = 'http://169.254.169.254/latest/meta-data';
@@ -54,6 +65,7 @@ const IMDS_DYNAMIC_BASE_URL = 'http://169.254.169.254/latest/dynamic/instance-id
 const DEFAULT_HEARTBEAT_MS = 10_000;
 const DEFAULT_FAST_POLLING_INTERVAL_MS = 2_000;
 const DEFAULT_FAST_POLLING_WINDOW_MS = 20_000;
+const DEFAULT_RUNTIME_ENTITLEMENT_POLL_MS = 2_000;
 const RECONNECT_GRACE_EVIDENCE_NO_ACK_LOG_INTERVAL = 30;
 const RECONNECT_GRACE_EVIDENCE_JOURNAL_FAILURE_LOG_INTERVAL = 30;
 const DEFAULT_DESIRED_STATE_PATH = path.resolve(
@@ -326,6 +338,8 @@ export interface InstanceAgentClientOptions {
     runtimeVersion?: string;
     heartbeatMs?: number;
     desiredStatePath?: string;
+    runtimeEntitlementManifestPath?: string;
+    runtimeEntitlementPollMs?: number;
     connectTicketRuntimeGate?: Pick<
         ConnectTicketRuntimeGate,
         | 'getReconnectGraceEvidenceJournalBlockReason'
@@ -817,6 +831,18 @@ export function wireInstanceAgent(
         options.heartbeatMs ?? process.env.INSTANCE_AGENT_HEARTBEAT_MS,
         0
     );
+    const runtimeEntitlementManifestPath = resolveRuntimeEntitlementManifestPath(
+        options.runtimeEntitlementManifestPath ??
+            process.env.SCALEWORLD_RUNTIME_ENTITLEMENT_MANIFEST_PATH ??
+            process.env.INSTANCE_AGENT_RUNTIME_ENTITLEMENT_MANIFEST_PATH
+    );
+    const runtimeEntitlementPollMs = Math.max(
+        1_000,
+        parseNonNegativeInteger(
+            options.runtimeEntitlementPollMs ?? process.env.INSTANCE_AGENT_RUNTIME_ENTITLEMENT_POLL_MS,
+            DEFAULT_RUNTIME_ENTITLEMENT_POLL_MS
+        )
+    );
 
     let currentDesiredState = readInstanceAgentDesiredStateSnapshot(desiredStatePath, log);
     let activeCommand = readInstanceAgentCommandJournalSnapshot(commandJournalPath, log);
@@ -872,12 +898,23 @@ export function wireInstanceAgent(
     let bootstrapPromise: Promise<void> | null = null;
     let tickInFlight = false;
     let heartbeatTimer: NodeJS.Timeout | null = null;
+    let runtimeEntitlementPollTimer: NodeJS.Timeout | null = null;
     let configuredHeartbeatMs = explicitHeartbeatMs > 0 ? explicitHeartbeatMs : DEFAULT_HEARTBEAT_MS;
     let heartbeatMs = configuredHeartbeatMs;
     let fastPollingIntervalMs = DEFAULT_FAST_POLLING_INTERVAL_MS;
     let fastPollingUntil = 0;
     let fastPollingRestoreTimer: NodeJS.Timeout | null = null;
     let token: string | null = null;
+    let runtimeEntitlementProjection = createUnassignedRuntimeEntitlementProjection();
+    let runtimeEntitlementProjectionPersisted = false;
+    try {
+        writeRuntimeEntitlementProjection(runtimeEntitlementManifestPath, runtimeEntitlementProjection);
+        runtimeEntitlementProjectionPersisted = true;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        runtimeEntitlementProjection = createFailedRuntimeEntitlementProjection('projection_write_failed');
+        log(`[instance-agent] Runtime entitlement state could not be cleared at startup: ${message}`);
+    }
     let runtimeSnapshot: InstanceAgentRuntimeSnapshot = {};
     let reconnectGraceWindow: InstanceAgentReconnectGraceWindow | null = null;
     const initialReconnectGraceEvidenceJournalRead = inspectInstanceAgentReconnectGraceElapsedEvidenceJournal(
@@ -1658,21 +1695,97 @@ export function wireInstanceAgent(
 
     const authorizedFetch = async (
         relativePath: string,
-        method: 'POST',
-        body: unknown
+        method: 'GET' | 'POST',
+        body?: unknown
     ): Promise<Response> => {
         if (!token) {
             throw new Error('Instance agent token is not available.');
         }
 
-        return fetch(new URL(relativePath, apiBaseUrl).toString(), {
+        const response = await fetch(new URL(relativePath, apiBaseUrl).toString(), {
             method,
             headers: {
                 'Content-Type': 'application/json',
                 Authorization: `Bearer ${token}`
             },
-            body: JSON.stringify(body)
+            body: body === undefined ? undefined : JSON.stringify(body)
         });
+        if (response.status === 401) {
+            token = null;
+        }
+        return response;
+    };
+
+    const applyRuntimeEntitlementProjection = (nextProjection: RuntimeEntitlementProjectionFile): boolean => {
+        const changed = !hasSameRuntimeEntitlementProjection(runtimeEntitlementProjection, nextProjection);
+        if (!changed && runtimeEntitlementProjectionPersisted) {
+            return false;
+        }
+
+        try {
+            writeRuntimeEntitlementProjection(runtimeEntitlementManifestPath, nextProjection);
+            runtimeEntitlementProjection = nextProjection;
+            runtimeEntitlementProjectionPersisted = true;
+            log(
+                `[instance-agent] Runtime entitlement projection is ${nextProjection.state}${
+                    nextProjection.manifest
+                        ? ` for request ${nextProjection.manifest.sessionRequestId} (manifest=${nextProjection.manifest.manifestId}).`
+                        : '.'
+                }`
+            );
+            return changed;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            runtimeEntitlementProjection =
+                createFailedRuntimeEntitlementProjection('projection_write_failed');
+            runtimeEntitlementProjectionPersisted = false;
+            log(`[instance-agent] Runtime entitlement projection write failed: ${message}`);
+            return true;
+        }
+    };
+
+    let runtimeEntitlementRefreshPromise: Promise<boolean> | null = null;
+    const refreshRuntimeEntitlementProjection = async (): Promise<boolean> => {
+        if (runtimeEntitlementRefreshPromise) {
+            return runtimeEntitlementRefreshPromise;
+        }
+        runtimeEntitlementRefreshPromise = (async () => {
+            if (!token) return false;
+            const identity = await resolveBootstrapIdentity();
+            let failureCode = 'projection_fetch_failed';
+            try {
+                const query = new URLSearchParams({
+                    instanceId: identity.instanceId,
+                    region: identity.region
+                });
+                const response = await authorizedFetch(
+                    `/agent/entitlement-manifest?${query.toString()}`,
+                    'GET'
+                );
+                if (response.status === 204) {
+                    return applyRuntimeEntitlementProjection(createUnassignedRuntimeEntitlementProjection());
+                }
+                if (!response.ok) {
+                    failureCode = `projection_api_http_${response.status}`;
+                    throw new Error(await describeErrorResponse(response, 'Runtime entitlement manifest'));
+                }
+
+                failureCode = 'projection_manifest_invalid';
+                const manifest = await parseJsonResponse<RuntimeEntitlementManifestApiResponse>(response);
+                return applyRuntimeEntitlementProjection(
+                    createProjectedRuntimeEntitlementProjection(manifest)
+                );
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                log(`[instance-agent] Runtime entitlement projection refresh failed: ${message}`);
+                return applyRuntimeEntitlementProjection(
+                    createFailedRuntimeEntitlementProjection(failureCode)
+                );
+            }
+        })().finally(() => {
+            runtimeEntitlementRefreshPromise = null;
+        });
+        return runtimeEntitlementRefreshPromise;
     };
 
     const postCommandTransition = async <TRequest>(
@@ -2135,6 +2248,9 @@ export function wireInstanceAgent(
                     reconnectGraceExpiresAtUtc:
                         reportedReconnectGraceWindow?.reconnectGraceExpiresAtUtc ?? null,
                     reconnectGraceElapsedEvidence: submittedReconnectGraceElapsedEvidence,
+                    runtimeEntitlementProjection: runtimeEntitlementProjectionReport(
+                        runtimeEntitlementProjection
+                    ),
                     runtimeReady:
                         runtimeSnapshot.status === 'ready' && !reconnectGraceRecoveryRecycleRequired,
                     streamerHealthy:
@@ -2193,6 +2309,7 @@ export function wireInstanceAgent(
             lastViewerDisconnectedAtUtc: reportedReconnectGraceWindow?.lastViewerDisconnectedAtUtc ?? null,
             reconnectGraceExpiresAtUtc: reportedReconnectGraceWindow?.reconnectGraceExpiresAtUtc ?? null,
             reconnectGraceElapsedEvidence: submittedReconnectGraceElapsedEvidence,
+            runtimeEntitlementProjection: runtimeEntitlementProjectionReport(runtimeEntitlementProjection),
             runtimeReady: runtimeSnapshot.status === 'ready' && !reconnectGraceRecoveryRecycleRequired,
             streamerHealthy: runtimeSnapshot.status === 'ready' && !reconnectGraceRecoveryRecycleRequired,
             sentAtUtc
@@ -2362,6 +2479,7 @@ export function wireInstanceAgent(
                 return;
             }
             await ensureBootstrap();
+            await refreshRuntimeEntitlementProjection();
             ensureCompletedRecycleMarkerEventQueued();
             await artifactManager?.drainQueue();
             await screenshotArtifactManager?.drainQueue();
@@ -2508,6 +2626,18 @@ export function wireInstanceAgent(
     });
 
     scheduleHeartbeat(heartbeatMs);
+    runtimeEntitlementPollTimer = setInterval(() => {
+        if (!token) {
+            void runTick();
+            return;
+        }
+        void refreshRuntimeEntitlementProjection().then((changed) => {
+            if (changed) {
+                requestFastPolling('runtime_entitlement_projection_changed');
+            }
+        });
+    }, runtimeEntitlementPollMs);
+    runtimeEntitlementPollTimer.unref?.();
     if (reconnectGraceElapsedEvidences.length > 0) {
         requestFastPolling('recovered_reconnect_grace_elapsed_evidence');
     } else {

@@ -31,6 +31,12 @@ const {
     readInstanceAgentReconnectGraceElapsedEvidenceJournal
 } = require('../dist/instance-agent-reconnect-grace-evidence-state.js');
 const { createSessionLogArtifactManager } = require('../dist/session-log-artifacts.js');
+const {
+    createProjectedRuntimeEntitlementProjection,
+    createUnassignedRuntimeEntitlementProjection,
+    runtimeEntitlementProjectionReport,
+    writeRuntimeEntitlementProjection
+} = require('../dist/runtime-entitlement-projection.js');
 
 function signConnectTicket(payload, signingKey) {
     const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
@@ -668,6 +674,10 @@ test('tokenful reset completion retries marker durability and survives acceptanc
             );
         }
 
+        if (requestPath === '/agent/entitlement-manifest') {
+            return new Response(null, { status: 204 });
+        }
+
         if (requestPath === '/agent/events/batch') {
             const body = JSON.parse(init.body);
             const resetCompletion = body.events.find((event) => event.eventType === 'reset_completed');
@@ -721,6 +731,10 @@ test('tokenful reset completion retries marker durability and survives acceptanc
                 region: 'eu-north-1',
                 heartbeatMs: 3_600_000,
                 desiredStatePath,
+                runtimeEntitlementManifestPath: path.join(
+                    stateDirectory,
+                    'runtime-entitlement-manifest.json'
+                ),
                 connectTicketRuntimeGate: {
                     getReconnectGraceEvidenceJournalBlockReason: () => null,
                     setReconnectGraceEvidenceJournalBlock() {},
@@ -771,6 +785,7 @@ test('tokenful reset completion retries marker durability and survives acceptanc
 
         assert.deepEqual(requestPaths, [
             '/agent/bootstrap',
+            '/agent/entitlement-manifest',
             '/agent/events/batch',
             '/agent/heartbeat',
             '/agent/events/batch'
@@ -1237,4 +1252,63 @@ test('legacy queue records without captured fingerprints never trigger broad log
 
     assert.equal(fs.readFileSync(capturedLog, 'utf8'), 'legacy captured content');
     assert.equal(fs.readFileSync(unrelatedLog, 'utf8'), 'must survive');
+});
+
+test('runtime entitlement projection atomically replaces stale assigned state with deny-by-default state', (context) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-entitlement-projection-'));
+    context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const manifestPath = path.join(root, 'runtime-entitlement-manifest.json');
+    const projected = createProjectedRuntimeEntitlementProjection(
+        {
+            sessionRequestId: '11111111-1111-4111-8111-111111111111',
+            manifestId: '22222222-2222-4222-8222-222222222222',
+            manifestHash: 'a'.repeat(64),
+            schemaVersion: 2,
+            audience: 'external',
+            groups: ['testcustomer'],
+            entitlements: ['session.premium.request', 'feature.maps.secure'],
+            requestedServiceClass: 'premium',
+            grantedServiceClass: 'premium',
+            minimumComputeCapability: 'premium',
+            placementPolicy: 'premium-only',
+            decidedAtUtc: '2026-09-01T20:00:00Z',
+            policyVersion: 'access-v2'
+        },
+        '2026-09-01T20:00:01Z'
+    );
+    writeRuntimeEntitlementProjection(manifestPath, projected);
+    assert.equal(runtimeEntitlementProjectionReport(projected).status, 'projected');
+
+    const unassigned = createUnassignedRuntimeEntitlementProjection('2026-09-01T20:00:02Z');
+    writeRuntimeEntitlementProjection(manifestPath, unassigned);
+
+    const persisted = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    assert.equal(persisted.state, 'unassigned');
+    assert.equal(persisted.manifest, null);
+    assert.deepEqual(
+        fs.readdirSync(root).filter((fileName) => fileName.endsWith('.tmp')),
+        []
+    );
+});
+
+test('runtime entitlement projection rejects malformed API identity and hashes', () => {
+    assert.throws(
+        () =>
+            createProjectedRuntimeEntitlementProjection({
+                sessionRequestId: 'not-a-request-id',
+                manifestId: '22222222-2222-4222-8222-222222222222',
+                manifestHash: 'not-a-hash',
+                schemaVersion: 2,
+                audience: 'external',
+                groups: [],
+                entitlements: [],
+                requestedServiceClass: 'standard',
+                grantedServiceClass: 'standard',
+                minimumComputeCapability: 'standard',
+                placementPolicy: 'standard-only',
+                decidedAtUtc: '2026-09-01T20:00:00Z',
+                policyVersion: 'access-v2'
+            }),
+        /SHA-256|UUID/u
+    );
 });

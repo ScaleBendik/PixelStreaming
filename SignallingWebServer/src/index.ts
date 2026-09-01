@@ -475,6 +475,16 @@ program
         config_file.instance_agent_desired_state_path || ''
     )
     .option(
+        '--instance_agent_runtime_entitlement_manifest_path <path>',
+        'Stable local JSON path atomically projected from the assigned session entitlement manifest.',
+        config_file.instance_agent_runtime_entitlement_manifest_path || ''
+    )
+    .option(
+        '--instance_agent_runtime_entitlement_poll_ms <number>',
+        'Polling interval for assigned-session entitlement projection.',
+        config_file.instance_agent_runtime_entitlement_poll_ms || ''
+    )
+    .option(
         '--instance_agent_artifact_upload_enabled <value>',
         'Enables upload and agent registration of session diagnostic log artifacts. true/false',
         config_file.instance_agent_artifact_upload_enabled || ''
@@ -808,6 +818,8 @@ const instanceAgentClient = wireInstanceAgent(signallingServer, {
     ),
     heartbeatMs: options.instance_agent_heartbeat_ms,
     desiredStatePath: instanceAgentDesiredStatePath,
+    runtimeEntitlementManifestPath: options.instance_agent_runtime_entitlement_manifest_path || undefined,
+    runtimeEntitlementPollMs: options.instance_agent_runtime_entitlement_poll_ms,
     connectTicketRuntimeGate,
     sessionLogArtifacts: {
         enabled: options.instance_agent_artifact_upload_enabled || undefined,

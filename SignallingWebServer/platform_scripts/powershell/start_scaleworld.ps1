@@ -19,6 +19,7 @@ param(
     [int]$ResY = $(if ($env:SCALEWORLD_RES_Y) { [int]$env:SCALEWORLD_RES_Y } else { 1260 }),
     [int]$Fps = $(if ($env:SCALEWORLD_PIXEL_STREAMING_FPS) { [int]$env:SCALEWORLD_PIXEL_STREAMING_FPS } else { 30 }),
     [int]$MaxBitrateKbps = $(if ($env:SCALEWORLD_PIXEL_STREAMING_MAX_BITRATE_KBPS) { [int]$env:SCALEWORLD_PIXEL_STREAMING_MAX_BITRATE_KBPS } else { 30000 }),
+    [string]$RuntimeEntitlementManifestPath = $(if ($env:SCALEWORLD_RUNTIME_ENTITLEMENT_MANIFEST_PATH) { $env:SCALEWORLD_RUNTIME_ENTITLEMENT_MANIFEST_PATH } else { 'C:\ProgramData\ScaleWorld\runtime-entitlement-manifest.json' }),
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$AdditionalArgs
 )
@@ -65,6 +66,7 @@ $maxBitrateBps = $MaxBitrateKbps * 1000
 
 $arguments = @(
     "-PixelStreamingEncoderCodec=$EncoderCodec",
+    "-ScaleWorldEntitlementManifest=`"$RuntimeEntitlementManifestPath`"",
     '-AllowPixelStreamingCommands',
     '-PixelStreamingEncoderTargetBitrate=-1',
     '-PixelStreaming2.Encoder.LatencyMode=LOW_LATENCY',
