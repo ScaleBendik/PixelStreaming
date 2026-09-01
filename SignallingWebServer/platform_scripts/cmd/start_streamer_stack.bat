@@ -10,6 +10,7 @@ set "DATA_DRIVE_SCRIPT=%SCRIPT_DIR%..\powershell\ensure_data_drive.ps1"
 set "UPDATE_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_update_mode.ps1"
 set "PROVISIONING_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_provisioning_mode.ps1"
 set "RESOLVE_MAINTENANCE_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\resolve_maintenance_mode_from_instance_tag.ps1"
+set "RESOLVE_SERVICE_CLASS_SCRIPT=%SCRIPT_DIR%..\powershell\resolve_service_class_from_instance_tag.ps1"
 set "ACTIVE_RUNTIME_IDENTITY_PUBLISHER=%SCRIPT_DIR%..\powershell\publish_active_runtime_identity_tags.ps1"
 set "STOP_SUPERSEDED_ROOT_SCRIPT=%SCRIPT_DIR%..\powershell\stop_superseded_root_processes.ps1"
 set "NORMALIZE_DELIVERY_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\normalize_pixelstreaming_delivery_mode.ps1"
@@ -25,6 +26,7 @@ if not defined DELIVERY_MODE_TAG_RETRY_DELAY_SECONDS set "DELIVERY_MODE_TAG_RETR
 if not defined MAINTENANCE_MODE_TAG_RETRY_COUNT set "MAINTENANCE_MODE_TAG_RETRY_COUNT=%STREAMING_LANE_TAG_RETRY_COUNT%"
 if not defined MAINTENANCE_MODE_TAG_RETRY_DELAY_SECONDS set "MAINTENANCE_MODE_TAG_RETRY_DELAY_SECONDS=%STREAMING_LANE_TAG_RETRY_DELAY_SECONDS%"
 if not defined SCALEWORLD_UNREAL_PROVISIONING_STARTUP_ARG set "SCALEWORLD_UNREAL_PROVISIONING_STARTUP_ARG=-RunProvisioningPSOWarmup"
+if not defined SCALEWORLD_UNREAL_PREMIUM_STARTUP_ARGS set "SCALEWORLD_UNREAL_PREMIUM_STARTUP_ARGS=-ExecCmds="sg.ViewDistanceQuality 4,sg.AntiAliasingQuality 4,sg.ShadowQuality 4,sg.GlobalIlluminationQuality 4,sg.ReflectionQuality 4,sg.PostProcessQuality 4,sg.TextureQuality 4,sg.EffectsQuality 4,sg.FoliageQuality 4,sg.ShadingQuality 4""
 call :resolve_streaming_lane_from_instance_tag
 if errorlevel 1 exit /b 1
 if defined RESOLVED_STREAMING_LANE set "SCALEWORLD_STREAMING_LANE=%RESOLVED_STREAMING_LANE%"
@@ -204,6 +206,7 @@ if not defined WATCHDOG_RESTART_COMMAND set "WATCHDOG_RESTART_COMMAND=""%SCRIPT_
 
 call :apply_unreal_provisioning_startup_args
 if errorlevel 1 exit /b 1
+call :apply_unreal_service_class_startup_args
 
 echo PixelStreaming delivery mode "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%" for %SCALEWORLD_STREAMING_LANE%/%SCALEWORLD_DEPLOYMENT_TRACK% startup.
 
@@ -444,6 +447,34 @@ if /i "!RESOLVED_MAINTENANCE_MODE!"=="provisioning" (
   echo Provisioning maintenance detected. Unreal startup will include !SCALEWORLD_UNREAL_PROVISIONING_STARTUP_ARG!.
 )
 
+exit /b 0
+
+:apply_unreal_service_class_startup_args
+set "RESOLVED_SERVICE_CLASS=standard"
+if defined SCALEWORLD_UNREAL_STARTUP_ARGS (
+  set "SCALEWORLD_UNREAL_STARTUP_ARGS=!SCALEWORLD_UNREAL_STARTUP_ARGS:%SCALEWORLD_UNREAL_PREMIUM_STARTUP_ARGS%=!"
+)
+if exist "%RESOLVE_SERVICE_CLASS_SCRIPT%" (
+  set "RESOLVED_SERVICE_CLASS="
+  for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%RESOLVE_SERVICE_CLASS_SCRIPT%"`) do (
+    set "RESOLVED_SERVICE_CLASS=%%I"
+  )
+  if not defined RESOLVED_SERVICE_CLASS (
+    echo WARNING: ScaleWorldServiceClass could not be resolved. Using standard Unreal scalability settings.
+    set "RESOLVED_SERVICE_CLASS=standard"
+  )
+)
+
+if /i "!RESOLVED_SERVICE_CLASS!"=="premium" (
+  if defined SCALEWORLD_UNREAL_STARTUP_ARGS (
+    set "SCALEWORLD_UNREAL_STARTUP_ARGS=!SCALEWORLD_UNREAL_STARTUP_ARGS! !SCALEWORLD_UNREAL_PREMIUM_STARTUP_ARGS!"
+  ) else (
+    set "SCALEWORLD_UNREAL_STARTUP_ARGS=!SCALEWORLD_UNREAL_PREMIUM_STARTUP_ARGS!"
+  )
+  echo Premium service class detected. Unreal will start with premium scalability settings.
+) else (
+  echo Standard service class detected. Unreal scalability settings are unchanged.
+)
 exit /b 0
 
 :resolve_maintenance_mode_from_instance_tag

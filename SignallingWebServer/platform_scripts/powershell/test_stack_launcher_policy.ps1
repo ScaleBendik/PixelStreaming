@@ -116,6 +116,7 @@ $repoSyncPath = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
 $repoHeadPublisherPath = Join-Path $PSScriptRoot 'publish_repo_head_tags.ps1'
 $deliveryModeResolverPath = Join-Path $PSScriptRoot 'resolve_pixelstreaming_delivery_mode_from_instance_tag.ps1'
 $maintenanceModeResolverPath = Join-Path $PSScriptRoot 'resolve_maintenance_mode_from_instance_tag.ps1'
+$serviceClassResolverPath = Join-Path $PSScriptRoot 'resolve_service_class_from_instance_tag.ps1'
 $activeRuntimeIdentityPublisherPath = Join-Path $PSScriptRoot 'publish_active_runtime_identity_tags.ps1'
 $runtimeInstallerPath = Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.ps1'
 $updateModePath = Join-Path $PSScriptRoot 'invoke_update_mode.ps1'
@@ -146,6 +147,7 @@ $repoSync = [System.IO.File]::ReadAllText($repoSyncPath)
 $repoHeadPublisher = [System.IO.File]::ReadAllText($repoHeadPublisherPath)
 $deliveryModeResolver = [System.IO.File]::ReadAllText($deliveryModeResolverPath)
 $maintenanceModeResolver = [System.IO.File]::ReadAllText($maintenanceModeResolverPath)
+$serviceClassResolver = [System.IO.File]::ReadAllText($serviceClassResolverPath)
 $activeRuntimeIdentityPublisher = [System.IO.File]::ReadAllText($activeRuntimeIdentityPublisherPath)
 $runtimeInstaller = [System.IO.File]::ReadAllText($runtimeInstallerPath)
 $updateMode = [System.IO.File]::ReadAllText($updateModePath)
@@ -1030,6 +1032,21 @@ Assert-ContainsText `
     -Content $maintenanceModeResolver `
     -Expected 'ScaleWorldMaintenanceMode' `
     -Message 'Maintenance-mode resolution must read the EC2 maintenance tag that owns provisioning state.'
+
+Assert-ContainsText `
+    -Content $serviceClassResolver `
+    -Expected 'ScaleWorldServiceClass' `
+    -Message 'Service-class resolution must read the dedicated EC2 instance tag.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'call :apply_unreal_service_class_startup_args' `
+    -Message 'Stack startup must apply service-class-specific Unreal settings.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'SCALEWORLD_UNREAL_PREMIUM_STARTUP_ARGS' `
+    -Message 'Premium Unreal scalability arguments must remain configurable without changing the shared runtime artifact.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
