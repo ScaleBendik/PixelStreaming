@@ -1,6 +1,6 @@
 # PixelStreaming Documentation
 
-Last updated: 2026-06-11
+Last updated: 2026-09-03
 
 This directory mixes upstream Pixel Streaming reference documentation with ScaleWorld operational docs for the customized streamer runtime.
 
@@ -13,9 +13,10 @@ Use these first for the Server Manager integration:
 | Streamer AWS/TURN/runtime topology | `cloud-infrastructure.md` |
 | Instance-agent bootstrap trust and secret separation | `../../scaleworld-server-manager-web/docs/instance-agent-bootstrap-trust-runbook-2026-05-05.md` |
 | Prod streamer promotion process | `prod-promotions.md` |
-| Stage source-instance AMI bake cleanup | `../BuildScripts/prepare-for-ami-bake.ps1` |
+| AMI bake cleanup | `../BuildScripts/prepare-for-ami-bake.ps1` |
 | Unreal ZIP update artifact contract | `s3-build-archive-contract.md` |
 | PixelStreaming runtime artifact contract | `pixelstreaming-runtime-artifact-contract.md` |
+| SQL Access authority and entitlement source | `../../scaleworld-server-manager-api/docs/sql-access-authority.md` |
 | Release Train current state | `../../scaleworld-server-manager-web/docs/release-train-current-state-2026-05-22.md` |
 | Runtime watchdog and startup recovery | `watchdog-runbook.md` |
 | TURN server notes | `turnserverdoc.md` |
@@ -36,8 +37,12 @@ Use these first for the Server Manager integration:
 9. Bootstrapped instances publish `ScaleWorldPixelStreamingUpdateCapabilities=pixelstreaming_runtime,combined_runtime_unreal`; Server Manager uses that tag to gate runtime-artifact and combined update jobs.
 10. Repo-head startup tagging preserves runtime-artifact identity when `ScaleWorldPixelStreamingDeliveryMode=runtime_artifact` or runtime identity tags are already present without an explicit `git_ref`, so runtime-artifact server cards keep showing the active bundle id instead of reverting to a Git target ref.
 11. `start_dev_turn.bat` and Wilbur defaults now align with API session access defaults: 5-minute last-viewer/reconnect grace and 10-minute first-viewer grace. The long-term backlog tracks moving lifecycle policy authority fully to the API.
-12. Stage source instances intended for Prod AMI baking should run `BuildScripts\prepare-for-ami-bake.ps1` after the final runtime artifact update and before image capture. The `prepare-scaleworld-s4-for-ami-bake.bat` helper explicitly targets the current Stage bake source instance name.
-13. The long-term backlog still tracks splitting the instance agent into a separate service once current warm-pool behavior is stable.
+12. Source instances intended for reusable Windows AMI baking must run `BuildScripts\prepare-for-ami-bake.ps1 -SysprepAndShutdown` after the final runtime artifact update. The helper validates the source NVIDIA device/driver, performs application/runtime cleanup, invokes EC2Launch v2 Sysprep, and shuts the source down. Capture the AMI only after EC2 reaches `stopped`; do not restart the source between Sysprep and image capture. The `prepare-scaleworld-s4-for-ami-bake.bat` helper still performs cleanup only and must not be treated as the complete cross-GPU image-generalization path.
+13. Dev AMI preparation for the dedicated `ScaleWorld_d1` source can be initiated from an operator workstation with `BuildScripts\prepare-scaleworld-d1-for-ami-bake-via-ssm.bat`, which wraps the adjacent PowerShell SSM runner. It requires the exact instance name, `ScaleWorldDeploymentTrack=dev`, an online SSM agent, and the explicit `SYSPREP` confirmation. The runner removes session-specific entitlement state, repairs the known per-user Microsoft Edge AppX provisioning drift that produces Sysprep error `0x80073cf2`, verifies `nvidia-smi` and EC2Launch v2, and rebinds the `start_streamer_stack` task to `SYSTEM`/`ServiceAccount` so its boot trigger survives the generalized machine identity. It then invokes Sysprep with shutdown and waits until AWS reports the source instance as `stopped` before reporting success.
+14. Managed sessions receive an immutable v2 runtime entitlement manifest through the instance-agent response. Wilbur validates the projection, writes it atomically to the configured local file, reports the applied manifest identity, blocks mismatched managed connect generations, and clears session-specific projection state during teardown and AMI preparation. The Unreal Blueprint consumer has passed local `product.exposed` manifest testing; hosted packaged-runtime projection and clear acceptance remain open.
+15. `ScaleWorldServiceClass=standard|premium` controls the Unreal startup scalability policy, while `ScaleWorldTemplateTier=standard|premium` identifies allocation eligibility to Server Manager. Missing or invalid service-class resolution fails safely to Standard settings. Premium capability and allocation must not be inferred from the AMI because the reusable image is tier-agnostic.
+16. The durable recycle path uses a one-shot recycle token plus replacement-generation proof; recovered command/desired-state journals stay quarantined until the API accepts the exact current generation. Do not weaken these fences to repair readiness symptoms.
+17. The long-term backlog still tracks splitting the instance agent into a separate service once current warm-pool behavior is stable.
 
 ## Upstream Pixel Streaming Docs
 

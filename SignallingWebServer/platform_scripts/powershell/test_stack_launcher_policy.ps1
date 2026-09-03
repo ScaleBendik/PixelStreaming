@@ -129,6 +129,8 @@ $prepareForBakePath = Join-Path $buildScriptsRoot 'prepare-for-ami-bake.ps1'
 $prepareScaleWorldS4ForBakePath = Join-Path $buildScriptsRoot 'prepare-scaleworld-s4-for-ami-bake.bat'
 $prepareScaleWorldS4ForBakeViaSsmPath = Join-Path $buildScriptsRoot 'prepare-scaleworld-s4-for-ami-bake-via-ssm.bat'
 $prepareScaleWorldS4ForBakeViaSsmScriptPath = Join-Path $buildScriptsRoot 'prepare-scaleworld-s4-for-ami-bake-via-ssm.ps1'
+$prepareScaleWorldD1ForBakeViaSsmPath = Join-Path $buildScriptsRoot 'prepare-scaleworld-d1-for-ami-bake-via-ssm.bat'
+$prepareScaleWorldD1ForBakeViaSsmScriptPath = Join-Path $buildScriptsRoot 'prepare-scaleworld-d1-for-ami-bake-via-ssm.ps1'
 
 $stackLauncher = [System.IO.File]::ReadAllText($stackLauncherPath)
 $stackRecycleLauncher = [System.IO.File]::ReadAllText($stackRecycleLauncherPath)
@@ -160,6 +162,8 @@ $prepareForBake = [System.IO.File]::ReadAllText($prepareForBakePath)
 $prepareScaleWorldS4ForBake = [System.IO.File]::ReadAllText($prepareScaleWorldS4ForBakePath)
 $prepareScaleWorldS4ForBakeViaSsm = [System.IO.File]::ReadAllText($prepareScaleWorldS4ForBakeViaSsmPath)
 $prepareScaleWorldS4ForBakeViaSsmScript = [System.IO.File]::ReadAllText($prepareScaleWorldS4ForBakeViaSsmScriptPath)
+$prepareScaleWorldD1ForBakeViaSsm = [System.IO.File]::ReadAllText($prepareScaleWorldD1ForBakeViaSsmPath)
+$prepareScaleWorldD1ForBakeViaSsmScript = [System.IO.File]::ReadAllText($prepareScaleWorldD1ForBakeViaSsmScriptPath)
 
 Assert-DoesNotContainText `
     -Content $stackLauncher `
@@ -645,6 +649,26 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $prepareForBake `
+    -Expected 'runtime-entitlement-manifest.json' `
+    -Message 'AMI bake preparation must clear the session-specific runtime entitlement projection before image capture.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected 'Repair-SysprepBlockingEdgeAppx' `
+    -Message 'AMI bake preparation must repair the known per-user Edge AppX state that prevents Windows generalization.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected 'Set-StreamerStartupTaskPrincipalForImage' `
+    -Message 'AMI bake preparation must rebind the streamer startup task to a machine-independent service principal before Sysprep.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
+    -Expected "-UserId 'SYSTEM'" `
+    -Message 'AMI bake preparation must run the post-Sysprep streamer startup task as SYSTEM.'
+
+Assert-ContainsText `
+    -Content $prepareForBake `
     -Expected 'Reset-InstanceAgentDesiredStateForBake' `
     -Message 'AMI bake preparation must reset desired state so stale source-instance commands are not baked.'
 
@@ -727,6 +751,76 @@ Assert-ContainsText `
     -Content $prepareScaleWorldS4ForBakeViaSsmScript `
     -Expected 'Type PREPARE to continue' `
     -Message 'ScaleWorld_s4 SSM bake runner must require an explicit local confirmation before remote cleanup.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldD1ForBakeViaSsm `
+    -Expected 'prepare-scaleworld-d1-for-ami-bake-via-ssm.ps1' `
+    -Message 'ScaleWorld_d1 workstation shortcut must delegate to the dedicated PowerShell SSM runner.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldD1ForBakeViaSsmScript `
+    -Expected "`$instanceName = 'ScaleWorld_d1'" `
+    -Message 'ScaleWorld_d1 SSM bake runner must be hard-bound to the dedicated Dev bake source.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldD1ForBakeViaSsmScript `
+    -Expected "`$expectedDeploymentTrack = 'dev'" `
+    -Message 'ScaleWorld_d1 SSM bake runner must reject a non-Dev deployment track.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldD1ForBakeViaSsmScript `
+    -Expected 'prepare-for-ami-bake.ps1' `
+    -Message 'ScaleWorld_d1 SSM bake runner must delegate to the generic on-instance bake preparation script.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldD1ForBakeViaSsmScript `
+    -Expected '-ExpectedInstanceName $expectedInstanceName' `
+    -Message 'ScaleWorld_d1 SSM bake runner must preserve the remote instance-name guard.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldD1ForBakeViaSsmScript `
+    -Expected 'runtime-entitlement-manifest.json' `
+    -Message 'ScaleWorld_d1 SSM bake runner must scrub session-specific entitlement state even when the installed generic prep predates that cleanup.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldD1ForBakeViaSsmScript `
+    -Expected 'AWS-RunPowerShellScript' `
+    -Message 'ScaleWorld_d1 bake runner must execute remotely through AWS Systems Manager.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldD1ForBakeViaSsmScript `
+    -Expected 'Type SYSPREP to continue' `
+    -Message 'ScaleWorld_d1 SSM bake runner must require explicit confirmation before cleanup and Sysprep shutdown.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldD1ForBakeViaSsmScript `
+    -Expected 'SYSPREP_LAUNCHING' `
+    -Message 'ScaleWorld_d1 SSM bake runner must explicitly mark the point at which EC2Launch generalization begins.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldD1ForBakeViaSsmScript `
+    -Expected "sysprep ''--shutdown=true''" `
+    -Message 'ScaleWorld_d1 SSM bake runner must use EC2Launch v2 Sysprep with shutdown.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldD1ForBakeViaSsmScript `
+    -Expected 'Wait-RemoteSysprepShutdown' `
+    -Message 'ScaleWorld_d1 workstation runner must wait for the source instance to stop after Sysprep.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldD1ForBakeViaSsmScript `
+    -Expected 'nvidia-smi.exe' `
+    -Message 'ScaleWorld_d1 SSM bake runner must validate the source GPU driver before generalization.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldD1ForBakeViaSsmScript `
+    -Expected 'Microsoft.MicrosoftEdge.Stable' `
+    -Message 'ScaleWorld_d1 SSM bake runner must repair the known Edge AppX provisioning drift before Sysprep.'
+
+Assert-ContainsText `
+    -Content $prepareScaleWorldD1ForBakeViaSsmScript `
+    -Expected "New-ScheduledTaskPrincipal -UserId ''SYSTEM'' -LogonType ServiceAccount" `
+    -Message 'ScaleWorld_d1 SSM bake runner must make the streamer startup task survive Windows generalization.'
 
 Assert-ContainsText `
     -Content $stackLauncher `

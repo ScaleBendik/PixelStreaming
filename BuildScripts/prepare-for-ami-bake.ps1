@@ -13,7 +13,8 @@ param(
     [switch]$SkipDesiredStateReset,
     [switch]$SkipRuntimeCacheCleanup,
     [switch]$SkipArtifactQueueCleanup,
-    [switch]$SkipVerification
+    [switch]$SkipVerification,
+    [switch]$SysprepAndShutdown
 )
 
 Set-StrictMode -Version Latest
@@ -453,6 +454,192 @@ function Clear-TransientBakeState {
     foreach ($file in $transientFiles) {
         Remove-FileIfPresent -Path $file
     }
+
+    $runtimeEntitlementManifestPath = if ($env:SCALEWORLD_RUNTIME_ENTITLEMENT_MANIFEST_PATH) {
+        $env:SCALEWORLD_RUNTIME_ENTITLEMENT_MANIFEST_PATH
+    } else {
+        'C:\ProgramData\ScaleWorld\runtime-entitlement-manifest.json'
+    }
+    Remove-FileIfPresent -Path $runtimeEntitlementManifestPath
+
+    $runtimeEntitlementDirectory = Split-Path -Parent $runtimeEntitlementManifestPath
+    $runtimeEntitlementFileName = Split-Path -Leaf $runtimeEntitlementManifestPath
+    if (Test-Path -LiteralPath $runtimeEntitlementDirectory -PathType Container) {
+        $temporaryProjectionFiles = @(
+            Get-ChildItem -LiteralPath $runtimeEntitlementDirectory -File -Force -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -like ".$runtimeEntitlementFileName.*.tmp" }
+        )
+
+        foreach ($temporaryProjectionFile in $temporaryProjectionFiles) {
+            Remove-FileIfPresent -Path $temporaryProjectionFile.FullName
+        }
+    }
+}
+
+function Get-Ec2LaunchV2Path {
+    $path = 'C:\Program Files\Amazon\EC2Launch\EC2Launch.exe'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "EC2Launch v2 was not found at '$path'. Refusing to prepare a non-generalized AMI."
+    }
+
+    return $path
+}
+
+function Test-SourceGpuAndDriver {
+    $nvidiaDevices = @(
+        Get-PnpDevice -Class Display -PresentOnly -ErrorAction Stop |
+            Where-Object {
+                ([string]$_.InstanceId).StartsWith('PCI\VEN_10DE', [System.StringComparison]::OrdinalIgnoreCase) -and
+                [string]::Equals([string]$_.Status, 'OK', [System.StringComparison]::OrdinalIgnoreCase)
+            }
+    )
+
+    if ($nvidiaDevices.Count -eq 0) {
+        throw 'No healthy present NVIDIA display device was found. Refusing to bake a GPU image.'
+    }
+
+    $nvidiaSmi = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
+    if (-not $nvidiaSmi) {
+        throw "NVIDIA driver verification failed because 'nvidia-smi.exe' was not found."
+    }
+
+    $nvidiaSmiOutput = & $nvidiaSmi.Source '--query-gpu=name,driver_version' '--format=csv,noheader'
+    if ($LASTEXITCODE -ne 0) {
+        throw "nvidia-smi failed with exit code $LASTEXITCODE. Refusing to bake a GPU image."
+    }
+
+    $summary = (($nvidiaSmiOutput | Out-String).Trim())
+    if ([string]::IsNullOrWhiteSpace($summary)) {
+        throw 'nvidia-smi returned no GPU identity. Refusing to bake a GPU image.'
+    }
+
+    Write-BakePrepLog "Verified source GPU and NVIDIA driver: $summary"
+}
+
+function Test-Ec2LaunchV2 {
+    $ec2Launch = Get-Ec2LaunchV2Path
+    $versionOutput = & $ec2Launch version
+    if ($LASTEXITCODE -ne 0) {
+        throw "EC2Launch v2 version check failed with exit code $LASTEXITCODE."
+    }
+
+    $version = (($versionOutput | Out-String).Trim())
+    if ([string]::IsNullOrWhiteSpace($version)) {
+        throw 'EC2Launch v2 did not report a version.'
+    }
+
+    Write-BakePrepLog "Verified EC2Launch v2 version $version at '$ec2Launch'."
+    return $ec2Launch
+}
+
+function Set-StreamerStartupTaskPrincipalForImage {
+    $taskName = 'start_streamer_stack'
+    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
+    $actionPath = @($task.Actions | ForEach-Object { [string]$_.Execute }) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Select-Object -First 1
+
+    if ([string]::IsNullOrWhiteSpace($actionPath) -or -not (Test-Path -LiteralPath $actionPath -PathType Leaf)) {
+        throw "Scheduled task '$taskName' does not point at an existing startup action. Refusing to bake an image that cannot start PixelStreaming."
+    }
+
+    $principal = New-ScheduledTaskPrincipal `
+        -UserId 'SYSTEM' `
+        -LogonType ServiceAccount `
+        -RunLevel Highest
+
+    if ($PSCmdlet.ShouldProcess($taskName, 'bind the streamer startup task to the SYSTEM service account for post-Sysprep boot')) {
+        Set-ScheduledTask `
+            -TaskName $taskName `
+            -TaskPath $task.TaskPath `
+            -Principal $principal `
+            -ErrorAction Stop | Out-Null
+    }
+
+    $updatedTask = Get-ScheduledTask -TaskName $taskName -TaskPath $task.TaskPath -ErrorAction Stop
+    if (-not [string]::Equals([string]$updatedTask.Principal.UserId, 'SYSTEM', [System.StringComparison]::OrdinalIgnoreCase) -or
+        -not [string]::Equals([string]$updatedTask.Principal.LogonType, 'ServiceAccount', [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Scheduled task '$taskName' was not rebound to SYSTEM/ServiceAccount. Refusing to bake an image with a machine-specific interactive principal."
+    }
+
+    Write-BakePrepLog "Verified startup task '$taskName' runs as SYSTEM/ServiceAccount after Windows generalization."
+}
+
+function Repair-SysprepBlockingEdgeAppx {
+    Import-Module Appx -ErrorAction Stop
+    Import-Module Dism -ErrorAction Stop
+
+    $packageName = 'Microsoft.MicrosoftEdge.Stable'
+    $installedPackages = @(
+        Get-AppxPackage -AllUsers -Name $packageName -ErrorAction SilentlyContinue
+    )
+    $provisionedPackages = @(
+        Get-AppxProvisionedPackage -Online -ErrorAction Stop |
+            Where-Object {
+                $_.DisplayName -eq $packageName -or
+                $_.PackageName -like "$packageName`_*"
+            }
+    )
+
+    $inconsistentPackages = @(
+        $installedPackages |
+            Where-Object {
+                $installedFullName = $_.PackageFullName
+                -not ($provisionedPackages | Where-Object { $_.PackageName -eq $installedFullName })
+            }
+    )
+
+    foreach ($package in $inconsistentPackages) {
+        $fullName = [string]$package.PackageFullName
+        Write-BakePrepLog "Removing Sysprep-blocking per-user Edge AppX registration '$fullName'." 'WARN'
+        if ($PSCmdlet.ShouldProcess($fullName, 'remove inconsistent Edge AppX registration from all users')) {
+            Remove-AppxPackage -Package $fullName -AllUsers -ErrorAction Stop
+        }
+    }
+
+    foreach ($package in $provisionedPackages) {
+        $fullName = [string]$package.PackageName
+        if ($inconsistentPackages.Count -gt 0) {
+            Write-BakePrepLog "Removing mismatched provisioned Edge AppX package '$fullName'." 'WARN'
+            if ($PSCmdlet.ShouldProcess($fullName, 'remove mismatched provisioned Edge AppX package')) {
+                Remove-AppxProvisionedPackage -Online -PackageName $fullName -ErrorAction Stop | Out-Null
+            }
+        }
+    }
+
+    $remainingFullNames = @(
+        Get-AppxPackage -AllUsers -Name $packageName -ErrorAction SilentlyContinue |
+            ForEach-Object { [string]$_.PackageFullName }
+    )
+    foreach ($package in $inconsistentPackages) {
+        if ($remainingFullNames -contains [string]$package.PackageFullName) {
+            throw "Failed to remove Sysprep-blocking AppX package '$($package.PackageFullName)'."
+        }
+    }
+
+    if ($inconsistentPackages.Count -eq 0) {
+        Write-BakePrepLog 'No inconsistent per-user Microsoft Edge AppX registration was detected.'
+    }
+}
+
+function Invoke-Ec2LaunchV2SysprepAndShutdown {
+    param([string]$Ec2LaunchPath)
+
+    $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw 'EC2Launch Sysprep must run from an elevated Administrator or SYSTEM PowerShell process.'
+    }
+
+    Write-BakePrepLog 'Invoking EC2Launch v2 Sysprep. The instance will disconnect from SSM and shut down when generalization completes.'
+    if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME, 'run EC2Launch v2 Sysprep and shut down the source instance')) {
+        & $Ec2LaunchPath sysprep '--shutdown=true'
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -ne 0) {
+            throw "EC2Launch v2 Sysprep failed with exit code $exitCode."
+        }
+
+        Write-BakePrepLog 'EC2Launch v2 Sysprep command returned successfully; shutdown is expected imminently.'
+    }
 }
 
 function Clear-BakeCaches {
@@ -660,6 +847,16 @@ if (-not $SkipVerification) {
         Test-BootstrapProvisioningScript -RepoPath $bootstrapRoot
         Test-BakePrepScripts -RepoPath $bootstrapRoot
     }
+
+    Test-SourceGpuAndDriver
+}
+
+$ec2LaunchPath = if ($SysprepAndShutdown) {
+    Set-StreamerStartupTaskPrincipalForImage
+    Repair-SysprepBlockingEdgeAppx
+    Test-Ec2LaunchV2
+} else {
+    $null
 }
 
 if (-not $SkipProcessStop) {
@@ -676,4 +873,10 @@ if (-not $SkipDesiredStateReset) {
 
 Clear-BakeCaches -InstallRoot $installRoot
 Write-FinalSummary -InstallRoot $installRoot -BootstrapRoot $bootstrapRoot -RuntimeRoot $runtimeRoot
-Write-BakePrepLog 'AMI bake preparation completed.'
+Write-BakePrepLog 'AMI application/runtime cleanup completed.'
+
+if ($SysprepAndShutdown) {
+    Invoke-Ec2LaunchV2SysprepAndShutdown -Ec2LaunchPath $ec2LaunchPath
+} else {
+    Write-BakePrepLog 'EC2Launch Sysprep was not requested. Do not capture a reusable cross-GPU AMI from this state.' 'WARN'
+}
