@@ -139,3 +139,36 @@ describe('VideoPlayer.updateVideoStreamSize — ViewportResScale', () => {
         expect(callback).not.toHaveBeenCalled();
     });
 });
+
+describe('VideoPlayer disposal', () => {
+    it('detaches window listeners and cancels deferred resize work', () => {
+        mockRTCRtpReceiver();
+        jest.useFakeTimers();
+        const parent = document.createElement('div');
+        document.body.appendChild(parent);
+        const config = new Config({ initialSettings: { [Flags.MatchViewportResolution]: true } });
+        const player = new VideoPlayer(parent, config);
+        const resize = jest.spyOn(player, 'resizePlayerStyle');
+        const updateSize = jest.spyOn(player, 'updateVideoStreamSize');
+        try {
+            window.dispatchEvent(new Event('orientationchange'));
+            player.updateVideoStreamSize();
+            player.destroy();
+            resize.mockClear();
+            updateSize.mockClear();
+
+            window.dispatchEvent(new Event('resize'));
+            window.dispatchEvent(new Event('orientationchange'));
+            jest.runAllTimers();
+
+            expect(resize).not.toHaveBeenCalled();
+            expect(updateSize).not.toHaveBeenCalled();
+        } finally {
+            player.destroy();
+            parent.remove();
+            unmockRTCRtpReceiver();
+            jest.useRealTimers();
+            jest.restoreAllMocks();
+        }
+    });
+});

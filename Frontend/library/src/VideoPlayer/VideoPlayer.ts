@@ -24,6 +24,8 @@ export class VideoPlayer {
     private audioElement?: HTMLAudioElement;
     private orientationChangeTimeout: number;
     private lastTimeResized = new Date().getTime();
+    private readonly onWindowResize = () => this.resizePlayerStyle();
+    private readonly onWindowOrientationChange = () => this.onOrientationChange();
 
     onMatchViewportResolutionCallback: (width: number, height: number) => void;
     onResizePlayerCallback: () => void;
@@ -69,11 +71,17 @@ export class VideoPlayer {
         };
 
         // set resize events to the windows if it is resized or its orientation is changed
-        window.addEventListener('resize', () => this.resizePlayerStyle(), true);
-        window.addEventListener('orientationchange', () => this.onOrientationChange());
+        window.addEventListener('resize', this.onWindowResize, true);
+        window.addEventListener('orientationchange', this.onWindowOrientationChange);
     }
 
     public destroy() {
+        window.removeEventListener('resize', this.onWindowResize, true);
+        window.removeEventListener('orientationchange', this.onWindowOrientationChange);
+        window.clearTimeout(this.orientationChangeTimeout);
+        window.clearTimeout(this.resizeTimeoutHandle);
+        this.videoElement.onclick = null;
+        this.videoElement.onloadedmetadata = null;
         this.videoElement.src = '';
         this.videoElement.srcObject = null;
         this.videoElement.remove();

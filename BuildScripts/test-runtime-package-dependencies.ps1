@@ -38,7 +38,7 @@ $parseErrors = $null
 $ast = [Management.Automation.Language.Parser]::ParseInput($packager, [ref]$tokens, [ref]$parseErrors)
 Assert-PackageTest (@($parseErrors).Count -eq 0) 'Could not parse the runtime packager.'
 
-foreach ($functionName in @('Invoke-Robocopy', 'Copy-WorkspaceNodeModules', 'Copy-RuntimeWorkspacePackage')) {
+foreach ($functionName in @('Invoke-Robocopy', 'Copy-RequiredDirectory', 'Copy-WorkspaceNodeModules', 'Copy-RuntimeWorkspacePackage', 'Copy-RuntimePlatformScripts', 'Copy-RuntimeCoturn', 'Get-PortableNodeVersion')) {
     $definition = $ast.Find({
         param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName
@@ -112,7 +112,42 @@ for (const [workspace, packageName, version] of [
     $containsNodeModules = $false
     . $stageDependencies
     Assert-PackageTest (-not $containsNodeModules -and -not (Test-Path -LiteralPath $stageRoot)) 'SkipNodeModules staged a dependency payload.'
-    Write-Output 'Runtime packaging dependency tests passed: root/local version isolation, all runtime workspaces, materialized UE5.8 libraries, absent dependencies, and SkipNodeModules.'
+
+    $platformRoot = Join-Path $repoRootPath 'SignallingWebServer\platform_scripts'
+    foreach ($relativePath in @('cmd\start.bat', 'powershell\unreal_prerequisite.psm1', 'cmd\coturn\turnserver.exe', 'cmd\coturn\turnserver.conf')) {
+        Write-FixtureFile (Join-Path $platformRoot $relativePath) 'required-runtime-file'
+    }
+    $excludedPaths = @('cmd\.env', 'cmd\.env.local', 'cmd\startup.log', 'cmd\startup.pid', 'cmd\state\runtime.json',
+        'cmd\logs\session.txt', 'cmd\.cache\data.txt', 'cmd\.git\config', 'cmd\node-backup-old\node.exe',
+        'cmd\coturn\coturn.pid', 'cmd\coturn\turnserver.log', 'cmd\coturn\.env', 'cmd\coturn\state\runtime.json')
+    foreach ($relativePath in $excludedPaths) {
+        Write-FixtureFile (Join-Path $platformRoot $relativePath) 'machine-only-fixture'
+    }
+    $platformStage = Join-Path $fixtureRoot 'platform payload'
+    Copy-RuntimePlatformScripts -DestinationRoot $platformStage
+    Copy-RuntimeCoturn -DestinationRoot $platformStage
+    $stagedPlatformRoot = Join-Path $platformStage 'SignallingWebServer\platform_scripts'
+    foreach ($relativePath in @('cmd\start.bat', 'powershell\unreal_prerequisite.psm1', 'cmd\coturn\turnserver.exe', 'cmd\coturn\turnserver.conf')) {
+        Assert-PackageTest (Test-Path -LiteralPath (Join-Path $stagedPlatformRoot $relativePath)) "Required runtime file was omitted: $relativePath"
+    }
+    foreach ($relativePath in $excludedPaths) {
+        Assert-PackageTest (-not (Test-Path -LiteralPath (Join-Path $stagedPlatformRoot $relativePath))) "Machine state leaked into runtime payload: $relativePath"
+    }
+
+    $actualNodeVersion = (& $NodePath -v | Out-String).Trim()
+    $verifiedNodeVersion = Get-PortableNodeVersion -NodeRuntimeDirectory (Split-Path -Parent $NodePath) -ExpectedVersion $actualNodeVersion
+    Assert-PackageTest ($verifiedNodeVersion -ceq $actualNodeVersion) 'Portable Node version was not measured from its executable.'
+    $rejectedMismatch = $false
+    try { Get-PortableNodeVersion -NodeRuntimeDirectory (Split-Path -Parent $NodePath) -ExpectedVersion 'v0.0.0' | Out-Null } catch { $rejectedMismatch = $true }
+    Assert-PackageTest $rejectedMismatch 'A stale portable Node must not be included in an artifact.'
+    $absentNode = Get-PortableNodeVersion -NodeRuntimeDirectory (Join-Path $fixtureRoot 'absent-node') -ExpectedVersion $actualNodeVersion
+    Assert-PackageTest ($null -eq $absentNode) 'Artifacts without portable Node must remain supported.'
+    $incompleteNode = Join-Path $fixtureRoot 'incomplete-node'
+    New-Item -ItemType Directory -Path $incompleteNode | Out-Null
+    $rejectedIncomplete = $false
+    try { Get-PortableNodeVersion -NodeRuntimeDirectory $incompleteNode -ExpectedVersion $actualNodeVersion | Out-Null } catch { $rejectedIncomplete = $true }
+    Assert-PackageTest $rejectedIncomplete 'An incomplete Node directory must not be marked as a bundled runtime.'
+    Write-Output 'Runtime packaging tests passed: dependency resolution, SkipNodeModules, required scripts/TURN files, machine-state exclusions and portable Node validation.'
 } finally {
     $resolvedFixture = [IO.Path]::GetFullPath($fixtureRoot)
     if (-not $resolvedFixture.StartsWith($fixtureTempRoot, [StringComparison]::OrdinalIgnoreCase) -or

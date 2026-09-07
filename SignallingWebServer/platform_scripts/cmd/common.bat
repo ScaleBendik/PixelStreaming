@@ -140,6 +140,7 @@ exit /b
 :SetupNode
 pushd "%SCRIPT_DIR%"
 SET NODE_NAME=node-%NODE_VERSION%-win-x64
+set "NODE_BACKUP_NAME="
 set "INSTALLED_NODE_VERSION="
 if exist "node\node.exe" (
   FOR /f %%A IN ('call "%SCRIPT_DIR%node\node.exe" -v') DO set "INSTALLED_NODE_VERSION=%%A"
@@ -166,7 +167,14 @@ if "!INSTALLED_NODE_VERSION!"=="%NODE_VERSION%" (
     if errorlevel 1 goto SetupNodeFailed
   )
   ren "%NODE_NAME%\" "node"
-  if errorlevel 1 goto SetupNodeFailed
+  if errorlevel 1 (
+    rem Restore the previous active path if activation failed after backing it up.
+    if defined NODE_BACKUP_NAME if not exist node\ (
+      ren "!NODE_BACKUP_NAME!" "node"
+      if errorlevel 1 echo ERROR: Previous Node remains in !NODE_BACKUP_NAME!; automatic restoration failed.
+    )
+    goto SetupNodeFailed
+  )
   del node.zip
   if exist "%SCRIPT_DIR%..\..\..\node_modules\" (
     echo Root node_modules found...skipping dependency install after NodeJS download.
@@ -190,10 +198,12 @@ if "%INSTALL_DEPS%"=="1" (
     rem --no-audit/--no-fund: neither is read by the startup path, and a slow
     rem registry audit blocks the server from starting for minutes.
     call %NPM% install --no-audit --no-fund
+    set "NPM_INSTALL_EXIT=!errorlevel!"
     popd
+    if not "!NPM_INSTALL_EXIT!"=="0" exit /b !NPM_INSTALL_EXIT!
 )
 
-exit /b
+exit /b 0
 
 :BackupNode
 set "NODE_BACKUP_NAME=node-backup-%RANDOM%-%RANDOM%"

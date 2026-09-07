@@ -11,8 +11,8 @@ import {
     MessageHelpers
 } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
 import { IStreamer, IStreamerInfo } from './StreamerRegistry';
-import { stringify } from './Utils';
 import { Logger } from './Logger';
+import { redactSensitiveLogValue } from './LogRedaction';
 import * as LogUtils from './LoggingUtils';
 import { SignallingServer } from './SignallingServer';
 
@@ -75,7 +75,9 @@ export class StreamerConnection extends EventEmitter implements IStreamer, LogUt
         this.registerMessageHandlers();
 
         this.protocol.on('unhandled', (message: BaseMessage) => {
-            Logger.warn(`Unhandled streamer protocol message: ${JSON.stringify(message)}`);
+            Logger.warn(
+                `Unhandled streamer protocol message: ${JSON.stringify(redactSensitiveLogValue(message))}`
+            );
         });
     }
 
@@ -136,8 +138,8 @@ export class StreamerConnection extends EventEmitter implements IStreamer, LogUt
     }
 
     private forwardMessage(message: BaseMessage): void {
-        if (!message.playerId) {
-            Logger.warn(`No playerId specified, cannot forward message: ${stringify(message)}`);
+        if (typeof message.playerId !== 'string' || !message.playerId) {
+            Logger.warn('Cannot forward streamer message without a valid playerId.');
         } else if (!this.subscribers.has(message.playerId)) {
             // Only forward to players that are actually subscribed to this streamer. Without this
             // check a streamer could target any player on the server (resolved via the global player
@@ -174,19 +176,27 @@ export class StreamerConnection extends EventEmitter implements IStreamer, LogUt
     }
 
     private onDisconnectPlayerRequest(message: Messages.disconnectPlayer): void {
-        if (message.playerId) {
-            if (!this.subscribers.has(message.playerId)) {
-                // A streamer may only disconnect its own subscribed players. Otherwise any streamer
-                // could forcibly close arbitrary player connections on a shared signalling server.
-                Logger.warn(
-                    `Streamer ${this.streamerId} tried to disconnect player ${message.playerId} which is not subscribed to it. Ignoring.`
-                );
-                return;
-            }
-            const player = this.server.playerRegistry.get(message.playerId);
-            if (player) {
-                player.protocol.disconnect(1011, message.reason);
-            }
+        if (typeof message.playerId !== 'string' || !message.playerId) {
+            Logger.warn('Ignoring streamer disconnect request without a valid playerId.');
+            return;
+        }
+        if (!this.subscribers.has(message.playerId)) {
+            // A streamer may only disconnect its own subscribed players. Otherwise any streamer
+            // could forcibly close arbitrary player connections on a shared signalling server.
+            Logger.warn(
+                `Streamer ${this.streamerId} tried to disconnect player ${message.playerId} which is not subscribed to it. Ignoring.`
+            );
+            return;
+        }
+        const player = this.server.playerRegistry.get(message.playerId);
+        if (player) {
+            // ws rejects non-string and overlong close reasons by throwing. Preserve the
+            // disconnect request, but omit an invalid reason instead of crashing Wilbur.
+            const reason =
+                typeof message.reason === 'string' && Buffer.byteLength(message.reason, 'utf8') <= 123
+                    ? message.reason
+                    : undefined;
+            player.protocol.disconnect(1011, reason);
         }
     }
 

@@ -387,15 +387,15 @@ export class SignallingServer {
             // The provider is consumer code, so its return is unknown to us; it travels as an
             // opaque blob in the config message either way.
             return this.config.peerOptionsProvider(peerRequest) as Messages.config['peerConnectionOptions'];
-        } catch (error) {
+        } catch {
             // A provider is consumer code and may reach outside the process for a credential. If it
             // fails we still send a config message, because a peer that never receives one simply
-            // waits forever with nothing in its log to explain why.
+            // waits forever with nothing in its log to explain why. Do not serialize arbitrary
+            // exceptions, which may contain credentials or cycles.
             Logger.error(
-                'peerOptionsProvider threw for %s peer %s, falling back to the static peer options: %s',
+                'peerOptionsProvider failed for %s peer %s, falling back to the static peer options.',
                 peerRequest.peerType,
-                peerRequest.peerId,
-                error instanceof Error ? error.message : stringify(error)
+                peerRequest.peerId
             );
             // eslint-disable-next-line @typescript-eslint/no-unsafe-return
             return staticConfig['peerConnectionOptions'];

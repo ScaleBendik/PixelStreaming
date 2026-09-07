@@ -101,6 +101,12 @@ test('REST-only Wilbur starts without serving the player or changing keepalive d
     assert.equal((await fetch(wilbur.baseUrl + '/')).status, 404);
     const status = await (await fetch(wilbur.baseUrl + '/api/status')).json();
     assert.equal(status.player_count, 0);
+    const configResponse = await fetch(wilbur.baseUrl + '/api/config');
+    assert.equal(configResponse.status, 200);
+    const snapshot = await configResponse.json();
+    assert.equal(snapshot.config.streamerPort, wilbur.streamerPort);
+    assert.equal(Object.hasOwn(snapshot.config, 'httpServer'), false);
+    assert.equal(Object.hasOwn(snapshot.config, 'playerWsOptions'), false);
     assert.match(wilbur.output(), /\[player-keepalive\] Enabled/);
     assert.match(wilbur.output(), /"player_keepalive_timeout": "0"/);
 });

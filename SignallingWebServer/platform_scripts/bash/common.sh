@@ -209,9 +209,11 @@ function setup_node() {
         node_url="https://nodejs.org/dist/$NODE_VERSION/node-$NODE_VERSION-linux-x64.tar.gz"
     fi
 
-    check_version "${node_version#v}" "${NODE_VERSION#v}"
-    local node_version_status=$?
-    if [[ -z "$node_version" || "$node_version_status" -eq 2 ]]; then
+    local node_version_status=2
+    if [[ "$node_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        check_version "${node_version#v}" "${NODE_VERSION#v}" && node_version_status=0 || node_version_status=$?
+    fi
+    if [[ "$node_version_status" -eq 2 ]]; then
         if ! install_node_runtime "$node_url"; then
             echo "Unable to install Node $NODE_VERSION; refusing to continue startup."
             popd > /dev/null

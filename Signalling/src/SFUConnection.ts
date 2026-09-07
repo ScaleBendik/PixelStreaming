@@ -176,6 +176,12 @@ export class SFUConnection extends EventEmitter implements IPlayer, IStreamer, L
     }
 
     private subscribe(streamerId: string) {
+        if (typeof streamerId !== 'string') {
+            Logger.warn('Ignoring malformed subscription and disconnecting its peer.');
+            this.disconnect();
+            return;
+        }
+
         const streamer = this.server.streamerRegistry.find(streamerId);
         if (!streamer) {
             Logger.error(
@@ -241,9 +247,9 @@ export class SFUConnection extends EventEmitter implements IPlayer, IStreamer, L
     }
 
     private sendToPlayer(message: BaseMessage): void {
-        if (!message.playerId) {
+        if (typeof message.playerId !== 'string' || !message.playerId) {
             Logger.error(
-                `SFU ${this.streamerId} trying to send a message to a player with no playerId. Ignored.`
+                `SFU ${this.streamerId} trying to send a message without a valid playerId. Ignored.`
             );
             return;
         }

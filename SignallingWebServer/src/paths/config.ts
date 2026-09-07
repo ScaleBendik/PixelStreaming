@@ -1,8 +1,19 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
-import { SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
+import { SignallingServer, redactSensitiveLogValue } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
 
 /* eslint-disable @typescript-eslint/no-unsafe-call,
                   @typescript-eslint/no-unsafe-member-access */
+
+// These are live transports or callbacks, not serializable public configuration.
+const INTERNAL_CONFIG_FIELDS = new Set([
+    'httpServer',
+    'httpsServer',
+    'streamerWsOptions',
+    'playerWsOptions',
+    'sfuWsOptions',
+    'authorizeStreamerId',
+    'peerOptionsProvider'
+]);
 
 export default function (signallingServer: SignallingServer) {
     const operations = {
@@ -11,8 +22,14 @@ export default function (signallingServer: SignallingServer) {
 
     function GET(req: any, res: any, _next: any) {
         res.status(200).json({
-            config: signallingServer.config,
-            protocolConfig: signallingServer.protocolConfig
+            config: redactSensitiveLogValue(
+                Object.fromEntries(
+                    Object.entries(signallingServer.config).filter(
+                        ([key]) => !INTERNAL_CONFIG_FIELDS.has(key)
+                    )
+                )
+            ),
+            protocolConfig: redactSensitiveLogValue(signallingServer.protocolConfig)
         });
     }
 
@@ -30,7 +47,7 @@ export default function (signallingServer: SignallingServer) {
                                 config: {
                                     type: 'object'
                                 },
-                                protocol: {
+                                protocolConfig: {
                                     type: 'object'
                                 }
                             }

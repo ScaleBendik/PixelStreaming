@@ -40,8 +40,10 @@ signalling logs and Common's serialized debug protocol messages redact credentia
 `NODE_VERSION` is `v22.23.2` (Node 22 LTS). The old 22.14.0 pin is below
 upstream webpack-dev-server 6 and http-proxy-middleware 4 engine requirements.
 Use the pin for builds and capture both `node --version` and `npm --version`;
-the verified portable distribution includes npm 10.9.8. The packager's metadata
-still reads the pin rather than proving the executable version.
+the verified portable distribution includes npm 10.9.8. Included portable Node
+must match the pin and is measured as `portableNodeVersion`. The separate
+`nodeVersion` field remains the required toolchain; it does not prove which
+executable built precompiled outputs.
 
 Workspace names, custom source imports and artifact materialization use
 `@epicgames-ps/*-ue5.8`. The lockfile was reconciled and installed with `npm ci`.
@@ -89,13 +91,39 @@ Common, Signalling, Wilbur and both frontend libraries have separate passing lin
 entry points. Some other upstream workspaces have empty or placeholder scripts;
 a root build does not establish end-to-end media correctness.
 
-The production dependency audit is clear on this graph. The full audit still
-reports development-tool advisories through `eslint-plugin-tsdoc`/`ajv` and
-`open-cli`/`file-type` (four moderate, one high). The existing packager copies
-root development dependencies too, so those packages are physically present in
-its ZIP even though the serving runtime does not depend on them. Upgrading those
-tools or pruning the bundle requires a separate verified tooling change; this
-merge does not claim the entire archive is advisory-free.
+The reviewed graph has no production or development audit findings after updating
+`eslint-plugin-tsdoc` to 0.5.2 and the bridge's coverage-report opener
+`open-cli` to 9.0.0. These updates change development dependencies only.
+The existing packager still copies installed development dependencies; narrowing
+that payload requires preserving workspace-local runtime resolution.
+
+## Review hardening
+
+The post-merge review preserves existing admission and input policies while fixing
+bounded failure paths:
+
+- Ticket JSON must contain object-shaped headers and claims. Unexpected verifier
+  or runtime-gate failures reject only that upgrade with HTTP 503 and no trusted
+  identity. Ordinary invalid tickets still follow enforce/soft mode; off remains
+  an explicit bypass. Malformed signalling envelopes are ignored without logging
+  their raw bodies. Subscription and routing identifiers are checked before
+  coercion; malformed or oversized WebSocket close reasons are omitted without
+  losing the requested disconnect. Unhandled-message diagnostics redact secrets.
+- Streamer registration rejects malformed identifiers or failed authorizers,
+  keeps repeated identifiers stable, and prevents collisions when requested IDs
+  already end in digits. Peer-option provider errors retain the per-role fallback
+  without exposing arbitrary exception text.
+- REST `/api/config` omits live transports/callbacks and redacts ICE credentials
+  from its serializable diagnostic snapshot.
+- Gamepads retain browser indices after disconnect and share one polling loop;
+  teardown cancels/fences polling and removes listeners. Video-player teardown
+  removes resize/orientation callbacks and deferred work. Viewport scale changes
+  immediately re-evaluate matched resolution.
+- Windows Node activation failure restores the previous runtime and failed npm
+  setup returns its failure code. Bash rejects malformed version output. Runtime
+  packages exclude common local state/log/environment files and validate any
+  included portable Node executable. Deployment-required static TURN credentials
+  remain deliberately included; see the runtime artifact contract.
 
 ## Hosted acceptance still required
 

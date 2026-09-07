@@ -51,13 +51,17 @@ export enum GamepadLayout {
  * Handles gamepad events from the document to send to the streamer.
  */
 export class GamepadController implements IInputController {
-    controllers: Array<Controller>;
+    controllers: Array<Controller> = [];
     streamMessageController: StreamMessageController;
 
     onGamepadConnectedListener: (event: GamepadEvent) => void;
     onGamepadDisconnectedListener: (event: GamepadEvent) => void;
     beforeUnloadListener: (event: Event) => void;
     requestAnimationFrame: (callback: FrameRequestCallback) => number;
+
+    private registered = false;
+    private registrationGeneration = 0;
+    private animationFrameHandle: number | null = null;
 
     constructor(streamMessageController: StreamMessageController) {
         this.streamMessageController = streamMessageController;
@@ -73,6 +77,11 @@ export class GamepadController implements IInputController {
     }
 
     register() {
+        if (this.registered) {
+            return;
+        }
+        this.registered = true;
+        this.registrationGeneration++;
         window.addEventListener('beforeunload', this.beforeUnloadListener);
 
         const browserWindow = window as Window;
@@ -94,6 +103,13 @@ export class GamepadController implements IInputController {
     }
 
     unregister() {
+        this.registered = false;
+        this.registrationGeneration++;
+        if (this.animationFrameHandle !== null) {
+            window.cancelAnimationFrame(this.animationFrameHandle);
+            this.animationFrameHandle = null;
+        }
+        window.removeEventListener('beforeunload', this.beforeUnloadListener);
         window.removeEventListener('gamepadconnected', this.onGamepadConnectedListener);
         window.removeEventListener('gamepaddisconnected', this.onGamepadDisconnectedListener);
         window.removeEventListener('webkitgamepadconnected', this.onGamepadConnectedListener);
@@ -117,6 +133,9 @@ export class GamepadController implements IInputController {
 
     private onGamepadConnected(event: GamepadEvent) {
         const gamepad = event.gamepad;
+        if (!this.registered || this.controllers[gamepad.index]) {
+            return;
+        }
         const newController: Controller = {
             currentState: deepCopyGamepad(gamepad),
             prevState: deepCopyGamepad(gamepad),
@@ -124,14 +143,18 @@ export class GamepadController implements IInputController {
         };
 
         this.controllers[gamepad.index] = newController;
-        window.requestAnimationFrame(() => this.updateStatus());
+        this.scheduleUpdate();
         this.streamMessageController.toStreamerHandlers.get('GamepadConnected')();
     }
 
     private onGamepadDisconnected(event: GamepadEvent) {
         const gamepad = event.gamepad;
         const deletedController = this.controllers[gamepad.index];
-        this.controllers = this.controllers.filter((_, index) => index !== gamepad.index);
+        if (!deletedController) {
+            return;
+        }
+        // Browser gamepad indices are stable; removing one must not shift the others.
+        this.controllers[gamepad.index] = undefined;
         if (deletedController.id !== undefined) {
             this.streamMessageController.toStreamerHandlers.get('GamepadDisconnected')([
                 deletedController.id
@@ -213,9 +236,23 @@ export class GamepadController implements IInputController {
             const controllerIndex = this.controllers.indexOf(controller);
             this.controllers[controllerIndex].prevState = deepCopyGamepad(currentState);
         }
-        if (this.controllers.length > 0) {
-            this.requestAnimationFrame(() => this.updateStatus());
+        this.scheduleUpdate();
+    }
+
+    private scheduleUpdate() {
+        if (!this.registered || this.animationFrameHandle !== null || !this.controllers.some(Boolean)) {
+            return;
         }
+
+        const generation = this.registrationGeneration;
+        this.animationFrameHandle = this.requestAnimationFrame(() => {
+            // A queued frame can outlive unregister/re-register even after cancellation.
+            if (!this.registered || generation !== this.registrationGeneration) {
+                return;
+            }
+            this.animationFrameHandle = null;
+            this.updateStatus();
+        });
     }
 
     private onBeforeUnload(_: Event) {

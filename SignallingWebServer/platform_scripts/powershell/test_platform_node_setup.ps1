@@ -48,7 +48,9 @@ class NodeStub {
     $common = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\cmd\common.bat'))
     $downloadLine = 'curl --fail -L -o ./node.zip "https://nodejs.org/dist/%NODE_VERSION%/%NODE_NAME%.zip"'
     Assert-NodeTest ($common.Contains($downloadLine)) 'Node download seam changed; review the isolation before updating this harness.'
-    $common = $common.Replace($downloadLine, 'call :TestDownload') + @'
+    $activationLine = '  ren "%NODE_NAME%\" "node"'
+    Assert-NodeTest ($common.Contains($activationLine)) 'Node activation seam changed; review the isolation before updating this harness.'
+    $common = $common.Replace($downloadLine, 'call :TestDownload').Replace($activationLine, '  call :TestActivateNode') + @'
 
 :TestDownload
 if "%TEST_DOWNLOAD_FAILURE%"=="1" exit /b 1
@@ -56,8 +58,12 @@ type nul > node.zip
 exit /b 0
 :TestExtract
 exit /b 0
+:TestActivateNode
+if "%TEST_SCENARIO%"=="activation-failure" exit /b 1
+ren "%NODE_NAME%\" "node"
+exit /b %errorlevel%
 '@
-    foreach ($scenario in @('upgrade', 'matching', 'bad-version', 'download-failure')) {
+    foreach ($scenario in @('upgrade', 'matching', 'bad-version', 'download-failure', 'activation-failure', 'npm-failure')) {
         $scenarioRoot = Join-Path $fixtureRoot ($scenario + ' with spaces')
         $cmdDir = Join-Path $scenarioRoot 'SignallingWebServer\platform_scripts\cmd'
         $installedDir = Join-Path $cmdDir 'node'
@@ -65,11 +71,12 @@ exit /b 0
         New-Item -ItemType Directory -Path $installedDir, $extractedDir, (Join-Path $scenarioRoot 'node_modules') -Force | Out-Null
         Copy-Item -LiteralPath $stubExe -Destination (Join-Path $installedDir 'node.exe')
         Copy-Item -LiteralPath $stubExe -Destination (Join-Path $extractedDir 'node.exe')
-        $installedVersion = if ($scenario -eq 'matching') { 'v22.23.2' } else { 'v22.14.0' }
+        $installedVersion = if ($scenario -in @('matching', 'npm-failure')) { 'v22.23.2' } else { 'v22.14.0' }
         $extractedVersion = if ($scenario -eq 'bad-version') { 'v22.14.0' } else { 'v22.23.2' }
         Write-TestFile (Join-Path $installedDir 'version.txt') $installedVersion
         Write-TestFile (Join-Path $extractedDir 'version.txt') $extractedVersion
         Write-TestFile (Join-Path $cmdDir 'common.bat') $common
+        Write-TestFile (Join-Path $cmdDir 'npm.cmd') "@echo off`nexit /b 31`n"
         $wrapper = @'
 @echo off
 setlocal enabledelayedexpansion
@@ -78,6 +85,9 @@ set "NODE_VERSION=v22.23.2"
 set "TAR=call :TestExtract"
 set "INSTALL_DEPS=0"
 set "TEST_DOWNLOAD_FAILURE=%~1"
+set "TEST_SCENARIO=%~2"
+set NPM="%SCRIPT_DIR%npm.cmd"
+if "%TEST_SCENARIO%"=="npm-failure" set "INSTALL_DEPS=1"
 call :SetupNode
 if errorlevel 1 exit /b 1
 set "NODE_TEST_ARGS_FILE=%SCRIPT_DIR%arguments.txt"
@@ -93,7 +103,7 @@ exit /b %errorlevel%
         Write-TestFile $wrapperPath $wrapper
         # A matching install must succeed even when all downloads would fail.
         $downloadFailure = if ($scenario -in @('matching', 'download-failure')) { '1' } else { '0' }
-        & $wrapperPath $downloadFailure | Out-Null
+        & $wrapperPath $downloadFailure $scenario | Out-Null
         $result = $LASTEXITCODE
         $backups = @(Get-ChildItem -LiteralPath $cmdDir -Directory -Filter 'node-backup-*')
         $versionAfter = (& (Join-Path $installedDir 'node.exe') -v).Trim()
@@ -113,11 +123,11 @@ exit /b %errorlevel%
             }
         } else {
             Assert-NodeTest ($result -ne 0) "$scenario must reject startup."
-            Assert-NodeTest ($versionAfter -eq 'v22.14.0' -and $backups.Count -eq 0) "$scenario moved or replaced the original runtime."
+            Assert-NodeTest ($versionAfter -eq $installedVersion -and $backups.Count -eq 0) "$scenario moved or replaced the original runtime."
             Assert-NodeTest (-not (Test-Path -LiteralPath (Join-Path $cmdDir 'arguments.txt'))) "$scenario launched the server."
         }
     }
-    Write-Output 'Platform Node setup tests passed: upgrade, matching pin, bad replacement, download failure, direct launch and spaced paths.'
+    Write-Output 'Platform Node setup tests passed: upgrade, matching pin, bad replacement, download/activation/npm failures, direct launch and spaced paths.'
 } finally {
     $resolvedFixture = [IO.Path]::GetFullPath($fixtureRoot)
     if (-not $resolvedFixture.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -or

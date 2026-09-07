@@ -146,6 +146,10 @@ export class PixelStreaming {
             this._webRtcController.videoPlayer.updateVideoStreamSize();
         });
 
+        this.config._addOnNumericSettingChangedListener(NumericParameters.ViewportResScale, () => {
+            this._webRtcController.videoPlayer.updateVideoStreamSize();
+        });
+
         this.config._addOnSettingChangedListener(Flags.HoveringMouseMode, (isHoveringMouse: boolean) => {
             this.config.setFlagLabel(
                 Flags.HoveringMouseMode,

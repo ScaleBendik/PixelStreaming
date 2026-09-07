@@ -307,6 +307,23 @@ function Copy-WorkspaceNodeModules {
     }
 }
 
+function Copy-RuntimePlatformScripts {
+    param([string]$DestinationRoot)
+
+    Copy-RequiredDirectory -RelativePath 'SignallingWebServer\platform_scripts' -DestinationRoot $DestinationRoot `
+        -ExtraRobocopyArguments @('/XJ', '/XD', 'node', 'node-backup-*', 'coturn', '.git', '.cache', 'state', 'logs',
+            '/XF', '*.log', '*.pid', '.env', '.env.*')
+}
+
+function Copy-RuntimeCoturn {
+    param([string]$DestinationRoot)
+
+    # A prior local TURN launch can leave its PID and logs beside the executable.
+    Copy-RequiredDirectory -RelativePath 'SignallingWebServer\platform_scripts\cmd\coturn' -DestinationRoot $DestinationRoot `
+        -ExtraRobocopyArguments @('/XJ', '/XD', '.git', '.cache', 'state', 'logs',
+            '/XF', '*.log', '*.pid', '.env', '.env.*')
+}
+
 function Copy-RuntimeWorkspacePackage {
     param(
         [string]$WorkspaceRelativePath,
@@ -359,6 +376,23 @@ function Get-NpmVersionOrNull {
     }
 
     return ($version | Out-String).Trim()
+}
+
+function Get-PortableNodeVersion {
+    param([string]$NodeRuntimeDirectory, [string]$ExpectedVersion)
+
+    if (-not (Test-Path -LiteralPath $NodeRuntimeDirectory)) {
+        return $null
+    }
+    $nodeExecutable = Join-Path $NodeRuntimeDirectory 'node.exe'
+    if (-not (Test-Path -LiteralPath $nodeExecutable -PathType Leaf)) {
+        throw "Portable Node directory '$NodeRuntimeDirectory' has no node.exe."
+    }
+    $version = (& $nodeExecutable -v | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $version -cne $ExpectedVersion) {
+        throw "Portable Node version '$version' does not match repository NODE_VERSION '$ExpectedVersion'."
+    }
+    return $version
 }
 
 function Get-GitValue {
@@ -479,12 +513,14 @@ Copy-RequiredFile -RelativePath "SignallingWebServer\peer_options.streamer.json"
 Copy-RequiredDirectory -RelativePath "SignallingWebServer\dist" -DestinationRoot $stageRoot
 Copy-RequiredDirectory -RelativePath "SignallingWebServer\apidoc" -DestinationRoot $stageRoot
 Copy-RequiredDirectory -RelativePath "SignallingWebServer\www" -DestinationRoot $stageRoot
-Copy-RequiredDirectory -RelativePath "SignallingWebServer\platform_scripts" -DestinationRoot $stageRoot -ExtraRobocopyArguments @("/XD", "node", "node-backup-*", "coturn")
+Copy-RuntimePlatformScripts -DestinationRoot $stageRoot
 Copy-RequiredFile -RelativePath "SignallingWebServer\platform_scripts\powershell\unreal_prerequisite.psm1" -DestinationRoot $stageRoot
 Copy-OptionalFile -RelativePath "SignallingWebServer\README.md" -DestinationRoot $stageRoot
 
 $nodeRuntimeSource = Join-Path $repoRootPath "SignallingWebServer\platform_scripts\cmd\node"
-$containsPortableNode = Test-Path -LiteralPath $nodeRuntimeSource
+$portableNodeVersion = Get-PortableNodeVersion -NodeRuntimeDirectory $nodeRuntimeSource `
+    -ExpectedVersion ((Get-Content -LiteralPath (Join-Path $repoRootPath 'NODE_VERSION') -Raw).Trim())
+$containsPortableNode = $null -ne $portableNodeVersion
 if ($containsPortableNode) {
     Copy-RequiredDirectory -RelativePath "SignallingWebServer\platform_scripts\cmd\node" -DestinationRoot $stageRoot
 }
@@ -492,7 +528,7 @@ if ($containsPortableNode) {
 $coturnSource = Join-Path $repoRootPath "SignallingWebServer\platform_scripts\cmd\coturn"
 $containsCoturn = Test-Path -LiteralPath $coturnSource
 if ($containsCoturn) {
-    Copy-RequiredDirectory -RelativePath "SignallingWebServer\platform_scripts\cmd\coturn" -DestinationRoot $stageRoot
+    Copy-RuntimeCoturn -DestinationRoot $stageRoot
 }
 
 $containsNodeModules = $false
@@ -539,6 +575,7 @@ $embeddedMetadata = [ordered]@{
     capabilities = $artifactCapabilities
     containsNodeModules = $containsNodeModules
     containsPortableNode = $containsPortableNode
+    portableNodeVersion = $portableNodeVersion
     containsCoturn = $containsCoturn
     promotable = $promotable
 }
@@ -575,6 +612,7 @@ $manifest = [ordered]@{
     capabilities = $artifactCapabilities
     containsNodeModules = $containsNodeModules
     containsPortableNode = $containsPortableNode
+    portableNodeVersion = $portableNodeVersion
     containsCoturn = $containsCoturn
     compatibility = [ordered]@{
         api = [ordered]@{

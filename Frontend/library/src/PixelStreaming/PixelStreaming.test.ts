@@ -1,6 +1,7 @@
 import { mockRTCRtpReceiver, unmockRTCRtpReceiver } from '../__test__/mockRTCRtpReceiver';
 import {
     Config,
+    Flags,
     NumericParameters,
     OptionParameters,
 } from '../Config/Config';
@@ -787,6 +788,36 @@ describe('PixelStreaming', () => {
         
         expect(commandSent).toEqual(true);
         expect(rtcPeerConnectionSpyFunctions.sendDataSpy).toHaveBeenCalled();
+    });
+
+    it('sends the scaled resolution when ViewportResScale changes without a window resize', () => {
+        const config = new Config({ initialSettings: { ss: mockSignallingUrl, [Flags.MatchViewportResolution]: true } });
+        const pixelStreaming = new PixelStreaming(config);
+        Object.defineProperty(pixelStreaming.videoElementParent, 'clientWidth', { value: 640 });
+        Object.defineProperty(pixelStreaming.videoElementParent, 'clientHeight', { value: 360 });
+        pixelStreaming.connect();
+        establishMockedPixelStreamingConnection();
+        jest.advanceTimersByTime(400);
+        const sent = rtcPeerConnectionSpyFunctions.sendDataSpy as jest.Mock;
+        sent.mockClear();
+
+        config.setNumericSetting(NumericParameters.ViewportResScale, 2);
+        jest.advanceTimersByTime(400);
+
+        expect(sent).toHaveBeenCalledTimes(1);
+        const command = new DataView(sent.mock.calls[0][0] as ArrayBuffer);
+        expect(command.getUint8(0)).toBe(51);
+        const text = Array.from({ length: command.getUint16(1, true) }, (_, index) =>
+            String.fromCharCode(command.getUint16(3 + index * 2, true))
+        ).join('');
+        expect(JSON.parse(text)).toEqual({ 'Resolution.Width': 1280, 'Resolution.Height': 720 });
+
+        config.setFlagEnabled(Flags.MatchViewportResolution, false);
+        sent.mockClear();
+        config.setNumericSetting(NumericParameters.ViewportResScale, 1);
+        jest.advanceTimersByTime(400);
+        expect(sent).not.toHaveBeenCalled();
+        pixelStreaming.disconnect();
     });
 
     it('should prevent sending console commands unless permitted by streamer', () => {

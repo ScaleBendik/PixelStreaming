@@ -1,7 +1,7 @@
 # PixelStreaming Runtime Artifact Contract
 
 Date: 2026-05-21
-Last updated: 2026-06-04
+Last updated: 2026-09-08
 Status: active foundation
 
 ## Intent
@@ -82,7 +82,13 @@ The runtime ZIP should contain only what a serving instance needs to start the P
 5. runtime scripts and config templates
 6. embedded `runtime-bundle-metadata.json` with the bundle identity and source metadata
 
-It must not contain secrets, `.git`, developer-only build caches, or machine-specific state.
+It must not contain service bootstrap secrets, ticket signing keys, `.git`, developer-only build caches, or machine-specific state. Platform-script and optional CoTURN copies exclude `.env` / `.env.*`, log and PID files, state/log/cache directories, Git directories, and retained Node backups; directory junctions are not followed.
+
+The current packager explicitly copies `peer_options.player.json` and `peer_options.streamer.json`, including their deployment-required static TURN credentials. These bundles therefore carry TURN credentials and must not be described as secret-free. The exclusions above prevent common incidental machine files from being copied; they do not replace reviewing the deliberately included configuration. Transitioning TURN to per-connection credentials requires a separate deployment/configuration change.
+
+The current dependency copy also includes the installed root and runtime-workspace dependency trees, including installed development packages. A production-only dependency payload remains a packaging follow-up; the existing copy preserves workspace-local version resolution required by Wilbur.
+
+When a portable Windows Node directory is included, its executable must report the exact repository `NODE_VERSION`; incomplete or stale directories fail packaging. Both metadata files record the measured `portableNodeVersion` (null when omitted). The existing `nodeVersion` field still identifies the required toolchain, not evidence of which executable produced prebuilt outputs; `-SkipBuild` cannot establish build provenance.
 
 Ordinary serving startup must not run `git fetch`, `npm install`, or TypeScript builds.
 

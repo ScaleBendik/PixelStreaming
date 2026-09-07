@@ -37,20 +37,28 @@ export class SignallingProtocol extends EventEmitter {
         this.transport = transport;
 
         transport.onMessage = (msg: string) => {
-            let parsedMessage: BaseMessage;
+            let parsedData: unknown;
             try {
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-                const parsedData = JSON.parse(msg);
-                Logger.Debug('Protocol received => \n' + JSON.stringify(parsedData, undefined, 4));
-                parsedMessage = parsedData as BaseMessage;
-            } catch (e: unknown) {
-                if (e instanceof Error) {
-                    Logger.Error(`Error parsing message string ${msg}.\n${e.message}`);
-                } else {
-                    Logger.Error(`Unknown error while parsing message data in handleOnMessage`);
-                }
+                parsedData = JSON.parse(msg) as unknown;
+            } catch {
+                // Parser errors can include the incoming body, which may contain credentials.
+                Logger.Error('Could not decode signalling message JSON.');
                 return;
             }
+
+            if (
+                parsedData === null ||
+                typeof parsedData !== 'object' ||
+                Array.isArray(parsedData) ||
+                !('type' in parsedData) ||
+                typeof parsedData.type !== 'string' ||
+                parsedData.type.length === 0
+            ) {
+                Logger.Warning('Ignoring signalling message without an object envelope and message type.');
+                return;
+            }
+            const parsedMessage = parsedData as BaseMessage;
+            Logger.Debug('Protocol received => \n' + JSON.stringify(parsedMessage, undefined, 4));
 
             // call the handlers
             transport.emit('message', parsedMessage); // emit this for listeners listening to any message

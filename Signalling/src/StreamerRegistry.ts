@@ -176,21 +176,36 @@ export class StreamerRegistry extends EventEmitter {
     private onEndpointId(streamer: IStreamer, message: Messages.endpointId): void {
         const oldId = streamer.streamerId;
 
-        // id might conflict or be invalid so here we sanitize it
-        const sanitizedId = this.sanitizeStreamerId(message.id);
+        // Endpoint ids arrive from the wire despite the generated TypeScript message type.
+        if (typeof message.id !== 'string') {
+            Logger.warn('StreamerRegistry: endpoint id must be a string. Disconnecting.');
+            this.remove(streamer);
+            streamer.protocol.disconnect(1008, 'invalid streamer id');
+            return;
+        }
+
+        // Ignore this connection when checking collisions, so repeating its own id is stable.
+        const sanitizedId = this.sanitizeStreamerId(message.id, streamer);
 
         let committedId: string | null = sanitizedId;
         if (this.authorizeStreamerId) {
             // Let the consumer accept the default id, override it (e.g. namespace per tenant), or
             // reject the registration entirely. This is where anti-squatting policy lives.
-            committedId = this.authorizeStreamerId({
-                streamer,
-                requestedId: message.id,
-                sanitizedId,
-                collided: !!message.id && sanitizedId !== message.id
-            });
+            try {
+                committedId = this.authorizeStreamerId({
+                    streamer,
+                    requestedId: message.id,
+                    sanitizedId,
+                    collided: !!message.id && sanitizedId !== message.id
+                });
+            } catch {
+                // A consumer authorization failure rejects only this connection. Do not log
+                // arbitrary exception messages, which may contain provider credentials.
+                Logger.error('StreamerRegistry: streamer id authorizer failed. Disconnecting.');
+                committedId = null;
+            }
 
-            if (committedId === null) {
+            if (typeof committedId !== 'string' || committedId.length === 0) {
                 Logger.warn(
                     `StreamerRegistry: streamer id '${message.id}' (was ${oldId}) rejected by authorizer. Disconnecting.`
                 );
@@ -228,30 +243,41 @@ export class StreamerRegistry extends EventEmitter {
      * must send config first can assign it and then synchronously add the connection.
      * This does not reserve the id; add checks availability again.
      */
-    sanitizeStreamerId(id: string): string {
-        // create a default id if none supplied
+    sanitizeStreamerId(id: string, excludedStreamer?: IStreamer): string {
         if (!id) {
             id = this.defaultStreamerIdPrefix;
         }
 
-        // search for existing streamerId and optionally append a numeric value
+        const existingIds = new Set(
+            this.streamers
+                .filter((streamer) => streamer !== excludedStreamer)
+                .map((streamer) => streamer.streamerId)
+        );
+        if (excludedStreamer?.streamerId === id && !existingIds.has(id)) {
+            return id;
+        }
         let maxPostfix = -1;
-        for (const streamer of this.streamers) {
-            const idMatchRegex = /^(.*?)(\d*)$/;
-
-            const [, baseId, postfix] = streamer.streamerId.match(idMatchRegex)!;
-            // if the id is numeric then base id will be empty and we need to compare with the postfix
-            if ((baseId !== '' && baseId !== id) || (baseId === '' && postfix !== id)) {
+        for (const existingId of existingIds) {
+            if (!existingId.startsWith(id)) {
                 continue;
             }
-            const numPostfix = Number(postfix);
-            if (numPostfix > maxPostfix) {
-                maxPostfix = numPostfix;
+            const suffix = existingId.slice(id.length);
+            if (suffix !== '' && !/^\d+$/.test(suffix)) {
+                continue;
+            }
+            const postfix = Number(suffix);
+            if (Number.isSafeInteger(postfix) && postfix < Number.MAX_SAFE_INTEGER) {
+                maxPostfix = Math.max(maxPostfix, postfix);
             }
         }
-        if (maxPostfix >= 0) {
-            return id + (maxPostfix + 1);
+
+        // Match the full requested prefix, including any numeric suffix it already has.
+        // The exact lookup also handles suffixes too large to increment safely as numbers.
+        let candidate = maxPostfix >= 0 ? id + (maxPostfix + 1) : id;
+        let nextPostfix = 1;
+        while (existingIds.has(candidate)) {
+            candidate = id + nextPostfix++;
         }
-        return id;
+        return candidate;
     }
 }

@@ -12,6 +12,7 @@ import {
 import { IPlayer, IPlayerInfo } from './PlayerRegistry';
 import { IStreamer } from './StreamerRegistry';
 import { Logger } from './Logger';
+import { redactSensitiveLogValue } from './LogRedaction';
 import * as LogUtils from './LoggingUtils';
 import { SignallingServer } from './SignallingServer';
 
@@ -145,7 +146,9 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
                 return;
             }
 
-            Logger.warn(`Unhandled player protocol message: ${JSON.stringify(message)}`);
+            Logger.warn(
+                `Unhandled player protocol message: ${JSON.stringify(redactSensitiveLogValue(message))}`
+            );
         });
     }
 
@@ -300,6 +303,12 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     }
 
     private subscribe(streamerId: string) {
+        if (typeof streamerId !== 'string') {
+            Logger.warn('Ignoring malformed subscription and disconnecting its peer.');
+            this.disconnect();
+            return;
+        }
+
         const streamer = this.server.streamerRegistry.find(streamerId);
         if (!streamer) {
             Logger.error(

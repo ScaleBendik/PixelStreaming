@@ -147,6 +147,10 @@ function parseGuidClaim(value: unknown): string | null {
         : null;
 }
 
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 function validateToken(token: string, host: string, settings: ConnectTicketAuthSettings): ValidationResult {
     const segments = token.split('.');
     if (segments.length !== 3) {
@@ -154,15 +158,19 @@ function validateToken(token: string, host: string, settings: ConnectTicketAuthS
     }
 
     const [headerSegment, payloadSegment, signatureSegment] = segments;
-    let header: Record<string, unknown>;
-    let payload: Record<string, unknown>;
+    let header: unknown;
+    let payload: unknown;
     let providedSignature: Buffer;
     try {
-        header = JSON.parse(decodeBase64Url(headerSegment).toString('utf8')) as Record<string, unknown>;
-        payload = JSON.parse(decodeBase64Url(payloadSegment).toString('utf8')) as Record<string, unknown>;
+        header = JSON.parse(decodeBase64Url(headerSegment).toString('utf8')) as unknown;
+        payload = JSON.parse(decodeBase64Url(payloadSegment).toString('utf8')) as unknown;
         providedSignature = decodeBase64Url(signatureSegment);
     } catch {
         return { isValid: false, reason: 'Connect ticket JWT could not be decoded.' };
+    }
+
+    if (!isJsonObject(header) || !isJsonObject(payload)) {
+        return { isValid: false, reason: 'Connect ticket JWT header and payload must be objects.' };
     }
 
     if (header.alg !== 'HS256') {
@@ -375,22 +383,24 @@ export function createPlayerVerifyClient(
         const authenticatedRequest = info.req as AuthenticatedIncomingMessage;
         authenticatedRequest.scaleWorldValidatedConnectTicketIdentity = undefined;
         authenticatedRequest.scaleWorldConnectTicketIdentityValidated = false;
-        const host = parseHostFromRequest(info.req);
-        const token = parseTicketFromRequest(info.req, host);
-        if (!token) {
-            const reason = 'Connect ticket (ct) is required.';
-            if (settings.mode === 'enforce') {
-                Logger.warn(reason);
-                done(false, 401, reason);
-                return;
-            }
-
-            Logger.warn(`[soft] ${reason}`);
-            done(true);
-            return;
+        let validation: ValidationResult;
+        try {
+            const host = parseHostFromRequest(info.req);
+            const token = parseTicketFromRequest(info.req, host);
+            validation = token
+                ? validateToken(token, host, settings)
+                : { isValid: false, reason: 'Connect ticket (ct) is required.' };
+        } catch {
+            // Request parsing and runtime admission hooks are local to this upgrade attempt.
+            // An unexpected failure cannot admit a viewer, including in soft mode. Keep raw
+            // errors and ticket material out of logs, and invoke done only outside this catch.
+            validation = {
+                isValid: false,
+                forceReject: true,
+                reason: 'Connect ticket verification is temporarily unavailable.'
+            };
         }
 
-        const validation = validateToken(token, host, settings);
         if (validation.isValid) {
             if (validation.identity) {
                 authenticatedRequest.scaleWorldValidatedConnectTicketIdentity = validation.identity;
