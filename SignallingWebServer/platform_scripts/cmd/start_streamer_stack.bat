@@ -211,6 +211,7 @@ if not defined WATCHDOG_RESTART_COMMAND set "WATCHDOG_RESTART_COMMAND=""%SCRIPT_
 call :apply_unreal_provisioning_startup_args
 if errorlevel 1 exit /b 1
 call :apply_unreal_service_class_startup_args
+if errorlevel 1 exit /b 1
 
 echo PixelStreaming delivery mode "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%" for %SCALEWORLD_STREAMING_LANE%/%SCALEWORLD_DEPLOYMENT_TRACK% startup.
 
@@ -456,8 +457,15 @@ exit /b 0
 :apply_unreal_service_class_startup_args
 set "RESOLVED_SERVICE_CLASS=standard"
 if defined SCALEWORLD_UNREAL_STARTUP_ARGS (
-  set "SCALEWORLD_UNREAL_STARTUP_ARGS=!SCALEWORLD_UNREAL_STARTUP_ARGS:%SCALEWORLD_UNREAL_PREMIUM_STARTUP_ARGS%=!"
-  set "SCALEWORLD_UNREAL_STARTUP_ARGS=!SCALEWORLD_UNREAL_STARTUP_ARGS:%SCALEWORLD_UNREAL_PREMIUM_INSTANCE_ARG%=!"
+  set "NORMALIZED_SERVICE_ARGS_FILE=%TEMP%\sw-startup-args-!RANDOM!-!RANDOM!.txt"
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%..\powershell\normalize_unreal_service_class_args.ps1" -OutputPath "!NORMALIZED_SERVICE_ARGS_FILE!"
+  if errorlevel 1 (
+    if exist "!NORMALIZED_SERVICE_ARGS_FILE!" del /q "!NORMALIZED_SERVICE_ARGS_FILE!"
+    exit /b 1
+  )
+  set "SCALEWORLD_UNREAL_STARTUP_ARGS="
+  set /p "SCALEWORLD_UNREAL_STARTUP_ARGS="<"!NORMALIZED_SERVICE_ARGS_FILE!"
+  del /q "!NORMALIZED_SERVICE_ARGS_FILE!"
 )
 if exist "%RESOLVE_SERVICE_CLASS_SCRIPT%" (
   set "RESOLVED_SERVICE_CLASS="

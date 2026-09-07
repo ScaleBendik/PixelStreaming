@@ -66,6 +66,7 @@ const DEFAULT_HEARTBEAT_MS = 10_000;
 const DEFAULT_FAST_POLLING_INTERVAL_MS = 2_000;
 const DEFAULT_FAST_POLLING_WINDOW_MS = 20_000;
 const DEFAULT_RUNTIME_ENTITLEMENT_POLL_MS = 2_000;
+const RUNTIME_ENTITLEMENT_FETCH_TIMEOUT_MS = 5_000;
 const RECONNECT_GRACE_EVIDENCE_NO_ACK_LOG_INTERVAL = 30;
 const RECONNECT_GRACE_EVIDENCE_JOURNAL_FAILURE_LOG_INTERVAL = 30;
 const DEFAULT_DESIRED_STATE_PATH = path.resolve(
@@ -1696,21 +1697,24 @@ export function wireInstanceAgent(
     const authorizedFetch = async (
         relativePath: string,
         method: 'GET' | 'POST',
-        body?: unknown
+        body?: unknown,
+        signal?: AbortSignal
     ): Promise<Response> => {
         if (!token) {
             throw new Error('Instance agent token is not available.');
         }
 
+        const requestToken = token;
         const response = await fetch(new URL(relativePath, apiBaseUrl).toString(), {
             method,
             headers: {
                 'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`
+                Authorization: `Bearer ${requestToken}`
             },
-            body: body === undefined ? undefined : JSON.stringify(body)
+            body: body === undefined ? undefined : JSON.stringify(body),
+            signal
         });
-        if (response.status === 401) {
+        if (response.status === 401 && token === requestToken) {
             token = null;
         }
         return response;
@@ -1751,16 +1755,20 @@ export function wireInstanceAgent(
         }
         runtimeEntitlementRefreshPromise = (async () => {
             if (!token) return false;
-            const identity = await resolveBootstrapIdentity();
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), RUNTIME_ENTITLEMENT_FETCH_TIMEOUT_MS);
             let failureCode = 'projection_fetch_failed';
             try {
+                const identity = await resolveBootstrapIdentity();
                 const query = new URLSearchParams({
                     instanceId: identity.instanceId,
                     region: identity.region
                 });
                 const response = await authorizedFetch(
                     `/agent/entitlement-manifest?${query.toString()}`,
-                    'GET'
+                    'GET',
+                    undefined,
+                    controller.signal
                 );
                 if (response.status === 204) {
                     return applyRuntimeEntitlementProjection(createUnassignedRuntimeEntitlementProjection());
@@ -1779,13 +1787,30 @@ export function wireInstanceAgent(
                 const message = error instanceof Error ? error.message : String(error);
                 log(`[instance-agent] Runtime entitlement projection refresh failed: ${message}`);
                 return applyRuntimeEntitlementProjection(
-                    createFailedRuntimeEntitlementProjection(failureCode)
+                    createFailedRuntimeEntitlementProjection(
+                        controller.signal.aborted ? 'projection_fetch_timeout' : failureCode
+                    )
                 );
+            } finally {
+                clearTimeout(timeout);
             }
         })().finally(() => {
             runtimeEntitlementRefreshPromise = null;
         });
         return runtimeEntitlementRefreshPromise;
+    };
+
+    const requestRuntimeEntitlementRefresh = (): void => {
+        void refreshRuntimeEntitlementProjection()
+            .then((changed) => {
+                if (changed) {
+                    requestFastPolling('runtime_entitlement_projection_changed');
+                }
+            })
+            .catch((error: unknown) => {
+                const message = error instanceof Error ? error.message : String(error);
+                log(`[instance-agent] Runtime entitlement refresh scheduling failed: ${message}`);
+            });
     };
 
     const postCommandTransition = async <TRequest>(
@@ -2479,7 +2504,9 @@ export function wireInstanceAgent(
                 return;
             }
             await ensureBootstrap();
-            await refreshRuntimeEntitlementProjection();
+            // Permission preparation must not block lifecycle evidence or the
+            // heartbeat response carrying teardown commands.
+            requestRuntimeEntitlementRefresh();
             ensureCompletedRecycleMarkerEventQueued();
             await artifactManager?.drainQueue();
             await screenshotArtifactManager?.drainQueue();
@@ -2631,11 +2658,7 @@ export function wireInstanceAgent(
             void runTick();
             return;
         }
-        void refreshRuntimeEntitlementProjection().then((changed) => {
-            if (changed) {
-                requestFastPolling('runtime_entitlement_projection_changed');
-            }
-        });
+        requestRuntimeEntitlementRefresh();
     }, runtimeEntitlementPollMs);
     runtimeEntitlementPollTimer.unref?.();
     if (reconnectGraceElapsedEvidences.length > 0) {

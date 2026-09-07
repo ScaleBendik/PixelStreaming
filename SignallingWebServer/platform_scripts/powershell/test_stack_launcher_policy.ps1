@@ -1159,7 +1159,7 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $stackLauncher `
-    -Expected 'SCALEWORLD_UNREAL_STARTUP_ARGS:%SCALEWORLD_UNREAL_PREMIUM_INSTANCE_ARG%=' `
+    -Expected 'normalize_unreal_service_class_args.ps1' `
     -Message 'Stack recovery must remove an inherited premium marker before re-evaluating the current service-class tag.'
 
 Assert-MatchesText `
@@ -2044,3 +2044,4 @@ Assert-ContainsText `
     -Expected 'INSTANCE_AGENT_SCREENSHOT_ARTIFACT_UPLOAD_ENABLED=%INSTANCE_AGENT_ARTIFACT_UPLOAD_ENABLED%' `
     -Message 'Legacy Wilbur launcher must enable screenshot bundles when session artifact uploads are enabled.'
 Write-Output 'Stack launcher policy tests passed.'
+& (Join-Path $PSScriptRoot 'test_unreal_service_class_args.ps1')

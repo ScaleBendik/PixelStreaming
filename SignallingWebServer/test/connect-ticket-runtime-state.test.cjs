@@ -806,6 +806,80 @@ test('tokenful reset completion retries marker durability and survives acceptanc
     }
 });
 
+test('stalled entitlement fetch preserves heartbeat delivery, times out closed, and can recover', async (context) => {
+    const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'sw-entitlement-liveness-'));
+    context.after(() => fs.rmSync(stateDirectory, { recursive: true, force: true }));
+    const manifestPath = path.join(stateDirectory, 'manifest.json');
+    const originals = { fetch: global.fetch, setTimeout: global.setTimeout, clearTimeout: global.clearTimeout,
+        setInterval: global.setInterval, clearInterval: global.clearInterval };
+    const intervals = [];
+    const timeouts = [];
+    const heartbeats = [];
+    const pending = [];
+    let eventBatches = 0;
+    global.setTimeout = (callback, delay) => { const timer = { callback, delay }; timeouts.push(timer); return timer; };
+    global.clearTimeout = (timer) => { if (timer) timer.cleared = true; };
+    global.setInterval = (callback, delay) => { const timer = { callback, delay }; intervals.push(timer); return timer; };
+    global.clearInterval = (timer) => { if (timer) timer.cleared = true; };
+    global.fetch = async (url, init = {}) => {
+        const route = new URL(url).pathname;
+        if (route === '/agent/bootstrap') return Response.json({ agentToken: 'test-token',
+            heartbeatIntervalSeconds: 10, commands: [], desiredState: {} });
+        if (route === '/agent/entitlement-manifest') return new Promise((resolve, reject) => {
+            assert.ok(init.signal);
+            pending.push({ resolve, signal: init.signal });
+            init.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        });
+        if (route === '/agent/heartbeat') {
+            heartbeats.push(JSON.parse(init.body));
+            return Response.json({ commands: [], desiredState: {} });
+        }
+        if (route === '/agent/events/batch') {
+            eventBatches += 1;
+            return Response.json({ acceptedCount: 100, commands: [], desiredState: {} });
+        }
+        throw new Error('IMDS unavailable in test');
+    };
+    const settle = async () => { for (let n = 0; n < 40; n++) await new Promise(resolve => setImmediate(resolve)); };
+    const poll = async () => {
+        for (const timer of [...intervals]) if (!timer.cleared) timer.callback();
+        await settle();
+    };
+    try {
+        wireInstanceAgent({ playerRegistry: { count: () => 0, get: () => undefined, has: () => false, on() {} } }, {
+            enabled: true, apiBaseUrl: 'https://agent.test', instanceId: 'i-test', region: 'eu-north-1',
+            requireIdentityProof: false, desiredStatePath: path.join(stateDirectory, 'desired.json'),
+            runtimeEntitlementManifestPath: manifestPath, sessionLogArtifacts: { enabled: false },
+            sessionScreenshotArtifacts: { enabled: false }, logger: () => {}
+        });
+        await settle();
+        await poll();
+        assert.equal(pending.length, 1, 'manifest refreshes must remain single-flight');
+        assert.ok(heartbeats.length >= 2, 'heartbeats continue before the manifest resolves');
+        assert.ok(eventBatches > 0);
+        const deadline = timeouts.find(timer => !timer.cleared && timer.delay === 5_000);
+        assert.ok(deadline);
+        deadline.callback();
+        await settle();
+        assert.equal(pending[0].signal.aborted, true);
+        assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).state, 'failed');
+        await poll();
+        assert.ok(heartbeats.some(item => item.runtimeEntitlementProjection?.errorCode === 'projection_fetch_timeout'));
+        assert.equal(pending.length, 2);
+        pending[1].resolve(Response.json({
+            sessionRequestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            manifestId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', manifestHash: 'A'.repeat(64), schemaVersion: 1,
+            audience: 'internal', groups: [], entitlements: ['session.standard.request'], requestedServiceClass: 'standard',
+            grantedServiceClass: 'standard', minimumComputeCapability: 'gpu-standard-v1',
+            placementPolicy: 'allow-upward-provider-substitution', decidedAtUtc: new Date().toISOString(), policyVersion: 'test'
+        }));
+        await settle();
+        assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).state, 'projected');
+    } finally {
+        Object.assign(global, originals);
+    }
+});
+
 test('completed recycle token survives marker cleanup and process restart while a new token remains open', (context) => {
     const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'sw-completed-recycle-token-'));
     context.after(() => fs.rmSync(stateDirectory, { recursive: true, force: true }));
