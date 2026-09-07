@@ -1,27 +1,41 @@
-# ServerManager PixelStreaming Agent Instructions
+# ServerManager PixelStreaming
 
-This repo is part of the larger ServerManager workspace.
+Owns Wilbur, embedded agent, viewer admission, and runtime startup/update/recycle.
 
-Before planning, reviewing, editing, debugging, or running commands in this repo,
-if `../docs/ai-context/00-index.md` exists:
+Paths are repo-relative. When present, follow `../AGENTS.md` for shared workflow,
+verification, authorization, and maintenance; read the workspace context index once.
+Context names below are under `../docs/ai-context/`; load only relevant sections.
+Standalone: start with `Docs/README.md` and `SignallingWebServer/README.md`. Inspect Git status/diffs,
+preserve unrelated edits, verify against source, and report actual checks/gaps.
+If Git is unavailable, preserve originals and check for concurrent edits.
+Continue authorized local work; report missing shared context and update local docs.
 
-1. Read `../docs/ai-context/00-index.md`.
-2. Read `../docs/ai-context/pixelstreaming.md`.
-3. Read `../docs/ai-context/local-dev.md` for command verification.
-4. Read `../docs/ai-context/conventions-and-traps.md`.
+## Reading routes
 
-Also read `../docs/ai-context/release-update-flow.md` and
-`../docs/ai-context/cross-system-flows.md` when touching runtime artifacts,
-connect-ticket validation, Wilbur, instance-agent behavior, viewer idle/recycle,
-startup scripts, artifact upload, or release/update behavior.
+- Runtime: `pixelstreaming.md`; toolchain/commands: PixelStreaming in `local-dev.md`.
+- Admission/agent/startup/idle/recycle: relevant traps and `cross-system-flows.md`.
+- Artifacts/install/release: `release-update-flow.md` and local
+  `Docs/pixelstreaming-runtime-artifact-contract.md`. Prefer ScaleWorld Docs over upstream README.
 
-The canonical active backlog is
-`../scaleworld-server-manager-web/MASTER_BACKLOG.md`. Check it before making
-roadmap, rollout, release, or priority claims. If durable PixelStreaming runtime
-behavior, commands, config, deployment assumptions, cross-system contracts, or
-backlog state changes, update the relevant `../docs/ai-context/` docs and the
-canonical backlog when appropriate.
+## Constraints
 
-Do not run operational scripts that stop/recycle instances, mutate EC2 tags,
-activate runtimes, or upload artifacts unless that is the explicit task.
+- Wilbur startup affects agent heartbeats/commands. Preserve exact session/generation
+  correlation, fail-closed tickets, and immutable artifact identity.
+- Signalling readiness alone does not prove usable media.
+- Stop/recycle, tag writes, activation, and upload scripts are operational;
+  inspect targets and run only within the authorized task.
+- Check `NODE_VERSION` and actual executable version for build/release provenance.
 
+## Verification
+
+Use affected workspace `package.json`; shared dependencies may need building first.
+
+- In `SignallingWebServer/`: `npm exec tsc -- --noEmit`, `npm run lint`, and
+  `npm test` for runtime behavior (the test script also builds Wilbur).
+- For startup/prerequisite changes, from repo root run PowerShell with
+  `-ExecutionPolicy Bypass -File` and the relevant harness under
+  `SignallingWebServer/platform_scripts/powershell/`:
+  `test_stack_launcher_policy.ps1` or `test_unreal_prerequisite.ps1`.
+- Run affected library/frontend tests/builds; broaden to root `npm run lint` and
+  `npm run build` for shared dependency changes. Report hosted acceptance separately;
+  compilation or placeholder test scripts do not establish lifecycle/media behavior.
