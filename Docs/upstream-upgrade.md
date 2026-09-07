@@ -89,6 +89,14 @@ Common, Signalling, Wilbur and both frontend libraries have separate passing lin
 entry points. Some other upstream workspaces have empty or placeholder scripts;
 a root build does not establish end-to-end media correctness.
 
+The production dependency audit is clear on this graph. The full audit still
+reports development-tool advisories through `eslint-plugin-tsdoc`/`ajv` and
+`open-cli`/`file-type` (four moderate, one high). The existing packager copies
+root development dependencies too, so those packages are physically present in
+its ZIP even though the serving runtime does not depend on them. Upgrading those
+tools or pruning the bundle requires a separate verified tooling change; this
+merge does not claim the entire archive is advisory-free.
+
 ## Hosted acceptance still required
 
 Before promoting this runtime, use an immutable artifact and the exact UE 5.8.2
