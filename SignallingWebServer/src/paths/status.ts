@@ -1,5 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
-import { SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
+import { SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
 
 // eslint-disable-next-line  @typescript-eslint/no-unsafe-assignment
 const pjson = require('../../package.json');
@@ -26,7 +26,7 @@ export default function (signallingServer: SignallingServer) {
 
     GET.apiDoc = {
         summary: 'Returns the current status of the server.',
-        operationId: 'getConfig',
+        operationId: 'getStatus',
         responses: {
             200: {
                 description: 'The current status of the server.',

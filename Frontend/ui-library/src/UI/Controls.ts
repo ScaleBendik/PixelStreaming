@@ -4,7 +4,7 @@ import { FullScreenIcon } from './FullscreenIcon';
 import { SettingsIcon } from './SettingsIcon';
 import { StatsIcon } from './StatsIcon';
 import { XRIcon } from './XRIcon';
-import { WebXRController } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.7';
+import { WebXRController } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.8';
 import { UIElementConfig, UIElementCreationMode } from '../UI/UIConfigurationTypes';
 
 /**
@@ -23,7 +23,7 @@ export type ControlsUIConfiguration = {
 
 // If there isn't a type provided, default behaviour is to create the element.
 function shouldCreateButton(type: UIElementConfig | undefined): boolean {
-    return type == undefined ? true : type.creationMode === UIElementCreationMode.CreateDefaultElement;
+    return type === undefined ? true : type.creationMode === UIElementCreationMode.CreateDefaultElement;
 }
 
 /**

@@ -16,17 +16,17 @@ permissions:
 
 jobs:
   streaming-test-linux:
-    if: github.repository == 'EpicGamesExt/PixelStreamingInfrastructure'
+    if: github.repository == 'EpicGames/PixelStreamingInfrastructure'
     runs-on: ubuntu-latest
     steps:
     - name: Checkout source code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v7
         
     - name: Create results directory
       run: mkdir Extras/FrontendTests/results
 
     - name: Launch frontend tests in docker containers
-      uses: isbang/compose-action@v1.5.1
+      uses: hoverkraft-tech/compose-action@v3.1.0
       with:
         compose-file: "Extras/FrontendTests/docker-compose.yml"
         up-flags: "--build --abort-on-container-exit --exit-code-from tester"
@@ -36,30 +36,30 @@ jobs:
       run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
       
     - name: Upload results
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: Results-${{ steps.vars.outputs.sha_short }}-Linux
         path: Extras/FrontendTests/results
 
   # streaming-test-win:
-  #   if: github.repository == 'EpicGamesExt/PixelStreamingInfrastructure'
+  #   if: github.repository == 'EpicGames/PixelStreamingInfrastructure'
   #   runs-on: windows-latest
   #   steps:
   #   - name: Checkout source code
-  #     uses: actions/checkout@v3
+  #     uses: actions/checkout@v7
   #
   #   - name: Get node version
   #     id: get_node_version
   #     run: echo "node_version=$(cat NODE_VERSION)" >> $Env:GITHUB_OUTPUT
   #
-  #   - uses: actions/setup-node@v4
+  #   - uses: actions/setup-node@v7
   #     with:
   #       node-version: ${{ steps.get_node_version.outputs.node_version }}
   #
   #   - name: Download streamer
   #     uses: robinraju/release-downloader@v1
   #     with:
-  #       repository: 'EpicGamesExt/PixelStreamingInfrastructure'
+  #       repository: 'EpicGames/PixelStreamingInfrastructure'
   #       tag: 'minimal-streamer'
   #       fileName: 'Minimal-PixelStreamer-5.6.7z'
   #
@@ -135,7 +135,7 @@ jobs:
   #     run: echo "sha_short=$(git rev-parse --short HEAD)" >> $Env:GITHUB_OUTPUT
   #     
   #   - name: Upload results
-  #     uses: actions/upload-artifact@v4
+  #     uses: actions/upload-artifact@v7
   #     with:
   #       name: Results-${{ steps.vars.outputs.sha_short }}-Win
   #       path: Extras\MinimalStreamTester\playwright-report

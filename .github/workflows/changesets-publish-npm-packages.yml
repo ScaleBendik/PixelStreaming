@@ -2,10 +2,15 @@ name: Publish NPM packages
 
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: build and 'npm publish --dry-run' every publishable package (ignoring version checks) so you can inspect the tarball contents in the logs. Nothing is published, tagged, or released."
+        type: boolean
+        default: false
   push:
-    branches: 
+    branches:
       - 'UE*'
-    paths: 
+    paths:
       - '**/package.json'
 
 # This makes the matrix of jobs to run one at a time.
@@ -18,14 +23,18 @@ permissions:
 jobs:
   # gets all publishable npm packages.
   fetch-package-info:
+    # Upstream packages and release tags are managed only in Epic's repository.
+    if: github.repository == 'EpicGames/PixelStreamingInfrastructure'
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    env:
+      DRY_RUN: ${{ inputs.dry_run == true }}
     outputs:
       matrix: ${{ steps.query-packages.outputs.matrix }}
     steps:
       - name: Checkout Repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v7
 
       - name: Get package info
         id: query-packages
@@ -38,6 +47,12 @@ jobs:
             package_name=$(echo $row | jq -r '.name')
             package_short_name=${package_name#@epicgames-ps/}
             package_version=$(echo $row | jq -r '.version')
+            # In dry-run we want to inspect every publishable package, so skip
+            # the "is this version newer than what's published" filter entirely.
+            if [ "$DRY_RUN" = "true" ]; then
+              to_publish+=($(echo $row | jq -c ". + { \"tag\": \"${package_short_name}\" }"))
+              continue
+            fi
             package_published=$(npm show "$package_name" version 2>/dev/null || echo "0.0.0")
             if [ "$(printf "%s\n%s" "$package_published" "$package_version" | sort -V | tail -n1)" = "$package_version" ] && [ "$package_version" != "$package_published" ]; then
               to_publish+=($(echo $row | jq -c ". + { \"tag\": \"${package_short_name}\" }"))
@@ -55,14 +70,16 @@ jobs:
     permissions:
       id-token: write # Required for OIDC
       contents: write
-    if: ${{ fromJSON(needs.fetch-package-info.outputs.matrix).count > 0 }}
+    env:
+      DRY_RUN: ${{ inputs.dry_run == true }}
+    if: ${{ github.repository == 'EpicGames/PixelStreamingInfrastructure' && fromJSON(needs.fetch-package-info.outputs.matrix).count > 0 }}
     strategy:
       max-parallel: 1
       matrix:
         package: ${{ fromJson(needs.fetch-package-info.outputs.matrix).list }}
     steps:
       - name: Checkout Repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v7
 
       - name: Remove workspace package
         run: rm package.json package-lock.json
@@ -72,44 +89,68 @@ jobs:
         run: echo "node_version=$(cat NODE_VERSION)" >> $GITHUB_OUTPUT
 
       - name: Setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "${{ steps.get_node_version.outputs.node_version }}"
           registry-url: 'https://registry.npmjs.org'
 
       # Ensure npm 11.5.1 or later is installed for OIDC
       - name: Update npm
-        run: npm install -g npm@latest
+        run: npm install -g npm@11.5.1
 
       - name: Publish ${{ matrix.package.name }}
         working-directory: ${{ matrix.package.path }}
         run: |
           npm install
           npm run build
-          npm publish --access public
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "::notice title=Dry run::Packing ${{ matrix.package.name }} without publishing. Inspect 'Tarball Contents' below."
+            npm publish --dry-run --access public
+          else
+            npm publish --access public
+          fi
 
       - name: Build the version label
+        if: ${{ inputs.dry_run != true }}
         id: build-label
         run: echo "label=${{ matrix.package.tag }}-${{ matrix.package.version }}" >> $GITHUB_OUTPUT
 
-      - name: Create release tag
-        uses: actions/github-script@v5
+      - name: Create or update release tag
+        if: ${{ inputs.dry_run != true }}
+        uses: actions/github-script@v9
         with:
           script: |
-            github.rest.git.createRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: 'refs/tags/${{ steps.build-label.outputs.label }}',
-              sha: context.sha
-            })
+            const tag = 'refs/tags/${{ steps.build-label.outputs.label }}';
+            try {
+              await github.rest.git.createRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: tag,
+                sha: context.sha
+              });
+            } catch (e) {
+              if (e.status === 422) {
+                await github.rest.git.updateRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: tag.replace('refs/', ''),
+                  sha: context.sha,
+                  force: true
+                });
+              } else {
+                throw e;
+              }
+            }
 
       - name: Split up the archive paths so the path in the archives is nice.
+        if: ${{ inputs.dry_run != true }}
         id: split-paths
         run: |
           echo "basename=$(basename ${{ matrix.package.path }})" >> $GITHUB_OUTPUT
           echo "dirname=$(dirname ${{ matrix.package.path }})" >> $GITHUB_OUTPUT
 
       - name: Archive Release tar.gz
+        if: ${{ inputs.dry_run != true }}
         uses: thedoctor0/zip-release@0.7.1
         with:
           directory: ${{ steps.split-paths.outputs.dirname }}
@@ -120,6 +161,7 @@ jobs:
             node_modules
 
       - name: Archive Release zip
+        if: ${{ inputs.dry_run != true }}
         uses: thedoctor0/zip-release@0.7.1
         with:
           directory: ${{ steps.split-paths.outputs.dirname }}
@@ -130,6 +172,7 @@ jobs:
             /${{ steps.split-paths.outputs.basename }}/node_modules/*
 
       - name: Make the release
+        if: ${{ inputs.dry_run != true }}
         uses: ncipollo/release-action@v1
         with:
           tag: "${{ steps.build-label.outputs.label }}"
@@ -138,7 +181,19 @@ jobs:
             ${{ steps.split-paths.outputs.dirname }}/${{ steps.build-label.outputs.label }}.tar.gz
           bodyFile: ${{ matrix.package.path }}/CHANGELOG.md
 
-      # Sometimes the next job will fail because npm reports that the dependency just published cant be found
-      - name: Allow publication to propagate
-        run: sleep 10
+      - name: Wait for package to propagate on npm registry
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          PACKAGE="${{ matrix.package.name }}"
+          VERSION="${{ matrix.package.version }}"
+          for i in $(seq 1 30); do
+            if npm view "${PACKAGE}@${VERSION}" version 2>/dev/null | grep -qF "${VERSION}"; then
+              echo "${PACKAGE}@${VERSION} is available on npm"
+              exit 0
+            fi
+            echo "Waiting for ${PACKAGE}@${VERSION} to propagate... (attempt $i/30)"
+            sleep 10
+          done
+          echo "ERROR: ${PACKAGE}@${VERSION} did not become available within 5 minutes"
+          exit 1
 

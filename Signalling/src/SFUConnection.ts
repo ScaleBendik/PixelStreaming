@@ -1,4 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
+import type { IncomingMessage } from 'http';
 import WebSocket from 'ws';
 import {
     ITransport,
@@ -8,7 +9,7 @@ import {
     Messages,
     BaseMessage,
     EventEmitter
-} from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
+} from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
 import { IPlayer, IPlayerInfo } from './PlayerRegistry';
 import { IStreamer, IStreamerInfo } from './StreamerRegistry';
 import { Logger } from './Logger';
@@ -45,6 +46,8 @@ export class SFUConnection extends EventEmitter implements IPlayer, IStreamer, L
     subscribedStreamer: IStreamer | null;
     // A descriptive string describing the remote address of this connection.
     remoteAddress?: string;
+    // The HTTP upgrade request that opened this connection, if available.
+    request?: IncomingMessage;
     // The max number of subscribed players at a time. A value of 0 means there is no limit (this the default).
     maxSubscribers: number;
     // A list of all the current subscribed players.
@@ -60,8 +63,9 @@ export class SFUConnection extends EventEmitter implements IPlayer, IStreamer, L
      * @param server - The signalling server object that spawned this sfu.
      * @param ws - The websocket coupled to this sfu connection.
      * @param remoteAddress - The remote address of this connection. Only used as display.
+     * @param request - The HTTP upgrade request that opened this connection, if available.
      */
-    constructor(server: SignallingServer, ws: WebSocket, remoteAddress?: string) {
+    constructor(server: SignallingServer, ws: WebSocket, remoteAddress?: string, request?: IncomingMessage) {
         super();
 
         this.server = server;
@@ -71,6 +75,7 @@ export class SFUConnection extends EventEmitter implements IPlayer, IStreamer, L
         this.streamerId = '';
         this.streaming = false;
         this.remoteAddress = remoteAddress;
+        this.request = request;
         this.subscribedStreamer = null;
         this.maxSubscribers = 0;
         this.subscribers = new Set();
@@ -179,7 +184,16 @@ export class SFUConnection extends EventEmitter implements IPlayer, IStreamer, L
             return;
         }
 
+        // Release the old streamer membership and listeners before replacing a subscription.
+        // Otherwise its later messages or disconnect event can reach the new SFU generation.
+        if (this.subscribedStreamer) {
+            this.unsubscribe();
+        }
+
         this.subscribedStreamer = streamer;
+        // Register as a subscriber of the upstream streamer so it will forward signalling messages
+        // back to this SFU (the streamer's forwardMessage only sends to subscribed players).
+        this.subscribedStreamer.subscribers.add(this.playerId);
         this.subscribedStreamer.on('layer_preference', this.layerPreferenceListener);
         this.subscribedStreamer.on('id_changed', this.streamerIdChangeListener);
         this.subscribedStreamer.on('disconnect', this.streamerDisconnectedListener);
@@ -202,6 +216,7 @@ export class SFUConnection extends EventEmitter implements IPlayer, IStreamer, L
         });
         this.sendToStreamer(disconnectedMessage);
 
+        this.subscribedStreamer.subscribers.delete(this.playerId);
         this.subscribedStreamer.off('layer_preference', this.layerPreferenceListener);
         this.subscribedStreamer.off('id_changed', this.streamerIdChangeListener);
         this.subscribedStreamer.off('disconnect', this.streamerDisconnectedListener);
@@ -229,6 +244,14 @@ export class SFUConnection extends EventEmitter implements IPlayer, IStreamer, L
         if (!message.playerId) {
             Logger.error(
                 `SFU ${this.streamerId} trying to send a message to a player with no playerId. Ignored.`
+            );
+            return;
+        }
+        if (!this.subscribers.has(message.playerId)) {
+            // Only send to players subscribed to this SFU, otherwise the SFU could target any player
+            // on the server via the global player registry (cross-tenant signalling).
+            Logger.error(
+                `SFU ${this.streamerId} tried to send a message to player ${message.playerId} which is not subscribed to it. Ignored.`
             );
             return;
         }

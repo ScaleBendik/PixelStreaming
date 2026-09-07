@@ -1,6 +1,6 @@
-import * as MsSdpUtils from "mediasoup-client/lib/handlers/sdp/commonUtils";
-import { RemoteSdp } from "mediasoup-client/lib/handlers/sdp/RemoteSdp";
-import { IceCandidate as ClientIceCandidate } from "mediasoup-client/lib/Transport";
+import * as MsSdpUtils from "mediasoup-client/handlers/sdp/commonUtils";
+import { RemoteSdp } from "mediasoup-client/handlers/sdp/RemoteSdp";
+import { IceCandidate as ClientIceCandidate } from "mediasoup-client/types";
 
 import {
   Consumer,
@@ -12,8 +12,8 @@ import {
   WebRtcTransport,
 } from "mediasoup/node/lib/types";
 
+import { randomUUID } from "node:crypto";
 import * as SdpTransform from "sdp-transform";
-import { v4 as uuidv4 } from "uuid";
 
 import * as BrowserRtpCapabilities from "./BrowserRtpCapabilities";
 import * as SdpUtils from "./SdpUtils";
@@ -208,7 +208,6 @@ export class SdpEndpoint {
         offerRtpParameters: this.producerOfferParams[i],
         answerRtpParameters: this.producers[i].rtpParameters,
         codecOptions: undefined,
-        extmapAllowMixed: false,
       });
     }
 
@@ -254,7 +253,7 @@ export class SdpEndpoint {
     });
 
     // Make an MSID to be used for both "audio" and "video" kinds.
-    const sendMsid = uuidv4().substr(0, 8);
+    const sendMsid = randomUUID().slice(0, 8);
 
     console.log("[SdpEndpoint.createOffer] Make 'sendonly' SDP Offer");
 

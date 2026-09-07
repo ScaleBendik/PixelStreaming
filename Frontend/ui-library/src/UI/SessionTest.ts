@@ -5,7 +5,7 @@ import {
     LatencyInfo,
     Logger,
     SettingNumber
-} from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.7';
+} from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.8';
 import { SettingUINumber } from '../Config/SettingUINumber';
 
 /**
@@ -160,7 +160,7 @@ export class SessionTest {
         this.records.forEach((record) => {
             csvHeader.forEach((field) => {
                 try {
-                    csvBody += `"${field.split('.').reduce((o, k) => o[k as never], record)}",`;
+                    csvBody += `"${field.split('.').reduce((o, k) => o[k as never], record) as unknown as string}",`;
                 } catch (_) {
                     csvBody += `"",`;
                 }
@@ -204,7 +204,7 @@ export class SessionTest {
         this.latencyRecords.forEach((record) => {
             csvHeader.forEach((field) => {
                 try {
-                    csvBody += `"${field.split('.').reduce((o, k) => o[k as never], record)}",`;
+                    csvBody += `"${field.split('.').reduce((o, k) => o[k as never], record) as unknown as string}",`;
                 } catch (_) {
                     csvBody += `"",`;
                 }

@@ -1,4 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
+import type { IncomingMessage } from 'http';
 import WebSocket from 'ws';
 import {
     ITransport,
@@ -7,7 +8,7 @@ import {
     MessageHelpers,
     Messages,
     BaseMessage
-} from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
+} from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
 import { IPlayer, IPlayerInfo } from './PlayerRegistry';
 import { IStreamer } from './StreamerRegistry';
 import { Logger } from './Logger';
@@ -44,6 +45,8 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     scaleWorldSessionIdentityValidated: boolean;
     // True only when the optional active-session id came from that validated ticket.
     scaleWorldActiveSessionIdValidated: boolean;
+    // The HTTP upgrade request that opened this connection, if available.
+    request?: IncomingMessage;
 
     private server: SignallingServer;
     private streamerIdChangeListener: (newId: string) => void;
@@ -58,8 +61,9 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
      * @param server - The signalling server object that spawned this player.
      * @param ws - The websocket coupled to this player connection.
      * @param remoteAddress - The remote address of this connection. Only used as display.
+     * @param request - The HTTP upgrade request that opened this connection, if available.
      */
-    constructor(server: SignallingServer, ws: WebSocket, remoteAddress?: string) {
+    constructor(server: SignallingServer, ws: WebSocket, remoteAddress?: string, request?: IncomingMessage) {
         this.server = server;
         this.playerId = '';
         this.subscribedStreamer = null;
@@ -71,6 +75,7 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
         this.scaleWorldMediaEvidenceCapabilityReported = false;
         this.scaleWorldMediaReceivedReported = false;
         this.scaleWorldMediaFlowObservedReported = false;
+        this.request = request;
 
         this.transport.on('error', this.onTransportError.bind(this));
         this.transport.on('close', this.onTransportClose.bind(this));
@@ -271,12 +276,22 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             } else {
                 Logger.warn(`Subscribing to ${streamerId}`);
                 this.subscribe(streamerId);
+                // subscribe() declines silently, most often because maxSubscribers is reached, and
+                // says so only by leaving subscribedStreamer unset. Forwarding anyway dereferences
+                // null, which surfaces as an uncaughtException and exits the process.
+                if (!this.subscribedStreamer) {
+                    Logger.error(
+                        `Player ${this.playerId} could not be subscribed to ${streamerId}. Disconnecting.`
+                    );
+                    this.disconnect();
+                    return;
+                }
             }
         }
 
         message.playerId = this.playerId;
-        LogUtils.logForward(this, this.subscribedStreamer!, message);
-        this.subscribedStreamer!.protocol.sendMessage(message);
+        LogUtils.logForward(this, this.subscribedStreamer, message);
+        this.subscribedStreamer.protocol.sendMessage(message);
     }
 
     private onIceCandidateMessage(message: BaseMessage): void {

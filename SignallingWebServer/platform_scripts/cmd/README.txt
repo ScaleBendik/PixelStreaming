@@ -15,3 +15,8 @@ Deprecated compatibility wrapper:
 Tips:
 
 - You can provide --help to start.bat to get a list of customizable arguments.
+- Values passed to these scripts cannot contain ^ or ! characters. cmd.exe
+  doubles a caret when the scripts hand their arguments to common.bat, and
+  strips an exclamation mark under delayed expansion, so a TURN password such
+  as "pass!word" arrives as "password" with no error. Choose credentials
+  without those two characters.

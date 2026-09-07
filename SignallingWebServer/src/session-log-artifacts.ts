@@ -225,8 +225,8 @@ function normalizeRequestSessionCorrelation(request: SessionLogArtifactRegistrat
 function hasSessionCorrelation(request: SessionLogArtifactRegistrationRequest): boolean {
     return Boolean(
         normalizeGuidText(request.sessionRequestId) ??
-            normalizeGuidText(request.userSessionId) ??
-            normalizeOptionalText(request.sessionId)
+        normalizeGuidText(request.userSessionId) ??
+        normalizeOptionalText(request.sessionId)
     );
 }
 

@@ -57,3 +57,22 @@ function redactSensitiveLogValueInternal(value: unknown, seen: WeakMap<object, u
 export function redactSensitiveLogValue(value: unknown): unknown {
     return redactSensitiveLogValueInternal(value, new WeakMap<object, unknown>());
 }
+
+/**
+ * Common's protocol logger emits an already serialized message instead of the signalling log
+ * envelope. Redact that JSON before forwarding it to any console or file transport.
+ */
+export function redactSensitiveProtocolLog(message: string): string {
+    const match = /^(Protocol (?:sent|received) =>\s*)([\s\S]+)$/.exec(message);
+    if (!match) {
+        return message;
+    }
+
+    try {
+        const payload: unknown = JSON.parse(match[2]);
+        return match[1] + JSON.stringify(redactSensitiveLogValue(payload), undefined, 4);
+    } catch {
+        // Never pass an unparseable protocol payload through the debug channel unredacted.
+        return match[1] + REDACTED_LOG_VALUE;
+    }
+}

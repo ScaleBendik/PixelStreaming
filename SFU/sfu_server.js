@@ -12,6 +12,7 @@ let signalServer = null;
 let mediasoupRouter;
 let streamer = null;
 let peers = new Map();
+let streamerSearchTimer = null;
 let dataRouter;
 let scalabilityMode = "L1T1"; // Scalability mode defaults to L1T1 and is set by the offer from the streamer
 
@@ -51,7 +52,7 @@ async function createDataRouter() {
                 playerId: ""
             };
         }
-        const length = message.readUint16LE(1);
+        const length = message.readUInt16LE(1);
         const headerEnd = length + 3;
         return {
             playerId: new TextDecoder("utf-16").decode(message.subarray(3, headerEnd)),
@@ -121,6 +122,34 @@ async function createDataRouter() {
     };
 }
 
+// Sends a message to the signalling server, but only while the connection is up. ws throws if the
+// socket is still connecting and raises an error event if it has closed, so anything that can run
+// after a disconnect (timers, close handlers) has to send through here.
+function sendToSignalServer(message) {
+    if (!signalServer || signalServer.readyState !== WebSocket.OPEN) {
+        return false;
+    }
+    signalServer.send(JSON.stringify(message));
+    return true;
+}
+
+// Asks for the streamer list again after a delay. Only one search is ever pending, so repeated
+// disconnects cannot build up a backlog of listStreamers messages and duplicate subscriptions.
+function scheduleStreamerSearch() {
+    cancelStreamerSearch();
+    streamerSearchTimer = setTimeout(function() {
+        streamerSearchTimer = null;
+        sendToSignalServer({ type: 'listStreamers' });
+    }, config.retrySubscribeDelaySecs * 1000);
+}
+
+function cancelStreamerSearch() {
+    if (streamerSearchTimer !== null) {
+        clearTimeout(streamerSearchTimer);
+        streamerSearchTimer = null;
+    }
+}
+
 function connectSignalling(server) {
     console.log("Connecting to Signalling Server at %s", server);
     signalServer = new WebSocket(server);
@@ -128,7 +157,10 @@ function connectSignalling(server) {
     signalServer.addEventListener("error", result => { console.log(`Error: ${result.message}`); });
     signalServer.addEventListener("message", result => onSignallingMessage(result.data));
     signalServer.addEventListener("close", result => {
-        onStreamerDisconnected();
+        // Only clean up locally. Nothing can be sent on a closed socket, and the reconnect below
+        // asks for the streamer list again as soon as the new connection is identified.
+        cancelStreamerSearch();
+        teardownStreamer();
         console.log(`Disconnected from signalling server: ${result.code} ${result.reason}`);
         console.log("Attempting reconnect to signalling server...");
         setTimeout(() => {
@@ -162,9 +194,7 @@ async function onStreamerList(msg) {
 
     if (!success) {
         // did not subscribe to anything
-        setTimeout(function() {
-            signalServer.send(JSON.stringify({ type: 'listStreamers' }));
-        }, config.retrySubscribeDelaySecs * 1000);
+        scheduleStreamerSearch();
     }
 }
 
@@ -176,7 +206,7 @@ async function onIdentify(msg) {
 async function onStreamerOffer(msg) {
     console.log("Got offer from streamer");
 
-    if (streamer != null) {
+    if (streamer !== null) {
         signalServer.close(1013 /* Try again later */, 'Producer is already connected');
         return;
     }
@@ -201,28 +231,40 @@ function getNextStreamerSCTPId() {
     return streamer.transport.getNextSctpStreamId();
 }
 
-function onStreamerDisconnected() {
-    console.log("Streamer disconnected");
+// Drops all players and closes anything we hold for the current streamer. Sends nothing, so it is
+// safe to call when the signalling connection has already gone away. Returns true if we still had
+// a streamer to tear down.
+function teardownStreamer() {
     disconnectAllPeers();
 
-    if (streamer != null) {
-        for (const mediaProducer of streamer.producers) {
-            mediaProducer.close();
-        }
-        streamer.transport.close();
-        streamer = null;
-        signalServer.send(JSON.stringify({ type: 'stopStreaming' }));
-
-        setTimeout(function() {
-            signalServer.send(JSON.stringify({ type: 'listStreamers' }));
-        }, config.retrySubscribeDelaySecs * 1000);
+    if (streamer === null) {
+        return false;
     }
+
+    for (const mediaProducer of streamer.producers) {
+        mediaProducer.close();
+    }
+    streamer.transport.close();
+    streamer = null;
+    return true;
+}
+
+function onStreamerDisconnected() {
+    console.log("Streamer disconnected");
+
+    if (teardownStreamer()) {
+        sendToSignalServer({ type: 'stopStreaming' });
+    }
+
+    // The streamer can also drop before it sends us an offer, in which case there was no streamer
+    // to tear down. Search either way, or the SFU sits idle until someone restarts it.
+    scheduleStreamerSearch();
 }
 
 async function onPeerConnected(peerId) {
     console.log("Player %s joined", peerId);
 
-    if (streamer == null) {
+    if (streamer === null) {
         console.log("No streamer connected, ignoring player.");
         return;
     }
@@ -374,8 +416,8 @@ async function onPeerAnswer(peerId, sdp) {
 function onPeerDisconnected(peerId) {
     console.log("Player %s disconnected", peerId);
     const peer = peers.get(peerId);
-    if (peer != null) {
-        for (consumer of peer.consumers) {
+    if (peer) {
+        for (const consumer of peer.consumers) {
             consumer.close();
         }
         if (peer.peerDataConsumer) {
@@ -401,8 +443,8 @@ function disconnectAllPeers() {
 function onLayerPreference(msg) {
     console.log("onLayerPreference: " + JSON.stringify(msg));
     const peer = peers.get(`${msg.playerId}`);
-    if (peer != null) {
-        for (consumer of peer.consumers) {
+    if (peer) {
+        for (const consumer of peer.consumers) {
             consumer.setPreferredLayers({ spatialLayer: msg.spatialLayer, temporalLayer: msg.temporalLayer });
         }
     }
@@ -410,36 +452,42 @@ function onLayerPreference(msg) {
 
 async function onSignallingMessage(message) {
     //console.log(`Got MSG: ${message}`);
-    const msg = JSON.parse(message);
+    let msg;
+    try {
+        msg = JSON.parse(message);
+    } catch (e) {
+        console.error('Failed to parse signalling message: %s', e.message);
+        return;
+    }
 
-    if (msg.type == 'offer') {
+    if (msg.type === 'offer') {
         onStreamerOffer(msg);
     }
-    else if (msg.type == 'answer') {
+    else if (msg.type === 'answer') {
         onPeerAnswer(msg.playerId, msg.sdp);
     }
-    else if (msg.type == 'playerConnected') {
+    else if (msg.type === 'playerConnected') {
         onPeerConnected(msg.playerId);
     }
-    else if (msg.type == 'playerDisconnected') {
+    else if (msg.type === 'playerDisconnected') {
         onPeerDisconnected(msg.playerId);
     }
-    else if (msg.type == 'streamerDisconnected') {
+    else if (msg.type === 'streamerDisconnected') {
         onStreamerDisconnected();
     }
-    else if (msg.type == 'dataChannelRequest') {
+    else if (msg.type === 'dataChannelRequest') {
         setupPeerDataChannels(msg.playerId);
     }
-    else if (msg.type == 'peerDataChannelsReady') {
+    else if (msg.type === 'peerDataChannelsReady') {
         setupStreamerDataChannelsForPeer(msg.playerId);
     }
-    else if (msg.type == 'layerPreference') {
+    else if (msg.type === 'layerPreference') {
         onLayerPreference(msg);
     }
-    else if (msg.type == 'streamerList') {
+    else if (msg.type === 'streamerList') {
         onStreamerList(msg);
     }
-    else if (msg.type == 'identify') {
+    else if (msg.type === 'identify') {
         onIdentify(msg);
     }
 }
@@ -466,7 +514,7 @@ async function startMediasoup() {
 async function onICEStateChange(identifier, iceState) {
     console.log("%s ICE state changed to %s", identifier, iceState);
 
-    if (identifier == 'Streamer' && iceState == 'completed') {
+    if (identifier === 'Streamer' && iceState === 'completed') {
         if (streamer.multiplexChannels) {
             const nextStreamerSCTPStreamId = streamer.transport.getNextSctpStreamId();
             //this will always be 0 since we are using one producer only

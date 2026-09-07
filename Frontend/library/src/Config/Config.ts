@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { Logger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
+import { Logger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
 import { SettingFlag } from './SettingFlag';
 import { SettingNumber } from './SettingNumber';
 import { SettingText } from './SettingText';
@@ -30,9 +30,11 @@ export class Flags {
     static UseCamera = 'UseCamera' as const;
     static KeyboardInput = 'KeyboardInput' as const;
     static MouseInput = 'MouseInput' as const;
+    static MouseDoubleClickAutoRelease = 'MouseDoubleClickAutoRelease' as const;
     static TouchInput = 'TouchInput' as const;
     static GamepadInput = 'GamepadInput' as const;
     static XRControllerInput = 'XRControllerInput' as const;
+    static AutoEnterVR = 'AutoEnterVR' as const;
     static WaitForStreamer = 'WaitForStreamer' as const;
     static HideUI = 'HideUI' as const;
     static EnableCaptureTimeExt = 'EnableCaptureTimeExt' as const;
@@ -65,6 +67,7 @@ export class NumericParameters {
     static MaxReconnectAttempts = 'MaxReconnectAttempts' as const;
     static StreamerAutoJoinInterval = 'StreamerAutoJoinInterval' as const;
     static KeepaliveDelay = 'KeepaliveDelay' as const;
+    static ViewportResScale = 'ViewportResScale' as const;
 }
 
 export type NumericParametersKeys = Exclude<keyof typeof NumericParameters, 'prototype'>;
@@ -193,11 +196,11 @@ export class Config {
                 settings && Object.prototype.hasOwnProperty.call(settings, TextParameters.SignallingServerUrl)
                     ? settings[TextParameters.SignallingServerUrl]
                     : (location.protocol === 'https:' ? 'wss://' : 'ws://') +
-                      window.location.hostname +
-                      // for readability, we omit the port if it's 80
-                      (window.location.port === '80' || window.location.port === ''
-                          ? ''
-                          : `:${window.location.port}`),
+                          window.location.hostname +
+                          // for readability, we omit the port if it's 80
+                          (window.location.port === '80' || window.location.port === ''
+                              ? ''
+                              : `:${window.location.port}`),
                 useUrlParams
             )
         );
@@ -282,7 +285,7 @@ export class Config {
                 'Preferred Quality',
                 'The preferred quality of the stream (only applicable when using the SFU)',
                 settings && Object.prototype.hasOwnProperty.call(settings, OptionParameters.PreferredQuality)
-                    ? settings[OptionParameters.PreferredQuality]!
+                    ? settings[OptionParameters.PreferredQuality]
                     : 'Default',
                 ['Default'],
                 useUrlParams
@@ -505,6 +508,19 @@ export class Config {
         );
 
         this.flags.set(
+            Flags.MouseDoubleClickAutoRelease,
+            new SettingFlag(
+                Flags.MouseDoubleClickAutoRelease,
+                'Auto release after double-click',
+                'After sending a MouseDouble message, also send a matching MouseUp so the streamer’s pressed-button state stays balanced. Disable to restore pre-fix behaviour if your project handles the doubleclick release itself.',
+                settings && Object.prototype.hasOwnProperty.call(settings, Flags.MouseDoubleClickAutoRelease)
+                    ? settings[Flags.MouseDoubleClickAutoRelease]
+                    : true,
+                useUrlParams
+            )
+        );
+
+        this.flags.set(
             Flags.TouchInput,
             new SettingFlag(
                 Flags.TouchInput,
@@ -539,6 +555,19 @@ export class Config {
                 settings && Object.prototype.hasOwnProperty.call(settings, Flags.XRControllerInput)
                     ? settings[Flags.XRControllerInput]
                     : true,
+                useUrlParams
+            )
+        );
+
+        this.flags.set(
+            Flags.AutoEnterVR,
+            new SettingFlag(
+                Flags.AutoEnterVR,
+                'Auto enter VR',
+                'When the video is ready and an immersive-vr session is supported, request the WebXR session automatically. May fail if the browser requires a user gesture to start a WebXR session.',
+                settings && Object.prototype.hasOwnProperty.call(settings, Flags.AutoEnterVR)
+                    ? settings[Flags.AutoEnterVR]
+                    : false,
                 useUrlParams
             )
         );
@@ -649,7 +678,7 @@ export class Config {
                 0 /*min*/,
                 999 /*max*/,
                 settings &&
-                Object.prototype.hasOwnProperty.call(settings, NumericParameters.MaxReconnectAttempts)
+                    Object.prototype.hasOwnProperty.call(settings, NumericParameters.MaxReconnectAttempts)
                     ? settings[NumericParameters.MaxReconnectAttempts]
                     : 3 /*value*/,
                 useUrlParams
@@ -800,7 +829,7 @@ export class Config {
                 500 /*min*/,
                 900000 /*max*/,
                 settings &&
-                Object.prototype.hasOwnProperty.call(settings, NumericParameters.StreamerAutoJoinInterval)
+                    Object.prototype.hasOwnProperty.call(settings, NumericParameters.StreamerAutoJoinInterval)
                     ? settings[NumericParameters.StreamerAutoJoinInterval]
                     : 3000 /*value*/,
                 useUrlParams
@@ -818,6 +847,21 @@ export class Config {
                 settings && Object.prototype.hasOwnProperty.call(settings, NumericParameters.KeepaliveDelay)
                     ? settings[NumericParameters.KeepaliveDelay]
                     : 30000 /*value*/,
+                useUrlParams
+            )
+        );
+
+        this.numericParameters.set(
+            NumericParameters.ViewportResScale,
+            new SettingNumber(
+                NumericParameters.ViewportResScale,
+                'Viewport Resolution Scale',
+                'Scale factor for viewport resolution when MatchViewportResolution is enabled. 1.0 = 100%, 0.5 = 50%, 2.0 = 200%.',
+                0.1 /*min*/,
+                3.0 /*max*/,
+                settings && Object.prototype.hasOwnProperty.call(settings, NumericParameters.ViewportResScale)
+                    ? settings[NumericParameters.ViewportResScale]
+                    : 1.0 /*value*/,
                 useUrlParams
             )
         );
@@ -856,6 +900,14 @@ export class Config {
         } else {
             throw new Error(`There is no numeric setting with the id of ${id}`);
         }
+    }
+
+    /**
+     * @param id The id of the numeric setting to check for.
+     * @returns True if the numeric setting is registered in this Config.
+     */
+    hasNumericSetting(id: NumericParametersIds): boolean {
+        return this.numericParameters.has(id);
     }
 
     /**
@@ -923,7 +975,7 @@ export class Config {
      * @returns True if the flag is enabled.
      */
     isFlagEnabled(id: FlagsIds): boolean {
-        return this.flags.get(id).flag as boolean;
+        return this.flags.get(id).flag;
     }
 
     /**

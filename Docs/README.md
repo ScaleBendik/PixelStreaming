@@ -1,6 +1,6 @@
 # PixelStreaming Documentation
 
-Last updated: 2026-09-03
+Last updated: 2026-09-07
 
 This directory mixes upstream Pixel Streaming reference documentation with ScaleWorld operational docs for the customized streamer runtime.
 
@@ -10,6 +10,7 @@ Use these first for the Server Manager integration:
 
 | Area | Doc |
 | --- | --- |
+| Upstream baseline, preserved customizations and verification | [upstream-upgrade.md](upstream-upgrade.md) |
 | Streamer AWS/TURN/runtime topology | `cloud-infrastructure.md` |
 | Instance-agent bootstrap trust and secret separation | `../../scaleworld-server-manager-web/docs/instance-agent-bootstrap-trust-runbook-2026-05-05.md` |
 | Prod streamer promotion process | `prod-promotions.md` |
@@ -55,3 +56,6 @@ The upstream docs remain relevant for general Pixel Streaming behavior:
 - `SignallingWebServer/README.md`
 
 Do not treat upstream docs as ScaleWorld operational runbooks unless they are explicitly referenced above.
+
+## Legal
+© 2004-2026, Epic Games, Inc. Unreal and its logo are Epic’s trademarks or registered trademarks in the US and elsewhere.

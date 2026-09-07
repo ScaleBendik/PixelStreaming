@@ -1,5 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
-import { SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
+import { SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
 
 /* eslint-disable @typescript-eslint/no-unsafe-argument,
                   @typescript-eslint/no-unsafe-call,
@@ -13,7 +13,8 @@ export default function (signallingServer: SignallingServer) {
     function GET(req: any, res: any, _next: any) {
         const player = signallingServer.playerRegistry.get(req.params.playerId);
         if (!player) {
-            throw new Error(`No player ID matches ${req.params.playerId}.`);
+            res.status(404).json({ message: `No player ID matches ${req.params.playerId}.` });
+            return;
         }
         res.status(200).json(player.getPlayerInfo());
     }

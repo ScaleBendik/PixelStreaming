@@ -13,7 +13,7 @@ import {
     SettingsChangedEvent,
     LatencyInfo,
     ShowOnScreenKeyboardEvent
-} from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.7';
+} from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.8';
 import { OverlayBase } from '../Overlay/BaseOverlay';
 import { ActionOverlay } from '../Overlay/ActionOverlay';
 import { TextOverlay } from '../Overlay/TextOverlay';
@@ -223,8 +223,8 @@ export class Application {
             navigator.vendor &&
             navigator.vendor.indexOf('Apple') > -1 &&
             navigator.userAgent &&
-            navigator.userAgent.indexOf('CriOS') == -1 &&
-            navigator.userAgent.indexOf('FxiOS') == -1;
+            navigator.userAgent.indexOf('CriOS') === -1 &&
+            navigator.userAgent.indexOf('FxiOS') === -1;
 
         // In some cases we want to disable fullscreen button if it is not explicitly requested:
 
@@ -234,7 +234,7 @@ export class Application {
 
         // Additionally iPad on non-Safari browsers doesn't really allow touch inputs and fullscreen video at the same time.
         // If you do this the video gets dragged off back to normal non-fullscreen video and then the video is paused.
-        // See: https://github.com/EpicGamesExt/PixelStreamingInfrastructure/issues/219
+        // See: https://github.com/EpicGames/PixelStreamingInfrastructure/issues/219
         const disableFullscreenButton = isIphone || (!isSafari && isIpad);
 
         if (this._options.fullScreenControlsConfig === undefined && disableFullscreenButton) {
@@ -808,7 +808,7 @@ export class Application {
                     }
                     allowRestart = true;
                 }
-            } else if (messageStreamingList.ids.length == 0) {
+            } else if (messageStreamingList.ids.length === 0) {
                 if (isReconnecting) {
                     message = `Waiting for a streamer to become available.`;
                     allowRestart = false;
@@ -869,7 +869,7 @@ export class Application {
             data: { id, target, type }
         } = event;
         // Explicitly handle specific setting behaviour
-        if (id == OptionParameters.PreferredQuality) {
+        if (id === OptionParameters.PreferredQuality) {
             const preferredQualityOption = this.stream.config.getSettingOption(
                 OptionParameters.PreferredQuality
             );

@@ -180,12 +180,15 @@ Assert-ContainsText `
     -Expected 'if not defined STACK_LAUNCH_UNREAL_BEFORE_WILBUR set "STACK_LAUNCH_UNREAL_BEFORE_WILBUR=false"' `
     -Message 'Stack launcher must wait for Wilbur readiness before starting Unreal while preserving the env override.'
 
-$streamerConfigSendIndex = $signallingServer.IndexOf('newStreamer.sendMessage(message);')
+# This source guard complements Signalling/test/upgrade-compatibility.test.cjs, which checks
+# actual config/identify wire order and a single config for static and dynamic peer options.
+$streamerConfigSendStatement = "this.sendConfigMessage(newStreamer, { peerType: 'streamer', peerId: newStreamer.streamerId });"
+$streamerConfigSendIndex = $signallingServer.IndexOf($streamerConfigSendStatement)
 $streamerRegistryAddIndex = $signallingServer.IndexOf('this.streamerRegistry.add(newStreamer);')
 Assert-True `
     -Condition (
         $streamerConfigSendIndex -ge 0 -and
-        $streamerConfigSendIndex -eq $signallingServer.LastIndexOf('newStreamer.sendMessage(message);') -and
+        $streamerConfigSendIndex -eq $signallingServer.LastIndexOf($streamerConfigSendStatement) -and
         $streamerRegistryAddIndex -gt $streamerConfigSendIndex
     ) `
     -Message 'Streamer handshake must send exactly one config before registry add sends identify.'

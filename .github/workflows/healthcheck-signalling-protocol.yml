@@ -15,14 +15,14 @@ permissions:
 
 jobs:
   signalling-protocol-test:
-    if: github.repository == 'EpicGamesExt/PixelStreamingInfrastructure'
+    if: github.repository == 'EpicGames/PixelStreamingInfrastructure'
     runs-on: ubuntu-latest
     steps:
     - name: Checkout source code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v7
         
     - name: Launch signalling tests in docker containers
-      uses: isbang/compose-action@v1.5.1
+      uses: hoverkraft-tech/compose-action@v3.1.0
       with:
         compose-file: "Extras/SS_Test/docker-compose.yml"
         up-flags: "--build --abort-on-container-exit --exit-code-from tester"

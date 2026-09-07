@@ -8,7 +8,7 @@ import { TouchController } from './TouchController';
 import { TouchControllerFake } from './TouchControllerFake';
 import { GamepadController } from './GamepadController';
 import { Config, ControlSchemeType } from '../Config/Config';
-import { Logger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
+import { Logger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
 import { InputCoordTranslator } from '../Util/InputCoordTranslator';
 import { StreamMessageController } from '../UeInstanceMessage/StreamMessageController';
 import { VideoPlayer } from '../VideoPlayer/VideoPlayer';
@@ -56,7 +56,7 @@ export class InputClassesFactory {
      * register mouse events based on a control type
      * @param controlScheme - if the mouse is either hovering or locked
      */
-    registerMouse(controlScheme: ControlSchemeType) {
+    registerMouse(controlScheme: ControlSchemeType, config: Config) {
         Logger.Info('Register Mouse Events');
         let mouseController: MouseController;
         if (controlScheme == ControlSchemeType.HoveringMouse) {
@@ -64,14 +64,16 @@ export class InputClassesFactory {
                 this.toStreamerMessagesProvider,
                 this.videoElementProvider,
                 this.coordinateConverter,
-                this.activeKeys
+                this.activeKeys,
+                config
             );
         } else {
             mouseController = new MouseControllerLocked(
                 this.toStreamerMessagesProvider,
                 this.videoElementProvider,
                 this.coordinateConverter,
-                this.activeKeys
+                this.activeKeys,
+                config
             );
         }
 

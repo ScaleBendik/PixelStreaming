@@ -4,8 +4,8 @@ import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
-import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
-import type { IPlayer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
+import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
+import type { IPlayer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
 import {
     canExecuteAcknowledgedInstanceCommand,
     type InstanceAgentClient,

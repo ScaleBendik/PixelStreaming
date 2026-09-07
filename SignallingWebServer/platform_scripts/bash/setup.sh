@@ -6,5 +6,5 @@ SCRIPT_DIR="$(cd -P -- "$(dirname -- "$0")" && pwd -P)"
 . "${SCRIPT_DIR}/common.sh"
 
 parse_args $@
-setup $@
+setup "$@" || exit 1
 build_wilbur

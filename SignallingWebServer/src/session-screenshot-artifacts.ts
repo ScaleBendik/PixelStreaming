@@ -223,8 +223,8 @@ function normalizeRequestSessionCorrelation(request: SessionScreenshotArtifactRe
 function hasSessionCorrelation(request: SessionScreenshotArtifactRegistrationRequest): boolean {
     return Boolean(
         normalizeGuidText(request.sessionRequestId) ??
-            normalizeGuidText(request.userSessionId) ??
-            normalizeOptionalText(request.sessionId)
+        normalizeGuidText(request.userSessionId) ??
+        normalizeOptionalText(request.sessionId)
     );
 }
 

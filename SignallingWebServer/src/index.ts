@@ -9,8 +9,9 @@ import {
     InitLogging,
     Logger,
     IWebServerConfig
-} from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
-import { beautify, IProgramOptions } from './Utils';
+} from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
+import { beautify, IProgramOptions, sanitizeOptionsForLogging } from './Utils';
+import { createTurnCredentialsProvider, hasCredentiallessTurnServer } from './turnCredentials';
 import { initInputHandler } from './InputHandler';
 import { Command, Option } from 'commander';
 import { initialize } from 'express-openapi';
@@ -29,19 +30,17 @@ import {
     type RuntimeStatusPublisher,
     type RuntimeStatusUpdate
 } from './runtime-status';
+import configHandler from './paths/config';
+import playersHandler from './paths/players';
+import playerByIdHandler from './paths/players/{playerId}';
+import statusHandler from './paths/status';
+import streamersHandler from './paths/streamers';
+import streamerByIdHandler from './paths/streamers/{streamerId}';
 
 type PackageJsonMetadata = { description?: string; version?: string; name?: string };
 const pjson = require('../package.json') as PackageJsonMetadata;
 
 const ENV_PLACEHOLDER_REGEX = /\$\{ENV:([A-Z0-9_]+)\}/g;
-
-const REDACTED_LOG_FIELDS = new Set([
-    'auth_signing_key',
-    'instance_agent_bootstrap_shared_secret',
-    'peer_options',
-    'peer_options_player',
-    'peer_options_streamer'
-]);
 
 function resolveEnvPlaceholders(value: unknown, missing: Set<string>): unknown {
     if (typeof value === 'string') {
@@ -91,23 +90,6 @@ function resolveAuthOption(currentValue: unknown, envVarName: string): string {
 function normalizeOptionalOption(value: unknown): string | undefined {
     const normalized = typeof value === 'string' ? value.trim() : '';
     return normalized.length > 0 ? normalized : undefined;
-}
-
-function sanitizeOptionsForLogging(input: IProgramOptions): IProgramOptions {
-    const sanitized: IProgramOptions = { ...input };
-    for (const field of REDACTED_LOG_FIELDS) {
-        const hasValue = Object.prototype.hasOwnProperty.call(input, field);
-        if (
-            hasValue &&
-            sanitized[field] !== undefined &&
-            sanitized[field] !== null &&
-            sanitized[field] !== ''
-        ) {
-            sanitized[field] = '[redacted]';
-        }
-    }
-
-    return sanitized;
 }
 
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument */
@@ -192,6 +174,11 @@ program
         'Sets the maximum number of subscribers per streamer. 0 = unlimited',
         config_file.max_players || '0'
     )
+    .option(
+        '--player_keepalive_timeout <milliseconds>',
+        'Disconnect a player after this many milliseconds without a keepalive response. 0 = disabled',
+        config_file.player_keepalive_timeout ?? '0'
+    )
     .option('--serve', 'Enables the webserver on player_port.', config_file.serve || false)
     .option(
         '--http_root <path>',
@@ -228,6 +215,31 @@ program
         '--rest_api',
         'Enables the rest API interface that can be accessed at <server_url>/api/api-definition',
         config_file.rest_api || false
+    )
+    .option(
+        '--cors',
+        'Enables CORS headers on the webserver. Required for browser-based clients hosted on a different origin to call routes such as the REST API.',
+        config_file.cors || false
+    )
+    .option(
+        '--cors_allowed_origins <origins>',
+        'Comma-separated list of allowed origins (e.g. "https://example.com,https://other.example.com"). If omitted, all origins are allowed.',
+        config_file.cors_allowed_origins || ''
+    )
+    .option(
+        '--cors_allowed_methods <methods>',
+        'Comma-separated list of allowed HTTP methods. Defaults to the cors middleware default if omitted.',
+        config_file.cors_allowed_methods || ''
+    )
+    .option(
+        '--cors_allowed_headers <headers>',
+        "Comma-separated list of allowed request headers. If omitted, the request's Access-Control-Request-Headers value is mirrored.",
+        config_file.cors_allowed_headers || ''
+    )
+    .option(
+        '--cors_credentials',
+        'Allow credentials (cookies, authorization headers) on cross-origin requests.',
+        config_file.cors_credentials || false
     )
     .addOption(
         new Option(
@@ -270,6 +282,23 @@ program
             '--peer_options_streamer_file <filename>',
             'Additional JSON data to send in peerConnectionOptions of the config message for streamer peers only. This allows you to provide JSON data without having to deal with it on the command line.'
         ).default(config_file.peer_options_streamer_file || '')
+    )
+    .addOption(
+        new Option(
+            '--turn_secret <secret>',
+            'Shared secret for time limited TURN credentials, matching static-auth-secret on the TURN server. When set, the username and credential of every turn: entry in the peer options are replaced with a freshly minted pair for each peer that connects.'
+        ).default(config_file.turn_secret || '')
+    )
+    .addOption(
+        new Option(
+            '--turn_secret_file <filename>',
+            'Reads the value of --turn_secret from a file, so the secret does not appear in the command line of this process.'
+        ).default(config_file.turn_secret_file || '')
+    )
+    .option(
+        '--turn_ttl <seconds>',
+        'How long a credential issued to a player stays valid. Streamers and SFUs are configured once and cannot be reissued, so they are given a credential that does not practically expire.',
+        config_file.turn_ttl || '86400'
     )
     .option(
         '--reverse-proxy',
@@ -590,6 +619,8 @@ if (options.save) {
     delete save_options.no_config;
     delete save_options.config_file;
     delete save_options.save;
+    // The secret itself never goes to disk here; turn_secret_file is only a path, so it stays.
+    delete save_options.turn_secret;
 
     // save out the config file with the current settings
     fs.writeFile(configArgsParser.config_file, beautify(save_options), (error: any) => {
@@ -648,6 +679,25 @@ if (options.peer_options_streamer_file) {
     Logger.warn(
         `The --peer_options_streamer cli flag has many issues with passing JSON data on the command line. It is recommended that you use --peer_options_streamer_file instead.`
     );
+}
+
+// read the turn_secret_file
+if (options.turn_secret_file) {
+    if (!fs.existsSync(options.turn_secret_file)) {
+        Logger.error(`turn_secret_file "${options.turn_secret_file}" does not exist.`);
+        throw Error(`Failed to find a turn secret file called ${options.turn_secret_file}.`);
+    }
+
+    // Trimmed because the usual way to write one of these is `echo $SECRET > secret.txt`, which
+    // leaves a trailing newline that would silently produce credentials the TURN server rejects.
+    options.turn_secret = fs.readFileSync(options.turn_secret_file, 'utf-8').trim();
+
+    // An empty file would otherwise read as "no secret configured" and silently start the server
+    // with the feature off, which looks identical to it working until a peer tries to relay.
+    if (!options.turn_secret) {
+        Logger.error(`turn_secret_file "${options.turn_secret_file}" is empty.`);
+        throw Error(`The turn secret file ${options.turn_secret_file} contains no secret.`);
+    }
 }
 
 Logger.info(`${pjson.name} v${pjson.version} starting...`);
@@ -757,6 +807,7 @@ const serverOpts: IServerConfig = {
     playerPort: options.player_port,
     sfuPort: options.sfu_port,
     peerOptions: options.peer_options,
+    playerKeepaliveTimeout: Number(options.player_keepalive_timeout),
     peerOptionsPlayer: options.peer_options_player,
     peerOptionsStreamer: options.peer_options_streamer,
     maxSubscribers: options.max_players,
@@ -775,12 +826,77 @@ if (playerVerifyClient) {
     };
 }
 
-if (options.serve) {
+// Time limited TURN credentials, when a shared secret was supplied. Without one the static username
+// and credential in the peer options are sent to every peer exactly as before.
+if (options.turn_secret) {
+    const turnTtlSeconds = Number(options.turn_ttl);
+    if (!Number.isFinite(turnTtlSeconds) || turnTtlSeconds <= 0) {
+        Logger.error(`turn_ttl "${options.turn_ttl}" is not a positive number of seconds.`);
+        throw Error(`Invalid turn_ttl "${options.turn_ttl}".`);
+    }
+
+    // `|| {}` because peer_options defaults to the empty string. SignallingServer normalises that
+    // for the static path, but a provider's return value is sent as given - and a peer that receives
+    // `""` as its configuration fails to construct its peer connection at all.
+    const turnOptions = { secret: String(options.turn_secret), ttlSeconds: turnTtlSeconds };
+    const sharedPeerOptions = options.peer_options || {};
+    const providers = {
+        player: createTurnCredentialsProvider(options.peer_options_player || sharedPeerOptions, turnOptions),
+        streamer: createTurnCredentialsProvider(
+            options.peer_options_streamer || sharedPeerOptions,
+            turnOptions
+        ),
+        sfu: createTurnCredentialsProvider(sharedPeerOptions, turnOptions)
+    };
+    serverOpts.peerOptionsProvider = (request) => providers[request.peerType](request);
+    Logger.info(`Issuing time limited TURN credentials, valid for ${turnTtlSeconds} seconds.`);
+} else if (
+    [options.peer_options, options.peer_options_player, options.peer_options_streamer].some(
+        hasCredentiallessTurnServer
+    )
+) {
+    // Nothing is going to fill these in, and a peer that receives a TURN server it cannot
+    // authenticate against fails later, at ICE, as a generic connection failure with nothing in
+    // this log to connect it back to configuration.
+    Logger.warn(
+        'The peer options name a TURN server with no username or credential, and no --turn_secret ' +
+            'was supplied to mint one. Peers will be unable to use that TURN server.'
+    );
+}
+
+const shouldServerStart = options.serve || options.rest_api;
+if (shouldServerStart) {
     const webserverOptions: IWebServerConfig = {
         httpPort: options.player_port,
         root: options.http_root,
-        homepageFile: options.homepage
+        homepageFile: options.homepage,
+        serveStatic: options.serve
     };
+
+    if (options.cors) {
+        const splitCsv = (value: unknown): string[] => {
+            if (typeof value !== 'string' || value.length === 0) return [];
+            return value
+                .split(',')
+                .map((s) => s.trim())
+                .filter((s) => s.length > 0);
+        };
+
+        webserverOptions.cors = {
+            enabled: true,
+            allowedOrigins: splitCsv(options.cors_allowed_origins),
+            allowedMethods: splitCsv(options.cors_allowed_methods),
+            allowedHeaders: splitCsv(options.cors_allowed_headers),
+            credentials: !!options.cors_credentials
+        };
+    }
+
+    if (options.serve) {
+        Logger.info('Static file serving enabled.');
+    } else if (options.rest_api) {
+        Logger.info('REST API enabled; static file serving disabled.');
+    }
+
     if (options.https) {
         webserverOptions.httpsPort = options.https_port;
         const sslKeyPath = path.join(__dirname, '..', options.ssl_key_path);
@@ -1035,14 +1151,21 @@ if (options.stdin) {
 }
 
 if (options.rest_api) {
-    void initialize({
+    initialize({
         app,
         docsPath: '/api-definition',
         exposeApiDocs: true,
         apiDoc: './apidoc/api-definition-base.yml',
-        paths: './dist/paths',
+        paths: [
+            { path: '/config', module: configHandler },
+            { path: '/players', module: playersHandler },
+            { path: '/players/{playerId}', module: playerByIdHandler },
+            { path: '/status', module: statusHandler },
+            { path: '/streamers', module: streamersHandler },
+            { path: '/streamers/{streamerId}', module: streamerByIdHandler }
+        ],
         dependencies: {
             signallingServer
         }
-    });
+    }).catch((err: unknown) => Logger.error(`REST API initialization failed: ${String(err)}`));
 }

@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
-import { SignallingProtocol, BaseMessage, EventEmitter } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
+import type { IncomingMessage } from 'http';
+import { SignallingProtocol, BaseMessage, EventEmitter } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
 import { Logger } from './Logger';
 import { IMessageLogger } from './LoggingUtils';
 import { IStreamer } from './StreamerRegistry';
@@ -12,6 +13,10 @@ export interface IPlayer extends IMessageLogger {
     playerId: string;
     protocol: SignallingProtocol;
     subscribedStreamer: IStreamer | null;
+    // The HTTP upgrade request that opened this connection, if available. Lets a consumer-supplied
+    // verifyClient (or other front door) attach an authenticated identity to the request and
+    // recover it here. The signalling server itself does not read this.
+    request?: IncomingMessage;
 
     sendMessage(message: BaseMessage): void;
     getPlayerInfo(): IPlayerInfo;
@@ -37,13 +42,11 @@ export interface IPlayerInfo {
  */
 export class PlayerRegistry extends EventEmitter {
     private players: Map<string, IPlayer> = new Map();
-    private playerCount: number;
     private nextPlayerId: number;
 
     constructor() {
         super();
         this.players = new Map();
-        this.playerCount = 0;
         this.nextPlayerId = 0;
     }
 
@@ -53,7 +56,6 @@ export class PlayerRegistry extends EventEmitter {
     add(player: IPlayer): void {
         player.playerId = this.getUniquePlayerId();
         this.players.set(player.playerId, player);
-        this.playerCount++;
         this.emit('added', player.playerId);
         Logger.info(`Registered new player: ${player.playerId}`);
     }
@@ -69,7 +71,6 @@ export class PlayerRegistry extends EventEmitter {
 
         this.emit('removed', player.playerId);
         this.players.delete(player.playerId);
-        this.playerCount--;
 
         Logger.info(`Unregistered player: ${player.playerId}`);
     }
@@ -97,7 +98,7 @@ export class PlayerRegistry extends EventEmitter {
      * Returns true when the registry is empty.
      */
     empty(): boolean {
-        return this.players.size == 0;
+        return this.players.size === 0;
     }
 
     /**

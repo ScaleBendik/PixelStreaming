@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { Logger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
+import { Logger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
 import { DataChannelController } from './DataChannelController';
 
 /**
@@ -19,7 +19,7 @@ export class DataChannelSender {
     canSend(): boolean {
         return (
             this.dataChannelProvider.getDataChannelInstance().dataChannel !== undefined &&
-            this.dataChannelProvider.getDataChannelInstance().dataChannel.readyState == 'open'
+            this.dataChannelProvider.getDataChannelInstance().dataChannel.readyState === 'open'
         );
     }
 
@@ -31,7 +31,7 @@ export class DataChannelSender {
         // reset the afk inactivity
         const dataChannelInstance = this.dataChannelProvider.getDataChannelInstance();
 
-        if (dataChannelInstance.dataChannel.readyState == 'open') {
+        if (dataChannelInstance.dataChannel.readyState === 'open') {
             dataChannelInstance.dataChannel.send(data);
             Logger.Info(`Message Sent: ${new Uint8Array(data)}`);
             this.resetAfkWarningTimerOnDataSend();

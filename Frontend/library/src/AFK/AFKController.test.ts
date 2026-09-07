@@ -55,11 +55,11 @@ describe('AFKController', () => {
             dismissAfk: expect.anything()
         }));
         expect(mockPixelStreaming.dispatchEvent).toHaveBeenCalledWith(new AfkWarningUpdateEvent({
-            countDown: 10,
+            countDown: 60,
         }));
 
-        // advance 10 more seconds to trigger AFK countdown updates and eventually timeout
-        jest.advanceTimersByTime(10 * 1000);
+        // advance 60 more seconds to trigger AFK countdown updates and eventually timeout
+        jest.advanceTimersByTime(60 * 1000);
         expect(mockPixelStreaming.dispatchEvent).toHaveBeenCalledWith(new AfkWarningUpdateEvent({
             countDown: 9,
         }));
@@ -140,21 +140,21 @@ describe('AFKController', () => {
             dismissAfk: expect.anything()
         }));
         expect(mockPixelStreaming.dispatchEvent).toHaveBeenCalledWith(new AfkWarningUpdateEvent({
-            countDown: 10,
+            countDown: 60,
         }));
 
         // Advance one more second and call onAfkClick
         jest.advanceTimersByTime(1000);
 
         expect(mockPixelStreaming.dispatchEvent).toHaveBeenCalledWith(new AfkWarningUpdateEvent({
-            countDown: 9,
+            countDown: 59,
         }));
 
         afkController.onAfkClick();
         expect(mockPixelStreaming.dispatchEvent).toHaveBeenCalledWith(new AfkWarningDeactivateEvent());
 
-        // advance 10 more seconds and ensure there are no more countdown/timeout events emitted
-        jest.advanceTimersByTime(10 * 1000);
+        // advance 60 more seconds and ensure there are no more countdown/timeout events emitted
+        jest.advanceTimersByTime(60 * 1000);
         expect(mockPixelStreaming.dispatchEvent).toHaveBeenCalledTimes(4);
     });
 

@@ -13,7 +13,8 @@ jobs:
     name: Backport PR
     runs-on: ubuntu-latest
     if: |
-      github.event.pull_request.merged == true
+      github.repository == 'EpicGames/PixelStreamingInfrastructure'
+      && github.event.pull_request.merged == true
       && contains(github.event.pull_request.labels.*.name, 'auto-backport')
       && (
         (github.event.action == 'labeled' && github.event.label.name == 'auto-backport')
@@ -21,11 +22,16 @@ jobs:
       )
     steps:
       - name: Backport Action
-        uses: sqren/backport-github-action@v8.9.3
+        uses: sorenlouv/backport-github-action@v12
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # A PAT (repo + workflow scope) is required: org policy forbids the
+          # default GITHUB_TOKEN from creating PRs, and PRs opened with it also
+          # don't trigger downstream `pull_request` workflows (anti-recursion
+          # limit), so CI would not run on backport PRs. Configure a repo or
+          # org secret named AUTOMATION_PAT.
+          github_token: ${{ secrets.AUTOMATION_PAT }}
           auto_backport_label_prefix: auto-backport-to-
-          add_original_reviewers: true
+          copy_source_pr_reviewers: true
 
       - name: Info log
         if: ${{ success() }}

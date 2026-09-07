@@ -7,13 +7,14 @@ import baseConfig from '../eslint.config.mjs'
 export default tseslint.config(
     baseConfig,
     {
-        ignores: [],
+        ignores: ["**/*.test.ts"],
     },
     {
         languageOptions: {
             parser: tseslint.parser,
             parserOptions: {
-                project: 'Signalling/tsconfig.cjs.json',
+                project: 'tsconfig.cjs.json',
+                tsconfigRootDir: import.meta.dirname,
             },
         },
         files: ["src/**/*.ts"],

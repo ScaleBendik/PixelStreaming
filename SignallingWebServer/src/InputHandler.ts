@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
-import { SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
-import { IProgramOptions, beautify } from './Utils';
+import { SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
+import { IProgramOptions, beautify, sanitizeOptionsForLogging } from './Utils';
 
 interface IHandlerFunc {
     desc: string;
@@ -24,9 +24,9 @@ export function initInputHandler(options: IProgramOptions, signallingServer: Sig
     // on any data into stdin
     stdin.on('data', (keyBuffer) => {
         const key = keyBuffer.toString();
-        if (key == 'q' || key == '\u0003') {
+        if (key === 'q' || key === '\u0003') {
             process.exit();
-        } else if (key == 'h') {
+        } else if (key === 'h') {
             process.stdout.write('Help:\n');
             for (const [handlerKey, handlerInfo] of Object.entries(handlers)) {
                 process.stdout.write(`\t${handlerKey} - ${handlerInfo.desc}\n`);
@@ -45,7 +45,7 @@ export function initInputHandler(options: IProgramOptions, signallingServer: Sig
 }
 
 function printConfig(options: IProgramOptions) {
-    process.stdout.write(`${beautify(options)}\n`);
+    process.stdout.write(`${beautify(sanitizeOptionsForLogging(options))}\n`);
 }
 
 function printServerInfo(_options: IProgramOptions, _signallingServer: SignallingServer) {

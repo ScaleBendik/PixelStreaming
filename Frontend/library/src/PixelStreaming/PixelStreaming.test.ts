@@ -7,7 +7,7 @@ import {
 import { PixelStreaming } from './PixelStreaming';
 import { SettingsChangedEvent, StreamerListMessageEvent, WebRtcConnectedEvent, WebRtcSdpEvent } from '../Util/EventEmitter';
 import { mockWebSocket, MockWebSocketSpyFunctions, MockWebSocketTriggerFunctions, unmockWebSocket } from '../__test__/mockWebSocket';
-import { BaseMessage, Messages, MessageHelpers } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
+import { BaseMessage, Messages, MessageHelpers } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
 import { mockRTCPeerConnection, MockRTCPeerConnectionSpyFunctions, MockRTCPeerConnectionTriggerFunctions, unmockRTCPeerConnection } from '../__test__/mockRTCPeerConnection';
 import { mockHTMLMediaElement, mockMediaStream, unmockMediaStream } from '../__test__/mockMediaStream';
 import { InitialSettings } from '../DataChannel/InitialSettings';
@@ -597,6 +597,36 @@ describe('PixelStreaming', () => {
         expect(statsEventSpy).not.toHaveBeenCalled();
     });
 
+    it('should stop processing stats when their event listener replaces the peer', async () => {
+        const config = new Config({ initialSettings: { ss: mockSignallingUrl, AutoConnect: true } });
+        const pixelStreaming = new PixelStreaming(config);
+        const secondStreamerId = 'MOCK_PIXEL_STREAMING_2';
+
+        triggerWebSocketOpen();
+        triggerConfigMessage();
+        triggerStreamerListMessage(streamerIdList);
+        triggerStreamerListMessage([streamerId, secondStreamerId]);
+
+        const previousController = pixelStreaming.webRtcController.peerConnectionController!;
+        const previousPeer = previousController.peerConnection;
+        previousPeer.getStats = jest.fn().mockResolvedValue(new Map() as unknown as RTCStatsReport);
+        const getReceiversSpy = jest.spyOn(previousPeer, 'getReceivers');
+        const latencySpy = jest.spyOn(previousController, 'onLatencyCalculated');
+        const statsListener = jest.fn(() => {
+            config.setOptionSettingValue(OptionParameters.StreamerId, secondStreamerId);
+        });
+        pixelStreaming.addEventListener('statsReceived', statsListener);
+
+        previousController.generateStats();
+        await flushPromises();
+
+        expect(statsListener).toHaveBeenCalledTimes(1);
+        expect(pixelStreaming.webRtcController.peerConnectionController).not.toBe(previousController);
+        expect(previousPeer.connectionState).toBe('closed');
+        expect(getReceiversSpy).not.toHaveBeenCalled();
+        expect(latencySpy).not.toHaveBeenCalled();
+    });
+
     it('should add an ICE candidate when receiving a iceCandidate message', () => {
         const config = new Config({ initialSettings: {ss: mockSignallingUrl, AutoConnect: true}});
         const pixelStreaming = new PixelStreaming(config);
@@ -823,6 +853,26 @@ describe('PixelStreaming', () => {
         
         expect(commandSent).toEqual(true);
         expect(rtcPeerConnectionSpyFunctions.sendDataSpy).toHaveBeenCalled();
+    });
+
+    it('should send interactions before the first video frame only while the data channel is open', () => {
+        mockHTMLMediaElement({ ableToPlay: true, readyState: 0 });
+        const config = new Config({ initialSettings: { ss: mockSignallingUrl, AutoConnect: true } });
+        const pixelStreaming = new PixelStreaming(config);
+
+        triggerWebSocketOpen();
+        triggerConfigMessage();
+        triggerStreamerListMessage(streamerIdList);
+
+        expect(pixelStreaming.emitUIInteraction({ custom: 'before channel' })).toBe(false);
+        const { channel } = triggerOpenDataChannel();
+        expect(pixelStreaming.webRtcController.videoPlayer.isVideoReady()).toBe(false);
+        expect(pixelStreaming.emitUIInteraction({ custom: 'before video' })).toBe(true);
+        expect(rtcPeerConnectionSpyFunctions.sendDataSpy).toHaveBeenCalledTimes(1);
+
+        Object.defineProperty(channel, 'readyState', { value: 'closing' });
+        expect(pixelStreaming.emitUIInteraction({ custom: 'after close' })).toBe(false);
+        expect(rtcPeerConnectionSpyFunctions.sendDataSpy).toHaveBeenCalledTimes(1);
     });
 
     it('should call user-provided callback if receiving a data channel Response message from the streamer', () => {

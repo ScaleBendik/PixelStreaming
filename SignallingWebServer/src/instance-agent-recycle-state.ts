@@ -2,7 +2,7 @@
 import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { Logger } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
+import { Logger } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
 
 const LEGACY_RECYCLE_MARKER_SCHEMA_VERSION = 1;
 const RECYCLE_MARKER_SCHEMA_VERSION = 2;

@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { Logger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
+import { Logger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
 
 /**
  * Handles the Sending and Receiving of messages to the UE Instance via the Data Channel
@@ -74,7 +74,7 @@ export class DataChannelController {
      */
     handleOnMessage(event: MessageEvent) {
         // Higher log level to prevent log spam with messages received
-        Logger.Info(`Data Channel (${this.label}) message: ${event}`);
+        Logger.Info(`Data Channel (${this.label}) message: ${event.type}`);
     }
 
     /**
@@ -82,7 +82,7 @@ export class DataChannelController {
      * @param event - Error Event
      */
     handleOnError(event: Event) {
-        Logger.Info(`Data Channel (${this.label}) error: ${event}`);
+        Logger.Info(`Data Channel (${this.label}) error: ${event.type}`);
         this.onError(this.dataChannel?.label, event);
     }
 

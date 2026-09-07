@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 import { SpecialKeyCodes } from './SpecialKeyCodes';
-import { Logger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
+import { Logger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
 import { ActiveKeys } from './InputClassesFactory';
 import { StreamMessageController } from '../UeInstanceMessage/StreamMessageController';
 import { Config, Flags } from '../Config/Config';
@@ -50,7 +50,7 @@ export class KeyboardController implements IInputController {
         }
 
         const toStreamerHandlers = this.streamMessageController.toStreamerHandlers;
-        toStreamerHandlers.get('KeyDown')?.([this.getKeycode(keyboardEvent)!, keyboardEvent.repeat ? 1 : 0]);
+        toStreamerHandlers.get('KeyDown')?.([this.getKeycode(keyboardEvent), keyboardEvent.repeat ? 1 : 0]);
         const activeKeys = this.activeKeys.getActiveKeys();
         activeKeys.push(keyCode);
 
@@ -130,6 +130,16 @@ export class KeyboardController implements IInputController {
             return SpecialKeyCodes.rightControl;
         } else if (keyboardEvent.keyCode === SpecialKeyCodes.alt && keyboardEvent.code === 'AltRight') {
             return SpecialKeyCodes.rightAlt;
+        } else if (keyboardEvent.code === 'MetaLeft' || keyboardEvent.code === 'OSLeft') {
+            // Browsers disagree on the legacy keyCode for the left Cmd/Win
+            // key (Chrome/Safari report 91, Firefox on Mac reports 224).
+            // Normalize using `code`. UE LeftWindowKey is 91.
+            return CodeToKeyCode['MetaLeft'];
+        } else if (keyboardEvent.code === 'MetaRight' || keyboardEvent.code === 'OSRight') {
+            // Right Cmd/Win has the same browser disagreement, and on
+            // Chrome/Safari it shares keyCode 93 with the ContextMenu key.
+            // Normalize to 92 (UE RightWindowKey).
+            return CodeToKeyCode['MetaRight'];
         } else {
             return keyboardEvent.keyCode;
         }

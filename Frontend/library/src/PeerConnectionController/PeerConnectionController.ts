@@ -1,12 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { Logger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
+import { Logger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
 import { Config, OptionParameters, Flags } from '../Config/Config';
 import { AggregatedStats } from './AggregatedStats';
 import { parseRtpParameters, splitSections } from 'sdp';
 import { RTCUtils } from '../Util/RTCUtils';
 import { CodecStats } from './CodecStats';
-import { SDPUtils } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
+import { SDPUtils } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
 import { LatencyCalculator, LatencyInfo } from './LatencyCalculator';
 
 export const kAbsCaptureTime = 'http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time';
@@ -427,8 +427,8 @@ export class PeerConnectionController {
      * When the RTC Peer Connection Signaling server state Changes
      * @param state - Signaling Server State Change Event
      */
-    handleSignalStateChange(state: Event) {
-        Logger.Info('signaling state change: ' + state);
+    handleSignalStateChange(_state: Event) {
+        Logger.Info('signaling state change: ' + this.peerConnection?.signalingState);
     }
 
     /**
@@ -436,7 +436,7 @@ export class PeerConnectionController {
      * @param state - Ice Connection State
      */
     handleIceConnectionStateChange(state: Event) {
-        Logger.Info('ice connection state change: ' + state);
+        Logger.Info('ice connection state change: ' + this.peerConnection?.iceConnectionState);
         this.onIceConnectionStateChange(state);
     }
 
@@ -453,13 +453,13 @@ export class PeerConnectionController {
      * @param event - The webRtc track event
      */
     handleOnTrack(event: RTCTrackEvent) {
-        if (event.streams.length < 1 || event.streams[0].id == 'probator') {
+        if (event.streams.length < 1 || event.streams[0].id === 'probator') {
             return;
         }
-        if (event.track.kind == 'video') {
+        if (event.track.kind === 'video') {
             this.videoTrack = event.track;
         }
-        if (event.track.kind == 'audio') {
+        if (event.track.kind === 'audio') {
             this.audioTrack = event.track;
         }
         this.onTrack(event);
@@ -665,8 +665,8 @@ export class PeerConnectionController {
                 for (const transceiver of this.peerConnection?.getTransceivers() ?? []) {
                     if (RTCUtils.canTransceiverReceiveVideo(transceiver)) {
                         for (const track of stream.getTracks()) {
-                            if (track.kind && track.kind == 'video') {
-                                transceiver.sender.replaceTrack(track);
+                            if (track.kind === 'video') {
+                                void transceiver.sender.replaceTrack(track);
                                 transceiver.direction = 'sendrecv';
                             }
                         }
@@ -674,7 +674,7 @@ export class PeerConnectionController {
                 }
             } else {
                 for (const track of stream.getTracks()) {
-                    if (track.kind && track.kind == 'video') {
+                    if (track.kind === 'video') {
                         this.peerConnection?.addTransceiver(track, {
                             direction: 'sendrecv'
                         });
@@ -714,8 +714,8 @@ export class PeerConnectionController {
                 for (const transceiver of this.peerConnection?.getTransceivers() ?? []) {
                     if (RTCUtils.canTransceiverReceiveAudio(transceiver)) {
                         for (const track of stream.getTracks()) {
-                            if (track.kind && track.kind == 'audio') {
-                                transceiver.sender.replaceTrack(track);
+                            if (track.kind === 'audio') {
+                                void transceiver.sender.replaceTrack(track);
                                 transceiver.direction = 'sendrecv';
                             }
                         }
@@ -723,7 +723,7 @@ export class PeerConnectionController {
                 }
             } else {
                 for (const track of stream.getTracks()) {
-                    if (track.kind && track.kind == 'audio') {
+                    if (track.kind === 'audio') {
                         this.peerConnection?.addTransceiver(track, {
                             direction: 'sendrecv'
                         });
@@ -819,7 +819,7 @@ export class PeerConnectionController {
                         .join(';');
                 const match = matcher.exec(str);
                 if (match !== null) {
-                    if (c.name == 'VP9') {
+                    if (c.name === 'VP9') {
                         // UE answers don't specify profile but we know we want profile 0
                         c.parameters = {
                             'profile-id': '0'

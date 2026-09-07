@@ -4,8 +4,8 @@ import os from 'os';
 import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
-import { Messages } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
+import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
+import { Messages } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
 
 const execFileAsync = promisify(execFile);
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';

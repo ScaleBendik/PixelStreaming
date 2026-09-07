@@ -5,7 +5,7 @@ import { LatencyTestResults } from '../DataChannel/LatencyTestResults';
 import { AggregatedStats } from '../PeerConnectionController/AggregatedStats';
 import { WebRtcPlayerController } from '../WebRtcPlayer/WebRtcPlayerController';
 import { Flags, NumericParameters } from '../Config/Config';
-import { Logger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
+import { Logger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
 import { InitialSettings } from '../DataChannel/InitialSettings';
 import {
     PixelStreamingEventEmitter,
@@ -518,6 +518,32 @@ export class PixelStreaming {
     _onVideoInitialized() {
         this._eventEmitter.dispatchEvent(new VideoInitializedEvent());
         this._videoStartTime = Date.now();
+        this.checkForAutoEnterVR();
+    }
+
+    /**
+     * If the AutoEnterVR flag is set and an immersive-vr session is supported,
+     * request the WebXR session. Browsers typically require a user gesture for
+     * `requestSession`; if no gesture is currently active the request will be
+     * rejected and a warning is logged. Callers that need a guaranteed entry
+     * (e.g. AutoConnect from a fresh page load) should still wire up a button.
+     */
+    private checkForAutoEnterVR() {
+        if (!this.config.isFlagEnabled(Flags.AutoEnterVR)) {
+            return;
+        }
+        WebXRController.isSessionSupported('immersive-vr')
+            .then((supported: boolean) => {
+                if (!supported) {
+                    Logger.Info('AutoEnterVR is on but immersive-vr is not supported on this device.');
+                    return;
+                }
+                this._webXrController.xrClicked();
+            })
+            .catch((err: unknown) => {
+                const msg = err instanceof Error ? err.message : JSON.stringify(err);
+                Logger.Warning(`AutoEnterVR check failed: ${msg}`);
+            });
     }
 
     /**
@@ -715,7 +741,7 @@ export class PixelStreaming {
      * NOTE: There are plans to refactor all request* functions. Expect changes if you use this!
      */
     public requestDataChannelLatencyTest(config: DataChannelLatencyTestConfig) {
-        if (!this._webRtcController.videoPlayer.isVideoReady()) {
+        if (!this._webRtcController.isDataChannelOpen()) {
             return false;
         }
         if (!this._dataChannelLatencyTestController) {
@@ -738,7 +764,7 @@ export class PixelStreaming {
      * @returns
      */
     public requestShowFps() {
-        if (!this._webRtcController.videoPlayer.isVideoReady()) {
+        if (!this._webRtcController.isDataChannelOpen()) {
             return false;
         }
         this._webRtcController.sendShowFps();
@@ -764,7 +790,11 @@ export class PixelStreaming {
      * @returns true if succeeded, false if rejected
      */
     public emitUIInteraction(descriptor: object | string) {
-        if (!this._webRtcController.videoPlayer.isVideoReady()) {
+        // A UIInteraction only needs the (reliable, ordered) data channel, which opens before
+        // the video is decode-ready. Gating on isVideoReady() instead would silently drop early
+        // interactions until the first video frame arrives - a problem on slow links where the
+        // application may be waiting on this message before it starts streaming video.
+        if (!this._webRtcController.isDataChannelOpen()) {
             return false;
         }
         this._webRtcController.emitUIInteraction(descriptor);
@@ -777,7 +807,7 @@ export class PixelStreaming {
      * @returns true if succeeded, false if rejected
      */
     public emitCommand(descriptor: object) {
-        if (!this._webRtcController.videoPlayer.isVideoReady()) {
+        if (!this._webRtcController.isDataChannelOpen()) {
             return false;
         }
         if (!this.allowConsoleCommands && 'ConsoleCommand' in descriptor) {
@@ -793,7 +823,7 @@ export class PixelStreaming {
      * @returns true if succeeded, false if rejected
      */
     public emitConsoleCommand(command: string) {
-        if (!this.allowConsoleCommands || !this._webRtcController.videoPlayer.isVideoReady()) {
+        if (!this.allowConsoleCommands || !this._webRtcController.isDataChannelOpen()) {
             return false;
         }
         this._webRtcController.emitConsoleCommand(command);
@@ -806,7 +836,7 @@ export class PixelStreaming {
      * @returns True if the message could be sent.
      */
     public sendTextboxEntry(contents: string): boolean {
-        if (!this._webRtcController.videoPlayer.isVideoReady()) {
+        if (!this._webRtcController.isDataChannelOpen()) {
             return false;
         }
         this._webRtcController.sendTextboxEntry(contents);

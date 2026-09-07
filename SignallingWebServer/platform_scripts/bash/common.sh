@@ -136,6 +136,42 @@ function check_and_install() { #dep_name #get_version_string #version_min #insta
     return 1
 }
 
+function install_node_runtime() {
+    local node_url="$1"
+    local node_name="${node_url##*/}"
+    node_name="${node_name%.tar.gz}"
+    local stage_dir
+    stage_dir=$(mktemp -d "${SCRIPT_DIR}/node-backup-download-XXXXXX") || return 1
+
+    # Validate the replacement before touching an existing portable runtime.
+    # Failed downloads remain in the backup directory for diagnosis.
+    if ! curl --fail --location "$node_url" --output "${stage_dir}/node.tar.gz" ||
+       ! tar -xf "${stage_dir}/node.tar.gz" -C "$stage_dir"; then
+        return 1
+    fi
+    local installed_version
+    installed_version=$("${stage_dir}/${node_name}/bin/node" --version) || return 1
+    if [[ "$installed_version" != "$NODE_VERSION" ]]; then
+        echo "Downloaded Node version '$installed_version' does not match '$NODE_VERSION'."
+        return 1
+    fi
+
+    local backup_dir=""
+    if [[ -e "${SCRIPT_DIR}/node" || -L "${SCRIPT_DIR}/node" ]]; then
+        backup_dir=$(mktemp -d "${SCRIPT_DIR}/node-backup-XXXXXX") || return 1
+        mv "${SCRIPT_DIR}/node" "${backup_dir}/node" || return 1
+    fi
+    if ! mv "${stage_dir}/${node_name}" "${SCRIPT_DIR}/node"; then
+        if [[ -n "$backup_dir" ]]; then
+            mv "${backup_dir}/node" "${SCRIPT_DIR}/node" || return 1
+        fi
+        return 1
+    fi
+    rm -- "${stage_dir}/node.tar.gz"
+    rmdir "$stage_dir"
+    return 0
+}
+
 function setup_node() {
     pushd "${SCRIPT_DIR}" > /dev/null
 
@@ -156,7 +192,7 @@ function setup_node() {
     # navigate to project root
     pushd "${SCRIPT_DIR}/../../.." > /dev/null
 
-    local node_version=$("node" --version)
+    local node_version=$("node" --version 2>/dev/null || true)
 
     local node_url=""
     if [ "$(uname)" == "Darwin" ]; then
@@ -173,15 +209,23 @@ function setup_node() {
         node_url="https://nodejs.org/dist/$NODE_VERSION/node-$NODE_VERSION-linux-x64.tar.gz"
     fi
 
-    check_and_install "node" "$node_version" "$NODE_VERSION" "curl $node_url --output node.tar.xz
-                                                                && tar -xf node.tar.xz
-                                                                && rm node.tar.xz
-                                                                && mv node-v*-*-* \"${SCRIPT_DIR}/node\""
+    check_version "${node_version#v}" "${NODE_VERSION#v}"
+    local node_version_status=$?
+    if [[ -z "$node_version" || "$node_version_status" -eq 2 ]]; then
+        if ! install_node_runtime "$node_url"; then
+            echo "Unable to install Node $NODE_VERSION; refusing to continue startup."
+            popd > /dev/null
+            return 1
+        fi
+        hash -r
+    fi
 
     # if node_modules doesnt exist or the package-lock file is newer than node_modules, install deps
     if [ ! -d node_modules ] || [ ../package-lock.json -nt node_modules ] || [ "$INSTALL_DEPS" == "1" ]; then
         echo "Installing dependencies..."
-        npm install
+        # --no-audit/--no-fund: neither is read by the startup path, and a slow
+        # registry audit blocks the server from starting for minutes.
+        npm install --no-audit --no-fund || { popd > /dev/null; return 1; }
     fi
 
     # log node version for audits
@@ -257,9 +301,9 @@ function setup_coturn() {
             echo 'CoTURN directory not found...beginning CoTURN download for Mac.'
             coturn_url=""
             if [[ $arch == x86_64* ]]; then
-                coturn_url="https://github.com/EpicGamesExt/PixelStreamingInfrastructure/releases/download/v4.6.2-coturn-mac-x86_64/turnserver.zip"
+                coturn_url="https://github.com/EpicGames/PixelStreamingInfrastructure/releases/download/v4.6.2-coturn-mac-x86_64/turnserver.zip"
             elif  [[ $arch == arm* ]]; then
-                coturn_url="https://github.com/EpicGamesExt/PixelStreamingInfrastructure/releases/download/v4.6.2-coturn-mac-arm64/turnserver.zip"
+                coturn_url="https://github.com/EpicGames/PixelStreamingInfrastructure/releases/download/v4.6.2-coturn-mac-arm64/turnserver.zip"
             fi
             curl -L -o ./turnserver.zip "$coturn_url"
             mkdir "${SCRIPT_DIR}/coturn" 
@@ -289,7 +333,7 @@ function setup_coturn() {
 
 function setup() {
     echo "Checking Pixel Streaming Server dependencies."
-    setup_node
+    setup_node || return 1
     setup_libraries
     setup_frontend
     setup_coturn
@@ -310,7 +354,16 @@ function set_public_ip() {
 function setup_turn_stun() {
     if [[ -z "$TURN_SERVER" ]]; then
         TURN_SERVER="${PUBLIC_IP}:19303"
+    fi
+
+    # Defaults are applied independently of TURN_SERVER so that --turn-user and
+    # --turn-pass are honoured on their own, and so that supplying --turn alone
+    # still leaves credentials set for the launch guard below.
+    if [[ -z "$TURN_USER" ]]; then
         TURN_USER="PixelStreamingUser"
+    fi
+
+    if [[ -z "$TURN_PASS" ]]; then
         TURN_PASS="AnotherTURNintheroad"
     fi
 

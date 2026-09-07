@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { Logger } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.7';
+import { Logger } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.8';
 
 import { OverlayBase } from './BaseOverlay';
 
@@ -28,7 +28,7 @@ export class ActionOverlay extends OverlayBase {
      * @param text - the update text to be inserted into the overlay
      */
     public update(text: string): void {
-        if (text != null || text != undefined) {
+        if (text != null) {
             this.textElement.innerHTML = text;
         }
     }

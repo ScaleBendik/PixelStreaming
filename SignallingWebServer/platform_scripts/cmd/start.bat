@@ -12,6 +12,9 @@ IF errorlevel 1 (
 )
 
 call :Setup
+IF errorlevel 1 (
+	exit /b 1
+)
 call :SetPublicIP
 call :SetupTurnStun bg
 

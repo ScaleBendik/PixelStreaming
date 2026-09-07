@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 import { Config, Flags, NumericParameters } from '../Config/Config';
-import { Logger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
+import { Logger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
 import { PixelStreaming } from '../PixelStreaming/PixelStreaming';
 import {
     AfkTimedOutEvent,
@@ -28,7 +28,7 @@ export class AFKController {
         this.pixelStreaming = pixelStreaming;
         this.onDismissAfk = onDismissAfk;
         this.onAFKTimedOutCallback = () => {
-            console.log('AFK timed out, did you want to override this callback?');
+            Logger.Warning('AFK timed out, did you want to override this callback?');
         };
     }
 
@@ -120,7 +120,7 @@ export class AFKController {
         // reset our countDown interval accordingly
         this.countDownTimer = setInterval(() => {
             this.countDown--;
-            if (this.countDown == 0) {
+            if (this.countDown === 0) {
                 // The user failed to click so hide the overlay and disconnect them.
                 this.pixelStreaming.dispatchEvent(new AfkTimedOutEvent());
                 this.onAFKTimedOutCallback();

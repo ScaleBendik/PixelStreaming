@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 import fs from 'fs';
 import path from 'path';
-import { Logger } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
+import { Logger } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
 
 export interface InstanceAgentDesiredStateSnapshot {
     warmHoldEnabled: boolean;

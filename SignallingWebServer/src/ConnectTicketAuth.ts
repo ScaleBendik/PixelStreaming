@@ -2,7 +2,7 @@
 import crypto from 'crypto';
 import type http from 'http';
 import type * as wslib from 'ws';
-import { Logger } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
+import { Logger } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
 import type { ConnectTicketRuntimeGate } from './connect-ticket-runtime-state';
 
 export type ConnectTicketAuthMode = 'off' | 'soft' | 'enforce';

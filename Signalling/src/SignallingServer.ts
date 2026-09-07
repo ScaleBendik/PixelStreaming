@@ -6,10 +6,15 @@ import { StreamerConnection } from './StreamerConnection';
 import { PlayerConnection } from './PlayerConnection';
 import { SFUConnection } from './SFUConnection';
 import { Logger } from './Logger';
-import { StreamerRegistry } from './StreamerRegistry';
+import { StreamerRegistry, StreamerIdAuthorizer } from './StreamerRegistry';
 import { PlayerRegistry } from './PlayerRegistry';
 import { IceCandidateMonitor, IceCandidateMonitorOptions } from './IceCandidateMonitor';
-import { Messages, MessageHelpers, SignallingProtocol } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
+import {
+    Messages,
+    MessageHelpers,
+    SignallingProtocol,
+    KeepaliveMonitor
+} from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
 import { stringify } from './Utils';
 import { redactSensitiveLogValue } from './LogRedaction';
 
@@ -131,6 +136,23 @@ export interface IServerConfig {
 
     // Maximum player candidate summaries tracked in memory at once.
     iceCandidateSummaryMaxTrackedPlayers?: number;
+
+    // Idle timeout in milliseconds after which a player that has stopped responding to keepalive
+    // pings is forcibly disconnected. 0 (the default) disables the check.
+    playerKeepaliveTimeout?: number;
+
+    // Optional hook to authorize (or override) the id a streamer registers as when it identifies
+    // itself. This is the seam for consumer-supplied anti-squatting / ownership policy; the project
+    // ships no authentication of its own. See StreamerIdAuthorizer. When omitted, the default
+    // behaviour is unchanged (requested id accepted, numeric suffix appended on collision).
+    authorizeStreamerId?: StreamerIdAuthorizer;
+
+    // Optional hook returning the peer configuration to send to a single connecting peer, in place
+    // of the static peerOptions. This is the seam for peer configuration that must not be shared
+    // between connections - time limited TURN credentials being the motivating case, since a static
+    // credential is sent to every peer that ever connects and cannot be changed without a redeploy.
+    // See PeerOptionsProvider. When omitted, each peer receives its role-specific static options.
+    peerOptionsProvider?: PeerOptionsProvider;
 }
 
 export type ProtocolConfig = {
@@ -197,6 +219,33 @@ interface IPlayerKeepaliveState {
 }
 
 /**
+ * The kind of peer a set of peer options is being built for. Provided so a consumer can vary what
+ * it returns by peer - a streamer connects once and holds its configuration for as long as it runs,
+ * where a player receives a fresh one every time it connects.
+ */
+export type PeerType = 'streamer' | 'player' | 'sfu';
+
+/**
+ * Describes the peer that is about to be sent a config message.
+ */
+export interface IPeerOptionsRequest {
+    // The kind of peer connecting.
+    peerType: PeerType;
+    // The id the registry assigned this peer. For a streamer or an SFU this is the placeholder the
+    // registry allocates on connect, because a streamer is not named until it sends its endpointId
+    // message, which happens after it has been configured. A player id is final.
+    peerId: string;
+}
+
+/**
+ * An optional consumer-supplied hook that builds the peer configuration for one connecting peer.
+ * Return the object to send as peerConnectionOptions in that peer's config message. This is the
+ * seam for per-connection credentials without the project committing to a credential scheme of its
+ * own. A provider that throws falls back to the static options for that peer role.
+ */
+export type PeerOptionsProvider = (request: IPeerOptionsRequest) => unknown;
+
+/**
  * The main signalling server object.
  * Contains a streamer and player registry and handles setting up of websockets
  * to listen for incoming connections.
@@ -225,7 +274,7 @@ export class SignallingServer {
         Logger.debug('Started SignallingServer with config: %s', stringify(redactSensitiveLogValue(config)));
 
         this.config = config;
-        this.streamerRegistry = new StreamerRegistry();
+        this.streamerRegistry = new StreamerRegistry(config.authorizeStreamerId);
         this.playerRegistry = new PlayerRegistry();
         const sharedPeerOptions = this.config.peerOptions || {};
         const playerPeerOptions = this.config.peerOptionsPlayer || sharedPeerOptions;
@@ -307,22 +356,63 @@ export class SignallingServer {
         }
     }
 
+    private sendConfigMessage(
+        connection: { sendMessage(msg: Messages.config): void },
+        peerRequest: IPeerOptionsRequest
+    ): void {
+        // peer connection options is a general field with all optional fields;
+        // it doesnt play nice with mergePartial so we just add it verbatim
+        const message: Messages.config = MessageHelpers.createMessage(Messages.config, this.protocolConfig);
+        message.peerConnectionOptions = this.getPeerOptions(peerRequest);
+        connection.sendMessage(message);
+    }
+
+    /**
+     * Resolves the peer options for one connecting peer, deferring to peerOptionsProvider when the
+     * consumer supplied one.
+     */
+    private getPeerOptions(peerRequest: IPeerOptionsRequest): Messages.config['peerConnectionOptions'] {
+        const staticConfig =
+            peerRequest.peerType === 'player'
+                ? this.protocolConfigPlayer
+                : peerRequest.peerType === 'streamer'
+                  ? this.protocolConfigStreamer
+                  : this.protocolConfig;
+        if (!this.config.peerOptionsProvider) {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+            return staticConfig['peerConnectionOptions'];
+        }
+
+        try {
+            // The provider is consumer code, so its return is unknown to us; it travels as an
+            // opaque blob in the config message either way.
+            return this.config.peerOptionsProvider(peerRequest) as Messages.config['peerConnectionOptions'];
+        } catch (error) {
+            // A provider is consumer code and may reach outside the process for a credential. If it
+            // fails we still send a config message, because a peer that never receives one simply
+            // waits forever with nothing in its log to explain why.
+            Logger.error(
+                'peerOptionsProvider threw for %s peer %s, falling back to the static peer options: %s',
+                peerRequest.peerType,
+                peerRequest.peerId,
+                error instanceof Error ? error.message : stringify(error)
+            );
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+            return staticConfig['peerConnectionOptions'];
+        }
+    }
+
     private onStreamerConnected(ws: wslib.WebSocket, request: http.IncomingMessage) {
         Logger.info(`New streamer connection: %s`, request.socket.remoteAddress);
 
-        const newStreamer = new StreamerConnection(this, ws, request.socket.remoteAddress);
+        const newStreamer = new StreamerConnection(this, ws, request.socket.remoteAddress, request);
         newStreamer.maxSubscribers = this.config.maxSubscribers || 0;
 
         // The streamer protocol requires config -> identify -> endpointId. In particular,
         // Pixel Streaming 2 may initialize its EpicRtc room as soon as identify arrives,
         // so sending identify first can race application of the ICE-server configuration.
-        const message: Messages.config = MessageHelpers.createMessage(
-            Messages.config,
-            this.protocolConfigStreamer
-        );
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        message.peerConnectionOptions = this.protocolConfigStreamer['peerConnectionOptions'];
-        newStreamer.sendMessage(message);
+        newStreamer.streamerId = this.streamerRegistry.sanitizeStreamerId(newStreamer.streamerId);
+        this.sendConfigMessage(newStreamer, { peerType: 'streamer', peerId: newStreamer.streamerId });
 
         // add it to the registry and when the transport closes, remove it.
         this.streamerRegistry.add(newStreamer);
@@ -343,7 +433,7 @@ export class SignallingServer {
             readRequestPathname(request)
         );
 
-        const newPlayer = new PlayerConnection(this, ws, request.socket.remoteAddress);
+        const newPlayer = new PlayerConnection(this, ws, request.socket.remoteAddress, request);
         const validatedIdentity = readValidatedConnectTicketIdentity(request);
         const scaleWorldSessionId = validatedIdentity?.activeSessionId ?? readScaleWorldSessionId(request);
         if (scaleWorldSessionId) {
@@ -366,20 +456,33 @@ export class SignallingServer {
             Logger.info(`Player %s (%s) disconnected.`, newPlayer.playerId, request.socket.remoteAddress);
         });
 
-        // because peer connection options is a general field with all optional fields
-        // it doesnt play nice with mergePartial so we just add it verbatim
-        const message: Messages.config = MessageHelpers.createMessage(
-            Messages.config,
-            this.protocolConfigPlayer
-        );
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        message.peerConnectionOptions = this.protocolConfigPlayer['peerConnectionOptions'];
-        newPlayer.sendMessage(message);
+        // This optional signalling ping/pong monitor is separate from ScaleWorld's websocket
+        // control-frame watchdog. It stays disabled unless its timeout is explicitly configured.
+        // Optionally monitor the player connection for liveness. A player whose socket dies without
+        // a clean close frame (sleeping laptop, dropped Wi-Fi, killed tab) is otherwise only removed
+        // once the OS TCP keepalive eventually reaps it, leaving it subscribed in the meantime. When
+        // maxSubscribers is set this can hold a slot that no live player is using. We use
+        // ws.terminate() rather than a graceful close because a dead peer never completes the close
+        // handshake. The monitor stops itself on transport 'close', so no manual teardown is needed.
+        const keepaliveTimeout = this.config.playerKeepaliveTimeout || 0;
+        if (keepaliveTimeout > 0) {
+            const keepalive = new KeepaliveMonitor(newPlayer.protocol, keepaliveTimeout);
+            keepalive.onTimeout = () => {
+                Logger.info(
+                    `Player %s (%s) failed keepalive - terminating dead connection.`,
+                    newPlayer.playerId,
+                    request.socket.remoteAddress
+                );
+                ws.terminate();
+            };
+        }
+
+        this.sendConfigMessage(newPlayer, { peerType: 'player', peerId: newPlayer.playerId });
     }
 
     private onSFUConnected(ws: wslib.WebSocket, request: http.IncomingMessage) {
         Logger.info(`New SFU connection: %s`, request.socket.remoteAddress);
-        const newSFU = new SFUConnection(this, ws, request.socket.remoteAddress);
+        const newSFU = new SFUConnection(this, ws, request.socket.remoteAddress, request);
 
         // SFU acts as both a streamer and player
         this.streamerRegistry.add(newSFU);
@@ -390,12 +493,7 @@ export class SignallingServer {
             Logger.info(`SFU %s (%s) disconnected.`, newSFU.streamerId, request.socket.remoteAddress);
         });
 
-        // because peer connection options is a general field with all optional fields
-        // it doesnt play nice with mergePartial so we just add it verbatim
-        const message: Messages.config = MessageHelpers.createMessage(Messages.config, this.protocolConfig);
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        message.peerConnectionOptions = this.protocolConfig['peerConnectionOptions'];
-        newSFU.sendMessage(message);
+        this.sendConfigMessage(newSFU, { peerType: 'sfu', peerId: newSFU.streamerId });
     }
 
     private initializePlayerKeepaliveWatchdog(): void {

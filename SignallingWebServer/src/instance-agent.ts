@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 import fs from 'fs';
 import path from 'path';
-import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.7';
+import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
 import type { RuntimeStatusUpdate, SessionNetworkPathReport } from './runtime-status';
 import {
     normalizeInstanceAgentDesiredStateSnapshot,
@@ -2377,11 +2377,11 @@ export function wireInstanceAgent(
         const acceptedCompletedRecycleMarker = completedRecycleMarkerAwaitingEventAck;
         const acceptedResetCompletion = Boolean(
             acceptedCompletedRecycleMarker &&
-                acceptedEvents.some(
-                    (event) =>
-                        event.eventType === 'reset_completed' &&
-                        event.metadata.recycleId === acceptedCompletedRecycleMarker.recycleId
-                )
+            acceptedEvents.some(
+                (event) =>
+                    event.eventType === 'reset_completed' &&
+                    event.metadata.recycleId === acceptedCompletedRecycleMarker.recycleId
+            )
         );
         const acceptedRecycleToken = normalizeInstanceAgentRecycleToken(
             acceptedCompletedRecycleMarker?.recycleRequestedToken
@@ -2814,10 +2814,10 @@ export function wireInstanceAgent(
                     !recycleMarker ||
                     Boolean(
                         activeCommand &&
-                            isRecycleToWarmCommand(activeCommand) &&
-                            recycleMarkerToken &&
-                            normalizeInstanceAgentRecycleToken(activeCommand.instanceCommandId) ===
-                                recycleMarkerToken
+                        isRecycleToWarmCommand(activeCommand) &&
+                        recycleMarkerToken &&
+                        normalizeInstanceAgentRecycleToken(activeCommand.instanceCommandId) ===
+                            recycleMarkerToken
                     );
                 const correlatedActiveCommand = activeCommandBelongsToRecycleMarker ? activeCommand : null;
                 resetInProgress = false;
@@ -2932,10 +2932,10 @@ export function wireInstanceAgent(
                     !recycleMarker ||
                     Boolean(
                         activeCommand &&
-                            isRecycleToWarmCommand(activeCommand) &&
-                            recycleMarkerToken &&
-                            normalizeInstanceAgentRecycleToken(activeCommand.instanceCommandId) ===
-                                recycleMarkerToken
+                        isRecycleToWarmCommand(activeCommand) &&
+                        recycleMarkerToken &&
+                        normalizeInstanceAgentRecycleToken(activeCommand.instanceCommandId) ===
+                            recycleMarkerToken
                     );
                 const correlatedActiveCommand = activeCommandBelongsToRecycleMarker ? activeCommand : null;
                 pendingRecycleCompletion = null;

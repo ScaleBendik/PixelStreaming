@@ -293,6 +293,20 @@ function Copy-RequiredDirectory {
     Invoke-Robocopy -Source $source -Destination $destination -ExtraArguments $ExtraRobocopyArguments
 }
 
+function Copy-WorkspaceNodeModules {
+    param(
+        [string]$WorkspaceRelativePath,
+        [string]$DestinationRoot
+    )
+
+    # npm can place incompatible versions below a workspace instead of hoisting them.
+    # Preserve that resolution order in standalone bundles (e.g. Wilbur's Commander).
+    $source = Join-Path (Join-Path $repoRootPath $WorkspaceRelativePath) "node_modules"
+    if (Test-Path -LiteralPath $source -PathType Container) {
+        Invoke-Robocopy -Source $source -Destination (Join-Path $DestinationRoot "node_modules") -ExtraArguments @("/XJ", "/XD", ".cache")
+    }
+}
+
 function Copy-RuntimeWorkspacePackage {
     param(
         [string]$WorkspaceRelativePath,
@@ -306,6 +320,7 @@ function Copy-RuntimeWorkspacePackage {
 
     Copy-Item -LiteralPath (Join-Path $packageRoot "package.json") -Destination (Join-Path $destination "package.json") -Force
     Invoke-Robocopy -Source (Join-Path $packageRoot "dist") -Destination (Join-Path $destination "dist")
+    Copy-WorkspaceNodeModules -WorkspaceRelativePath $WorkspaceRelativePath -DestinationRoot $destination
 }
 
 function Invoke-AwsS3Copy {
@@ -462,8 +477,9 @@ Copy-RequiredFile -RelativePath "SignallingWebServer\config.json" -DestinationRo
 Copy-RequiredFile -RelativePath "SignallingWebServer\peer_options.player.json" -DestinationRoot $stageRoot
 Copy-RequiredFile -RelativePath "SignallingWebServer\peer_options.streamer.json" -DestinationRoot $stageRoot
 Copy-RequiredDirectory -RelativePath "SignallingWebServer\dist" -DestinationRoot $stageRoot
+Copy-RequiredDirectory -RelativePath "SignallingWebServer\apidoc" -DestinationRoot $stageRoot
 Copy-RequiredDirectory -RelativePath "SignallingWebServer\www" -DestinationRoot $stageRoot
-Copy-RequiredDirectory -RelativePath "SignallingWebServer\platform_scripts" -DestinationRoot $stageRoot -ExtraRobocopyArguments @("/XD", "node", "coturn")
+Copy-RequiredDirectory -RelativePath "SignallingWebServer\platform_scripts" -DestinationRoot $stageRoot -ExtraRobocopyArguments @("/XD", "node", "node-backup-*", "coturn")
 Copy-RequiredFile -RelativePath "SignallingWebServer\platform_scripts\powershell\unreal_prerequisite.psm1" -DestinationRoot $stageRoot
 Copy-OptionalFile -RelativePath "SignallingWebServer\README.md" -DestinationRoot $stageRoot
 
@@ -494,12 +510,16 @@ if (-not $SkipNodeModules) {
     New-Item -ItemType Directory -Path (Join-Path $stageRoot "node_modules\@epicgames-ps") -Force | Out-Null
     Copy-RuntimeWorkspacePackage `
         -WorkspaceRelativePath "Common" `
-        -PackageName "lib-pixelstreamingcommon-ue5.7" `
+        -PackageName "lib-pixelstreamingcommon-ue5.8" `
         -StageRoot $stageRoot
     Copy-RuntimeWorkspacePackage `
         -WorkspaceRelativePath "Signalling" `
-        -PackageName "lib-pixelstreamingsignalling-ue5.7" `
+        -PackageName "lib-pixelstreamingsignalling-ue5.8" `
         -StageRoot $stageRoot
+
+    foreach ($workspace in @("Common", "Signalling", "SignallingWebServer")) {
+        Copy-WorkspaceNodeModules -WorkspaceRelativePath $workspace -DestinationRoot (Join-Path $stageRoot $workspace)
+    }
 
     $containsNodeModules = $true
 }

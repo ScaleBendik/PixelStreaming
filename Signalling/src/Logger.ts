@@ -5,8 +5,8 @@ import path from 'path';
 import winston from 'winston';
 import 'winston-daily-rotate-file';
 import { TransformableInfo } from 'logform';
-import { BaseMessage, ILogger, overrideLogger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
-import { redactSensitiveLogValue } from './LogRedaction';
+import { BaseMessage, ILogger, overrideLogger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
+import { redactSensitiveLogValue, redactSensitiveProtocolLog } from './LogRedaction';
 
 const { combine, timestamp, printf, colorize, splat } = winston.format;
 
@@ -46,7 +46,7 @@ class CommonLogger implements ILogger {
     InitLogging(_logLevel: number, _includeStack: boolean): void {}
 
     Debug(message: string): void {
-        this.logger.debug(message);
+        this.logger.debug(redactSensitiveProtocolLog(message));
     }
 
     Info(message: string): void {

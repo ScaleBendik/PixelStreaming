@@ -1,5 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
-import { BaseMessage, Messages } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.7';
+import { BaseMessage, Messages } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
 import { IPlayer } from './PlayerRegistry';
 import { IStreamer } from './StreamerRegistry';
 import { Logger } from './Logger';

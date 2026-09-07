@@ -17,20 +17,21 @@ permissions:
 
 jobs:
   build-using-local-deps:
-    if: github.repository == 'EpicGamesExt/PixelStreamingInfrastructure'
+    if: github.repository == 'EpicGames/PixelStreamingInfrastructure'
     runs-on: ubuntu-latest
     steps:
     - name: Checkout source code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v7
 
     - name: Get node version
       id: get_node_version
       run: echo "node_version=$(cat NODE_VERSION)" >> $GITHUB_OUTPUT
 
-    - uses: actions/setup-node@v4
+    - uses: actions/setup-node@v7
       with:
         node-version: "${{ steps.get_node_version.outputs.node_version }}"
         registry-url: 'https://registry.npmjs.org'
+        cache: 'npm'
 
     - name: Install dependencies
       run: npm install
@@ -39,13 +40,13 @@ jobs:
       working-directory: Common
       run: npm run build && npm run lint
 
-    - name: Build and lint checks on signalling library
+    - name: Build, lint and unit tests on signalling library
       working-directory: Signalling
-      run: npm run build && npm run lint
+      run: npm run build && npm run lint && npm run test
 
-    - name: Build and lint checks on wilbur
+    - name: Build, lint and unit tests on wilbur
       working-directory: SignallingWebServer
-      run: npm run build && npm run lint
+      run: npm run build && npm run lint && npm run test
 
     - name: Build, lint and unit tests on frontend library
       working-directory: Frontend/library
