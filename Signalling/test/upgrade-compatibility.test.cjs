@@ -515,3 +515,76 @@ test('unhandled player and streamer diagnostics redact credential fields without
     assert.equal(message.nested.credential, 'synthetic-private-credential');
     player.close(); streamer.close();
 });
+
+for (const [supported, allowed, expected] of [
+    [['VP9'], ['AV1', 'VP9'], 'VP9'],
+    [['AV1', 'VP9'], ['AV1', 'VP9'], 'AV1'],
+    [['H264'], ['AV1', 'VP9'], null],
+    [['H264'], ['AV1', 'VP9', 'H264'], 'H264'],
+    [[], ['AV1', 'VP9'], null],
+    [null, ['AV1', 'VP9'], 'AV1']
+]) test('initial codec selection enforces policy for ' + JSON.stringify({ supported, allowed }), () => {
+    const server = serverWith(), events = [];
+    server.codecEvidenceRecorder = e => events.push(e);
+    const streamer = new Socket(), viewer = new Socket();
+    server.onStreamerConnected(streamer, request());
+    streamer.receive({ type: 'endpointId', id: 'test-streamer' });
+    const policy = { version: 1, snapshotId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', policyHash: 'A'.repeat(64), allowedCodecs: allowed, defaultCodec: 'AV1', allowSwitching: false };
+    server.onPlayerConnected(viewer, request({ sessionRequestId: 'signed-request', activeSessionId: 'signed-session', codecPolicy: policy }));
+    const player = server.playerRegistry.listPlayers()[0];
+    viewer.receive({ type: 'scaleWorldCodecCapabilities', supportedCodecs: supported });
+    viewer.receive({ type: 'subscribe', streamerId: 'test-streamer' });
+    if (expected) {
+        assert.equal(player.selectedCodec, expected);
+        assert.equal(events.at(-1).eventType, 'codec_selected');
+        assert.match(events.at(-1).reason, /preferred AV1/);
+        const sdp = 'v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96 97 98\r\na=rtpmap:96 AV1/90000\r\na=rtpmap:97 VP9/90000\r\na=rtpmap:98 H264/90000\r\n';
+        streamer.receive({ type: 'offer', playerId: player.streamerPlayerId, sdp });
+        const answer = viewer.messages.at(-1).sdp;
+        viewer.receive({ type: 'answer', sdp: answer, mediaGeneration: 0 });
+        viewer.receive({ type: 'scaleWorldCodecObservation', codec: expected, mediaGeneration: 0, framesDecoded: 100, bytesReceived: 999999 });
+        assert.equal(events.at(-1).eventType, 'observed');
+        assert.equal(events.at(-1).codec, expected);
+    } else {
+        assert.equal(player.subscribedStreamer, null);
+        assert.equal(viewer.messages.at(-1).status, 'failed');
+    }
+    const count = streamer.messages.length;
+    viewer.receive({ type: 'scaleWorldCodecCapabilities', supportedCodecs: ['AV1'] });
+    assert.equal(streamer.messages.length, count, 'late capability reports never restart media');
+    if (expected) assert.equal(player.selectedCodec, expected);
+    assert.equal(player.scaleWorldSessionRequestId, 'signed-request');
+    assert.equal(player.scaleWorldSessionId, 'signed-session');
+    assert.equal(new Set(events.map(e => e.connectionId)).size, 1);
+    viewer.close(); streamer.close();
+});
+
+test('capability fallback cannot start media when its audit write fails', () => {
+    const server = serverWith(), viewer = new Socket(), streamer = new Socket();
+    server.onStreamerConnected(streamer, request()); streamer.receive({ type: 'endpointId', id: 'test-streamer' });
+    server.onPlayerConnected(viewer, request({ sessionRequestId: 'signed-request' }));
+    const player = server.playerRegistry.listPlayers()[0];
+    server.codecEvidenceRecorder = () => { throw new Error('disk full'); };
+    viewer.receive({ type: 'scaleWorldCodecCapabilities', supportedCodecs: ['VP9'] });
+    viewer.receive({ type: 'subscribe', streamerId: 'test-streamer' });
+    assert.equal(player.subscribedStreamer, null);
+    viewer.close(); streamer.close();
+});
+
+test('startup fallback also governs the first browser-originated offer', () => {
+    const server = serverWith(), viewer = new Socket(), streamer = new Socket();
+    server.onStreamerConnected(streamer, request()); streamer.receive({ type: 'endpointId', id: 'test-streamer' });
+    server.onPlayerConnected(viewer, request({ sessionRequestId: 'signed-request', codecPolicy: {
+        version: 1, snapshotId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', policyHash: 'A'.repeat(64),
+        allowedCodecs: ['AV1', 'VP9'], defaultCodec: 'AV1', allowSwitching: false
+    } }));
+    const player = server.playerRegistry.listPlayers()[0];
+    viewer.receive({ type: 'scaleWorldCodecCapabilities', supportedCodecs: ['VP9'] });
+    const sdp = 'v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 98\r\na=rtpmap:98 VP9/90000\r\n';
+    viewer.receive({ type: 'offer', sdp, mediaGeneration: 0 });
+    assert.equal(player.selectedCodec, 'VP9');
+    assert.equal(streamer.messages.at(-1).type, 'offer');
+    streamer.receive({ type: 'answer', sdp, playerId: player.streamerPlayerId });
+    assert.equal(player.codecNegotiated, true);
+    viewer.close(); streamer.close();
+});

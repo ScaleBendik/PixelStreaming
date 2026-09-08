@@ -46,6 +46,8 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     private codecSequence = 0;
     private codecGeneration = 0;
     private selectedCodec?: VideoCodec;
+    private codecSelectionFinalized = false;
+    private codecSelectionFailed = false;
     private lastCodecObservation = { frames: 0, bytes: 0, at: 0 };
 
     get streamerPlayerId(): string {
@@ -101,6 +103,8 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
 
     private filterCodecMessage(message: BaseMessage, fromStreamer: boolean): boolean {
         if (!this.codecPolicy || (message.type !== 'offer' && message.type !== 'answer')) return true;
+        if (this.codecSelectionFailed) return false;
+        this.codecSelectionFinalized = true;
         try {
             const description = message as BaseMessage & {
                 sdp: string;
@@ -145,15 +149,64 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     }
 
     private handleCodecMessage(message: BaseMessage): boolean {
-        if (message.type !== 'scaleWorldCodecSwitch' && message.type !== 'scaleWorldCodecObservation')
+        if (
+            message.type !== 'scaleWorldCodecSwitch' &&
+            message.type !== 'scaleWorldCodecObservation' &&
+            message.type !== 'scaleWorldCodecCapabilities'
+        )
             return false;
         if (!this.codecPolicy) return true;
         const data = message as BaseMessage & {
             codec?: VideoCodec;
+            supportedCodecs?: unknown;
             mediaGeneration?: number;
             framesDecoded?: number;
             bytesReceived?: number;
         };
+        if (message.type === 'scaleWorldCodecCapabilities') {
+            if (this.codecSelectionFinalized || this.codecHasSubscribed || this.codecOffer) return true;
+            const supported = data.supportedCodecs;
+            if (
+                supported !== null &&
+                (!Array.isArray(supported) ||
+                    supported.length > 4 ||
+                    supported.some(
+                        (c: unknown) => typeof c !== 'string' || !videoCodecs.includes(c as VideoCodec)
+                    ))
+            )
+                return true;
+            this.codecSelectionFinalized = true;
+            const preferred = this.codecPolicy.defaultCodec;
+            const selected =
+                supported === null
+                    ? preferred
+                    : ([preferred, 'VP9', 'H264'].find(
+                          (c) =>
+                              this.codecPolicy!.allowedCodecs.includes(c as VideoCodec) &&
+                              supported.includes(c)
+                      ) as VideoCodec | undefined);
+            if (!selected) {
+                this.codecSelectionFailed = true;
+                this.failCodecNegotiation('Client reports no policy-permitted codec; preferred ' + preferred);
+                return true;
+            }
+            const reason =
+                supported === null
+                    ? 'Client decoding capabilities unavailable; preferred ' + preferred
+                    : selected === preferred
+                      ? 'Client advertises preferred ' + preferred
+                      : 'Client does not advertise preferred ' + preferred + '; fallback to ' + selected;
+            try {
+                // Persist intent before any offer. Browser capability reports do not expand policy.
+                this.recordCodec('codec_selected', { codec: selected, reason });
+                this.selectedCodec = selected;
+                this.sendCodecState('negotiating');
+            } catch {
+                this.codecSelectionFailed = true;
+                this.failCodecNegotiation('Codec selection evidence unavailable');
+            }
+            return true;
+        }
         if (message.type === 'scaleWorldCodecSwitch') {
             // Reject legacy clients even when an immutable older ticket permits switching.
             this.sendCodecState('rejected', 'The codec is selected by session policy');
@@ -488,6 +541,8 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     }
 
     private subscribe(streamerId: string) {
+        if (this.codecSelectionFailed) return;
+        this.codecSelectionFinalized = true;
         if (typeof streamerId !== 'string') {
             Logger.warn('Ignoring malformed subscription and disconnecting its peer.');
             this.disconnect();

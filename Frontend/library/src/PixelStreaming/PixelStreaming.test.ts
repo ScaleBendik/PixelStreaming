@@ -95,6 +95,23 @@ describe('PixelStreaming', () => {
     });
 
 
+    it.each([true, false])('reports browser capabilities before subscribing without guessing when detection is unavailable: %s', (known) => {
+        const capabilities = jest.spyOn(RTCRtpReceiver, 'getCapabilities').mockReturnValue({
+            codecs: [{ mimeType: 'video/VP9', clockRate: 90000 }, { mimeType: 'video/VP9', clockRate: 90000, sdpFmtpLine: 'profile-id=2' }],
+            headerExtensions: []
+        });
+        if (!known) capabilities.mockReturnValue(null);
+        const config = new Config({ initialSettings: { ss: mockSignallingUrl, AutoConnect: true } }); const player = new PixelStreaming(config);
+        const messages: BaseMessage[] = [];
+        jest.spyOn(player.webRtcController.protocol, 'sendMessage').mockImplementation(m => { messages.push(m); });
+        triggerWebSocketOpen(); triggerConfigMessage(); triggerStreamerListMessage(streamerIdList);
+        const index = messages.findIndex(m => m.type === 'subscribe');
+        expect(index).toBeGreaterThan(0);
+        expect(messages[index - 1]).toMatchObject({ type: 'scaleWorldCodecCapabilities', supportedCodecs: known ? ['VP9'] : null });
+        expect(messages.filter(m => m.type === 'scaleWorldCodecCapabilities')).toHaveLength(1);
+        player.disconnect(); capabilities.mockRestore();
+    });
+
     it('ignores client codec changes while retaining generation-safe same-codec retries', async () => {
         const capabilities = jest.spyOn(RTCRtpReceiver, 'getCapabilities').mockReturnValue({
             codecs: [{ mimeType: 'video/VP9', clockRate: 90000 }, { mimeType: 'video/H264', clockRate: 90000 }],

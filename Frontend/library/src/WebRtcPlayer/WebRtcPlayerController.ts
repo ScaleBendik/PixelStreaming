@@ -113,11 +113,34 @@ export class WebRtcPlayerController {
     hasCompletedInitialVideo: boolean;
 
     private codecMediaGeneration = 0;
+    private codecCapabilitiesSent = false;
     private applyingCodecState = false;
     private lastCodecReport = 0;
     private codecStatusElement?: HTMLDivElement;
 
     private sendSignallingMessage<T extends BaseMessage>(message: T): void {
+        if (!this.codecCapabilitiesSent && ['subscribe', 'offer'].includes(message.type)) {
+            this.codecCapabilitiesSent = true;
+            let supportedCodecs: string[] | null = null;
+            try {
+                const capabilities = RTCRtpReceiver.getCapabilities?.('video');
+                if (capabilities) {
+                    supportedCodecs = [
+                        ...new Set(
+                            capabilities.codecs
+                                .map((c) => c.mimeType.split('/')[1]?.toUpperCase())
+                                .filter((c) => ['AV1', 'VP9', 'H264', 'VP8'].includes(c))
+                        )
+                    ];
+                }
+            } catch {
+                // Unknown support must not become an assumed H264 capability.
+            }
+            this.protocol.sendMessage({
+                type: 'scaleWorldCodecCapabilities',
+                supportedCodecs
+            } as BaseMessage);
+        }
         if (['offer', 'answer', 'iceCandidate'].includes(message.type)) {
             const tagged = { ...message, mediaGeneration: this.codecMediaGeneration };
             this.protocol.sendMessage(tagged);
@@ -285,6 +308,7 @@ export class WebRtcPlayerController {
         this.protocol.transport.addListener('open', () => {
             this.config.scaleWorldCodecPolicy = undefined;
             this.codecMediaGeneration = 0;
+            this.codecCapabilitiesSent = false;
             this.lastCodecReport = 0;
             this.signallingConnectionGeneration++;
             this.subscribedSignallingConnectionGeneration = -1;

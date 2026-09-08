@@ -47,8 +47,11 @@ browser answers H264. The user confirmed working H264 video. VP9 switches failed
 during negotiation and immediately restored H264. The agreed simplification
 removes manual switching: the signed policy default is fixed at connection start,
 with actual-codec evidence retained. That simplification needs runtime/frontend
-activation; d1 media and Premium AV1 acceptance remain unverified. Initial
-unsupported-client fallback is not implemented.
+activation; d1 media and Premium AV1 acceptance remain unverified. Initial client fallback now selects from browser-advertised capabilities before
+the first offer: policy default, then permitted VP9/H264. Unknown capabilities
+retain the default; unsupported advertised decoding is not retried. Deploy the
+API accepting codec_selected events before this runtime. Hosted fallback media
+acceptance remains pending.
 
 | Area | Preservation rule and evidence |
 | --- | --- |
