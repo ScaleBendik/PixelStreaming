@@ -130,7 +130,9 @@ GOTO :arg_loop
 
 :PostArgs
 SHIFT
-IF "%~1"=="" GOTO LoopExit
+rem Preserve an explicit empty value ("") and continue forwarding later options.
+rem %~1 strips quotes and would mistake that value for the end of the argument list.
+IF [%1]==[] GOTO LoopExit
 set SERVER_ARGS=%SERVER_ARGS% %1
 GOTO PostArgs
 
