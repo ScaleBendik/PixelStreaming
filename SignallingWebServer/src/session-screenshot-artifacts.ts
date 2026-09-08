@@ -1,11 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
-import { execFile } from 'child_process';
+import { execArtifactFile } from './artifact-process';
 import { createHash, randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { promisify } from 'util';
-
-const execFileAsync = promisify(execFile);
 
 const DEFAULT_OBJECT_PREFIX = 'PixelStreamingScreenshots/nonprod';
 const DEFAULT_MAX_FILE_COUNT = 200;
@@ -639,7 +636,7 @@ async function headObject(
         ['s3api', 'head-object', '--bucket', bucketName, '--key', objectKey, '--output', 'json'],
         region
     );
-    const { stdout } = await execFileAsync(awsCliPath, args, { windowsHide: true });
+    const { stdout } = await execArtifactFile(awsCliPath, args);
     const parsed = JSON.parse(stdout || '{}') as {
         ETag?: unknown;
         VersionId?: unknown;
@@ -662,14 +659,17 @@ async function createZipFromStaging(
         'if (Test-Path -LiteralPath $env:SCALEWORLD_SCREENSHOT_ZIP_PATH) { Remove-Item -LiteralPath $env:SCALEWORLD_SCREENSHOT_ZIP_PATH -Force }',
         "Compress-Archive -Path (Join-Path $env:SCALEWORLD_SCREENSHOT_STAGE_PATH '*') -DestinationPath $env:SCALEWORLD_SCREENSHOT_ZIP_PATH -Force"
     ].join('; ');
-    await execFileAsync(powershellPath, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command], {
-        windowsHide: true,
-        env: {
-            ...process.env,
-            SCALEWORLD_SCREENSHOT_STAGE_PATH: stagingPath,
-            SCALEWORLD_SCREENSHOT_ZIP_PATH: zipPath
+    await execArtifactFile(
+        powershellPath,
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command],
+        {
+            env: {
+                ...process.env,
+                SCALEWORLD_SCREENSHOT_STAGE_PATH: stagingPath,
+                SCALEWORLD_SCREENSHOT_ZIP_PATH: zipPath
+            }
         }
-    });
+    );
 }
 export function createSessionScreenshotArtifactManager(
     options: SessionScreenshotArtifactManagerOptions
@@ -1027,7 +1027,7 @@ export function createSessionScreenshotArtifactManager(
             ],
             awsRegion ?? record.request.region
         );
-        const { stderr } = await execFileAsync(awsCliPath, args, { windowsHide: true });
+        const { stderr } = await execArtifactFile(awsCliPath, args);
         if (stderr && stderr.trim().length > 0)
             log(`[screenshot-artifacts] AWS CLI upload stderr: ${truncateText(stderr.trim(), 500)}`);
         record.status = 'pending_registration';
@@ -1126,6 +1126,7 @@ export function createSessionScreenshotArtifactManager(
                 if (record.status === 'pending_registration') await registerRecord(record);
                 processed += 1;
             } catch (error) {
+                processed += 1; // Failed attempts also consume the bounded drain budget.
                 const message = error instanceof Error ? error.message : String(error);
                 record.attempts += 1;
                 record.lastError = truncateText(message, 1000);

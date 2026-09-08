@@ -59,6 +59,8 @@ import {
     type RuntimeEntitlementProjectionFile
 } from './runtime-entitlement-projection';
 
+import { fetchWithDeadline } from './instance-agent-transport';
+
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
 const IMDS_METADATA_BASE_URL = 'http://169.254.169.254/latest/meta-data';
 const IMDS_DYNAMIC_BASE_URL = 'http://169.254.169.254/latest/dynamic/instance-identity';
@@ -754,7 +756,7 @@ async function describeErrorResponse(response: Response, action: string): Promis
 }
 
 async function readImdsToken(): Promise<string> {
-    const response = await fetch(IMDS_TOKEN_URL, {
+    const response = await fetchWithDeadline(IMDS_TOKEN_URL, {
         method: 'PUT',
         headers: { 'X-aws-ec2-metadata-token-ttl-seconds': '21600' }
     });
@@ -763,7 +765,7 @@ async function readImdsToken(): Promise<string> {
 }
 
 async function readImdsValue(pathSuffix: string, token: string): Promise<string> {
-    const response = await fetch(`${IMDS_METADATA_BASE_URL}/${pathSuffix}`, {
+    const response = await fetchWithDeadline(`${IMDS_METADATA_BASE_URL}/${pathSuffix}`, {
         headers: { 'X-aws-ec2-metadata-token': token }
     });
     if (!response.ok) throw new Error(`IMDS read for '${pathSuffix}' failed with status ${response.status}.`);
@@ -771,7 +773,7 @@ async function readImdsValue(pathSuffix: string, token: string): Promise<string>
 }
 
 async function readImdsDynamicValue(pathSuffix: string, token: string): Promise<string> {
-    const response = await fetch(`${IMDS_DYNAMIC_BASE_URL}/${pathSuffix}`, {
+    const response = await fetchWithDeadline(`${IMDS_DYNAMIC_BASE_URL}/${pathSuffix}`, {
         headers: { 'X-aws-ec2-metadata-token': token }
     });
     if (!response.ok) {
@@ -898,6 +900,16 @@ export function wireInstanceAgent(
     let bootstrapIdentityPromise: Promise<BootstrapIdentity> | null = null;
     let bootstrapPromise: Promise<void> | null = null;
     let tickInFlight = false;
+    let eventFlushInFlight = false;
+    let controlRequestSequence = 0;
+    let appliedControlRequestSequence = 0;
+    const acceptControlResponse = (sequence: number): boolean => {
+        if (sequence < appliedControlRequestSequence) {
+            return false;
+        }
+        appliedControlRequestSequence = sequence;
+        return true;
+    };
     let heartbeatTimer: NodeJS.Timeout | null = null;
     let runtimeEntitlementPollTimer: NodeJS.Timeout | null = null;
     let configuredHeartbeatMs = explicitHeartbeatMs > 0 ? explicitHeartbeatMs : DEFAULT_HEARTBEAT_MS;
@@ -1705,7 +1717,7 @@ export function wireInstanceAgent(
         }
 
         const requestToken = token;
-        const response = await fetch(new URL(relativePath, apiBaseUrl).toString(), {
+        const response = await fetchWithDeadline(new URL(relativePath, apiBaseUrl).toString(), {
             method,
             headers: {
                 'Content-Type': 'application/json',
@@ -2252,7 +2264,8 @@ export function wireInstanceAgent(
             const submittedReconnectGraceElapsedEvidence = reconnectGraceElapsedEvidences[0] ?? null;
             const viewerCount = server.playerRegistry.count();
             const reportedReconnectGraceWindow = resolveReconnectGraceWindowForReport(viewerCount);
-            const response = await fetch(new URL('/agent/bootstrap', apiBaseUrl).toString(), {
+            const controlSequence = ++controlRequestSequence;
+            const response = await fetchWithDeadline(new URL('/agent/bootstrap', apiBaseUrl).toString(), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -2293,12 +2306,13 @@ export function wireInstanceAgent(
 
             const payload = await parseJsonResponse<InstanceAgentBootstrapResponse>(response);
             token = payload.agentToken;
+            const applyControl = acceptControlResponse(controlSequence);
             applyInstanceAgentControlResponse(payload, 'bootstrap', submittedReconnectGraceElapsedEvidence, {
-                applyCommands,
-                applyDesiredState,
+                applyCommands: applyControl ? applyCommands : () => undefined,
+                applyDesiredState: applyControl ? applyDesiredState : () => undefined,
                 handleReconnectGraceElapsedEvidenceResponse
             });
-            if (explicitHeartbeatMs <= 0 && payload.heartbeatIntervalSeconds > 0) {
+            if (applyControl && explicitHeartbeatMs <= 0 && payload.heartbeatIntervalSeconds > 0) {
                 scheduleHeartbeat(payload.heartbeatIntervalSeconds * 1000);
             }
             log(
@@ -2323,6 +2337,7 @@ export function wireInstanceAgent(
         const submittedReconnectGraceElapsedEvidence = reconnectGraceElapsedEvidences[0] ?? null;
         const viewerCount = server.playerRegistry.count();
         const reportedReconnectGraceWindow = resolveReconnectGraceWindowForReport(viewerCount);
+        const controlSequence = ++controlRequestSequence;
         const response = await authorizedFetch('/agent/heartbeat', 'POST', {
             instanceId: identity.instanceId,
             region: identity.region,
@@ -2344,68 +2359,86 @@ export function wireInstanceAgent(
         }
 
         const payload = await parseJsonResponse<InstanceAgentHeartbeatResponse>(response);
+        const applyControl = acceptControlResponse(controlSequence);
         applyInstanceAgentControlResponse(payload, 'heartbeat', submittedReconnectGraceElapsedEvidence, {
-            applyCommands,
-            applyDesiredState,
+            applyCommands: applyControl ? applyCommands : () => undefined,
+            applyDesiredState: applyControl ? applyDesiredState : () => undefined,
             handleReconnectGraceElapsedEvidenceResponse
         });
-        if (explicitHeartbeatMs <= 0 && payload.heartbeatIntervalSeconds > 0) {
+        if (applyControl && explicitHeartbeatMs <= 0 && payload.heartbeatIntervalSeconds > 0) {
             scheduleHeartbeat(payload.heartbeatIntervalSeconds * 1000);
         }
     };
 
     const flushEvents = async (): Promise<void> => {
-        if (!token || pendingEvents.length === 0) {
+        if (eventFlushInFlight || !token || pendingEvents.length === 0) {
             return;
         }
 
-        const identity = await resolveBootstrapIdentity();
-        const eventsToSend = pendingEvents.slice(0, MAX_PENDING_EVENTS);
-        const response = await authorizedFetch('/agent/events/batch', 'POST', {
-            instanceId: identity.instanceId,
-            region: identity.region,
-            events: eventsToSend
-        });
-        if (!response.ok) {
-            throw new Error(await describeErrorResponse(response, 'Event upload'));
-        }
+        eventFlushInFlight = true;
+        try {
+            const identity = await resolveBootstrapIdentity();
+            const eventsToSend = pendingEvents.slice(0, MAX_PENDING_EVENTS);
+            const controlSequence = ++controlRequestSequence;
+            const response = await authorizedFetch('/agent/events/batch', 'POST', {
+                instanceId: identity.instanceId,
+                region: identity.region,
+                events: eventsToSend
+            });
+            if (!response.ok) {
+                throw new Error(await describeErrorResponse(response, 'Event upload'));
+            }
 
-        const payload = await parseJsonResponse<InstanceAgentEventBatchResponse>(response);
-        const acceptedCount = Math.min(eventsToSend.length, Math.max(0, payload.acceptedCount));
-        const acceptedEvents = eventsToSend.slice(0, acceptedCount);
-        pendingEvents = pendingEvents.slice(acceptedCount);
-        const acceptedCompletedRecycleMarker = completedRecycleMarkerAwaitingEventAck;
-        const acceptedResetCompletion = Boolean(
-            acceptedCompletedRecycleMarker &&
-            acceptedEvents.some(
-                (event) =>
-                    event.eventType === 'reset_completed' &&
-                    event.metadata.recycleId === acceptedCompletedRecycleMarker.recycleId
-            )
-        );
-        const acceptedRecycleToken = normalizeInstanceAgentRecycleToken(
-            acceptedCompletedRecycleMarker?.recycleRequestedToken
-        );
-        const responseRecycleToken = normalizeInstanceAgentRecycleToken(
-            payload.desiredState?.recycleRequestedToken
-        );
-        const resetCompletionStillNeedsControlReconciliation = Boolean(
-            acceptedResetCompletion && acceptedRecycleToken && responseRecycleToken === acceptedRecycleToken
-        );
-        if (acceptedResetCompletion && !resetCompletionStillNeedsControlReconciliation) {
-            acknowledgedRecycleMarkerToClear = acceptedCompletedRecycleMarker;
-            completedRecycleMarkerAwaitingEventAck = null;
-            tryClearAcknowledgedRecycleMarker();
-        } else if (resetCompletionStillNeedsControlReconciliation) {
-            log(
-                `[instance-agent] reset_completed for recycle ${acceptedCompletedRecycleMarker?.recycleId ?? 'unknown'} was accepted, but desired state still requests its token. Retaining the durable marker through a Ready heartbeat and replaying the same completion evidence.`
+            const payload = await parseJsonResponse<InstanceAgentEventBatchResponse>(response);
+            if (!Number.isSafeInteger(payload.acceptedCount) || payload.acceptedCount < 0) {
+                throw new Error('Event upload returned an invalid acknowledgement count.');
+            }
+            const acceptedCount = Math.min(eventsToSend.length, payload.acceptedCount);
+            const acceptedEvents = eventsToSend.slice(0, acceptedCount);
+            // Overflow can change positions while the submitted batch is in flight.
+            // Only remove acknowledged objects, retaining the order of surviving events.
+            const acknowledged = new Set(acceptedEvents);
+            pendingEvents = pendingEvents.filter((event) => !acknowledged.has(event));
+            const applyControl = acceptControlResponse(controlSequence);
+            const acceptedCompletedRecycleMarker = completedRecycleMarkerAwaitingEventAck;
+            const acceptedResetCompletion = Boolean(
+                acceptedCompletedRecycleMarker &&
+                acceptedEvents.some(
+                    (event) =>
+                        event.eventType === 'reset_completed' &&
+                        event.metadata.recycleId === acceptedCompletedRecycleMarker.recycleId
+                )
             );
-        }
-        applyCommands(payload.commands, 'events');
-        applyDesiredState(payload.desiredState, 'events');
-        if (resetCompletionStillNeedsControlReconciliation) {
-            ensureCompletedRecycleMarkerEventQueued();
-            requestFastPolling('reset_completed_control_reconciliation');
+            const acceptedRecycleToken = normalizeInstanceAgentRecycleToken(
+                acceptedCompletedRecycleMarker?.recycleRequestedToken
+            );
+            const responseRecycleToken = normalizeInstanceAgentRecycleToken(
+                (applyControl ? payload.desiredState : currentDesiredState)?.recycleRequestedToken
+            );
+            const resetCompletionStillNeedsControlReconciliation = Boolean(
+                acceptedResetCompletion &&
+                acceptedRecycleToken &&
+                responseRecycleToken === acceptedRecycleToken
+            );
+            if (acceptedResetCompletion && !resetCompletionStillNeedsControlReconciliation) {
+                acknowledgedRecycleMarkerToClear = acceptedCompletedRecycleMarker;
+                completedRecycleMarkerAwaitingEventAck = null;
+                tryClearAcknowledgedRecycleMarker();
+            } else if (resetCompletionStillNeedsControlReconciliation) {
+                log(
+                    `[instance-agent] reset_completed for recycle ${acceptedCompletedRecycleMarker?.recycleId ?? 'unknown'} was accepted, but desired state still requests its token. Retaining the durable marker through a Ready heartbeat and replaying the same completion evidence.`
+                );
+            }
+            if (applyControl) {
+                applyCommands(payload.commands, 'events');
+                applyDesiredState(payload.desiredState, 'events');
+            }
+            if (resetCompletionStillNeedsControlReconciliation) {
+                ensureCompletedRecycleMarkerEventQueued();
+                requestFastPolling('reset_completed_control_reconciliation');
+            }
+        } finally {
+            eventFlushInFlight = false;
         }
     };
 
@@ -2474,6 +2507,20 @@ export function wireInstanceAgent(
             await captureSessionScreenshotArtifact('reset_recovered_ready', commandToFinalize, {
                 source: 'ready_recovery'
             }).catch(() => undefined);
+            // Control polling continues during capture and may invalidate this command.
+            if (
+                activeCommand?.instanceCommandId !== commandToFinalize.instanceCommandId ||
+                !activeCommandConfirmedByApi ||
+                resetInProgress ||
+                pendingRecycleCompletion ||
+                server.playerRegistry.count() > 0 ||
+                (runtimeSnapshot.status?.trim().toLowerCase() ?? '') !== 'ready' ||
+                options.connectTicketRuntimeGate?.getRecycleTokenCompletionStatus(
+                    commandToFinalize.instanceCommandId
+                ) !== 'completed'
+            ) {
+                return;
+            }
             await completeCommand(commandToFinalize, {
                 resultJson: JSON.stringify({
                     status: runtimeSnapshot.status,
@@ -2489,6 +2536,33 @@ export function wireInstanceAgent(
             );
         }
     };
+
+    const createBackgroundWorker = (label: string, work: () => Promise<void>): (() => void) => {
+        let inFlight = false;
+        return () => {
+            if (inFlight) return;
+            inFlight = true;
+            void Promise.resolve()
+                .then(work)
+                .catch((error: unknown) => {
+                    const message = error instanceof Error ? error.message : String(error);
+                    log(`[instance-agent] ${label} failed: ${message}`);
+                })
+                .finally(() => {
+                    inFlight = false;
+                });
+        };
+    };
+    const requestLogArtifactDrain = createBackgroundWorker('Log artifact drain', async () => {
+        await artifactManager?.drainQueue();
+    });
+    const requestScreenshotArtifactDrain = createBackgroundWorker('Screenshot artifact drain', async () => {
+        await screenshotArtifactManager?.drainQueue();
+    });
+    const requestCommandRecovery = createBackgroundWorker('Command recovery', async () => {
+        await tryStartRecoveredRecycleCommand();
+        await tryFinalizeRecoveredActiveCommand();
+    });
 
     const runTick = async (): Promise<void> => {
         if (tickInFlight) {
@@ -2507,16 +2581,16 @@ export function wireInstanceAgent(
             // Permission preparation must not block lifecycle evidence or the
             // heartbeat response carrying teardown commands.
             requestRuntimeEntitlementRefresh();
-            ensureCompletedRecycleMarkerEventQueued();
-            await artifactManager?.drainQueue();
-            await screenshotArtifactManager?.drainQueue();
-            ensureCompletedRecycleMarkerEventQueued();
-            await flushEvents();
             await sendHeartbeat();
             ensureCompletedRecycleMarkerEventQueued();
-            await flushEvents();
-            await tryStartRecoveredRecycleCommand();
-            await tryFinalizeRecoveredActiveCommand();
+            // Optional transports never hold the heartbeat/command-polling gate.
+            void flushEvents().catch((error: unknown) => {
+                const message = error instanceof Error ? error.message : String(error);
+                log(`[instance-agent] Event upload failed: ${message}`);
+            });
+            requestLogArtifactDrain();
+            requestScreenshotArtifactDrain();
+            requestCommandRecovery();
             tryClearAcknowledgedRecycleMarker();
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);

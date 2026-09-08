@@ -1,12 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
-import { execFile } from 'child_process';
+import { execArtifactFile } from './artifact-process';
 import { createHash, randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
 import { gzip } from 'zlib';
 
-const execFileAsync = promisify(execFile);
 const gzipAsync = promisify(gzip);
 
 const DEFAULT_OBJECT_PREFIX = 'PixelStreamingLogs';
@@ -1102,7 +1101,7 @@ export function createSessionLogArtifactManager(
     const executeAwsCli =
         options.awsCliExecutor ??
         (async (executable: string, args: string[]): Promise<AwsCliResult> => {
-            const result = await execFileAsync(executable, args, { windowsHide: true });
+            const result = await execArtifactFile(executable, args);
             return {
                 stdout: String(result.stdout ?? ''),
                 stderr: String(result.stderr ?? '')
@@ -1447,6 +1446,7 @@ export function createSessionLogArtifactManager(
                 }
                 processed += 1;
             } catch (error) {
+                processed += 1; // Failed attempts also consume the bounded drain budget.
                 const message = error instanceof Error ? error.message : String(error);
                 record.attempts += 1;
                 record.lastError = truncateText(message, 1000);

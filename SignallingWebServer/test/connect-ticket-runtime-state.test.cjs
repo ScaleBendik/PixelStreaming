@@ -783,9 +783,10 @@ test('tokenful reset completion retries marker durability and survives acceptanc
             await new Promise((resolve) => setImmediate(resolve));
         }
 
-        assert.deepEqual(requestPaths, [
+        // Heartbeat now progresses before ordinary event upload; entitlement polling is independent.
+        assert.deepEqual(requestPaths.filter((value) => value !== '/agent/entitlement-manifest'), [
             '/agent/bootstrap',
-            '/agent/entitlement-manifest',
+            '/agent/heartbeat',
             '/agent/events/batch',
             '/agent/heartbeat',
             '/agent/events/batch'
