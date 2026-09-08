@@ -20,6 +20,45 @@ Examples:
 
 Fleet artifact discovery lists `.zip` objects from `s3://scaleworlddepot/ScaleworldBuilds/`.
 
+### Packaged content root and Development builds
+
+The ZIP may contain a flat package or a wrapping build directory. The installed
+content root must contain the bootstrap `ScaleWorld.exe`. Shipping normally has
+one executable with that exact name; Development also has
+`ScaleWorld/Binaries/Win64/ScaleWorld.exe`. This two-file layout is valid and must
+retain both executables, the surrounding `Engine`/`ScaleWorld` content, and PDBs.
+The wrapper directory does not have to match the uploaded ZIP's friendly name.
+
+`SWupdate.ps1` resolves one unambiguous bootstrap root and permits only that exact
+nested Development executable as an additional same-name candidate. Multiple
+release roots, unexpected extra `ScaleWorld.exe` files, and a nested runtime
+without its bootstrap are rejected before activation. Do not remove or rename
+either executable to work around validation.
+
+Startup, recycle liveness, and watchdog detection recognize Development by its
+exact nested executable path under the active install or its junction target.
+The root bootstrap alone cannot establish runtime liveness. Shipping matching
+and configured watchdog command-line filters remain supported.
+
+Older runtime artifacts reject the Development archive as multiple executable
+candidates and can miss its runtime process after startup. Install a corrected
+**PixelStreaming runtime-only update first**, then retry the Unreal ZIP through
+Fleet. A first combined update still begins under the old updater and cannot be
+relied on to fix its own archive validation. No Unreal repackaging is needed for
+this compatibility fix. A failed preparation has not activated the new build;
+the prior current-build marker is therefore expected to remain.
+
+Focused local checks (no EC2 operations):
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File SignallingWebServer/platform_scripts/powershell/test_unreal_archive_layout.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File SignallingWebServer/platform_scripts/powershell/test_scaleworld_process_helpers.ps1
+```
+
+The archive harness imports only updater function definitions and exercises tiny
+ZIPs. Its optional `-PackageRoot <existing-unpacked-build>` checks an actual
+package's content-root selection without changing that package.
+
 ## Fleet / Instance Tag Contract
 
 Update mode on the instance uses:

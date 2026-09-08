@@ -95,6 +95,23 @@ function Get-ScaleWorldRuntimeProcessMatcher {
     }
     $resolvedBaseName = [System.IO.Path]::GetFileNameWithoutExtension($resolvedExecutableName)
 
+    $developmentExecutablePaths = [System.Collections.Generic.List[string]]::new()
+    $runtimeRelativePath = Join-Path $resolvedBaseName (Join-Path 'Binaries\Win64' $resolvedExecutableName)
+    Add-ScaleWorldUniqueString -Values $developmentExecutablePaths -Value (Join-Path $resolvedInstallRoot $runtimeRelativePath)
+    # CIM may report the physical release path behind the active-install junction.
+    $installEntry = Get-Item -LiteralPath $resolvedInstallRoot -ErrorAction SilentlyContinue
+    if ($installEntry -and $installEntry.PSObject.Properties['Target']) {
+        foreach ($targetPath in @($installEntry.Target)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$targetPath)) {
+                $targetRoot = [string]$targetPath
+                if (-not [IO.Path]::IsPathRooted($targetRoot)) {
+                    $targetRoot = Join-Path (Split-Path -Parent $resolvedInstallRoot) $targetRoot
+                }
+                Add-ScaleWorldUniqueString -Values $developmentExecutablePaths -Value (Join-Path ([IO.Path]::GetFullPath($targetRoot)) $runtimeRelativePath)
+            }
+        }
+    }
+
     $namePatterns = [System.Collections.Generic.List[string]]::new()
     Add-ScaleWorldUniqueString -Values $namePatterns -Value (Normalize-ScaleWorldLikePattern -Pattern $RuntimeProcessPattern)
     if ($IncludeLauncherExecutable) {
@@ -115,9 +132,40 @@ function Get-ScaleWorldRuntimeProcessMatcher {
         InstallRootPrefix   = $installRootPrefix
         ExecutableName      = $resolvedExecutableName
         BaseName            = $resolvedBaseName
+        DevelopmentExecutablePaths = $developmentExecutablePaths.ToArray()
         NamePatterns        = $namePatterns.ToArray()
         CommandLinePatterns = $commandLinePatterns.ToArray()
     }
+}
+
+function Test-ScaleWorldDevelopmentRuntimeProcess {
+    param(
+        [object]$Process,
+        [object]$Matcher
+    )
+
+    if ([string]$Process.Name -ine $Matcher.ExecutableName) {
+        return $false
+    }
+    $executablePath = if ($Process.PSObject.Properties['ExecutablePath']) { [string]$Process.ExecutablePath } else { '' }
+    if ([string]::IsNullOrWhiteSpace($executablePath)) {
+        # Only the command's executable token counts, never a path in an argument.
+        $commandLine = [string]$Process.CommandLine
+        if ($commandLine -match '^\s*"([^"]+)"') {
+            $executablePath = $Matches[1]
+        } elseif ($commandLine -match '^\s*(\S+)') {
+            $executablePath = $Matches[1]
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($executablePath) -or -not [IO.Path]::IsPathRooted($executablePath)) {
+        return $false
+    }
+    try {
+        $executablePath = [IO.Path]::GetFullPath($executablePath)
+    } catch {
+        return $false
+    }
+    return @($Matcher.DevelopmentExecutablePaths) -contains $executablePath
 }
 
 function Test-ScaleWorldRuntimeProcessMatch {
@@ -128,6 +176,10 @@ function Test-ScaleWorldRuntimeProcessMatch {
         [object]$Matcher,
         [string[]]$AdditionalCommandLinePatterns = @()
     )
+
+    if (Test-ScaleWorldDevelopmentRuntimeProcess -Process $Process -Matcher $Matcher) {
+        return $true
+    }
 
     $processName = [string]$Process.Name
     foreach ($pattern in @($Matcher.NamePatterns)) {

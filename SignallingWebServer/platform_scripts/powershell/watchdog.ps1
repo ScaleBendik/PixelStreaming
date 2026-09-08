@@ -45,6 +45,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+. (Join-Path $PSScriptRoot 'scaleworld_process_helpers.ps1')
+
 $script:IdentityCache = $null
 $script:LastStatusPublishFailure = $null
 $script:LastMaintenanceModeReadAtUtc = [DateTimeOffset]::MinValue
@@ -544,7 +546,7 @@ function Test-NameMatch {
 }
 
 function Get-ProcessSnapshot {
-    Get-CimInstance Win32_Process | Select-Object ProcessId, Name, CommandLine, CreationDate
+    Get-CimInstance Win32_Process | Select-Object ProcessId, Name, CommandLine, CreationDate, ExecutablePath
 }
 
 function Get-ProcessCreationUtcDateTime {
@@ -612,7 +614,10 @@ function Find-MatchingProcesses {
     $matches = @(
         $Snapshot | Where-Object {
             $name = [string]($_.Name)
-            if (-not (Test-NameMatch -Name $name -Pattern $Rule.ProcessName)) {
+            $isDevelopmentRuntime = $Rule.PSObject.Properties['DevelopmentRuntimeMatcher'] -and
+                (Test-NameMatch -Name ($Rule.DevelopmentRuntimeMatcher.BaseName + '-Win64-Development.exe') -Pattern $Rule.ProcessName) -and
+                (Test-ScaleWorldDevelopmentRuntimeProcess -Process $_ -Matcher $Rule.DevelopmentRuntimeMatcher)
+            if (-not $isDevelopmentRuntime -and -not (Test-NameMatch -Name $name -Pattern $Rule.ProcessName)) {
                 return $false
             }
 
@@ -948,6 +953,7 @@ if (-not [string]::IsNullOrWhiteSpace($UnrealProcessName)) {
     $rules.Add([pscustomobject]@{
         Name = 'unreal'
         ProcessName = $UnrealProcessName
+        DevelopmentRuntimeMatcher = Get-ScaleWorldRuntimeProcessMatcher -IncludeLauncherExecutable $false
         CommandLinePattern = $UnrealCommandLinePattern
         CommandLinePatterns = Get-CommandLinePatterns -Pattern $UnrealCommandLinePattern
         FaultReason = 'unreal_process_missing'

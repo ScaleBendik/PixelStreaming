@@ -577,6 +577,38 @@ function Assert-Checksum {
     }
 }
 
+function Resolve-ReleaseArchiveContentRoot {
+    param(
+        [string]$StagingRoot,
+        [string]$ExecutableName
+    )
+
+    $matchedExecutables = @(Get-ChildItem -LiteralPath $StagingRoot -Recurse -File -Filter $ExecutableName -ErrorAction Stop)
+    $baseName = [IO.Path]::GetFileNameWithoutExtension($ExecutableName)
+    $runtimeRelativePath = Join-Path $baseName (Join-Path 'Binaries\Win64' $ExecutableName)
+    $runtimeDirectorySuffix = '\' + $baseName + '\Binaries\Win64'
+    $contentRoots = @(
+        foreach ($candidate in $matchedExecutables) {
+            $candidateRoot = $candidate.Directory.FullName
+            # A nested game binary alone is not a packaged bootstrap/root.
+            if ($candidateRoot.EndsWith($runtimeDirectorySuffix, [StringComparison]::OrdinalIgnoreCase)) {
+                continue
+            }
+            $developmentRuntime = Join-Path $candidateRoot $runtimeRelativePath
+            $unexpectedExecutables = @($matchedExecutables | Where-Object {
+                $_.FullName -ne $candidate.FullName -and $_.FullName -ne $developmentRuntime
+            })
+            if ($unexpectedExecutables.Count -eq 0) {
+                $candidateRoot
+            }
+        }
+    )
+    if ($contentRoots.Count -ne 1) {
+        throw "Archive contents must have one unambiguous '$ExecutableName' bootstrap, with only an optional '$runtimeRelativePath' Development runtime; found $($matchedExecutables.Count) executable candidates."
+    }
+    return $contentRoots[0]
+}
+
 function Expand-ReleaseArchive {
     param(
         [string]$ArchivePath,
@@ -597,19 +629,7 @@ function Expand-ReleaseArchive {
     New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
     Expand-Archive -Path $ArchivePath -DestinationPath $stagingRoot -Force
 
-    $matchedExecutables = @(Get-ChildItem -LiteralPath $stagingRoot -Recurse -File -Filter $ExecutableName -ErrorAction Stop)
-    if ($matchedExecutables.Count -eq 1) {
-        $contentSource = Split-Path -Parent $matchedExecutables[0].FullName
-    } elseif ($matchedExecutables.Count -gt 1) {
-        throw "Archive '$ArchivePath' contains multiple '$ExecutableName' candidates. Refusing to continue."
-    } else {
-        $topLevel = @(Get-ChildItem -LiteralPath $stagingRoot -Force)
-        if ($topLevel.Count -eq 1 -and $topLevel[0].PSIsContainer) {
-            $contentSource = $topLevel[0].FullName
-        } else {
-            $contentSource = $stagingRoot
-        }
-    }
+    $contentSource = Resolve-ReleaseArchiveContentRoot -StagingRoot $stagingRoot -ExecutableName $ExecutableName
 
     if ($contentSource -ne $stagingRoot) {
         Move-Item -LiteralPath $contentSource -Destination $DestinationPath -Force
