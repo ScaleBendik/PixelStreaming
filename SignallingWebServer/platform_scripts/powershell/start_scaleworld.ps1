@@ -64,16 +64,18 @@ Write-Output ("Verified Unreal Visual C++ prerequisite required={0} installed={1
 $runtimeMatcher = Get-ScaleWorldRuntimeProcessMatcher -InstallRoot $installRootPath -ExecutableName $ExecutableName -RuntimeProcessPattern $RuntimeProcessPattern -IncludeLauncherExecutable $false
 $maxBitrateBps = $MaxBitrateKbps * 1000
 
+# Pixel Streaming command-line names omit CVar dots and the "2" suffix.
+# Dotted CVar names are not parsed as these startup arguments by Unreal.
 $arguments = @(
     "-PixelStreamingEncoderCodec=$EncoderCodec",
-    '-PixelStreaming2.WebRTC.NegotiateCodecs=true',
-    '-PixelStreaming2.WebRTC.CodecPreferences=AV1,VP9,H264,VP8',
+    '-PixelStreamingWebRTCNegotiateCodecs=true',
+    '-PixelStreamingWebRTCCodecPreferences=AV1,VP9,H264,VP8',
     "-ScaleWorldEntitlementManifest=`"$RuntimeEntitlementManifestPath`"",
     '-AllowPixelStreamingCommands',
     '-PixelStreamingEncoderTargetBitrate=-1',
-    '-PixelStreaming2.Encoder.LatencyMode=LOW_LATENCY',
-    "-PixelStreaming2.WebRTC.Fps=$Fps",
-    "-PixelStreaming2.WebRTC.MaxBitrate=$maxBitrateBps",
+    '-PixelStreamingEncoderLatencyMode=LOW_LATENCY',
+    "-PixelStreamingWebRTCFps=$Fps",
+    "-PixelStreamingWebRTCMaxBitrate=$maxBitrateBps",
     '-RenderOffScreen',
     "-ResX=$ResX",
     "-ResY=$ResY",

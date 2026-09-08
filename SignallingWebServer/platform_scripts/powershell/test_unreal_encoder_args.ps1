@@ -22,7 +22,21 @@ function Start-Process {
  if($ArgumentList -notcontains "-PixelStreamingEncoderCodec=$ExpectedCodec"){throw 'Codec selection changed'}
  $cuda=@($ArgumentList|Where-Object {$_ -eq '-AVCodecs.NvEnc.D3D12UsesCUDA=true'})
  if($cuda.Count -ne 1){throw 'Negotiated H264 must enable CUDA once for every initial codec'}
- if($ArgumentList -notcontains '-PixelStreaming2.WebRTC.NegotiateCodecs=true'){throw 'Codec negotiation must be enabled'}
+ # Model the engine's ConsoleVariableToCommandArgValue conversion, rather than
+ # accepting a dotted CVar literal that appears on argv but is silently ignored.
+ $expectedSettings=@{
+  'PixelStreaming2.WebRTC.NegotiateCodecs'='true'
+  'PixelStreaming2.WebRTC.CodecPreferences'='AV1,VP9,H264,VP8'
+  'PixelStreaming2.Encoder.LatencyMode'='LOW_LATENCY'
+  'PixelStreaming2.WebRTC.Fps'='30'
+  'PixelStreaming2.WebRTC.MaxBitrate'='30000000'
+ }
+ foreach($cvar in $expectedSettings.Keys){
+  $argumentName=$cvar.Replace('.','').Replace('PixelStreaming2','PixelStreaming')
+  $matched=@($ArgumentList|Where-Object {$_ -like "-$argumentName=*"})
+  if($matched.Count -ne 1 -or $matched[0] -ne "-$argumentName=$($expectedSettings[$cvar])"){throw "Engine setting not parsed: $cvar"}
+ }
+ if(@($ArgumentList|Where-Object {$_ -like '-PixelStreaming2.*'}).Count){throw 'Dotted Pixel Streaming CVars are not startup arguments'}
  if($ArgumentList -contains '-d3d11'){throw 'Renderer must not switch to D3D11'}
  [pscustomobject]@{Id=$PID}
 }

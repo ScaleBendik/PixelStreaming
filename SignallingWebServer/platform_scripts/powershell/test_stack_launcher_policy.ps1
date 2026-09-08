@@ -1227,7 +1227,7 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $unrealLauncher `
-    -Expected '"-PixelStreaming2.WebRTC.MaxBitrate=$maxBitrateBps"' `
+    -Expected '"-PixelStreamingWebRTCMaxBitrate=$maxBitrateBps"' `
     -Message 'Unreal startup must pass the configured WebRTC max bitrate to Pixel Streaming 2.'
 
 Assert-ContainsText `

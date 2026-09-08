@@ -18,6 +18,25 @@ by our startup logs, including the custom authentication fields.
 
 ## Preserved integration contracts
 
+### Unreal startup codec arguments
+
+Pixel Streaming 2 console-variable names are not literal command-line names.
+The engine's `ConsoleVariableToCommandArgValue` removes dots and replaces
+`PixelStreaming2` with `PixelStreaming`. The launcher therefore uses
+`-PixelStreamingWebRTCNegotiateCodecs=true` and
+`-PixelStreamingWebRTCCodecPreferences=AV1,VP9,H264,VP8`. The same conversion
+applies to encoder latency, FPS and maximum bitrate. The encoder launch harness
+checks the settings through this conversion across all startup codec cases.
+
+Dev d1 runtime `pixelstreaming-runtime-20260908-004` was observed with the old
+dotted arguments and VP9-only streamer offers, followed by immediate governed
+negotiation failure before browser answers. Merely seeing an argument in the
+process command line does not establish that Unreal parsed it. The corrected
+launcher requires a runtime update and Unreal restart, followed by verification
+of the full offer and actual decoded codec on the exact application build.
+This local fix does not change session policy snapshots or analytics, and does
+not add automatic client codec fallback.
+
 | Area | Preservation rule and evidence |
 | --- | --- |
 | Viewer admission | Keep `createPlayerVerifyClient`, durable runtime admission gates, and signed identity attached before player registration. Query `sm_*` fields remain telemetry. Wilbur and Signalling regression suites cover these paths. |
