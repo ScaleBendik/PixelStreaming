@@ -94,6 +94,49 @@ describe('PixelStreaming', () => {
         jest.resetAllMocks();
     });
 
+
+    it('switches the media peer without reconnecting signalling or narrowing policy choices to the SDP', async () => {
+        const capabilities = jest.spyOn(RTCRtpReceiver, 'getCapabilities').mockReturnValue({
+            codecs: [{ mimeType: 'video/VP9', clockRate: 90000 }, { mimeType: 'video/H264', clockRate: 90000 }],
+            headerExtensions: []
+        });
+        const config = new Config({ initialSettings: { ss: mockSignallingUrl, AutoConnect: true } });
+        const pixelStreaming = new PixelStreaming(config);
+        triggerWebSocketOpen(); triggerConfigMessage(); triggerStreamerListMessage(streamerIdList);
+        const messages: Array<BaseMessage & Record<string, unknown>> = [];
+        webSocketSpyFunctions.sendSpy = jest.fn(data => messages.push(JSON.parse(String(data))));
+        const state = { type: 'scaleWorldCodecState', selectedCodec: 'H264', availableCodecs: ['VP9', 'H264'], mediaGeneration: 0, status: 'negotiating' };
+        triggerSignallingMessage(state);
+        triggerSdpOfferMessage(); await flushPromises();
+        expect(config.getSettingOption(OptionParameters.PreferredCodec).options).toEqual(['VP9', 'H264']);
+        const previous = pixelStreaming.webRtcController.peerConnectionController!;
+        const previousPeer = previous.peerConnection;
+        config.setOptionSettingValue(OptionParameters.PreferredCodec, 'VP9');
+        expect(messages.at(-1)).toMatchObject({ type: 'scaleWorldCodecSwitch', codec: 'VP9', mediaGeneration: 0 });
+        const restarting = { ...state, selectedCodec: 'VP9', mediaGeneration: 1, status: 'restarting' };
+        triggerSignallingMessage(restarting);
+        expect(pixelStreaming.webRtcController.peerConnectionController).not.toBe(previous);
+        const replacement = pixelStreaming.webRtcController.peerConnectionController;
+        triggerSignallingMessage(restarting);
+        const staleRestart = { ...state, status: 'restarting' };
+        triggerSignallingMessage(staleRestart);
+        expect(pixelStreaming.webRtcController.peerConnectionController).toBe(replacement);
+        expect(config.scaleWorldCodecPolicy?.selectedCodec).toBe('VP9');
+        expect(previousPeer.connectionState).toBe('closed');
+        expect(pixelStreaming.webRtcController.protocol.isConnected()).toBe(true);
+        const count = messages.length;
+        previous.onSetLocalDescription({ type: 'answer', sdp });
+        expect(messages.length).toBe(count);
+        expect(config.getSettingOption(OptionParameters.PreferredCodec).options).toEqual(['VP9', 'H264']);
+        config.setOptionSettingValue(OptionParameters.StreamerId, streamerId);
+        expect(messages.at(-1)).toMatchObject({ type: 'subscribe', streamerId });
+        expect(pixelStreaming.webRtcController.peerConnectionController).toBe(replacement);
+        const retry = { ...restarting, mediaGeneration: 2 };
+        triggerSignallingMessage(retry);
+        expect(pixelStreaming.webRtcController.peerConnectionController).not.toBe(replacement);
+        pixelStreaming.disconnect(); capabilities.mockRestore();
+    });
+
     it('should emit settingsChanged events when the configuration is updated', () => {
         const config = new Config();
         const pixelStreaming = new PixelStreaming(config);

@@ -174,10 +174,11 @@ export class PeerConnectionController {
             }
 
             // Add our list of preferred codecs, in order of preference
-            this.config.setOptionSettingOptions(
-                OptionParameters.PreferredCodec,
-                this.fuzzyIntersectUEAndBrowserCodecs(offer)
-            );
+            if (!this.config.scaleWorldCodecPolicy)
+                this.config.setOptionSettingOptions(
+                    OptionParameters.PreferredCodec,
+                    this.fuzzyIntersectUEAndBrowserCodecs(offer)
+                );
             if (peerConnection !== this.peerConnection) {
                 return false;
             }
@@ -233,10 +234,11 @@ export class PeerConnectionController {
             }
 
             // Add our list of preferred codecs, in order of preference
-            this.config.setOptionSettingOptions(
-                OptionParameters.PreferredCodec,
-                this.fuzzyIntersectUEAndBrowserCodecs(answer)
-            );
+            if (!this.config.scaleWorldCodecPolicy)
+                this.config.setOptionSettingOptions(
+                    OptionParameters.PreferredCodec,
+                    this.fuzzyIntersectUEAndBrowserCodecs(answer)
+                );
             return true;
         } catch (error) {
             if (peerConnection === this.peerConnection) {
@@ -286,7 +288,11 @@ export class PeerConnectionController {
                 }
 
                 // Update the preferred codec selection based on what was actually negotiated
-                if (this.updateCodecSelection && !!aggregatedStats.inboundVideoStats.codecId) {
+                if (
+                    !this.config.scaleWorldCodecPolicy &&
+                    this.updateCodecSelection &&
+                    !!aggregatedStats.inboundVideoStats.codecId
+                ) {
                     // Construct the qualified codec name from the mimetype and fmtp
                     const codecStats: CodecStats | undefined = aggregatedStats.codecs.get(
                         aggregatedStats.inboundVideoStats.codecId

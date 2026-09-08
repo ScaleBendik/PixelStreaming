@@ -1,4 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
+import { CodecEvidenceJournal } from './codec-evidence-journal';
 import fs from 'fs';
 import path from 'path';
 import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
@@ -2726,6 +2727,60 @@ export function wireInstanceAgent(
         requestFastPolling('viewer_disconnected');
     });
 
+    const codecJournal = new CodecEvidenceJournal(desiredStatePath + '.codec-evidence.json');
+    server.codecJournalReady = () =>
+        server.codecAdmissionEnforced &&
+        codecJournal.ready &&
+        process.env.SCALEWORLD_CODEC_NEGOTIATION !== '0';
+    server.codecEvidenceRecorder = (event) =>
+        codecJournal.append({
+            ...event,
+            runtimeVersion: configuredRuntimeVersion ?? runtimeSnapshot.version
+        });
+    let codecFlushInFlight = false;
+    const flushCodecEvidence = async (): Promise<void> => {
+        if (codecFlushInFlight || !token) return;
+        codecFlushInFlight = true;
+        try {
+            const identity = await resolveBootstrapIdentity();
+            const batch = codecJournal.batch();
+            const response = await fetchWithDeadline(
+                new URL('/agent/codec-evidence', apiBaseUrl).toString(),
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+                    body: JSON.stringify({
+                        instanceId: identity.instanceId,
+                        region: identity.region,
+                        protocolVersion: 1,
+                        ready: server.codecJournalReady?.() === true,
+                        events: batch
+                    })
+                }
+            );
+            if (response.status === 401) {
+                token = null;
+                return;
+            }
+            if (!response.ok) throw new Error('Codec evidence upload rejected (' + response.status + ')');
+            const payload = await parseJsonResponse<{ acknowledgedEventIds: string[] }>(response);
+            const sentIds = new Set(batch.map((e) => e.eventId));
+            if (
+                !Array.isArray(payload.acknowledgedEventIds) ||
+                payload.acknowledgedEventIds.some((id) => !sentIds.has(id))
+            )
+                throw new Error('Invalid codec evidence acknowledgement');
+            codecJournal.acknowledge(payload.acknowledgedEventIds);
+        } catch (error) {
+            log('[codec-evidence] ' + (error instanceof Error ? error.message : String(error)));
+        } finally {
+            codecFlushInFlight = false;
+        }
+    };
+    const codecUploadTimer = setInterval(() => {
+        void flushCodecEvidence();
+    }, 5000);
+    codecUploadTimer.unref?.();
     scheduleHeartbeat(heartbeatMs);
     runtimeEntitlementPollTimer = setInterval(() => {
         if (!token) {

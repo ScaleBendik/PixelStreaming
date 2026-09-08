@@ -21,8 +21,8 @@ function Start-Process {
  param($FilePath,$ArgumentList,$WorkingDirectory,[switch]$PassThru)
  if($ArgumentList -notcontains "-PixelStreamingEncoderCodec=$ExpectedCodec"){throw 'Codec selection changed'}
  $cuda=@($ArgumentList|Where-Object {$_ -eq '-AVCodecs.NvEnc.D3D12UsesCUDA=true'})
- if($ExpectedCodec -ieq 'H264') {if($cuda.Count -ne 1){throw 'H264 must enable CUDA once'}}
- elseif($cuda.Count -ne 0){throw 'Non-H264 backend must remain unchanged'}
+ if($cuda.Count -ne 1){throw 'Negotiated H264 must enable CUDA once for every initial codec'}
+ if($ArgumentList -notcontains '-PixelStreaming2.WebRTC.NegotiateCodecs=true'){throw 'Codec negotiation must be enabled'}
  if($ArgumentList -contains '-d3d11'){throw 'Renderer must not switch to D3D11'}
  [pscustomobject]@{Id=$PID}
 }

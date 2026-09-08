@@ -10,7 +10,8 @@ Logger.silent = true;
 
 const key = 'synthetic-auth-test-signing-key-at-least-thirty-two-characters';
 const host = 'route-a.stream.example.test';
-const identity = { sessionRequestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', activeSessionId: '11111111-1111-4111-8111-111111111111' };
+const codecPolicy = { version: 1, snapshotId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', policyHash: 'A'.repeat(64), allowedCodecs: ['VP9'], defaultCodec: 'VP9', allowSwitching: false };
+const identity = { codecPolicy, sessionRequestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', activeSessionId: '11111111-1111-4111-8111-111111111111' };
 function settings(mode, runtimeGate) {
     return { mode, issuer: 'issuer', audience: 'audience', signingKey: key, instanceId: 'i-test', routeHostSuffix: 'stream.example.test', clockSkewSeconds: 0, runtimeGate };
 }

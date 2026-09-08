@@ -14,3 +14,5 @@ common/types/*
 Docs/*-promotions.local.md
 BuildArtifacts/
 SignallingWebServer/state/
+
+.review-tmp/

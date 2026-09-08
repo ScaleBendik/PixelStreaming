@@ -140,7 +140,10 @@ export class StreamerConnection extends EventEmitter implements IStreamer, LogUt
     private forwardMessage(message: BaseMessage): void {
         if (typeof message.playerId !== 'string' || !message.playerId) {
             Logger.warn('Cannot forward streamer message without a valid playerId.');
-        } else if (!this.subscribers.has(message.playerId)) {
+            return;
+        }
+        const player = this.server.playerRegistry.getForStreamerMessage(message.playerId);
+        if (!player || !this.subscribers.has(player.playerId)) {
             // Only forward to players that are actually subscribed to this streamer. Without this
             // check a streamer could target any player on the server (resolved via the global player
             // registry), allowing cross-tenant signalling on a shared signalling server.
@@ -148,16 +151,18 @@ export class StreamerConnection extends EventEmitter implements IStreamer, LogUt
                 `Streamer ${this.streamerId} tried to forward a message to player ${message.playerId} which is not subscribed to it. Ignoring.`
             );
         } else {
-            const player = this.server.playerRegistry.get(message.playerId);
-            if (player) {
-                LogUtils.logForward(this, player, message);
-                player.protocol.sendMessage(message);
-            }
+            // Keep browser/analytics identity stable while Unreal sees a distinct media peer.
+            message.playerId = player.playerId;
+            LogUtils.logForward(this, player, message);
+            player.sendMessage(message);
         }
     }
 
     private onIceCandidateMessage(message: BaseMessage): void {
-        const player = message.playerId ? this.server.playerRegistry.get(message.playerId) : undefined;
+        const player =
+            typeof message.playerId === 'string'
+                ? this.server.playerRegistry.getForStreamerMessage(message.playerId)
+                : undefined;
         this.server.iceCandidateMonitor.recordStreamerCandidate(this, player, message);
         this.forwardMessage(message);
     }
@@ -180,7 +185,8 @@ export class StreamerConnection extends EventEmitter implements IStreamer, LogUt
             Logger.warn('Ignoring streamer disconnect request without a valid playerId.');
             return;
         }
-        if (!this.subscribers.has(message.playerId)) {
+        const player = this.server.playerRegistry.getForStreamerMessage(message.playerId);
+        if (!player || !this.subscribers.has(player.playerId)) {
             // A streamer may only disconnect its own subscribed players. Otherwise any streamer
             // could forcibly close arbitrary player connections on a shared signalling server.
             Logger.warn(
@@ -188,7 +194,6 @@ export class StreamerConnection extends EventEmitter implements IStreamer, LogUt
             );
             return;
         }
-        const player = this.server.playerRegistry.get(message.playerId);
         if (player) {
             // ws rejects non-string and overlong close reasons by throwing. Preserve the
             // disconnect request, but omit an invalid reason instead of crashing Wilbur.

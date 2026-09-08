@@ -11,6 +11,7 @@ import { IStreamer } from './StreamerRegistry';
  */
 export interface IPlayer extends IMessageLogger {
     playerId: string;
+    readonly streamerPlayerId?: string;
     protocol: SignallingProtocol;
     subscribedStreamer: IStreamer | null;
     // The HTTP upgrade request that opened this connection, if available. Lets a consumer-supplied
@@ -88,6 +89,15 @@ export class PlayerRegistry extends EventEmitter {
      */
     get(playerId: string): IPlayer | undefined {
         return this.players.get(playerId);
+    }
+
+    /** Resolve only the current Unreal media peer, never a retired codec generation. */
+    getForStreamerMessage(streamerPlayerId: string): IPlayer | undefined {
+        const player =
+            this.players.get(streamerPlayerId) ?? this.players.get(streamerPlayerId.split('-codec-')[0]);
+        return player && (player.streamerPlayerId ?? player.playerId) === streamerPlayerId
+            ? player
+            : undefined;
     }
 
     listPlayers(): IPlayer[] {

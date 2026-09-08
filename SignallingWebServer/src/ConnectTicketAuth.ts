@@ -1,4 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
+import { parseCodecPolicy, CodecTicketPolicy } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
 import crypto from 'crypto';
 import type http from 'http';
 import type * as wslib from 'ws';
@@ -28,6 +29,7 @@ type ValidationResult = {
 export interface ValidatedConnectTicketIdentity {
     sessionRequestId: string;
     activeSessionId?: string;
+    codecPolicy?: CodecTicketPolicy;
 }
 
 type AuthenticatedIncomingMessage = http.IncomingMessage & {
@@ -221,6 +223,15 @@ function validateToken(token: string, host: string, settings: ConnectTicketAuthS
         };
     }
 
+    const codecPolicy = parseCodecPolicy(payload.codecPolicy);
+    if (sessionRequestId && !codecPolicy) {
+        return {
+            isValid: false,
+            forceReject: true,
+            reason: 'A signed codec policy is required for managed sessions.'
+        };
+    }
+
     const activeSessionId = parseGuidClaim(payload.activeSessionId) ?? undefined;
     if (payload.activeSessionId !== undefined && !activeSessionId) {
         return {
@@ -284,7 +295,8 @@ function validateToken(token: string, host: string, settings: ConnectTicketAuthS
         identity: sessionRequestId
             ? {
                   sessionRequestId,
-                  activeSessionId
+                  activeSessionId,
+                  codecPolicy
               }
             : undefined
     };

@@ -404,7 +404,8 @@ test('managed WebSocket admission is rejected when viewer evidence is not durabl
             instanceId: 'i-test',
             routeKey: 'route-a',
             sessionRequestId,
-            activeSessionId
+            activeSessionId,
+            codecPolicy: { version: 1, snapshotId: sessionRequestId, policyHash: 'A'.repeat(64), allowedCodecs: ['VP9'], defaultCodec: 'VP9', allowSwitching: false }
         },
         signingKey
     );

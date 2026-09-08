@@ -111,6 +111,73 @@ export class WebRtcPlayerController {
     keepalive: KeepaliveMonitor;
     playerId: string | null = null;
     hasCompletedInitialVideo: boolean;
+
+    private codecMediaGeneration = 0;
+    private applyingCodecState = false;
+    private lastCodecReport = 0;
+    private codecStatusElement?: HTMLDivElement;
+
+    private sendSignallingMessage<T extends BaseMessage>(message: T): void {
+        if (['offer', 'answer', 'iceCandidate'].includes(message.type)) {
+            const tagged = { ...message, mediaGeneration: this.codecMediaGeneration };
+            this.protocol.sendMessage(tagged);
+        } else this.protocol.sendMessage(message);
+    }
+
+    private handleCodecState(message: BaseMessage): void {
+        if (message.type !== 'scaleWorldCodecState') return;
+        const state = message as BaseMessage & {
+            selectedCodec: string;
+            availableCodecs: string[];
+            mediaGeneration: number;
+            status: string;
+            reason?: string;
+        };
+        if (
+            !Array.isArray(state.availableCodecs) ||
+            !Number.isSafeInteger(state.mediaGeneration) ||
+            state.mediaGeneration < this.codecMediaGeneration
+        )
+            return;
+        const newGeneration = state.mediaGeneration > this.codecMediaGeneration;
+        const supported = BrowserUtils.getSupportedVideoCodecs().map((c) =>
+            c.trim().split(' ')[0].toUpperCase()
+        );
+        const available = state.availableCodecs.filter((c) => supported.includes(c));
+        this.applyingCodecState = true;
+        try {
+            this.codecMediaGeneration = state.mediaGeneration;
+            this.config.scaleWorldCodecPolicy = {
+                availableCodecs: available,
+                selectedCodec: state.selectedCodec
+            };
+            this.config.setOptionSettingOptions(OptionParameters.PreferredCodec, available);
+            if (available.includes(state.selectedCodec))
+                this.config.setOptionSettingValue(OptionParameters.PreferredCodec, state.selectedCodec);
+            this.preferredCodec = state.selectedCodec;
+            if (state.status === 'restarting' && newGeneration) {
+                this.lastCodecReport = 0;
+                this.replacePeerConnectionController(this.peerConfig, false);
+            }
+        } finally {
+            this.applyingCodecState = false;
+        }
+        if (!this.codecStatusElement) {
+            this.codecStatusElement = document.createElement('div');
+            this.codecStatusElement.setAttribute('role', 'status');
+            this.codecStatusElement.style.cssText =
+                'position:absolute;bottom:12px;left:12px;padding:6px 10px;background:#161b22;color:white;border-radius:4px;pointer-events:none;z-index:30;font:13px sans-serif';
+            this.pixelStreaming.videoElementParent.appendChild(this.codecStatusElement);
+        }
+        const text =
+            state.status === 'streaming'
+                ? 'Codec: ' + state.selectedCodec
+                : state.status === 'restarting' || state.status === 'negotiating'
+                  ? 'Connecting video using ' + state.selectedCodec + '…'
+                  : (state.reason ?? 'Codec switch unavailable');
+        this.codecStatusElement.textContent = text;
+    }
+
     private signallingConnectionGeneration = 0;
     private peerConnectionGeneration = 0;
     private subscribedSignallingConnectionGeneration = -1;
@@ -182,6 +249,7 @@ export class WebRtcPlayerController {
         // set up websocket methods
         this.transport = new WebSocketTransport(config.webSocketProtocols);
         this.protocol = new SignallingProtocol(this.transport);
+        this.protocol.on('unhandled', (message: BaseMessage) => this.handleCodecState(message));
         this.protocol.addListener(Messages.config.typeName, (msg: BaseMessage) =>
             this.handleOnConfigMessage(msg as Messages.config)
         );
@@ -215,13 +283,16 @@ export class WebRtcPlayerController {
             this.handleIceCandidate(iceCandidateMessage.candidate);
         });
         this.protocol.transport.addListener('open', () => {
+            this.config.scaleWorldCodecPolicy = undefined;
+            this.codecMediaGeneration = 0;
+            this.lastCodecReport = 0;
             this.signallingConnectionGeneration++;
             this.subscribedSignallingConnectionGeneration = -1;
             this.activeSubscribedStreamerId = '';
             const BrowserSendOffer = this.config.isFlagEnabled(Flags.BrowserSendOffer);
             if (!BrowserSendOffer) {
                 const message = MessageHelpers.createMessage(Messages.listStreamers);
-                this.protocol.sendMessage(message);
+                this.sendSignallingMessage(message);
             }
             this.reconnectAttempt = 0;
             this.isReconnecting = false;
@@ -339,7 +410,7 @@ export class WebRtcPlayerController {
                         temporalLayer: 0
                     });
                 }
-                this.protocol.sendMessage(message);
+                this.sendSignallingMessage(message);
             }
         );
 
@@ -1248,16 +1319,17 @@ export class WebRtcPlayerController {
         // Explicitly selecting the active id is an intentional retry. A different id is also a
         // new media generation. In both cases, retire the old browser peer before subscribing.
         if (
-            !this.peerConnectionController ||
-            alreadySubscribedForConnection ||
-            this.activeSubscribedStreamerId !== ''
+            !this.config.scaleWorldCodecPolicy &&
+            (!this.peerConnectionController ||
+                alreadySubscribedForConnection ||
+                this.activeSubscribedStreamerId !== '')
         ) {
             this.replacePeerConnectionController(this.peerConfig, false);
         }
 
         const message = MessageHelpers.createMessage(Messages.subscribe, { streamerId });
         try {
-            this.protocol.sendMessage(message);
+            this.sendSignallingMessage(message);
             // Commit the de-duplication marker only after the transport accepted the send. A
             // synchronous WebSocket send failure must leave a later same-id retry available.
             this.subscribedSignallingConnectionGeneration = this.signallingConnectionGeneration;
@@ -1333,7 +1405,7 @@ export class WebRtcPlayerController {
     }
 
     handlePingMessage(pingMessage: Messages.ping) {
-        this.protocol.sendMessage(MessageHelpers.createMessage(Messages.pong, { time: pingMessage.time }));
+        this.sendSignallingMessage(MessageHelpers.createMessage(Messages.pong, { time: pingMessage.time }));
     }
 
     /**
@@ -1415,7 +1487,7 @@ export class WebRtcPlayerController {
                     this.reconnectAttempt++;
                     this.isReconnecting = true;
                     setTimeout(() => {
-                        this.protocol.sendMessage(MessageHelpers.createMessage(Messages.listStreamers));
+                        this.sendSignallingMessage(MessageHelpers.createMessage(Messages.listStreamers));
                     }, reconnectDelay);
                 } else {
                     // We've exhausted our reconnect attempts, return to main screen
@@ -1636,7 +1708,7 @@ export class WebRtcPlayerController {
             this.recvDataChannelController.createDataChannel(peerConnection, 'recv-datachannel', RecvOptions);
             this.recvDataChannelController.handleOnOpen = () => {
                 if (this.isCurrentPeerConnection(controller, generation)) {
-                    this.protocol.sendMessage(MessageHelpers.createMessage(Messages.peerDataChannelsReady));
+                    this.sendSignallingMessage(MessageHelpers.createMessage(Messages.peerDataChannelsReady));
                 }
             };
             // If we're uni-directional, only the recv data channel should handle incoming messages
@@ -1707,7 +1779,7 @@ export class WebRtcPlayerController {
     handleSendIceCandidate(iceEvent: RTCPeerConnectionIceEvent) {
         if (iceEvent.candidate && iceEvent.candidate.candidate) {
             Logger.Info(`Local ICE candidate generated: ` + JSON.stringify(iceEvent.candidate));
-            this.protocol.sendMessage(
+            this.sendSignallingMessage(
                 MessageHelpers.createMessage(Messages.iceCandidate, { candidate: iceEvent.candidate })
             );
         }
@@ -1746,7 +1818,7 @@ export class WebRtcPlayerController {
             maxBitrateBps: 1000 * this.config.getNumericSettingValue(NumericParameters.WebRTCMaxBitrate)
         };
 
-        this.protocol.sendMessage(MessageHelpers.createMessage(Messages.offer, extraParams));
+        this.sendSignallingMessage(MessageHelpers.createMessage(Messages.offer, extraParams));
 
         // Send offer back to Pixel Streaming main class for event dispatch
         this.pixelStreaming._onWebRtcSdpOffer(offer);
@@ -1772,10 +1844,10 @@ export class WebRtcPlayerController {
             maxBitrateBps: 1000 * this.config.getNumericSettingValue(NumericParameters.WebRTCMaxBitrate)
         };
 
-        this.protocol.sendMessage(MessageHelpers.createMessage(Messages.answer, extraParams));
+        this.sendSignallingMessage(MessageHelpers.createMessage(Messages.answer, extraParams));
 
         if (this.isUsingSFU) {
-            this.protocol.sendMessage(MessageHelpers.createMessage(Messages.dataChannelRequest));
+            this.sendSignallingMessage(MessageHelpers.createMessage(Messages.dataChannelRequest));
         }
 
         // Send answer back to Pixel Streaming main class for event dispatch
@@ -2179,6 +2251,27 @@ export class WebRtcPlayerController {
      * @param stats - Aggregated Stats
      */
     handleVideoStats(stats: AggregatedStats) {
+        const inbound = stats.inboundVideoStats;
+        const codec = stats.codecs
+            .get(inbound.codecId)
+            ?.mimeType?.replace(/^video\//i, '')
+            .toUpperCase();
+        if (
+            this.config.scaleWorldCodecPolicy &&
+            codec &&
+            inbound.framesDecoded > 0 &&
+            inbound.bytesReceived > 0 &&
+            Date.now() - this.lastCodecReport >= 5000
+        ) {
+            this.lastCodecReport = Date.now();
+            this.sendSignallingMessage({
+                type: 'scaleWorldCodecObservation',
+                mediaGeneration: this.codecMediaGeneration,
+                codec,
+                framesDecoded: inbound.framesDecoded,
+                bytesReceived: inbound.bytesReceived
+            });
+        }
         this.pixelStreaming._onVideoStats(stats);
     }
 
@@ -2190,6 +2283,17 @@ export class WebRtcPlayerController {
     }
 
     setPreferredCodec(codec: string) {
+        if (this.config.scaleWorldCodecPolicy && !this.applyingCodecState) {
+            const canonical = codec.trim().split(' ')[0].toUpperCase();
+            if (canonical !== this.config.scaleWorldCodecPolicy.selectedCodec) {
+                this.sendSignallingMessage({
+                    type: 'scaleWorldCodecSwitch',
+                    codec: canonical,
+                    mediaGeneration: this.codecMediaGeneration
+                });
+            }
+            return;
+        }
         this.preferredCodec = codec;
         if (this.peerConnectionController) {
             this.peerConnectionController.preferredCodec = codec;

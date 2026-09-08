@@ -139,6 +139,8 @@ export interface ConfigParams {
     webSocketProtocols?: string | string[];
 }
 export class Config {
+    /** Server-authenticated session choices, independent of the current SDP. */
+    scaleWorldCodecPolicy?: { availableCodecs: string[]; selectedCodec: string };
     /* A map of flags that can be toggled - options that can be set in the application - e.g. Use Mic? */
     private flags = new Map<FlagsIds, SettingFlag>();
 

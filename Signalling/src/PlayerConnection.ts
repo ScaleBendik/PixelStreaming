@@ -1,4 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
+import { randomUUID } from 'node:crypto';
+import {
+    CodecTicketPolicy,
+    CodecEvidence,
+    VideoCodec,
+    videoCodecs,
+    restrictVideoSdp,
+    validateCodecAnswer
+} from './CodecPolicy';
 import type { IncomingMessage } from 'http';
 import WebSocket from 'ws';
 import {
@@ -28,6 +37,222 @@ import { SignallingServer } from './SignallingServer';
  * subscribed to.
  */
 export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
+    private codecPolicy?: CodecTicketPolicy;
+    private codecOffer?: string;
+    private codecOfferFromStreamer?: boolean;
+    private codecNegotiated = false;
+    private codecHasSubscribed = false;
+    private codecConnectionId = randomUUID();
+    private codecSequence = 0;
+    private codecGeneration = 0;
+    private selectedCodec?: VideoCodec;
+    private availableCodecs: VideoCodec[] = [];
+    private codecSwitch?: { id: string; previous: VideoCodec; rollback: boolean };
+    private codecTimeout?: NodeJS.Timeout;
+    private lastCodecObservation = { frames: 0, bytes: 0, at: 0 };
+
+    get streamerPlayerId(): string {
+        return this.codecPolicy
+            ? `${this.playerId}-codec-${this.codecConnectionId}-${this.codecGeneration}`
+            : this.playerId;
+    }
+
+    initializeCodecPolicy(policy?: CodecTicketPolicy): boolean {
+        if (!policy || !this.server.codecJournalReady?.()) return false;
+        this.codecPolicy = policy;
+        this.selectedCodec = policy.defaultCodec;
+        try {
+            this.recordCodec('connection_opened');
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    private recordCodec(eventType: string, extra: Partial<CodecEvidence> = {}): void {
+        if (!this.codecPolicy || !this.scaleWorldSessionRequestId) return;
+        if (!this.server.codecEvidenceRecorder) throw new Error('Codec evidence unavailable');
+        this.server.codecEvidenceRecorder({
+            eventId: randomUUID(),
+            sessionRequestId: this.scaleWorldSessionRequestId,
+            connectionId: this.codecConnectionId,
+            sequence: this.codecSequence + 1,
+            mediaGeneration: this.codecGeneration,
+            eventType,
+            codec: this.selectedCodec,
+            evidenceSource: 'signalling',
+            policyHash: this.codecPolicy.policyHash,
+            occurredAtUtc: new Date().toISOString(),
+            switchId: this.codecSwitch?.id,
+            ...extra
+        });
+        this.codecSequence++;
+    }
+
+    private sendCodecState(status: string, reason?: string): void {
+        if (!this.codecPolicy) return;
+        this.protocol.sendMessage({
+            type: 'scaleWorldCodecState',
+            connectionId: this.codecConnectionId,
+            mediaGeneration: this.codecGeneration,
+            selectedCodec: this.selectedCodec,
+            availableCodecs: this.codecPolicy.allowSwitching ? this.availableCodecs : [this.selectedCodec],
+            allowSwitching: this.codecPolicy.allowSwitching,
+            status,
+            reason
+        } as BaseMessage);
+    }
+
+    private filterCodecMessage(message: BaseMessage, fromStreamer: boolean): boolean {
+        if (!this.codecPolicy || (message.type !== 'offer' && message.type !== 'answer')) return true;
+        try {
+            const description = message as BaseMessage & {
+                sdp: string;
+                sfu?: boolean;
+                scalabilityMode?: string;
+            };
+            if (description.sfu || (description.scalabilityMode && description.scalabilityMode !== 'L1T1')) {
+                throw new Error('Governed codecs require a direct non-SVC stream');
+            }
+            const result = restrictVideoSdp(description.sdp, this.selectedCodec!);
+            if (message.type === 'offer') {
+                this.availableCodecs = this.codecPolicy.allowedCodecs.filter((c) =>
+                    result.available.includes(c)
+                );
+                this.codecOffer = result.sdp;
+                this.codecOfferFromStreamer = fromStreamer;
+                this.codecNegotiated = false;
+                this.sendCodecState('negotiating');
+            } else {
+                if (this.codecOfferFromStreamer === fromStreamer)
+                    throw new Error('Answer must come from the opposite peer');
+                validateCodecAnswer(this.codecOffer, description.sdp);
+                this.recordCodec('negotiated');
+                this.codecOffer = undefined;
+                this.codecOfferFromStreamer = undefined;
+                this.codecNegotiated = true;
+            }
+            description.sdp = result.sdp;
+            return true;
+        } catch {
+            this.failCodecSwitch('Codec negotiation failed');
+            return false;
+        }
+    }
+
+    private restartCodecPeer(codec: VideoCodec): void {
+        const streamerId = this.subscribedStreamer?.streamerId;
+        if (!streamerId) throw new Error('No active streamer');
+        this.selectedCodec = codec;
+        this.subscribe(streamerId);
+        clearTimeout(this.codecTimeout);
+        const generation = this.codecGeneration;
+        this.codecTimeout = setTimeout(() => {
+            if (this.codecSwitch && generation === this.codecGeneration)
+                this.failCodecSwitch('No decoded video after codec switch');
+        }, 25000);
+        this.codecTimeout.unref?.();
+    }
+
+    private failCodecSwitch(reason: string): void {
+        clearTimeout(this.codecTimeout);
+        try {
+            this.recordCodec('switch_failed', { reason });
+            if (this.codecSwitch && !this.codecSwitch.rollback) {
+                this.codecSwitch.rollback = true;
+                this.restartCodecPeer(this.codecSwitch.previous);
+                return;
+            }
+        } catch {
+            reason = 'Codec evidence unavailable; media paused';
+        }
+        this.codecSwitch = undefined;
+        this.unsubscribe();
+        this.sendCodecState('failed', reason);
+    }
+
+    private handleCodecMessage(message: BaseMessage): boolean {
+        if (message.type !== 'scaleWorldCodecSwitch' && message.type !== 'scaleWorldCodecObservation')
+            return false;
+        if (!this.codecPolicy) return true;
+        const data = message as BaseMessage & {
+            codec?: VideoCodec;
+            mediaGeneration?: number;
+            framesDecoded?: number;
+            bytesReceived?: number;
+        };
+        if (message.type === 'scaleWorldCodecSwitch') {
+            if (
+                !this.codecPolicy.allowSwitching ||
+                this.codecSwitch ||
+                !this.subscribedStreamer ||
+                data.mediaGeneration !== this.codecGeneration ||
+                !this.availableCodecs.includes(data.codec!) ||
+                data.codec === this.selectedCodec ||
+                !this.server.codecJournalReady?.()
+            ) {
+                this.sendCodecState('rejected', 'Codec switch is not available');
+                return true;
+            }
+            const change = { id: randomUUID(), previous: this.selectedCodec!, rollback: false };
+            try {
+                this.recordCodec('switch_requested', { codec: data.codec, switchId: change.id });
+            } catch {
+                this.sendCodecState('rejected', 'Codec evidence unavailable; current video preserved');
+                return true;
+            }
+            this.codecSwitch = change;
+            try {
+                this.restartCodecPeer(data.codec!);
+            } catch {
+                this.failCodecSwitch('Codec switch could not start');
+            }
+            return true;
+        }
+        const frames = data.framesDecoded;
+        const bytes = data.bytesReceived;
+        if (
+            data.mediaGeneration !== this.codecGeneration ||
+            !this.subscribedStreamer ||
+            !this.codecNegotiated ||
+            !videoCodecs.includes(data.codec!) ||
+            !Number.isSafeInteger(frames) ||
+            !Number.isSafeInteger(bytes) ||
+            frames! <= this.lastCodecObservation.frames ||
+            bytes! <= this.lastCodecObservation.bytes ||
+            frames! > 1e12 ||
+            bytes! > 1e15 ||
+            Date.now() - this.lastCodecObservation.at < 4000
+        )
+            return true;
+        try {
+            // Browser observations are explicitly untrusted evidence, retained even when contradictory.
+            this.recordCodec('observed', {
+                evidenceSource: 'browser',
+                codec: data.codec,
+                framesDecoded: frames,
+                bytesReceived: bytes
+            });
+            this.lastCodecObservation = { frames: frames!, bytes: bytes!, at: Date.now() };
+            if (data.codec !== this.selectedCodec) {
+                this.failCodecSwitch('Observed codec differs from negotiated policy');
+                return true;
+            }
+            if (this.codecSwitch) {
+                this.recordCodec(
+                    this.codecSwitch.rollback ? 'switch_failed' : 'switch_succeeded',
+                    this.codecSwitch.rollback ? { reason: 'Previous codec restored' } : {}
+                );
+                this.codecSwitch = undefined;
+                clearTimeout(this.codecTimeout);
+            }
+            this.sendCodecState('streaming');
+        } catch {
+            this.failCodecSwitch('Codec evidence unavailable');
+        }
+        return true;
+    }
+
     private static readonly minimumConfirmedVideoBytes = 256_000;
     // The unique id of this player connection.
     playerId: string;
@@ -100,6 +325,7 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
      * @param message - The message to send.
      */
     sendMessage(message: BaseMessage): void {
+        if (!this.filterCodecMessage(message, true)) return;
         LogUtils.logOutgoing(this, message);
         this.protocol.sendMessage(message);
     }
@@ -142,7 +368,7 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
         this.protocol.on(Messages.layerPreference.typeName, this.sendToStreamer.bind(this));
 
         this.protocol.on('unhandled', (message: BaseMessage) => {
-            if (this.handleScaleWorldMediaEvidenceMessage(message)) {
+            if (this.handleCodecMessage(message) || this.handleScaleWorldMediaEvidenceMessage(message)) {
                 return;
             }
 
@@ -267,6 +493,23 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     }
 
     private sendToStreamer(message: BaseMessage): void {
+        const generation = (message as BaseMessage & { mediaGeneration?: number }).mediaGeneration;
+        if (
+            this.codecPolicy &&
+            ['answer', 'offer', 'iceCandidate'].includes(message.type) &&
+            generation !== this.codecGeneration
+        )
+            return;
+        // Only the first browser offer may bootstrap an implicit subscription. Late ICE or
+        // answers must not revive a paused/unsubscribed managed media generation.
+        if (
+            this.codecPolicy &&
+            !this.subscribedStreamer &&
+            ['answer', 'offer', 'iceCandidate'].includes(message.type) &&
+            (message.type !== 'offer' || this.codecHasSubscribed)
+        )
+            return;
+        if (!this.filterCodecMessage(message, false)) return;
         if (!this.subscribedStreamer) {
             Logger.warn(
                 `Player ${this.playerId} tried to send to a streamer but they're not subscribed to any.`
@@ -292,7 +535,7 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             }
         }
 
-        message.playerId = this.playerId;
+        message.playerId = this.streamerPlayerId;
         LogUtils.logForward(this, this.subscribedStreamer, message);
         this.subscribedStreamer.protocol.sendMessage(message);
     }
@@ -310,6 +553,10 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
         }
 
         const streamer = this.server.streamerRegistry.find(streamerId);
+        if (streamer && this.codecPolicy && streamer.getStreamerInfo().type !== 'Streamer') {
+            this.sendCodecState('failed', 'Codec switching requires a direct streamer connection');
+            return;
+        }
         if (!streamer) {
             Logger.error(
                 `subscribe: Player ${this.playerId} tried to subscribe to a non-existent streamer ${streamerId}`
@@ -339,6 +586,17 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             return;
         }
 
+        if (this.codecPolicy) {
+            if (this.codecHasSubscribed) {
+                this.codecGeneration++;
+                this.codecOffer = undefined;
+                this.codecOfferFromStreamer = undefined;
+                this.codecNegotiated = false;
+                this.lastCodecObservation = { frames: 0, bytes: 0, at: 0 };
+                this.sendCodecState('restarting');
+            }
+            this.codecHasSubscribed = true;
+        }
         this.subscribedStreamer = streamer;
         this.subscribedStreamer.subscribers.add(this.playerId);
         this.subscribedStreamer.on('id_changed', this.streamerIdChangeListener);
@@ -353,6 +611,9 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     }
 
     private unsubscribe() {
+        this.codecOffer = undefined;
+        this.codecOfferFromStreamer = undefined;
+        this.codecNegotiated = false;
         if (!this.subscribedStreamer) {
             return;
         }
@@ -383,16 +644,35 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     }
 
     private onTransportClose(_event: CloseEvent): void {
+        clearTimeout(this.codecTimeout);
+        try {
+            this.recordCodec('connection_closed');
+        } catch {
+            Logger.error('Codec close evidence could not be persisted');
+        }
         Logger.debug('PlayerConnection transport close.');
         this.server.iceCandidateMonitor.flushPlayer(this.playerId, 'player_disconnected');
         this.disconnect();
     }
 
     private onSubscribeMessage(message: Messages.subscribe): void {
+        if (this.codecSwitch) {
+            this.sendCodecState('rejected', 'Wait for the codec switch to finish');
+            return;
+        }
         this.subscribe(message.streamerId);
     }
 
     private onUnsubscribeMessage(_message: Messages.unsubscribe): void {
+        clearTimeout(this.codecTimeout);
+        if (this.codecSwitch) {
+            try {
+                this.recordCodec('switch_failed', { reason: 'Media unsubscribed during codec switch' });
+            } catch {
+                Logger.error('Codec cancellation evidence could not be persisted');
+            }
+            this.codecSwitch = undefined;
+        }
         this.unsubscribe();
     }
 

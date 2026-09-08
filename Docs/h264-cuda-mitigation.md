@@ -21,7 +21,8 @@ mechanism. Increasing RAM/pagefile would only postpone the observed exhaustion.
 ## Launcher behavior
 
 `SignallingWebServer/platform_scripts/powershell/start_scaleworld.ps1` adds
-the CUDA flag when its resolved `EncoderCodec` is H264 (case-insensitive).
+the CUDA flag for every initial codec, because governed sessions can negotiate
+H264 later. Codec negotiation is enabled in the same launcher.
 Standard VP9, premium AV1 and explicit codec-selection precedence are unchanged.
 The renderer is not switched. Because this is in the common Unreal launcher,
 normal startup and Unreal-only watchdog recovery both apply the option without

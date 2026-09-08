@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 import http from 'http';
+import { CodecTicketPolicy, CodecEvidence } from './CodecPolicy';
 import https from 'https';
 import * as wslib from 'ws';
 import { StreamerConnection } from './StreamerConnection';
@@ -24,6 +25,7 @@ const SCALEWORLD_SESSION_REQUEST_ID_PARAM = 'sm_session_request_id';
 type ValidatedConnectTicketIdentity = {
     sessionRequestId: string;
     activeSessionId?: string;
+    codecPolicy?: CodecTicketPolicy;
 };
 
 type AuthenticatedIncomingMessage = http.IncomingMessage & {
@@ -74,7 +76,8 @@ function readValidatedConnectTicketIdentity(
 
     return {
         sessionRequestId,
-        activeSessionId
+        activeSessionId,
+        codecPolicy: identity?.codecPolicy
     };
 }
 
@@ -257,6 +260,9 @@ export class SignallingServer {
     protocolConfigStreamer: ProtocolConfig;
     streamerRegistry: StreamerRegistry;
     playerRegistry: PlayerRegistry;
+    codecEvidenceRecorder?: (event: CodecEvidence) => void;
+    codecJournalReady?: () => boolean;
+    codecAdmissionEnforced = false;
     startTime: Date;
     private playerKeepaliveEnabled: boolean;
     private playerKeepaliveIntervalMs: number;
@@ -449,6 +455,10 @@ export class SignallingServer {
         this.registerPlayerKeepalive(ws, request.socket.remoteAddress);
 
         // add it to the registry and when the transport closes, remove it
+        if (validatedIdentity && !newPlayer.initializeCodecPolicy(validatedIdentity.codecPolicy)) {
+            ws.close(1013, 'Codec policy enforcement unavailable');
+            return;
+        }
         this.playerRegistry.add(newPlayer);
         newPlayer.transport.on('close', () => {
             this.unregisterPlayerKeepalive(ws);

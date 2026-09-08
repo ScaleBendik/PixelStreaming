@@ -918,6 +918,8 @@ if (shouldServerStart) {
 }
 
 const signallingServer = new SignallingServer(serverOpts);
+// Governed codec readiness requires an authenticated viewer boundary.
+signallingServer.codecAdmissionEnforced = authMode === 'enforce';
 const instanceAgentClient = wireInstanceAgent(signallingServer, {
     enabled: options.instance_agent,
     apiBaseUrl: String(options.instance_agent_api_base_url || ''),
