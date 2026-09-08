@@ -82,6 +82,13 @@ $arguments = @(
     "-PixelStreamingPort=$PixelStreamingPort"
 )
 
+# Keep D3D12 rendering, but avoid the native D3D12 NVENC reconfiguration
+# retention observed with H264. Apply here so Unreal-only recovery inherits it.
+# Codec defaults (standard VP9 / premium AV1) remain unchanged.
+if ($EncoderCodec -ieq 'H264') {
+    $arguments += '-AVCodecs.NvEnc.D3D12UsesCUDA=true'
+}
+
 if ($AdditionalArgs) {
     $arguments += $AdditionalArgs
 }

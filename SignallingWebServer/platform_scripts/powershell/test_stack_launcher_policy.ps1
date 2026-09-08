@@ -1763,36 +1763,31 @@ Assert-ContainsText `
     -Expected 'options.connectTicketRuntimeGate?.isCommercialRecoveryRequired() !== true' `
     -Message 'Ready heartbeat retry bypass must remain limited to a pending marker whose commercial recovery fence is already complete.'
 
+# The control tick must progress without waiting for optional event transport.
+# Runtime tests cover stalled uploads and stable reset-evidence replay/acknowledgement.
 $runTickIndex = $instanceAgent.IndexOf('const runTick = async (): Promise<void> =>')
-$firstResetCompletionFlushIndex = if ($runTickIndex -ge 0) {
-    $instanceAgent.IndexOf('await flushEvents();', $runTickIndex)
-} else {
-    -1
-}
-$readyHeartbeatIndex = if ($firstResetCompletionFlushIndex -ge 0) {
-    $instanceAgent.IndexOf('await sendHeartbeat();', $firstResetCompletionFlushIndex)
-} else {
-    -1
-}
-$resetCompletionReplayIndex = if ($readyHeartbeatIndex -ge 0) {
-    $instanceAgent.IndexOf('ensureCompletedRecycleMarkerEventQueued();', $readyHeartbeatIndex)
-} else {
-    -1
-}
-$replayedResetCompletionFlushIndex = if ($resetCompletionReplayIndex -ge 0) {
-    $instanceAgent.IndexOf('await flushEvents();', $resetCompletionReplayIndex)
+$runTickEndIndex = if ($runTickIndex -ge 0) {
+    $instanceAgent.IndexOf("queueEvent('agent_started'", $runTickIndex)
 } else {
     -1
 }
 Assert-True `
+    -Condition ($runTickIndex -ge 0 -and $runTickEndIndex -gt $runTickIndex) `
+    -Message 'Instance-agent control tick must be identifiable for launch-policy checks.'
+$runTick = $instanceAgent.Substring($runTickIndex, $runTickEndIndex - $runTickIndex)
+$readyHeartbeatIndex = $runTick.IndexOf('await sendHeartbeat();')
+$resetCompletionReplayIndex = $runTick.IndexOf('ensureCompletedRecycleMarkerEventQueued();')
+$backgroundEventFlushIndex = $runTick.IndexOf('void flushEvents().catch(')
+$markerCleanupIndex = $runTick.IndexOf('tryClearAcknowledgedRecycleMarker();')
+Assert-True `
     -Condition (
-        $runTickIndex -ge 0 -and
-        $firstResetCompletionFlushIndex -gt $runTickIndex -and
-        $readyHeartbeatIndex -gt $firstResetCompletionFlushIndex -and
+        $readyHeartbeatIndex -ge 0 -and
         $resetCompletionReplayIndex -gt $readyHeartbeatIndex -and
-        $replayedResetCompletionFlushIndex -gt $resetCompletionReplayIndex
+        $backgroundEventFlushIndex -gt $resetCompletionReplayIndex -and
+        $markerCleanupIndex -gt $backgroundEventFlushIndex -and
+        $runTick -notmatch 'await\s+flushEvents\s*\('
     ) `
-    -Message 'Reset completion reconciliation must upload once, send Ready, replay stable evidence, and upload again in that order.'
+    -Message 'Reset reconciliation must send Ready, queue stable evidence, start nonblocking event upload, and retry acknowledged-marker cleanup without awaiting event transport.'
 
 Assert-ContainsText `
     -Content $instanceAgent `
