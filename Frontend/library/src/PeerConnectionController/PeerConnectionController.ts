@@ -1,4 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
+import { preferVideoCodec } from '../Util/CodecPreferences';
 
 import { Logger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
 import { Config, OptionParameters, Flags } from '../Config/Config';
@@ -594,40 +595,12 @@ export class PeerConnectionController {
                     transceiver.receiver.track.kind === 'video' &&
                     transceiver.setCodecPreferences
                 ) {
-                    // Get our preferred codec from the codecs options drop down
-                    const preferredRTPCodec = this.preferredCodec.split(' ');
-                    const preferredRTCRtpCodecCapability: RTCRtpCodec = {
-                        mimeType: 'video/' + preferredRTPCodec[0] /* Name */,
-                        clockRate: 90000 /* All current video formats in browsers have 90khz clock rate */,
-                        sdpFmtpLine: preferredRTPCodec[1] ? preferredRTPCodec[1] : ''
-                    };
-
-                    // Populate a list of codecs we will support with our preferred one in the first position
-                    const ourSupportedCodecs: Array<RTCRtpCodec> = [preferredRTCRtpCodecCapability];
-
-                    // Go through all codecs the browser supports and add them to the list (in any order)
-                    RTCRtpReceiver.getCapabilities('video').codecs.forEach(
-                        (browserSupportedCodec: RTCRtpCodec) => {
-                            // Don't add our preferred codec again, but add everything else
-                            if (browserSupportedCodec.mimeType != preferredRTCRtpCodecCapability.mimeType) {
-                                ourSupportedCodecs.push(browserSupportedCodec);
-                            } else if (
-                                browserSupportedCodec?.sdpFmtpLine !=
-                                preferredRTCRtpCodecCapability?.sdpFmtpLine
-                            ) {
-                                ourSupportedCodecs.push(browserSupportedCodec);
-                            }
-                        }
-                    );
-
-                    for (const codec of ourSupportedCodecs) {
-                        if (codec?.sdpFmtpLine === undefined || codec.sdpFmtpLine === '') {
-                            // We can't dynamically add members to the codec, so instead remove the field if it's empty
-                            delete codec.sdpFmtpLine;
-                        }
+                    const capabilities = RTCRtpReceiver.getCapabilities('video');
+                    if (capabilities?.codecs.length) {
+                        transceiver.setCodecPreferences(
+                            preferVideoCodec(capabilities.codecs, this.preferredCodec)
+                        );
                     }
-
-                    transceiver.setCodecPreferences(ourSupportedCodecs);
                 }
             }
         }

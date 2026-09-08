@@ -39,6 +39,38 @@ function assertUnvalidated(req) {
 }
 
 for (const mode of ['soft', 'enforce']) {
+    test(mode + ': signed legacy admin tickets cannot bypass session codec policy', () => {
+        for (const omitted of [['sessionRequestId', 'codecPolicy'], ['sessionRequestId'], ['codecPolicy']]) {
+            const payload = claims();
+            for (const key of omitted) delete payload[key];
+            const { result, req } = verify(mode, ticket({ alg: 'HS256' }, payload));
+            assert.equal(result[0], false);
+            assert.match(result[2], /managed session identity or shadow target and signed codec policy/);
+            assertUnvalidated(req);
+        }
+    });
+
+    test(mode + ': VP8 cannot be admitted even by an older signed policy', () => {
+        const payload = { ...claims(), codecPolicy: { ...codecPolicy, allowedCodecs: ['VP9', 'VP8'] } };
+        assert.equal(verify(mode, ticket({ alg: 'HS256' }, payload)).result[0], false);
+    });
+
+    test(mode + ': shadow target is signed, policy governed and excluded from managed admission', () => {
+        const payload = claims(); delete payload.sessionRequestId; delete payload.activeSessionId;
+        payload.shadowSessionRequestId = identity.sessionRequestId;
+        payload.aud = "audience.shadow-v1";
+        let managedAdmissions = 0;
+        const gate = { getReconnectGraceEvidenceJournalBlockReason: () => null, rejectReasonForTicket: () => null, recordManagedViewerAdmission: () => { managedAdmissions++; } };
+        const valid = verify(mode, ticket({ alg: 'HS256' }, payload), gate);
+        assert.deepEqual(valid.result, [true]);
+        assert.equal(valid.req.scaleWorldValidatedConnectTicketIdentity.sessionRequestId, undefined);
+        assert.equal(valid.req.scaleWorldValidatedConnectTicketIdentity.shadowSessionRequestId, identity.sessionRequestId);
+        assert.equal(managedAdmissions, 0);
+        for (const extra of [{ aud: 'audience' }, { sessionRequestId: identity.sessionRequestId }, { activeSessionId: identity.activeSessionId }, { shadowSessionRequestId: 'invalid' }, { codecPolicy: undefined }]) {
+            assert.equal(verify(mode, ticket({ alg: 'HS256' }, { ...payload, ...extra }), gate).result[0], false);
+        }
+    });
+
     test(mode + ': non-object JWT headers and payloads cannot throw or establish managed identity', () => {
         for (const value of [null, [], ['HS256'], true, 1, 'text']) {
             for (const token of [ticket(value, claims()), ticket({ alg: 'HS256' }, value)]) {

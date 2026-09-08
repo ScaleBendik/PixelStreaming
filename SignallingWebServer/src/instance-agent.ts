@@ -2754,6 +2754,7 @@ export function wireInstanceAgent(
                         region: identity.region,
                         protocolVersion: 1,
                         ready: server.codecJournalReady?.() === true,
+                        shadowReady: server.codecJournalReady?.() === true,
                         events: batch
                     })
                 }

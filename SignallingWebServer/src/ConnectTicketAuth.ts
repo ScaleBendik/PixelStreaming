@@ -27,7 +27,8 @@ type ValidationResult = {
 };
 
 export interface ValidatedConnectTicketIdentity {
-    sessionRequestId: string;
+    sessionRequestId?: string;
+    shadowSessionRequestId?: string;
     activeSessionId?: string;
     codecPolicy?: CodecTicketPolicy;
 }
@@ -192,8 +193,11 @@ function validateToken(token: string, host: string, settings: ConnectTicketAuthS
         return { isValid: false, reason: 'Connect ticket issuer is invalid.' };
     }
 
-    if (!validateAudience(payload.aud, settings.audience)) {
-        return { isValid: false, reason: 'Connect ticket audience is invalid.' };
+    // A separate audience prevents an older runtime treating shadow tickets as unrestricted admin access.
+    const shadowTicket = payload.shadowSessionRequestId !== undefined;
+    const expectedAudience = settings.audience + (shadowTicket ? '.shadow-v1' : '');
+    if (!validateAudience(payload.aud, expectedAudience)) {
+        return { isValid: false, forceReject: shadowTicket, reason: 'Connect ticket audience is invalid.' };
     }
 
     const exp = parseNumericDateClaim(payload.exp);
@@ -223,12 +227,19 @@ function validateToken(token: string, host: string, settings: ConnectTicketAuthS
         };
     }
 
+    const shadowSessionRequestId = parseGuidClaim(payload.shadowSessionRequestId) ?? undefined;
+    if (
+        (payload.shadowSessionRequestId !== undefined && !shadowSessionRequestId) ||
+        (shadowSessionRequestId && (sessionRequestId || payload.activeSessionId !== undefined))
+    ) {
+        return { isValid: false, forceReject: true, reason: 'Invalid shadow session identity.' };
+    }
     const codecPolicy = parseCodecPolicy(payload.codecPolicy);
-    if (sessionRequestId && !codecPolicy) {
+    if ((!sessionRequestId && !shadowSessionRequestId) || !codecPolicy) {
         return {
             isValid: false,
             forceReject: true,
-            reason: 'A signed codec policy is required for managed sessions.'
+            reason: 'A managed session identity or shadow target and signed codec policy are required.'
         };
     }
 
@@ -298,7 +309,7 @@ function validateToken(token: string, host: string, settings: ConnectTicketAuthS
                   activeSessionId,
                   codecPolicy
               }
-            : undefined
+            : { shadowSessionRequestId, codecPolicy }
     };
 }
 
@@ -417,10 +428,6 @@ export function createPlayerVerifyClient(
             if (validation.identity) {
                 authenticatedRequest.scaleWorldValidatedConnectTicketIdentity = validation.identity;
                 authenticatedRequest.scaleWorldConnectTicketIdentityValidated = true;
-            } else {
-                Logger.warn(
-                    'Validated connect ticket has no sessionRequestId claim; allowing unmanaged access without commercial session identity.'
-                );
             }
             done(true);
             return;

@@ -51,7 +51,7 @@ function Start-Process {
  # accepting a dotted CVar literal that appears on argv but is silently ignored.
  $expectedSettings=@{
   'PixelStreaming2.WebRTC.NegotiateCodecs'='true'
-  'PixelStreaming2.WebRTC.CodecPreferences'='AV1,VP9,H264,VP8'
+  'PixelStreaming2.WebRTC.CodecPreferences'='AV1,VP9,H264'
   'PixelStreaming2.Encoder.LatencyMode'='LOW_LATENCY'
   'PixelStreaming2.WebRTC.Fps'='30'
   'PixelStreaming2.WebRTC.MaxBitrate'='30000000'

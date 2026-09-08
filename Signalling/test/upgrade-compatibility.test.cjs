@@ -588,3 +588,76 @@ test('startup fallback also governs the first browser-originated offer', () => {
     assert.equal(player.codecNegotiated, true);
     viewer.close(); streamer.close();
 });
+
+
+test('codec failures identify the rejected answer without exposing SDP or storage errors', () => {
+    for (const failure of ['rejected-video', 'payload-remap', 'journal']) {
+        const server = serverWith(); const events = [];
+        server.codecEvidenceRecorder = e => {
+            if (failure === 'journal' && e.eventType === 'negotiated') throw Error('private-storage-detail');
+            events.push(e);
+        };
+        const streamer = new Socket(); const viewer = new Socket();
+        server.onStreamerConnected(streamer, request());
+        streamer.receive({ type: 'endpointId', id: 'test-streamer' });
+        server.onPlayerConnected(viewer, request({ sessionRequestId: 'request', activeSessionId: 'session' }));
+        viewer.receive({ type: 'subscribe', streamerId: 'test-streamer' });
+        const player = server.playerRegistry.listPlayers()[0];
+        const sdp = ['v=0', 'm=video 9 UDP/TLS/RTP/SAVPF 127', 'a=rtpmap:127 VP9/90000', ''].join('\r\n');
+        streamer.receive({ type: 'offer', playerId: player.streamerPlayerId, sdp });
+        const answer = failure === 'rejected-video' ? sdp.replace('m=video 9', 'm=video 0')
+            : failure === 'payload-remap' ? sdp.replaceAll('127', '98') : sdp;
+        const before = streamer.messages.length;
+        viewer.receive({ type: 'answer', sdp: answer, mediaGeneration: 0 });
+        assert.deepEqual(streamer.messages.slice(before).map(m => m.type), ['playerDisconnected']);
+        const reason = events.at(-1).reason;
+        assert.equal(events.at(-1).eventType, 'switch_failed');
+        assert.match(reason, /Codec negotiation failed \(answer\):/);
+        assert.ok(reason.includes(failure === 'rejected-video' ? 'Exactly one active video section'
+            : failure === 'payload-remap' ? 'Answer changed a video payload mapping' : 'Validation or evidence persistence failed'));
+        assert.doesNotMatch(reason, /private-storage-detail|rtpmap/);
+        viewer.close(); streamer.close();
+    }
+});
+
+
+test('admin shadow inherits the active fallback codec without managed identity and closes with its source', () => {
+    const server = serverWith(); const events = [];
+    server.codecEvidenceRecorder = event => events.push(event);
+    const streamer = new Socket(); const viewer = new Socket(); const shadowSocket = new Socket();
+    server.onStreamerConnected(streamer, request());
+    streamer.receive({ type: 'endpointId', id: 'test-streamer' });
+    const policy = { version: 1, snapshotId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', policyHash: 'A'.repeat(64), allowedCodecs: ['AV1', 'VP9'], defaultCodec: 'AV1', allowSwitching: false };
+    server.onPlayerConnected(viewer, request({ sessionRequestId: 'signed-request', activeSessionId: 'signed-session', codecPolicy: policy }));
+    const owner = server.playerRegistry.listPlayers()[0];
+    viewer.receive({ type: 'scaleWorldCodecCapabilities', supportedCodecs: ['VP9'] });
+    viewer.receive({ type: 'subscribe', streamerId: 'test-streamer' });
+    const sdp = ['v=0', 'm=video 9 UDP/TLS/RTP/SAVPF 96 98', 'a=rtpmap:96 AV1/90000', 'a=rtpmap:98 VP9/90000', ''].join('\r\n');
+    streamer.receive({ type: 'offer', playerId: owner.streamerPlayerId, sdp });
+    viewer.receive({ type: 'answer', sdp: viewer.messages.at(-1).sdp, mediaGeneration: 0 });
+    const ownerMediaId = owner.streamerPlayerId;
+    server.onPlayerConnected(shadowSocket, request({ shadowSessionRequestId: 'signed-request', codecPolicy: policy }));
+    const shadow = server.playerRegistry.listPlayers()[1];
+    assert.ok(shadow);
+    assert.equal(shadow.scaleWorldSessionIdentityValidated, false);
+    assert.equal(shadow.scaleWorldSessionRequestId, undefined);
+    assert.equal(shadow.scaleWorldSessionId, undefined);
+    assert.equal(shadow.selectedCodec, 'VP9');
+    shadowSocket.receive({ type: 'scaleWorldCodecCapabilities', supportedCodecs: ['AV1', 'VP9', 'H264'] });
+    shadowSocket.receive({ type: 'subscribe', streamerId: 'test-streamer' });
+    streamer.receive({ type: 'offer', playerId: shadow.streamerPlayerId, sdp });
+    assert.doesNotMatch(shadowSocket.messages.at(-1).sdp, /AV1/);
+    shadowSocket.receive({ type: 'answer', sdp: shadowSocket.messages.at(-1).sdp, mediaGeneration: 0 });
+    assert.equal(owner.streamerPlayerId, ownerMediaId);
+    assert.equal(owner.selectedCodec, 'VP9');
+    const shadowEvents = events.filter(event => event.connectionId === shadow.codecConnectionId);
+    assert.equal(shadowEvents[0].reason, 'Admin shadow viewer; existing session codec');
+    assert.ok(shadowEvents.every(event => event.sessionRequestId === 'signed-request' && event.codec === 'VP9'));
+    viewer.close();
+    assert.equal(shadowSocket.readyState, WebSocket.CLOSED);
+    assert.equal(server.playerRegistry.count(), 0);
+    const stale = new Socket();
+    server.onPlayerConnected(stale, request({ shadowSessionRequestId: 'signed-request', codecPolicy: policy }));
+    assert.equal(stale.readyState, WebSocket.CLOSED);
+    streamer.close();
+});

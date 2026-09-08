@@ -20,7 +20,7 @@ export function parseCodecPolicy(value: unknown): CodecTicketPolicy | undefined 
         p.allowedCodecs.length < 1 ||
         p.allowedCodecs.length > 4 ||
         new Set(p.allowedCodecs).size !== p.allowedCodecs.length ||
-        p.allowedCodecs.some((c) => !videoCodecs.includes(c)) ||
+        p.allowedCodecs.some((c) => c === 'VP8' || !videoCodecs.includes(c)) ||
         !p.allowedCodecs.includes(p.defaultCodec) ||
         typeof p.allowSwitching !== 'boolean'
     )

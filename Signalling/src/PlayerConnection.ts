@@ -56,24 +56,55 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             : this.playerId;
     }
 
-    initializeCodecPolicy(policy?: CodecTicketPolicy): boolean {
+    private shadowSessionRequestId?: string;
+
+    initializeCodecPolicy(policy?: CodecTicketPolicy, shadowSessionRequestId?: string): boolean {
         if (!policy || !this.server.codecJournalReady?.()) return false;
         this.codecPolicy = policy;
+        this.shadowSessionRequestId = shadowSessionRequestId;
         this.selectedCodec = policy.defaultCodec;
+        if (shadowSessionRequestId) {
+            const source = this.shadowSource();
+            if (!source || !policy.allowedCodecs.includes(source.selectedCodec!)) return false;
+            this.selectedCodec = source.selectedCodec;
+        }
         try {
-            this.recordCodec('connection_opened');
+            this.recordCodec(
+                'connection_opened',
+                this.shadowSessionRequestId ? { reason: 'Admin shadow viewer; existing session codec' } : {}
+            );
             return true;
         } catch {
             return false;
         }
     }
 
+    private shadowSource(): PlayerConnection | undefined {
+        return this.server.playerRegistry
+            .listPlayers()
+            .find(
+                (player): player is PlayerConnection =>
+                    player instanceof PlayerConnection &&
+                    player !== this &&
+                    player.scaleWorldSessionIdentityValidated &&
+                    player.scaleWorldSessionRequestId === this.shadowSessionRequestId &&
+                    player.codecPolicy?.policyHash === this.codecPolicy?.policyHash &&
+                    player.codecNegotiated &&
+                    !!player.subscribedStreamer
+            );
+    }
+
+    closeOrphanedShadow(): void {
+        if (this.shadowSessionRequestId && !this.shadowSource()) this.disconnect();
+    }
+
     private recordCodec(eventType: string, extra: Partial<CodecEvidence> = {}): void {
-        if (!this.codecPolicy || !this.scaleWorldSessionRequestId) return;
+        const evidenceRequestId = this.shadowSessionRequestId ?? this.scaleWorldSessionRequestId;
+        if (!this.codecPolicy || !evidenceRequestId) return;
         if (!this.server.codecEvidenceRecorder) throw new Error('Codec evidence unavailable');
         this.server.codecEvidenceRecorder({
             eventId: randomUUID(),
-            sessionRequestId: this.scaleWorldSessionRequestId,
+            sessionRequestId: evidenceRequestId,
             connectionId: this.codecConnectionId,
             sequence: this.codecSequence + 1,
             mediaGeneration: this.codecGeneration,
@@ -104,6 +135,13 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     private filterCodecMessage(message: BaseMessage, fromStreamer: boolean): boolean {
         if (!this.codecPolicy || (message.type !== 'offer' && message.type !== 'answer')) return true;
         if (this.codecSelectionFailed) return false;
+        if (
+            this.shadowSessionRequestId &&
+            (!this.shadowSource() || this.shadowSource()?.selectedCodec !== this.selectedCodec)
+        ) {
+            this.disconnect();
+            return false;
+        }
         this.codecSelectionFinalized = true;
         try {
             const description = message as BaseMessage & {
@@ -131,8 +169,23 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             }
             description.sdp = result.sdp;
             return true;
-        } catch {
-            this.failCodecNegotiation('Codec negotiation failed');
+        } catch (error) {
+            // Only expose our fixed validation messages, never arbitrary SDP or journal errors.
+            const knownReasons = [
+                'Governed codecs require a direct non-SVC stream',
+                'Invalid SDP',
+                'Duplicate video payload mapping',
+                'Exactly one active video section is required',
+                'Answer must come from the opposite peer',
+                'Answer without a current offer',
+                'Answer changed a video payload mapping',
+                'The streamer cannot negotiate ' + this.selectedCodec
+            ];
+            const detail =
+                error instanceof Error && knownReasons.includes(error.message)
+                    ? error.message
+                    : 'Validation or evidence persistence failed';
+            this.failCodecNegotiation('Codec negotiation failed (' + message.type + '): ' + detail);
             return false;
         }
     }
@@ -176,11 +229,13 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             )
                 return true;
             this.codecSelectionFinalized = true;
-            const preferred = this.codecPolicy.defaultCodec;
+            const preferred = this.shadowSessionRequestId
+                ? this.selectedCodec!
+                : this.codecPolicy.defaultCodec;
             const selected =
                 supported === null
                     ? preferred
-                    : ([preferred, 'VP9', 'H264'].find(
+                    : ((this.shadowSessionRequestId ? [preferred] : [preferred, 'VP9', 'H264']).find(
                           (c) =>
                               this.codecPolicy!.allowedCodecs.includes(c as VideoCodec) &&
                               supported.includes(c)
@@ -550,6 +605,10 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
         }
 
         const streamer = this.server.streamerRegistry.find(streamerId);
+        if (this.shadowSessionRequestId && this.shadowSource()?.subscribedStreamer !== streamer) {
+            this.disconnect();
+            return;
+        }
         if (streamer && this.codecPolicy && streamer.getStreamerInfo().type !== 'Streamer') {
             this.sendCodecState('failed', 'Codec policy requires a direct streamer connection');
             return;

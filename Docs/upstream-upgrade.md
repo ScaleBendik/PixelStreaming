@@ -23,7 +23,7 @@ by our startup logs, including the custom authentication fields.
 Pixel Streaming 2 command-line names omit CVar dots and replace `PixelStreaming2`
 with `PixelStreaming`. The launcher uses `-PixelStreamingWebRTCNegotiateCodecs=true`
 and the PowerShell single-quoted argument
-`'-PixelStreamingWebRTCCodecPreferences=\"AV1,VP9,H264,VP8\"'`.
+`'-PixelStreamingWebRTCCodecPreferences=\"AV1,VP9,H264\"'`. VP8 is removed from the current startup preference list.
 Backslashes preserve literal quotes through Windows argv processing. Ordinary
 quotes are stripped, after which Unreal stops at the first comma. Correct names
 alone (commit db4b4d4d) or ordinary quotes restrict the list to AV1, yielding no
@@ -52,6 +52,17 @@ the first offer: policy default, then permitted VP9/H264. Unknown capabilities
 retain the default; unsupported advertised decoding is not retried. Deploy the
 API accepting codec_selected events before this runtime. Hosted fallback media
 acceptance remains pending.
+
+The subsequent runtime 007 VP9 failure was reproduced in Chrome using a sanitized
+Dev offer: the frontend synthesized a bare VP9 capability before the advertised
+profile-id=0 capability. Chrome then answered with a rejected video section
+(m=video 0). With only real browser capabilities reordered, the same offer yields
+an active VP9 answer and passes signalling validation; H264 also passes.
+Codec preference ordering must preserve advertised profiles and never synthesize
+capabilities. The local fix retains all browser capabilities and only changes
+their order; signed policy enforcement remains at signalling. Hosted activation
+and media verification of this correction remain pending.
+
 
 | Area | Preservation rule and evidence |
 | --- | --- |
@@ -175,3 +186,25 @@ Unreal process, browser and hosted network. Existing rare zero-media and idle-ga
 AFK investigations remain open; this merge does not claim to resolve them. The
 SFU registration path retains upstream ordering and requires its own hosted media
 acceptance before adoption in ScaleWorld.
+
+### Admin direct and shadow connections
+
+Dev runtime 007 admitted a claimless admin ticket and decoded VP8. Current code
+rejects tickets without a managed identity or signed shadow target and codec policy.
+VP8 is excluded from startup preferences and rejected in ticket policy validation;
+historical VP8 observations remain readable.
+
+The API preserves direct admin access: idle instances create tracked internal
+sessions, owned sessions reconnect, and occupied instances issue shadow tickets.
+Shadows require a live managed viewer for the signed request and policy hash,
+inherit its negotiated codec and streamer, and close when that source disappears.
+Their codec events are associated with the existing policy under a separate
+connection ID, but their identity cannot establish managed viewer/billing evidence.
+The agent advertises shadowReady only with healthy enforced codec journaling;
+the API gates shadow issuance on that fresh token-bound registration. A separate
+<configured audience>.shadow-v1 JWT audience also makes older runtimes reject
+shadow tickets across rollback, protecting mixed-version deployments. Deploy the API gate before activating the runtime.
+
+The corrected browser capability ordering and safe negotiation diagnostics are
+also included locally. Hosted VP9, Premium AV1/fallback, tracked direct admin and
+shadow/billing acceptance remain pending activation of the rebuilt artifact.

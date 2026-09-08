@@ -119,6 +119,10 @@ test('TURN generation preserves split ICE policies, config-first ordering and si
         auth_mode: 'enforce', auth_issuer: 'upgrade-test', auth_audience: 'upgrade-test',
         auth_signing_key: signingKey, auth_instance_id: 'i-upgrade-test',
         auth_route_host_suffix: 'stream.example.test',
+        // Governed admission requires the durable codec journal installed by the agent.
+        instance_agent: true, instance_agent_api_base_url: 'http://127.0.0.1:1',
+        instance_agent_instance_id: 'i-upgrade-test', instance_agent_region: 'eu-north-1',
+        instance_agent_require_identity_proof: false,
         turn_secret: turnSecret, turn_ttl: 600,
         peer_options: { iceServers: [{ urls: 'stun:shared.example.test' }] },
         peer_options_player: { iceTransportPolicy: 'relay', iceServers: [{ urls: 'turn:player.example.test' }] },
@@ -146,7 +150,9 @@ test('TURN generation preserves split ICE policies, config-first ordering and si
     const now = Math.floor(Date.now() / 1000);
     const ticket = signTicket({
         iss: 'upgrade-test', aud: 'upgrade-test', instanceId: 'i-upgrade-test',
-        routeKey: 'upgrade', iat: now, nbf: now - 1, exp: now + 60
+        routeKey: 'upgrade', iat: now, nbf: now - 1, exp: now + 60,
+        sessionRequestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        codecPolicy: { version: 1, snapshotId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', policyHash: 'A'.repeat(64), allowedCodecs: ['VP9'], defaultCodec: 'VP9', allowSwitching: false }
     }, signingKey);
     const player = connect(t, 'ws://127.0.0.1:' + wilbur.playerPort + '/?ct=' + ticket, {
         headers: { Host: 'upgrade.stream.example.test' }

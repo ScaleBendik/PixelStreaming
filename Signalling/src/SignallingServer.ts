@@ -23,7 +23,8 @@ const SCALEWORLD_SESSION_ID_PARAM = 'sm_session_id';
 const SCALEWORLD_SESSION_REQUEST_ID_PARAM = 'sm_session_request_id';
 
 type ValidatedConnectTicketIdentity = {
-    sessionRequestId: string;
+    sessionRequestId?: string;
+    shadowSessionRequestId?: string;
     activeSessionId?: string;
     codecPolicy?: CodecTicketPolicy;
 };
@@ -70,12 +71,13 @@ function readValidatedConnectTicketIdentity(
     const identity = authenticatedRequest.scaleWorldValidatedConnectTicketIdentity;
     const sessionRequestId = identity?.sessionRequestId?.trim() ?? '';
     const activeSessionId = identity?.activeSessionId?.trim() || undefined;
-    if (!sessionRequestId) {
-        return undefined;
-    }
+    const shadowSessionRequestId = identity?.shadowSessionRequestId?.trim() || undefined;
+    if (!sessionRequestId && !shadowSessionRequestId) return undefined;
+    if (sessionRequestId && shadowSessionRequestId) return undefined;
 
     return {
-        sessionRequestId,
+        sessionRequestId: sessionRequestId || undefined,
+        shadowSessionRequestId,
         activeSessionId,
         codecPolicy: identity?.codecPolicy
     };
@@ -441,21 +443,30 @@ export class SignallingServer {
 
         const newPlayer = new PlayerConnection(this, ws, request.socket.remoteAddress, request);
         const validatedIdentity = readValidatedConnectTicketIdentity(request);
-        const scaleWorldSessionId = validatedIdentity?.activeSessionId ?? readScaleWorldSessionId(request);
+        const scaleWorldSessionId = validatedIdentity?.shadowSessionRequestId
+            ? undefined
+            : (validatedIdentity?.activeSessionId ?? readScaleWorldSessionId(request));
         if (scaleWorldSessionId) {
             newPlayer.scaleWorldSessionId = scaleWorldSessionId;
         }
-        const scaleWorldSessionRequestId =
-            validatedIdentity?.sessionRequestId ?? readScaleWorldSessionRequestId(request);
+        const scaleWorldSessionRequestId = validatedIdentity?.shadowSessionRequestId
+            ? undefined
+            : (validatedIdentity?.sessionRequestId ?? readScaleWorldSessionRequestId(request));
         if (scaleWorldSessionRequestId) {
             newPlayer.scaleWorldSessionRequestId = scaleWorldSessionRequestId;
         }
-        newPlayer.scaleWorldSessionIdentityValidated = validatedIdentity !== undefined;
+        newPlayer.scaleWorldSessionIdentityValidated = validatedIdentity?.sessionRequestId !== undefined;
         newPlayer.scaleWorldActiveSessionIdValidated = validatedIdentity?.activeSessionId !== undefined;
         this.registerPlayerKeepalive(ws, request.socket.remoteAddress);
 
         // add it to the registry and when the transport closes, remove it
-        if (validatedIdentity && !newPlayer.initializeCodecPolicy(validatedIdentity.codecPolicy)) {
+        if (
+            validatedIdentity &&
+            !newPlayer.initializeCodecPolicy(
+                validatedIdentity.codecPolicy,
+                validatedIdentity.shadowSessionRequestId
+            )
+        ) {
             ws.close(1013, 'Codec policy enforcement unavailable');
             return;
         }
@@ -463,6 +474,10 @@ export class SignallingServer {
         newPlayer.transport.on('close', () => {
             this.unregisterPlayerKeepalive(ws);
             this.playerRegistry.remove(newPlayer);
+            // Shadows must never keep the underlying viewer session alive after its owner leaves.
+            for (const player of this.playerRegistry.listPlayers()) {
+                if (player instanceof PlayerConnection) player.closeOrphanedShadow();
+            }
             Logger.info(`Player %s (%s) disconnected.`, newPlayer.playerId, request.socket.remoteAddress);
         });
 
