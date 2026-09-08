@@ -46,9 +46,6 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     private codecSequence = 0;
     private codecGeneration = 0;
     private selectedCodec?: VideoCodec;
-    private availableCodecs: VideoCodec[] = [];
-    private codecSwitch?: { id: string; previous: VideoCodec; rollback: boolean };
-    private codecTimeout?: NodeJS.Timeout;
     private lastCodecObservation = { frames: 0, bytes: 0, at: 0 };
 
     get streamerPlayerId(): string {
@@ -83,7 +80,6 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             evidenceSource: 'signalling',
             policyHash: this.codecPolicy.policyHash,
             occurredAtUtc: new Date().toISOString(),
-            switchId: this.codecSwitch?.id,
             ...extra
         });
         this.codecSequence++;
@@ -96,8 +92,8 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             connectionId: this.codecConnectionId,
             mediaGeneration: this.codecGeneration,
             selectedCodec: this.selectedCodec,
-            availableCodecs: this.codecPolicy.allowSwitching ? this.availableCodecs : [this.selectedCodec],
-            allowSwitching: this.codecPolicy.allowSwitching,
+            availableCodecs: [this.selectedCodec],
+            allowSwitching: false,
             status,
             reason
         } as BaseMessage);
@@ -116,9 +112,6 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             }
             const result = restrictVideoSdp(description.sdp, this.selectedCodec!);
             if (message.type === 'offer') {
-                this.availableCodecs = this.codecPolicy.allowedCodecs.filter((c) =>
-                    result.available.includes(c)
-                );
                 this.codecOffer = result.sdp;
                 this.codecOfferFromStreamer = fromStreamer;
                 this.codecNegotiated = false;
@@ -135,38 +128,18 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             description.sdp = result.sdp;
             return true;
         } catch {
-            this.failCodecSwitch('Codec negotiation failed');
+            this.failCodecNegotiation('Codec negotiation failed');
             return false;
         }
     }
 
-    private restartCodecPeer(codec: VideoCodec): void {
-        const streamerId = this.subscribedStreamer?.streamerId;
-        if (!streamerId) throw new Error('No active streamer');
-        this.selectedCodec = codec;
-        this.subscribe(streamerId);
-        clearTimeout(this.codecTimeout);
-        const generation = this.codecGeneration;
-        this.codecTimeout = setTimeout(() => {
-            if (this.codecSwitch && generation === this.codecGeneration)
-                this.failCodecSwitch('No decoded video after codec switch');
-        }, 25000);
-        this.codecTimeout.unref?.();
-    }
-
-    private failCodecSwitch(reason: string): void {
-        clearTimeout(this.codecTimeout);
+    private failCodecNegotiation(reason: string): void {
         try {
+            // Retain the existing event vocabulary for older analytics consumers.
             this.recordCodec('switch_failed', { reason });
-            if (this.codecSwitch && !this.codecSwitch.rollback) {
-                this.codecSwitch.rollback = true;
-                this.restartCodecPeer(this.codecSwitch.previous);
-                return;
-            }
         } catch {
             reason = 'Codec evidence unavailable; media paused';
         }
-        this.codecSwitch = undefined;
         this.unsubscribe();
         this.sendCodecState('failed', reason);
     }
@@ -182,31 +155,8 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             bytesReceived?: number;
         };
         if (message.type === 'scaleWorldCodecSwitch') {
-            if (
-                !this.codecPolicy.allowSwitching ||
-                this.codecSwitch ||
-                !this.subscribedStreamer ||
-                data.mediaGeneration !== this.codecGeneration ||
-                !this.availableCodecs.includes(data.codec!) ||
-                data.codec === this.selectedCodec ||
-                !this.server.codecJournalReady?.()
-            ) {
-                this.sendCodecState('rejected', 'Codec switch is not available');
-                return true;
-            }
-            const change = { id: randomUUID(), previous: this.selectedCodec!, rollback: false };
-            try {
-                this.recordCodec('switch_requested', { codec: data.codec, switchId: change.id });
-            } catch {
-                this.sendCodecState('rejected', 'Codec evidence unavailable; current video preserved');
-                return true;
-            }
-            this.codecSwitch = change;
-            try {
-                this.restartCodecPeer(data.codec!);
-            } catch {
-                this.failCodecSwitch('Codec switch could not start');
-            }
+            // Reject legacy clients even when an immutable older ticket permits switching.
+            this.sendCodecState('rejected', 'The codec is selected by session policy');
             return true;
         }
         const frames = data.framesDecoded;
@@ -235,20 +185,12 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             });
             this.lastCodecObservation = { frames: frames!, bytes: bytes!, at: Date.now() };
             if (data.codec !== this.selectedCodec) {
-                this.failCodecSwitch('Observed codec differs from negotiated policy');
+                this.failCodecNegotiation('Observed codec differs from negotiated policy');
                 return true;
-            }
-            if (this.codecSwitch) {
-                this.recordCodec(
-                    this.codecSwitch.rollback ? 'switch_failed' : 'switch_succeeded',
-                    this.codecSwitch.rollback ? { reason: 'Previous codec restored' } : {}
-                );
-                this.codecSwitch = undefined;
-                clearTimeout(this.codecTimeout);
             }
             this.sendCodecState('streaming');
         } catch {
-            this.failCodecSwitch('Codec evidence unavailable');
+            this.failCodecNegotiation('Codec evidence unavailable');
         }
         return true;
     }
@@ -554,7 +496,7 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
 
         const streamer = this.server.streamerRegistry.find(streamerId);
         if (streamer && this.codecPolicy && streamer.getStreamerInfo().type !== 'Streamer') {
-            this.sendCodecState('failed', 'Codec switching requires a direct streamer connection');
+            this.sendCodecState('failed', 'Codec policy requires a direct streamer connection');
             return;
         }
         if (!streamer) {
@@ -644,7 +586,6 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     }
 
     private onTransportClose(_event: CloseEvent): void {
-        clearTimeout(this.codecTimeout);
         try {
             this.recordCodec('connection_closed');
         } catch {
@@ -656,23 +597,10 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     }
 
     private onSubscribeMessage(message: Messages.subscribe): void {
-        if (this.codecSwitch) {
-            this.sendCodecState('rejected', 'Wait for the codec switch to finish');
-            return;
-        }
         this.subscribe(message.streamerId);
     }
 
     private onUnsubscribeMessage(_message: Messages.unsubscribe): void {
-        clearTimeout(this.codecTimeout);
-        if (this.codecSwitch) {
-            try {
-                this.recordCodec('switch_failed', { reason: 'Media unsubscribed during codec switch' });
-            } catch {
-                Logger.error('Codec cancellation evidence could not be persisted');
-            }
-            this.codecSwitch = undefined;
-        }
         this.unsubscribe();
     }
 

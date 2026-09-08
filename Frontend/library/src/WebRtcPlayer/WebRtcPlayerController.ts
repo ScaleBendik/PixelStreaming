@@ -174,7 +174,7 @@ export class WebRtcPlayerController {
                 ? 'Codec: ' + state.selectedCodec
                 : state.status === 'restarting' || state.status === 'negotiating'
                   ? 'Connecting video using ' + state.selectedCodec + '…'
-                  : (state.reason ?? 'Codec switch unavailable');
+                  : (state.reason ?? 'Codec unavailable');
         this.codecStatusElement.textContent = text;
     }
 
@@ -2284,14 +2284,6 @@ export class WebRtcPlayerController {
 
     setPreferredCodec(codec: string) {
         if (this.config.scaleWorldCodecPolicy && !this.applyingCodecState) {
-            const canonical = codec.trim().split(' ')[0].toUpperCase();
-            if (canonical !== this.config.scaleWorldCodecPolicy.selectedCodec) {
-                this.sendSignallingMessage({
-                    type: 'scaleWorldCodecSwitch',
-                    codec: canonical,
-                    mediaGeneration: this.codecMediaGeneration
-                });
-            }
             return;
         }
         this.preferredCodec = codec;

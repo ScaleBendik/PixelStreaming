@@ -20,22 +20,35 @@ by our startup logs, including the custom authentication fields.
 
 ### Unreal startup codec arguments
 
-Pixel Streaming 2 console-variable names are not literal command-line names.
-The engine's `ConsoleVariableToCommandArgValue` removes dots and replaces
-`PixelStreaming2` with `PixelStreaming`. The launcher therefore uses
-`-PixelStreamingWebRTCNegotiateCodecs=true` and
-`-PixelStreamingWebRTCCodecPreferences=AV1,VP9,H264,VP8`. The same conversion
-applies to encoder latency, FPS and maximum bitrate. The encoder launch harness
-checks the settings through this conversion across all startup codec cases.
+Pixel Streaming 2 command-line names omit CVar dots and replace `PixelStreaming2`
+with `PixelStreaming`. The launcher uses `-PixelStreamingWebRTCNegotiateCodecs=true`
+and the PowerShell single-quoted argument
+`'-PixelStreamingWebRTCCodecPreferences=\"AV1,VP9,H264,VP8\"'`.
+Backslashes preserve literal quotes through Windows argv processing. Ordinary
+quotes are stripped, after which Unreal stops at the first comma. Correct names
+alone (commit db4b4d4d) or ordinary quotes restrict the list to AV1, yielding no
+video offer on the tested Standard host. The regression uses native
+CommandLineToArgvW and Unreal's reconstruction/value parsing rules across all
+startup codec cases. FPS, bitrate and latency use the same name conversion.
 
-Dev d1 runtime `pixelstreaming-runtime-20260908-004` was observed with the old
-dotted arguments and VP9-only streamer offers, followed by immediate governed
-negotiation failure before browser answers. Merely seeing an argument in the
-process command line does not establish that Unreal parsed it. The corrected
-launcher requires a runtime update and Unreal restart, followed by verification
-of the full offer and actual decoded codec on the exact application build.
-This local fix does not change session policy snapshots or analytics, and does
-not add automatic client codec fallback.
+Final launcher SHA256:
+2A67134BC613B85F2149A1C8AA2B05A1459F05760B1147303A181623FD880621.
+Applied directly to Dev d2 at 2026-09-08 14:42 UTC and d1 at 14:47 UTC, within
+runtime pixelstreaming-runtime-20260908-004, restarting only Unreal and retaining
+Wilbur. Backups are under
+C:\ProgramData\ScaleWorld\Diagnostics\codec-negotiation-db4b4d4d on each host.
+Both Dev launchers were restored from the original hash-verified backup on
+2026-09-08 at the user's request before final artifact publication. Original SHA256:
+27203C0143A133226F2870916F956BB194F9445BBD61152E8F79F2B4D1D4ABEA.
+The final source retains the fix; publication does not activate it on these hosts.
+
+On d2, the full offer contains VP9/H264/VP8, governed SDP selects H264, and the
+browser answers H264. The user confirmed working H264 video. VP9 switches failed
+during negotiation and immediately restored H264. The agreed simplification
+removes manual switching: the signed policy default is fixed at connection start,
+with actual-codec evidence retained. That simplification needs runtime/frontend
+activation; d1 media and Premium AV1 acceptance remain unverified. Initial
+unsupported-client fallback is not implemented.
 
 | Area | Preservation rule and evidence |
 | --- | --- |

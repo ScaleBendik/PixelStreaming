@@ -69,7 +69,7 @@ $maxBitrateBps = $MaxBitrateKbps * 1000
 $arguments = @(
     "-PixelStreamingEncoderCodec=$EncoderCodec",
     '-PixelStreamingWebRTCNegotiateCodecs=true',
-    '-PixelStreamingWebRTCCodecPreferences=AV1,VP9,H264,VP8',
+    '-PixelStreamingWebRTCCodecPreferences=\"AV1,VP9,H264,VP8\"',
     "-ScaleWorldEntitlementManifest=`"$RuntimeEntitlementManifestPath`"",
     '-AllowPixelStreamingCommands',
     '-PixelStreamingEncoderTargetBitrate=-1',

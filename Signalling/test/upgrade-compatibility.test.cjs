@@ -63,7 +63,7 @@ function request(identity) {
     };
 }
 
-test('governed codec switch replaces only media, preserves viewer identity and records decoded codec', () => {
+test('policy-selected codec rejects legacy switches and retains actual codec evidence and session identity', () => {
     const server = serverWith(); const events = []; let removed = 0;
     server.codecEvidenceRecorder = event => events.push(event);
     server.playerRegistry.on('removed', () => removed++);
@@ -78,44 +78,27 @@ test('governed codec switch replaces only media, preserves viewer identity and r
     const firstMediaId = player.streamerPlayerId;
     streamer.receive({ type: 'offer', playerId: firstMediaId, sdp });
     assert.doesNotMatch(viewer.messages.at(-1).sdp, /H264/);
+    const answer = viewer.messages.at(-1).sdp;
     const before = streamer.messages.length;
-    viewer.receive({ type: 'scaleWorldCodecSwitch', codec: 'AV1', mediaGeneration: 0 });
-    assert.equal(streamer.messages.length, before);
-    viewer.receive({ type: 'scaleWorldCodecSwitch', codec: 'H264', mediaGeneration: 0 });
-    assert.deepEqual(streamer.messages.slice(before).map(m => m.type), ['playerDisconnected', 'playerConnected']);
-    assert.equal(streamer.messages[before].playerId, firstMediaId);
-    assert.equal(streamer.messages[before + 1].playerId, player.streamerPlayerId);
-    assert.notEqual(player.streamerPlayerId, firstMediaId);
-    assert.equal(removed, 0); assert.equal(server.playerRegistry.count(), 1); assert.equal(player.playerId, playerId);
-    assert.equal(player.scaleWorldSessionId, 'signed-session'); assert.equal(player.scaleWorldSessionRequestId, 'signed-request');
-    const delivered = viewer.messages.length;
-    for (const staleId of [firstMediaId, playerId]) {
-        for (const type of ['offer', 'answer', 'iceCandidate', 'disconnectPlayer'])
-            streamer.receive({ type, playerId: staleId, sdp, candidate: {}, reason: 'retired media peer' });
+    for (const codec of ['AV1', 'H264', 'VP9']) {
+        viewer.receive({ type: 'scaleWorldCodecSwitch', codec, mediaGeneration: 0 });
+        assert.equal(viewer.messages.at(-1).status, 'rejected');
+        assert.equal(viewer.messages.at(-1).allowSwitching, false);
+        assert.deepEqual(viewer.messages.at(-1).availableCodecs, ['VP9']);
     }
-    assert.equal(viewer.messages.length, delivered);
-    assert.equal(viewer.readyState, WebSocket.OPEN);
-    streamer.receive({ type: 'offer', playerId: player.streamerPlayerId, sdp });
-    assert.equal(viewer.messages.at(-1).playerId, playerId, 'browser keeps its logical player identity');
-    assert.doesNotMatch(viewer.messages.at(-1).sdp, /VP9/);
-    viewer.receive({ type: 'scaleWorldCodecObservation', codec: 'H264', mediaGeneration: 1, framesDecoded: 100, bytesReceived: 999999 });
-    assert.equal(events.filter(e => e.eventType === 'observed').length, 0, 'an offer alone cannot confirm decoded media');
-    viewer.receive({ type: 'answer', sdp: viewer.messages.at(-1).sdp, mediaGeneration: 1 });
-    viewer.receive({ type: 'scaleWorldCodecObservation', codec: 'H264', mediaGeneration: 0, framesDecoded: 100, bytesReceived: 999999 });
-    assert.equal(events.filter(e => e.eventType === 'observed').length, 0);
-    viewer.receive({ type: 'scaleWorldCodecObservation', codec: 'H264', mediaGeneration: 1, framesDecoded: 100, bytesReceived: 999999 });
-    assert.equal(events.at(-1).eventType, 'switch_succeeded');
-    assert.equal(events.find(e => e.eventType === 'observed').evidenceSource, 'browser');
+    assert.equal(streamer.messages.length, before);
+    assert.equal(player.streamerPlayerId, firstMediaId);
+    assert.equal(player.selectedCodec, 'VP9');
+    assert.equal(removed, 0); assert.equal(player.playerId, playerId);
+    assert.equal(player.scaleWorldSessionId, 'signed-session');
+    assert.equal(player.scaleWorldSessionRequestId, 'signed-request');
+    viewer.receive({ type: 'answer', sdp: answer, mediaGeneration: 0 });
+    viewer.receive({ type: 'scaleWorldCodecObservation', codec: 'VP9', mediaGeneration: 0, framesDecoded: 100, bytesReceived: 999999 });
+    assert.deepEqual(events.map(e => e.eventType), ['connection_opened', 'negotiated', 'observed']);
+    assert.equal(events.at(-1).codec, 'VP9');
+    assert.equal(events.at(-1).evidenceSource, 'browser');
     assert.equal(new Set(events.map(e => e.connectionId)).size, 1);
-    assert.deepEqual(events.map(e => e.sequence), events.map((_, i) => i + 1));
-    // No mutation is allowed when pre-switch durable persistence fails.
-    const count = streamer.messages.length;
-    server.codecEvidenceRecorder = () => { throw new Error('disk full'); };
-    viewer.receive({ type: 'scaleWorldCodecSwitch', codec: 'VP9', mediaGeneration: 1 });
-    assert.equal(streamer.messages.length, count); assert.equal(player.selectedCodec, 'H264');
-    server.codecEvidenceRecorder = event => events.push(event);
-    streamer.receive({ type: 'disconnectPlayer', playerId: player.streamerPlayerId, reason: 'current peer closed' });
-    assert.equal(viewer.readyState, WebSocket.CLOSED, 'current peer disconnect remains authoritative');
+    assert.deepEqual(events.map(e => e.sequence), [1, 2, 3]);
     viewer.close(); streamer.close();
 });
 
@@ -162,7 +145,7 @@ test('browser-first offers publish governed choices and require the opposite pee
         } }));
         const player = server.playerRegistry.listPlayers()[0];
         viewer.receive({ type: 'offer', mediaGeneration: 0, sdp: 'v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96 98\r\na=rtpmap:96 H264/90000\r\na=rtpmap:98 VP9/90000\r\n' });
-        assert.deepEqual(viewer.messages.at(-1).availableCodecs, ['VP9', 'H264']);
+        assert.deepEqual(viewer.messages.at(-1).availableCodecs, ['VP9']);
         const answer = { type: 'answer', playerId: player.streamerPlayerId, sdp: streamer.messages.at(-1).sdp, mediaGeneration: 0 };
         assert.doesNotMatch(answer.sdp, /H264/);
         (wrongPeer ? viewer : streamer).receive(answer);
@@ -183,25 +166,6 @@ test('an answer cannot reintroduce a codec removed from the offer', () => {
     viewer.receive({ type: 'answer', mediaGeneration: 0, sdp });
     assert.equal(player.subscribedStreamer, null);
     assert.equal(streamer.messages.filter(m => m.type === 'answer').length, 0);
-    viewer.close(); streamer.close();
-});
-
-test('codec switch timeout restores the previous permitted codec once without removing the viewer', context => {
-    const timers = []; context.mock.method(global, 'setTimeout', fn => { timers.push(fn); return { unref() {} }; });
-    const server = serverWith(); const events = []; server.codecEvidenceRecorder = e => events.push(e);
-    const streamer = new Socket(); const viewer = new Socket(); server.onStreamerConnected(streamer, request());
-    streamer.receive({ type: 'endpointId', id: 'test-streamer' });
-    server.onPlayerConnected(viewer, request({ sessionRequestId: 'signed-request', codecPolicy: {
-        version: 1, snapshotId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', policyHash: 'A'.repeat(64), allowedCodecs: ['VP9', 'AV1'], defaultCodec: 'VP9', allowSwitching: true } }));
-    const player = server.playerRegistry.listPlayers()[0];
-    viewer.receive({ type: 'subscribe', streamerId: 'test-streamer' });
-    streamer.receive({ type: 'offer', playerId: player.streamerPlayerId, sdp: 'v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96 98\r\na=rtpmap:96 AV1/90000\r\na=rtpmap:98 VP9/90000\r\n' });
-    viewer.receive({ type: 'scaleWorldCodecSwitch', codec: 'AV1', mediaGeneration: 0 });
-    timers.at(-1)(); assert.equal(player.selectedCodec, 'VP9'); assert.equal(player.codecGeneration, 2);
-    timers[0](); assert.notEqual(player.subscribedStreamer, null, 'the superseded timeout must not terminate rollback');
-    timers.at(-1)(); assert.equal(player.codecGeneration, 2); assert.equal(player.subscribedStreamer, null);
-    assert.equal(server.playerRegistry.count(), 1); assert.equal(viewer.readyState, WebSocket.OPEN);
-    assert.ok(events.some(e => e.eventType === 'switch_failed'));
     viewer.close(); streamer.close();
 });
 

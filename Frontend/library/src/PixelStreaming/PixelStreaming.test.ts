@@ -95,7 +95,7 @@ describe('PixelStreaming', () => {
     });
 
 
-    it('switches the media peer without reconnecting signalling or narrowing policy choices to the SDP', async () => {
+    it('ignores client codec changes while retaining generation-safe same-codec retries', async () => {
         const capabilities = jest.spyOn(RTCRtpReceiver, 'getCapabilities').mockReturnValue({
             codecs: [{ mimeType: 'video/VP9', clockRate: 90000 }, { mimeType: 'video/H264', clockRate: 90000 }],
             headerExtensions: []
@@ -112,8 +112,9 @@ describe('PixelStreaming', () => {
         const previous = pixelStreaming.webRtcController.peerConnectionController!;
         const previousPeer = previous.peerConnection;
         config.setOptionSettingValue(OptionParameters.PreferredCodec, 'VP9');
-        expect(messages.at(-1)).toMatchObject({ type: 'scaleWorldCodecSwitch', codec: 'VP9', mediaGeneration: 0 });
-        const restarting = { ...state, selectedCodec: 'VP9', mediaGeneration: 1, status: 'restarting' };
+        expect(messages.some(m => m.type === 'scaleWorldCodecSwitch')).toBe(false);
+        expect(pixelStreaming.webRtcController.preferredCodec).toBe('H264');
+        const restarting = { ...state, mediaGeneration: 1, status: 'restarting' };
         triggerSignallingMessage(restarting);
         expect(pixelStreaming.webRtcController.peerConnectionController).not.toBe(previous);
         const replacement = pixelStreaming.webRtcController.peerConnectionController;
@@ -121,7 +122,7 @@ describe('PixelStreaming', () => {
         const staleRestart = { ...state, status: 'restarting' };
         triggerSignallingMessage(staleRestart);
         expect(pixelStreaming.webRtcController.peerConnectionController).toBe(replacement);
-        expect(config.scaleWorldCodecPolicy?.selectedCodec).toBe('VP9');
+        expect(config.scaleWorldCodecPolicy?.selectedCodec).toBe('H264');
         expect(previousPeer.connectionState).toBe('closed');
         expect(pixelStreaming.webRtcController.protocol.isConnected()).toBe(true);
         const count = messages.length;

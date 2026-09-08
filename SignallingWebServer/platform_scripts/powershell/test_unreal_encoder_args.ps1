@@ -17,11 +17,36 @@ function Assert-ScaleWorldUnrealPrerequisite { param($UnrealRoot,$LauncherExecut
 param($SelectedCodec,$TierDefault,$ExpectedCodec)
 $env:SCALEWORLD_ENCODER_CODEC=if($SelectedCodec -eq 'unset'){''}else{$SelectedCodec}
 $env:SCALEWORLD_DEFAULT_ENCODER_CODEC=if($TierDefault -eq 'unset'){''}else{$TierDefault}
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class CodecLaunchArgv {
+ [DllImport("shell32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+ public static extern IntPtr CommandLineToArgvW(string commandLine, out int argc);
+ [DllImport("kernel32.dll")]
+ public static extern IntPtr LocalFree(IntPtr pointer);
+}
+"@
 function Start-Process {
  param($FilePath,$ArgumentList,$WorkingDirectory,[switch]$PassThru)
  if($ArgumentList -notcontains "-PixelStreamingEncoderCodec=$ExpectedCodec"){throw 'Codec selection changed'}
  $cuda=@($ArgumentList|Where-Object {$_ -eq '-AVCodecs.NvEnc.D3D12UsesCUDA=true'})
  if($cuda.Count -ne 1){throw 'Negotiated H264 must enable CUDA once for every initial codec'}
+ # LaunchWindows.cpp decodes argv, then only restores ordinary quotes for
+ # values with spaces. Literal escaped quotes must survive this first pass.
+ $argc=0
+ $argv=[CodecLaunchArgv]::CommandLineToArgvW(('ScaleWorld.exe '+($ArgumentList -join ' ')),[ref]$argc)
+ if($argv -eq [IntPtr]::Zero){throw 'Windows command-line parsing failed'}
+ try {
+  $engineArguments=@(for($index=1;$index -lt $argc;$index++){
+   $argument=[Runtime.InteropServices.Marshal]::PtrToStringUni([Runtime.InteropServices.Marshal]::ReadIntPtr($argv,$index*[IntPtr]::Size))
+   if($argument.Contains(' ')){
+    $quoteAt=if($argument.StartsWith('-') -and $argument.Contains('=')){$argument.IndexOf('=')+1}else{0}
+    $argument=$argument.Substring(0,$quoteAt)+'"'+$argument.Substring($quoteAt)+'"'
+   }
+   $argument
+  })
+ } finally {[void][CodecLaunchArgv]::LocalFree($argv)}
  # Model the engine's ConsoleVariableToCommandArgValue conversion, rather than
  # accepting a dotted CVar literal that appears on argv but is silently ignored.
  $expectedSettings=@{
@@ -33,8 +58,12 @@ function Start-Process {
  }
  foreach($cvar in $expectedSettings.Keys){
   $argumentName=$cvar.Replace('.','').Replace('PixelStreaming2','PixelStreaming')
-  $matched=@($ArgumentList|Where-Object {$_ -like "-$argumentName=*"})
-  if($matched.Count -ne 1 -or $matched[0] -ne "-$argumentName=$($expectedSettings[$cvar])"){throw "Engine setting not parsed: $cvar"}
+  $matched=@($engineArguments|Where-Object {$_ -like "-$argumentName=*"})
+  if($matched.Count -ne 1){throw "Engine setting not parsed: $cvar"}
+  # FParse::Value stops unquoted values at comma, closing parenthesis or whitespace.
+  $value=$matched[0].Substring($argumentName.Length+2)
+  $parsed=if($value.StartsWith('"')){($value.Substring(1) -split '"',2)[0]}else{($value -split '[,)\s]',2)[0]}
+  if($parsed -ne $expectedSettings[$cvar]){throw "Engine setting not parsed: $cvar (parsed $parsed)"}
  }
  if(@($ArgumentList|Where-Object {$_ -like '-PixelStreaming2.*'}).Count){throw 'Dotted Pixel Streaming CVars are not startup arguments'}
  if($ArgumentList -contains '-d3d11'){throw 'Renderer must not switch to D3D11'}

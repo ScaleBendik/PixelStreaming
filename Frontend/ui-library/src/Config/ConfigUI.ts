@@ -296,20 +296,7 @@ export class ConfigUI {
                     this.numericParametersUi.get(NumericParameters.CompatQualityMax)
                 );
 
-            const preferredCodecOption = this.optionParametersUi.get(OptionParameters.PreferredCodec);
-            if (isSettingEnabled(settingsConfig, OptionParameters.PreferredCodec))
-                this.addSettingOption(
-                    encoderSettingsSection,
-                    this.optionParametersUi.get(OptionParameters.PreferredCodec)
-                );
-            if (
-                preferredCodecOption &&
-                [...preferredCodecOption.selector.options]
-                    .map((o) => o.value)
-                    .includes('Only available on Chrome')
-            ) {
-                preferredCodecOption.disable();
-            }
+            // Codec selection is enforced by session policy; actual codec is shown in status.
 
             if (isSettingEnabled(settingsConfig, OptionParameters.PreferredQuality))
                 this.addSettingOption(
