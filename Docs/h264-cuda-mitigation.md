@@ -34,6 +34,22 @@ not publish an artifact; the user will perform the artifact update manually.
 
 ## Validation and limits
 
+On 2026-09-09 the user reported persistent tiled/shifted video after changing
+2240x1260 to 2560x1440 through an in-game Blueprint command with the CUDA path
+enabled. Reconnecting to the same session restores the image at the new size.
+Live resolution changes therefore remain a known acceptance blocker; the prior
+bounded-memory result does not establish correct resizing. The exact instance,
+negotiated codec and resource-level cause have not yet been verified for this report.
+
+Epic's [workaround guidance](https://github.com/EpicGames/PixelStreamingInfrastructure/issues/900#issuecomment-4764121992)
+warns of artifacts with placed D3D12 resources. Texture-layout/mapping lifetime
+and encoder resize state are investigation leads, not confirmed causes. The
+inspected UE source already requests an IDR on encoding-dimension changes, so
+adding keyframes alone is not an established fix. Until isolated, retain a fixed
+output resolution or reconnect after changing it. Do not revert to the leaking
+native D3D12 H264 path as a blanket workaround. Any engine-side fix must retain
+D3D12, preserve the CUDA memory benefit and pass repeated resize/reconnect tests.
+
 From the repository root, run:
 
 ```powershell
