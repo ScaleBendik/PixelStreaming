@@ -2705,6 +2705,29 @@ export function wireInstanceAgent(
             requestFastPolling('viewer_media_flow_observed');
         }
     );
+    server.playerRegistry.on(
+        'scaleWorldSessionQuality',
+        (playerId: string, summary: Record<string, unknown>) => {
+            const sessionContext = readPlayerSessionContext(playerId);
+            if (!hasPlayerSessionContext(sessionContext)) return;
+            // Replace queued quality snapshots during an outage; never crowd out lifecycle events.
+            pendingEvents = pendingEvents.filter(
+                (event) =>
+                    event.eventType !== 'viewer_quality_summary' ||
+                    event.metadata?.['connectionId'] !== summary['connectionId']
+            );
+            if (pendingEvents.length >= MAX_PENDING_EVENTS - 1) return;
+            queueEvent(
+                'viewer_quality_summary',
+                {
+                    ...summary,
+                    ...buildPlayerSessionMetadata(sessionContext)
+                },
+                getPlayerEventSessionId(sessionContext)
+            );
+            // The normal agent flush transports this; quality never triggers fast polling.
+        }
+    );
     server.playerRegistry.on('removed', (playerId?: string) => {
         const rawCount = server.playerRegistry.count();
         const normalizedPlayerId = normalizeOptionalText(playerId);

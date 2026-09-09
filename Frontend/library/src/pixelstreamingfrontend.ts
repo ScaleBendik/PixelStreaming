@@ -24,3 +24,5 @@ export * from './PeerConnectionController/LatencyCalculator';
 export * from './DataChannel/DataChannelLatencyTestResults';
 export * from './Util/EventEmitter';
 export * from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
+
+export { SessionQuality } from './Util/SessionQuality';

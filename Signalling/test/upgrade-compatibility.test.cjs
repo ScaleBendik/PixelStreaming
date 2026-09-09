@@ -753,3 +753,19 @@ for (const stage of ['before-subscribe', 'no-streamer-offer', 'no-browser-answer
         viewer.close(); streamer.close();
     });
 }
+
+test('session quality accepts only managed viewers and strips browser identity fields', () => {
+    const server = serverWith(); const summaries = [];
+    server.playerRegistry.on('scaleWorldSessionQuality', (...args) => summaries.push(args));
+    const managed = new Socket(); const unsigned = new Socket();
+    server.onPlayerConnected(managed, request({ sessionRequestId: 'signed-request', activeSessionId: 'signed-session' }));
+    server.onPlayerConnected(unsigned, request());
+    const report = { type: 'scaleWorldSessionQuality', telemetryVersion: 1, connectedMs: 1000, videoBytes: 1000,
+        latencyDurationMs: 0, latencyWeightedMs: 0, maxBitrateKbps: 30_000, sessionRequestId: 'spoof', connectionId: 'spoof' };
+    unsigned.receive(report); managed.receive(report); managed.receive(report);
+    assert.equal(summaries.length, 1);
+    assert.equal(summaries[0][0], server.playerRegistry.listPlayers()[0].playerId);
+    assert.notEqual(summaries[0][1].connectionId, 'spoof');
+    assert.equal('sessionRequestId' in summaries[0][1], false);
+    managed.close(); unsigned.close();
+});

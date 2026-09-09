@@ -8,6 +8,8 @@ import {
     Logger,
     LogLevel,
     Flags,
+    SessionQuality,
+    NumericParameters,
     TextParameters
 } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.8';
 import { Application, PixelStreamingApplicationStyle } from '@epicgames-ps/lib-pixelstreamingfrontend-ui-ue5.8';
@@ -758,6 +760,30 @@ document.body.onload = function() {
         config.setFlagEnabled(Flags.AutoConnect, true);
     }
 
+    let sessionQuality = new SessionQuality();
+    let qualitySettingsReceived = false;
+    const reportSessionQuality = (final = false): void => {
+        const report = sessionQuality.report(performance.now(), qualitySettingsReceived
+            ? config.getNumericSettingValue(NumericParameters.WebRTCMaxBitrate) : undefined, final);
+        if (report) {
+            // Telemetry is best effort and must never interrupt stream teardown.
+            try { stream.signallingProtocol.sendMessage(report); } catch { /* closed transport */ }
+        }
+    };
+    stream.addEventListener('initialSettings', ({ data: { settings } }) => {
+        const max = settings.WebRTCSettings?.MaxBitrate;
+        qualitySettingsReceived = typeof max === 'number' && Number.isFinite(max) && max > 0;
+    });
+    stream.addEventListener('latencyCalculated', ({ data: { latencyInfo } }) => {
+        sessionQuality.observeLatency(latencyInfo.averageE2ELatency, performance.now());
+    });
+    stream.addEventListener('statsReceived', ({ data: { aggregatedStats } }) => {
+        const video = aggregatedStats.inboundVideoStats;
+        sessionQuality.observe(video.id, video.timestamp, video.bytesReceived, performance.now());
+        reportSessionQuality();
+    });
+    window.addEventListener('pagehide', () => reportSessionQuality(true));
+
     let mediaEvidenceConnectionGeneration = 0;
     let mediaReceivedGeneration = -1;
     let mediaFrameCallbackGeneration = -1;
@@ -849,6 +875,8 @@ document.body.onload = function() {
     };
 
     stream.signallingProtocol.transport.addListener('open', () => {
+        sessionQuality = new SessionQuality();
+        qualitySettingsReceived = false;
         mediaEvidenceConnectionGeneration += 1;
         mediaFrameCallbackGeneration = -1;
         mediaFlowObservationGeneration = -1;
@@ -876,6 +904,7 @@ document.body.onload = function() {
         armMediaFrameEvidence(mediaEvidenceConnectionGeneration);
     });
     stream.addEventListener('webRtcConnected', () => {
+        sessionQuality.setConnected(true);
         armMediaStartStaleTimer(mediaEvidenceConnectionGeneration);
     });
 
@@ -1002,6 +1031,8 @@ document.body.onload = function() {
     }
 
     stream.addEventListener('webRtcDisconnected', (event) => {
+        reportSessionQuality(true);
+        sessionQuality.setConnected(false);
         clearMediaStartStaleTimer();
         mediaStartStalePromptGeneration = -1;
         const eventData = (event as { data?: { eventString?: string } }).data;

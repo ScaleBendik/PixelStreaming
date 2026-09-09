@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 import { randomUUID } from 'node:crypto';
+import { SessionQualityReceiver } from './SessionQuality';
 import {
     CodecTicketPolicy,
     CodecEvidence,
@@ -383,6 +384,7 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     private streamerIdChangeListener: (newId: string) => void;
     private streamerDisconnectedListener: () => void;
     private scaleWorldMediaEvidenceCapabilityReported: boolean;
+    private readonly sessionQualityReceiver = new SessionQualityReceiver();
     private scaleWorldMediaReceivedReported: boolean;
     private scaleWorldMediaFlowObservedReported: boolean;
 
@@ -474,6 +476,20 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
         this.protocol.on(Messages.layerPreference.typeName, this.sendToStreamer.bind(this));
 
         this.protocol.on('unhandled', (message: BaseMessage) => {
+            if (message.type === 'scaleWorldSessionQuality') {
+                if (
+                    this.scaleWorldSessionIdentityValidated &&
+                    this.scaleWorldSessionRequestId &&
+                    this.playerId
+                ) {
+                    const summary = this.sessionQualityReceiver.accept(
+                        message as unknown as Record<string, unknown>
+                    );
+                    if (summary)
+                        this.server.playerRegistry.emit('scaleWorldSessionQuality', this.playerId, summary);
+                }
+                return;
+            }
             if (this.handleCodecMessage(message) || this.handleScaleWorldMediaEvidenceMessage(message)) {
                 return;
             }

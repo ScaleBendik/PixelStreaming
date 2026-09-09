@@ -76,7 +76,7 @@ async function harness(t, options = {}) {
     });
     options.beforeWire?.(directory);
     options.configure?.(h);
-    h.client = wireInstanceAgent({ playerRegistry: { count: () => 0, get: () => undefined, has: () => false, on() {} } }, {
+    h.client = wireInstanceAgent({ playerRegistry: options.playerRegistry ?? { count: () => 0, get: () => undefined, has: () => false, on() {} } }, {
         enabled: true, apiBaseUrl: 'https://agent.test', instanceId: 'i-test', region: 'eu-north-1',
         requireIdentityProof: false, heartbeatMs: 10000,
         desiredStatePath: path.join(directory, 'desired.json'),
@@ -229,3 +229,26 @@ for (const invalidate of [false, true]) {
         assert.equal(h.commandTransitions.filter(item => item.route === '/agent/commands/complete').length, invalidate ? 0 : 1);
     });
 }
+
+test('quality snapshots coalesce without fast polling or displacing queued lifecycle work', async t => {
+    const handlers = {};
+    const playerRegistry = { count: () => 1, has: () => true,
+        get: () => ({ scaleWorldSessionIdentityValidated: true, scaleWorldSessionRequestId: 'managed-request' }),
+        on: (name, callback) => { handlers[name] = callback; } };
+    const h = await harness(t, { playerRegistry });
+    const before = h.batches.length;
+    for (let sequence = 1; sequence <= 20; sequence++)
+        handlers.scaleWorldSessionQuality('player', {connectionId:'connection', sequence, connectedMs:sequence * 1000});
+    await settle();
+    assert.equal(h.batches.length, before, 'quality does not trigger a flush');
+    await h.poll();
+    const quality = h.batches.flat().filter(e => e.eventType === 'viewer_quality_summary');
+    assert.equal(quality.length, 1); assert.equal(quality[0].metadata.sequence, '20');
+    assert.equal(quality[0].metadata.sessionRequestId, 'managed-request');
+    h.batches.length = 0;
+    for (let i = 0; i < 100; i++) h.queue('lifecycle-' + i);
+    handlers.scaleWorldSessionQuality('player', {connectionId:'other', sequence:1});
+    await h.poll();
+    assert.equal(h.batches.flat().filter(e => e.eventType === 'session_network_path').length, 100);
+    assert.equal(h.batches.flat().filter(e => e.eventType === 'viewer_quality_summary').length, 0);
+});
