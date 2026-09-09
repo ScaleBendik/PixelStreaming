@@ -48,7 +48,7 @@ function signConnectTicket(payload, signingKey) {
 }
 
 function createViewerIdleHarness(graceMs = 1_234) {
-    const listeners = { added: [], removed: [] };
+    const listeners = { added: [], removed: [], negotiated: [] };
     const playerId = 'managed-player';
     const player = {
         scaleWorldSessionId: '11111111-1111-4111-8111-111111111111',
@@ -513,7 +513,7 @@ test('tokenless passive recycle marker never adopts an unchanged newer desired r
     assert.equal(marker.recycleRequestedToken, undefined);
     assert.equal(isInstanceAgentRecycleReplacementProof(marker), true);
 
-    const listeners = { added: [], removed: [] };
+    const listeners = { added: [], removed: [], negotiated: [] };
     const scheduledTimeouts = [];
     const recycleTokenChecks = [];
     const teardownStarts = [];
@@ -879,6 +879,98 @@ test('stalled entitlement fetch preserves heartbeat delivery, times out closed, 
         assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).state, 'projected');
     } finally {
         Object.assign(global, originals);
+    }
+});
+
+for (const scenario of ['new-boot-unassigned', 'new-boot-reassigned', 'same-boot', 'same-assignment', 'readmitted', 'commercial-recovery']) {
+    test(`ownership reconciliation after host boot: ${scenario}`, (t) => {
+        const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'sw-boot-assignment-'));
+        t.after(() => fs.rmSync(folder, { recursive: true, force: true }));
+        const requestA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+        const requestB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+        let now = 1_000;
+        const options = { statePath: path.join(folder, 'auth.json'), desiredStatePath: path.join(folder, 'desired.json'),
+            commandJournalPath: path.join(folder, 'command.json'), nowEpochSeconds: () => now, hostBootEpochSeconds: 500, logger() {} };
+        const oldGate = createConnectTicketRuntimeGate(options);
+        assert.equal(oldGate.recordManagedViewerAdmission({ sessionRequestId: requestA }), null);
+        if (scenario === 'commercial-recovery') oldGate.markTeardownStarted({ reason: 'test' });
+        now = 2_000;
+        const gate = createConnectTicketRuntimeGate({ ...options, hostBootEpochSeconds: scenario === 'same-boot' ? 500 : 1_500 });
+        if (scenario === 'readmitted') assert.equal(gate.recordManagedViewerAdmission({ sessionRequestId: requestA }), null);
+        gate.reconcileAssignmentAfterHostBoot(scenario === 'same-assignment' ? requestA : scenario === 'new-boot-reassigned' ? requestB : null);
+        const released = scenario.startsWith('new-boot-');
+        assert.equal(gate.getDurableManagedViewerEvidenceStatus(), released ? 'none' : 'present');
+        if (released) {
+            assert.match(gate.rejectReasonForTicket({ issuedAtEpochSeconds: 1_999, expiresAtEpochSeconds: 2_100, sessionRequestId: requestA }), /before this session teardown/);
+            assert.equal(gate.rejectReasonForTicket({ issuedAtEpochSeconds: 2_006, expiresAtEpochSeconds: 2_100, sessionRequestId: requestB }), null);
+            assert.equal(gate.recordManagedViewerAdmission({ sessionRequestId: requestB }), null);
+            const restarted = createConnectTicketRuntimeGate({ ...options, hostBootEpochSeconds: 1_500 });
+            assert.match(restarted.rejectReasonForTicket({ issuedAtEpochSeconds: 2_006, expiresAtEpochSeconds: 2_100, sessionRequestId: requestA }), /different managed session/);
+        }
+    });
+}
+
+test('failed managed reconnect attempts retain the original deadline and expire while a socket is open', () => {
+    const harness = createViewerIdleHarness();
+    const originalExistsSync = fs.existsSync;
+    try {
+        harness.removeViewer();
+        const window = harness.publishedWindows.at(-1);
+        const timer = harness.scheduledTimeouts.find(timer => timer.delay === 1_234);
+        harness.player.negotiationPending = true;
+        harness.reconnectViewer();
+        harness.removeViewer();
+        harness.reconnectViewer();
+        assert.deepEqual(harness.publishedWindows.at(-1), window);
+        assert.equal(harness.scheduledTimeouts.filter(timer => timer.delay === 1_234).length, 1);
+        fs.existsSync = () => false;
+        timer.callback();
+        assert.equal(harness.elapsedEvidences.length, 1);
+        assert.equal(harness.elapsedEvidences[0].reconnectGraceExpiresAtUtc, window.reconnectGraceExpiresAtUtc);
+    } finally {
+        fs.existsSync = originalExistsSync;
+        harness.restoreTimers();
+    }
+});
+
+test('a governed reconnect cancels grace only after validated negotiation', () => {
+    const harness = createViewerIdleHarness();
+    try {
+        harness.removeViewer();
+        harness.player.negotiationPending = true;
+        harness.reconnectViewer();
+        assert.ok(harness.publishedWindows.at(-1));
+        harness.player.negotiationPending = false;
+        for (const listener of harness.listeners.negotiated) listener(harness.playerId);
+        assert.equal(harness.publishedWindows.at(-1), null);
+        assert.equal(harness.elapsedEvidences.length, 0);
+    } finally {
+        harness.restoreTimers();
+    }
+});
+
+test('negotiation completing after the deadline cannot cancel grace while socket close is pending', () => {
+    const harness = createViewerIdleHarness();
+    const originalNow = Date.now;
+    const originalExistsSync = fs.existsSync;
+    try {
+        harness.removeViewer();
+        const window = harness.publishedWindows.at(-1);
+        harness.player.negotiationPending = true;
+        harness.reconnectViewer();
+        Date.now = () => Date.parse(window.reconnectGraceExpiresAtUtc) + 1;
+        harness.player.negotiationPending = false;
+        let closed = false;
+        harness.player.protocol.disconnect = () => { closed = true; };
+        for (const listener of harness.listeners.negotiated) listener(harness.playerId);
+        assert.equal(closed, true);
+        fs.existsSync = () => false;
+        harness.scheduledTimeouts.find(timer => timer.delay === 1_234).callback();
+        assert.equal(harness.elapsedEvidences.length, 1);
+    } finally {
+        Date.now = originalNow;
+        fs.existsSync = originalExistsSync;
+        harness.restoreTimers();
     }
 });
 

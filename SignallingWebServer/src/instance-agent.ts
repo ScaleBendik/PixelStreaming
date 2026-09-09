@@ -354,6 +354,7 @@ export interface InstanceAgentClientOptions {
         | 'completeCommercialRecoveryAfterReset'
         | 'getRecycleTokenCompletionStatus'
         | 'getCommercialRecoveryReadyNotBeforeEpochSeconds'
+        | 'reconcileAssignmentAfterHostBoot'
     >;
     sessionLogArtifacts?: SessionLogArtifactRuntimeOptions;
     sessionScreenshotArtifacts?: SessionScreenshotArtifactRuntimeOptions;
@@ -1784,6 +1785,7 @@ export function wireInstanceAgent(
                     controller.signal
                 );
                 if (response.status === 204) {
+                    options.connectTicketRuntimeGate?.reconcileAssignmentAfterHostBoot?.(null);
                     return applyRuntimeEntitlementProjection(createUnassignedRuntimeEntitlementProjection());
                 }
                 if (!response.ok) {
@@ -1793,9 +1795,11 @@ export function wireInstanceAgent(
 
                 failureCode = 'projection_manifest_invalid';
                 const manifest = await parseJsonResponse<RuntimeEntitlementManifestApiResponse>(response);
-                return applyRuntimeEntitlementProjection(
-                    createProjectedRuntimeEntitlementProjection(manifest)
+                const projection = createProjectedRuntimeEntitlementProjection(manifest);
+                options.connectTicketRuntimeGate?.reconcileAssignmentAfterHostBoot?.(
+                    projection.manifest!.sessionRequestId
                 );
+                return applyRuntimeEntitlementProjection(projection);
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 log(`[instance-agent] Runtime entitlement projection refresh failed: ${message}`);

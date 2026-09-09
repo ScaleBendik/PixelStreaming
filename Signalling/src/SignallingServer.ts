@@ -467,7 +467,11 @@ export class SignallingServer {
                 validatedIdentity.shadowSessionRequestId
             )
         ) {
-            ws.close(1013, 'Codec policy enforcement unavailable');
+            this.unregisterPlayerKeepalive(ws);
+            ws.close(
+                newPlayer.codecAdmissionFailureReason ? 1008 : 1013,
+                newPlayer.codecAdmissionFailureReason ?? 'Codec policy enforcement unavailable'
+            );
             return;
         }
         this.playerRegistry.add(newPlayer);

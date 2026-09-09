@@ -856,6 +856,18 @@ function Get-RecoveryPlan {
     $failedRuleNames = @($FailedRules | ForEach-Object { $_.Name })
     $nonHealthFailedRules = @($FailedRules | Where-Object { $_.Name -ne 'streamer-health' })
 
+    if ($FailedRules.Count -eq 1 -and $FailedRules[0].Name -eq 'streamer-health' -and
+        $FailedRules[0].FaultReason -eq 'streamer_negotiation_timeout' -and
+        -not [string]::IsNullOrWhiteSpace($UnrealOnlyCommand)) {
+        # Keep Wilbur and its commercial reconnect deadline alive during RTC recovery.
+        return [pscustomobject]@{
+            Label = 'unreal negotiation recovery'
+            Command = $UnrealOnlyCommand
+            TerminationRules = @($PrimaryRules | Where-Object { $_.Name -eq 'unreal' }) + @($LauncherRules | Where-Object { $_.Name -like 'unreal-*' })
+            BootReason = 'watchdog_unreal_restart_pending'
+        }
+    }
+
     if ($nonHealthFailedRules.Count -eq 1 -and $failedRuleNames.Count -eq 1) {
         $singleRule = $nonHealthFailedRules[0]
         if ($singleRule.Name -eq 'wilbur' -and -not [string]::IsNullOrWhiteSpace($WilburOnlyCommand)) {
@@ -1258,6 +1270,7 @@ while ($true) {
                         'streamer_health_missing',
                         'streamer_health_invalid',
                         'streamer_health_missing_timestamp',
+                        'streamer_negotiation_timeout',
                         'streamer_health_file_stale'
                     ) -contains $streamerHealthFaultReason
                     $streamerHealthUnreadyRecoveryElapsed =

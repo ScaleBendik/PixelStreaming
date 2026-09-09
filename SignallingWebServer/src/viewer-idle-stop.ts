@@ -999,7 +999,12 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         managedSessionIdentity: ManagedSessionIdentity | null
     ): boolean =>
         managedSessionIdentity
-            ? countManagedSessionViewers(managedSessionIdentity.sessionRequestId) > 0
+            ? [...managedSessionIdentitiesByPlayerId.entries()].some(
+                  ([playerId, identity]) =>
+                      identity.sessionRequestId.toLowerCase() ===
+                          managedSessionIdentity.sessionRequestId.toLowerCase() &&
+                      server.playerRegistry.get(playerId)?.negotiationPending !== true
+              )
             : server.playerRegistry.count() > 0;
     const markManagedSessionViewer = (
         playerId?: string,
@@ -2449,7 +2454,15 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     };
 
     const onViewerAdded = (playerId?: string): void => {
-        if (isCommercialReconnectDeadlineLocked()) {
+        if (
+            isCommercialReconnectDeadlineLocked() ||
+            (reconnectGraceWindowPhase === 'waiting' &&
+                reconnectGraceWindowState?.managedSessionIdentity &&
+                Date.now() >= Date.parse(reconnectGraceWindowState.reconnectGraceExpiresAtUtc))
+        ) {
+            // WebSocket close is asynchronous; do not let this rejected peer cancel
+            // the deadline while its close handshake is still in flight.
+            if (playerId) managedSessionIdentitiesByPlayerId.delete(playerId);
             const latePlayer = playerId ? server.playerRegistry.get(playerId) : undefined;
             log(
                 `[idle-stop] Rejecting viewer ${playerId ?? '(unknown)'} because the reconnect deadline has elapsed and commercial teardown is irrevocable.`
@@ -2497,6 +2510,17 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         }
 
         const managedIdentity = markManagedSessionViewer(playerId);
+        if (
+            managedIdentity &&
+            reconnectGraceWindowPhase === 'waiting' &&
+            playerId &&
+            server.playerRegistry.get(playerId)?.negotiationPending === true
+        ) {
+            log(
+                `[idle-stop] Managed viewer ${playerId} is negotiating; the existing reconnect deadline is unchanged.`
+            );
+            return;
+        }
         if (
             !managedIdentity &&
             reconnectGraceWindowPhase === 'waiting' &&
@@ -2627,6 +2651,7 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
     };
 
     server.playerRegistry.on('added', onViewerAdded);
+    server.playerRegistry.on('negotiated', onViewerAdded);
     server.playerRegistry.on('removed', onViewerRemoved);
     log('[idle-stop] Wired to player registry events.');
 

@@ -1,6 +1,6 @@
 # Runtime Watchdog
 
-Last updated: 2026-04-23
+Last updated: 2026-09-09
 
 ## Purpose
 
@@ -31,6 +31,33 @@ The watchdog can:
    - `start_unreal.bat` when only Unreal is missing
 8. trigger full-stack recovery through `start_streamer_stack.bat --recovery` for combined or ambiguous faults
 9. publish `booting` with a reason that reflects the recovery type before restart
+
+Governed player connections have a 60-second negotiation deadline covering
+capabilities, subscription and SDP. A failed connection leaves the registry;
+an unsuccessful reconnect cannot extend an existing commercial reconnect deadline.
+Only validated SDP completion before that deadline cancels grace. Browser AFK
+still starts after negotiation and is not the establishment timeout.
+
+If an authenticated managed viewer subscribes but Unreal supplies no SDP before
+the deadline, Wilbur writes `healthy=false` with
+`reason=streamer_negotiation_timeout`. Ping/pong does not clear this fault. A valid
+Unreal SDP response or replacement streamer clears it. A browser that fails to
+answer, a shadow timeout, or an idle warm pool does not establish this fault.
+After its normal failure threshold, the watchdog restarts **Unreal only** for
+this fault, retaining Wilbur's request identity, evidence journal and reconnect
+deadline. Combined process faults still use full-stack recovery. This does not
+detect every post-negotiation media stall or establish its engine-level cause.
+
+After an EC2 stop/start, persisted ownership is reconciled against successful
+authenticated assignment responses. It can be released only when the previous
+admission predates the host boot, the API no longer assigns that request, and no
+viewer has been admitted in the current Wilbur process. Pending commercial
+recovery/evidence blocks still require their existing recovery path. A Wilbur
+restart within the same host boot is insufficient proof. Previous tickets stay
+fenced by a durable cutoff; the next session needs a fresh ticket.
+
+Regression checks include `test_watchdog_negotiation_recovery.ps1` alongside
+`test_stack_launcher_policy.ps1` and the Signalling/Wilbur test suites.
 
 The watchdog does not yet:
 
@@ -195,11 +222,11 @@ Operational note:
 2. Use `start_dev_turn.bat` directly only for focused Wilbur troubleshooting.
 3. Start with `WATCHDOG_DRY_RUN=true` until fault detection and restart behavior are validated on a dev instance.
 4. Keep legacy crash tooling only until watchdog restart flow is verified end-to-end in dev.
-5. Recovery should restart the whole stack through `start_streamer_stack.bat --recovery`, not only one process.
+5. Use the selected recovery plan: combined/unknown faults restart the stack through `start_streamer_stack.bat --recovery`; an isolated missing Unreal process or `streamer_negotiation_timeout` restarts Unreal only.
 6. `start_dev_turn.bat` reloads TURN credentials and the connect-ticket signing key on restart, so recovery should continue to flow through that script.
 7. Recovery-mode stack launches keep watchdog supervision enabled; if Wilbur or Unreal startup fails, the launcher schedules the watchdog before returning failure.
-8. Hung Unreal detection depends on Wilbur writing a fresh local health file from real streamer ping traffic.
-9. When both processes are still present, the watchdog now requires the old Unreal CPU-stall signal as corroboration before it restarts the stack. This keeps the long-serving production heuristic in place while avoiding duplicate launches and reducing false positives from transient signalling issues.
+8. Hung Unreal detection depends on Wilbur's local health file, including streamer ping traffic and authenticated managed negotiation timeouts. Pings alone do not prove Unreal can create a peer or render video.
+9. Ordinary streamer-health faults require CPU-stall corroboration when both processes are present. The trusted `streamer_negotiation_timeout` fault is an exception: a busy Unreal process that cannot answer a managed subscription still requires recovery.
 10. The first missing-process grace now applies only to initial watchdog boot, not to subsequent recoveries. Subsequent recoveries rely on the normal post-restart grace window instead.
 11. The current empirically stable defaults are:
    - Task Scheduler startup delay: `20s`
@@ -212,7 +239,7 @@ Operational note:
 1. Validate process detection for Unreal-only failure.
 2. Validate process detection for Wilbur-only failure.
 3. Validate hung Unreal detection by leaving both processes alive while the local streamer health file becomes unhealthy or stale.
-4. Confirm the watchdog waits for Unreal CPU stall confirmation before recovering that hung-session case.
+4. Confirm ordinary stale/ping faults wait for CPU-stall confirmation, while a managed no-SDP timeout recovers Unreal even when CPU time increases. Confirm Wilbur's PID and the request identity survive that Unreal-only recovery.
 5. Validate full-stack recovery using the default restart command.
 6. Confirm runtime status transitions during recovery:
    - `runtime_fault`

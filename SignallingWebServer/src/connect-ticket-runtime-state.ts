@@ -2,6 +2,7 @@
 import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { Logger } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
 import {
     isInstanceAgentCommandExpired,
@@ -41,6 +42,7 @@ export type RecycleTokenCompletionStatus = 'completed' | 'open' | 'unavailable';
 export interface ConnectTicketRuntimeGate {
     rejectReasonForTicket(ticket: ConnectTicketRuntimeTicket): string | null;
     recordManagedViewerAdmission(identity: ManagedViewerAdmissionIdentity): string | null;
+    reconcileAssignmentAfterHostBoot(sessionRequestId: string | null): boolean;
     getDurableManagedViewerEvidenceStatus(): DurableManagedViewerEvidenceStatus;
     markTeardownStarted(options?: ConnectTicketTeardownStartOptions): boolean;
     isCommercialRecoveryRequired(): boolean;
@@ -80,6 +82,7 @@ export interface ConnectTicketRuntimeGateOptions {
     commandJournalPath?: string;
     admissionClockSkewSeconds?: number;
     nowEpochSeconds?: () => number;
+    hostBootEpochSeconds?: number;
     logger?: (message: string) => void;
 }
 
@@ -441,6 +444,8 @@ export function createConnectTicketRuntimeGate(
     let runtimeStatePersistenceFailureReason: string | null = null;
     let reconnectGraceEvidenceJournalBlockReason: string | null = null;
     let managedSessionRequestId = initialRuntimeState.snapshot.managedViewerSessionRequestId ?? null;
+    let admittedInThisProcess = false;
+    const hostBootEpochSeconds = options.hostBootEpochSeconds ?? Math.floor(Date.now() / 1000 - os.uptime());
     let runtimeStateFileExpected = true;
     const admissionClockSkewSeconds = Math.max(
         0,
@@ -683,6 +688,7 @@ export function createConnectTicketRuntimeGate(
                 existingSessionRequestId &&
                 (!activeSessionId || existingActiveSessionId?.toLowerCase() === activeSessionId.toLowerCase())
             ) {
+                admittedInThisProcess = true;
                 return null;
             }
 
@@ -701,7 +707,50 @@ export function createConnectTicketRuntimeGate(
 
             runtimeStatePersistenceFailureReason = null;
             managedSessionRequestId = sessionRequestId;
+            admittedInThisProcess = true;
             return null;
+        },
+        reconcileAssignmentAfterHostBoot(sessionRequestId: string | null): boolean {
+            // Called only after an authenticated, successful assignment response.
+            // A new Wilbur process alone is not cleanup proof: require a host boot
+            // after the previous admission, and never release a viewer admitted here.
+            if (admittedInThisProcess || !managedSessionRequestId) return true;
+            const assignedRequestId =
+                sessionRequestId === null ? null : normalizeOptionalGuid(sessionRequestId);
+            if (sessionRequestId !== null && !assignedRequestId) return false;
+            if (assignedRequestId?.toLowerCase() === managedSessionRequestId.toLowerCase()) return true;
+            const state = inspectRuntimeStateSnapshot(statePath, logger);
+            if (state.status !== 'valid') return false;
+            const admittedAt = Date.parse(state.snapshot.managedViewerFirstAdmittedAtUtc ?? '') / 1000;
+            if (
+                !Number.isFinite(admittedAt) ||
+                !Number.isFinite(hostBootEpochSeconds) ||
+                admittedAt + admissionClockSkewSeconds >= hostBootEpochSeconds ||
+                state.snapshot.commercialRecoveryRequired === true ||
+                reconnectGraceEvidenceJournalBlockReason
+            )
+                return false;
+
+            const cutoff = Math.max(
+                state.snapshot.rejectTicketsIssuedAtOrBeforeEpochSeconds ?? 0,
+                nowEpochSeconds() + admissionClockSkewSeconds
+            );
+            const nextSnapshot = normalizeRuntimeStateSnapshot({
+                ...state.snapshot,
+                managedViewerSessionRequestId: undefined,
+                managedViewerActiveSessionId: undefined,
+                managedViewerFirstAdmittedAtUtc: undefined,
+                rejectTicketsIssuedAtOrBeforeEpochSeconds: cutoff,
+                rejectTicketsIssuedAtOrBeforeUtc: toUtcIsoString(cutoff),
+                reason: 'prior_assignment_released_after_host_boot',
+                updatedAtUtc: nowUtc()
+            });
+            if (!writeRuntimeStateSnapshot(statePath, nextSnapshot, logger)) return false;
+            managedSessionRequestId = null;
+            logger(
+                '[connect-ticket-runtime-state] Released prior-boot ownership after authoritative assignment reconciliation; earlier tickets remain fenced.'
+            );
+            return true;
         },
         getDurableManagedViewerEvidenceStatus(): DurableManagedViewerEvidenceStatus {
             if (runtimeStatePersistenceFailureReason) {

@@ -429,6 +429,7 @@ export function wireSignallingRuntimeStatus(
     let readySoakStartedAtMs: number | null = null;
     let readySoakTimer: NodeJS.Timeout | null = null;
     const attachedStreamers = new WeakSet<object>();
+    const negotiationStalledStreamers = new WeakSet<object>();
 
     const clearHeartbeat = (): void => {
         if (!heartbeatTimer) return;
@@ -467,7 +468,6 @@ export function wireSignallingRuntimeStatus(
             if (playerVisibleStreamerCount > 0) {
                 healthy = true;
                 reason = currentReason ?? 'stream_player_visible';
-                lastHealthyAtMs = nowMs;
             } else if (lastStreamerPingAtMs !== null && nowMs - lastStreamerPingAtMs > streamerPingFreshMs) {
                 reason = 'streamer_ping_stale';
             } else {
@@ -477,7 +477,6 @@ export function wireSignallingRuntimeStatus(
             if (playerVisibleStreamerCount > 0) {
                 healthy = true;
                 reason = currentReason ?? 'verifying_stream_stability';
-                lastHealthyAtMs = nowMs;
             } else {
                 reason = currentReason ?? 'streamer_not_player_visible';
             }
@@ -486,6 +485,14 @@ export function wireSignallingRuntimeStatus(
         } else if (currentStatus === RUNTIME_STATUS_WAITING_FOR_STREAMER) {
             reason = 'waiting_for_streamer';
         }
+
+        // Ping/pong proves only that the signalling transport is alive. A managed
+        // player's unanswered SDP request is independent evidence of an RTC stall.
+        if (getPlayerVisibleStreamers().some((streamer) => negotiationStalledStreamers.has(streamer))) {
+            healthy = false;
+            reason = 'streamer_negotiation_timeout';
+        }
+        if (healthy) lastHealthyAtMs = nowMs;
 
         const snapshot: LocalStreamerHealthSnapshot = {
             status: currentStatus ?? 'unknown',
@@ -595,7 +602,6 @@ export function wireSignallingRuntimeStatus(
 
         if (currentStatus === RUNTIME_STATUS_READY) {
             resetReadySoak();
-            lastHealthyAtMs = nowMs;
             publishTransition(RUNTIME_STATUS_READY, currentReason ?? 'stream_stable', transitionOptions);
             startHeartbeat();
             return;
@@ -620,7 +626,6 @@ export function wireSignallingRuntimeStatus(
         }
 
         resetReadySoak();
-        lastHealthyAtMs = nowMs;
         publishTransition(RUNTIME_STATUS_READY, 'stream_stable', transitionOptions);
         startHeartbeat();
     };
@@ -702,6 +707,17 @@ export function wireSignallingRuntimeStatus(
 
     evaluateDerivedStatus({ force: true });
     startStreamerHealthTimer();
+
+    server.playerRegistry.on('streamer_negotiation_timeout', (streamer: object) => {
+        if (!streamer) return;
+        negotiationStalledStreamers.add(streamer);
+        log('[runtime-status] Managed viewer negotiation timed out without an Unreal SDP response.');
+        writeStreamerHealthSnapshot();
+    });
+    server.playerRegistry.on('streamer_negotiation_response', (streamer: object) => {
+        if (!streamer || !negotiationStalledStreamers.delete(streamer)) return;
+        writeStreamerHealthSnapshot();
+    });
 
     server.streamerRegistry.streamers.forEach((streamer) => {
         attachStreamerHealthListeners(streamer.streamerId);

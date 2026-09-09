@@ -12,6 +12,8 @@ import { IStreamer } from './StreamerRegistry';
 export interface IPlayer extends IMessageLogger {
     playerId: string;
     readonly streamerPlayerId?: string;
+    // Governed viewers must finish SDP negotiation before cancelling reconnect grace.
+    readonly negotiationPending?: boolean;
     protocol: SignallingProtocol;
     subscribedStreamer: IStreamer | null;
     // The HTTP upgrade request that opened this connection, if available. Lets a consumer-supplied

@@ -49,6 +49,37 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     private codecSelectionFinalized = false;
     private codecSelectionFailed = false;
     private lastCodecObservation = { frames: 0, bytes: 0, at: 0 };
+    private negotiationTimer?: ReturnType<typeof setTimeout>;
+    private streamerDescriptionReceived = false;
+
+    get negotiationPending(): boolean {
+        return !!this.codecPolicy && !this.codecNegotiated;
+    }
+
+    private clearNegotiationTimer(): void {
+        if (this.negotiationTimer) clearTimeout(this.negotiationTimer);
+        this.negotiationTimer = undefined;
+    }
+
+    private startNegotiationTimer(): void {
+        if (!this.codecPolicy || this.codecSelectionFailed || this.negotiationTimer) return;
+        // One deadline across capabilities, subscription and SDP; retries on the same
+        // socket cannot extend it. Idle warm-pool streamers have no player deadline.
+        this.negotiationTimer = setTimeout(() => {
+            this.negotiationTimer = undefined;
+            if (this.codecNegotiated) return;
+            if (
+                this.subscribedStreamer &&
+                !this.streamerDescriptionReceived &&
+                this.scaleWorldSessionIdentityValidated &&
+                !this.shadowSessionRequestId
+            ) {
+                this.server.playerRegistry.emit('streamer_negotiation_timeout', this.subscribedStreamer);
+            }
+            this.failCodecNegotiation('Stream negotiation timed out');
+        }, 60_000);
+        this.negotiationTimer.unref();
+    }
 
     get streamerPlayerId(): string {
         return this.codecPolicy
@@ -57,6 +88,7 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     }
 
     private shadowSessionRequestId?: string;
+    codecAdmissionFailureReason?: string;
 
     initializeCodecPolicy(policy?: CodecTicketPolicy, shadowSessionRequestId?: string): boolean {
         if (!policy || !this.server.codecJournalReady?.()) return false;
@@ -66,6 +98,10 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
         if (shadowSessionRequestId) {
             const source = this.shadowSource();
             if (!source || !policy.allowedCodecs.includes(source.selectedCodec!)) return false;
+            if (source.selectedCodec === 'H264') {
+                this.codecAdmissionFailureReason = 'Shadow connect is unavailable for H264 sessions';
+                return false;
+            }
             this.selectedCodec = source.selectedCodec;
         }
         try {
@@ -73,6 +109,7 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
                 'connection_opened',
                 this.shadowSessionRequestId ? { reason: 'Admin shadow viewer; existing session codec' } : {}
             );
+            this.startNegotiationTimer();
             return true;
         } catch {
             return false;
@@ -153,10 +190,15 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
                 throw new Error('Governed codecs require a direct non-SVC stream');
             }
             const result = restrictVideoSdp(description.sdp, this.selectedCodec!);
+            if (fromStreamer) {
+                this.streamerDescriptionReceived = true;
+                this.server.playerRegistry.emit('streamer_negotiation_response', this.subscribedStreamer);
+            }
             if (message.type === 'offer') {
                 this.codecOffer = result.sdp;
                 this.codecOfferFromStreamer = fromStreamer;
                 this.codecNegotiated = false;
+                this.startNegotiationTimer();
                 this.sendCodecState('negotiating');
             } else {
                 if (this.codecOfferFromStreamer === fromStreamer)
@@ -166,6 +208,10 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
                 this.codecOffer = undefined;
                 this.codecOfferFromStreamer = undefined;
                 this.codecNegotiated = true;
+                this.clearNegotiationTimer();
+                this.server.playerRegistry.emit('negotiated', this.playerId);
+                // Lifecycle listeners may reject a completion after an irrevocable deadline.
+                if (!this.subscribedStreamer) return false;
             }
             description.sdp = result.sdp;
             return true;
@@ -191,6 +237,8 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     }
 
     private failCodecNegotiation(reason: string): void {
+        this.codecSelectionFailed = true;
+        this.clearNegotiationTimer();
         try {
             // Retain the existing event vocabulary for older analytics consumers.
             this.recordCodec('switch_failed', { reason });
@@ -199,6 +247,9 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
         }
         this.unsubscribe();
         this.sendCodecState('failed', reason);
+        // A failed socket must leave the viewer registry so lifecycle grace can run.
+        // 1001 also prevents the frontend's automatic retry loop from concealing failure.
+        this.protocol.disconnect(1001, 'Stream negotiation failed');
     }
 
     private handleCodecMessage(message: BaseMessage): boolean {
@@ -343,6 +394,7 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
         this.server = server;
         this.playerId = '';
         this.subscribedStreamer = null;
+        this.startNegotiationTimer();
         this.transport = new WebSocketTransportNJS(ws);
         this.protocol = new SignallingProtocol(this.transport);
         this.remoteAddress = remoteAddress;
@@ -613,6 +665,26 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             this.sendCodecState('failed', 'Codec policy requires a direct streamer connection');
             return;
         }
+        // Block before sending playerConnected to Unreal. This also covers stale
+        // shadow tickets and duplicate owner tabs; the existing viewer stays intact.
+        if (
+            streamer &&
+            this.codecPolicy &&
+            this.server.playerRegistry
+                .listPlayers()
+                .some(
+                    (player) =>
+                        player instanceof PlayerConnection &&
+                        player !== this &&
+                        player.subscribedStreamer === streamer &&
+                        (this.selectedCodec === 'H264' || player.selectedCodec === 'H264')
+                )
+        ) {
+            this.failCodecNegotiation(
+                'H264 sessions support one viewer. Close the existing player before reconnecting.'
+            );
+            return;
+        }
         if (!streamer) {
             Logger.error(
                 `subscribe: Player ${this.playerId} tried to subscribe to a non-existent streamer ${streamerId}`
@@ -654,6 +726,8 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             this.codecHasSubscribed = true;
         }
         this.subscribedStreamer = streamer;
+        this.streamerDescriptionReceived = false;
+        this.startNegotiationTimer();
         this.subscribedStreamer.subscribers.add(this.playerId);
         this.subscribedStreamer.on('id_changed', this.streamerIdChangeListener);
         this.subscribedStreamer.on('disconnect', this.streamerDisconnectedListener);
@@ -688,6 +762,7 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
 
     private disconnect() {
         this.unsubscribe();
+        this.clearNegotiationTimer();
         this.protocol.disconnect();
     }
 

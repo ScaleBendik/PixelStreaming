@@ -610,8 +610,9 @@ test('codec failures identify the rejected answer without exposing SDP or storag
         const before = streamer.messages.length;
         viewer.receive({ type: 'answer', sdp: answer, mediaGeneration: 0 });
         assert.deepEqual(streamer.messages.slice(before).map(m => m.type), ['playerDisconnected']);
-        const reason = events.at(-1).reason;
-        assert.equal(events.at(-1).eventType, 'switch_failed');
+        const reason = events.findLast(event => event.eventType === 'switch_failed').reason;
+        assert.equal(events.at(-1).eventType, 'connection_closed');
+        assert.equal(viewer.readyState, WebSocket.CLOSED);
         assert.match(reason, /Codec negotiation failed \(answer\):/);
         assert.ok(reason.includes(failure === 'rejected-video' ? 'Exactly one active video section'
             : failure === 'payload-remap' ? 'Answer changed a video payload mapping' : 'Validation or evidence persistence failed'));
@@ -661,3 +662,83 @@ test('admin shadow inherits the active fallback codec without managed identity a
     assert.equal(stale.readyState, WebSocket.CLOSED);
     streamer.close();
 });
+for (const codec of ['H264', 'VP9']) {
+    test(`${codec} shadow admission protects the owner's Unreal peer`, () => {
+        const server = serverWith();
+        server.codecEvidenceRecorder = () => {};
+        const streamer = new Socket(); const viewer = new Socket(); const shadowSocket = new Socket();
+        server.onStreamerConnected(streamer, request());
+        streamer.receive({ type: 'endpointId', id: 'test-streamer' });
+        const policy = { version: 1, snapshotId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', policyHash: 'A'.repeat(64), allowedCodecs: [codec], defaultCodec: codec, allowSwitching: false };
+        server.onPlayerConnected(viewer, request({ sessionRequestId: 'signed-request', activeSessionId: 'signed-session', codecPolicy: policy }));
+        const owner = server.playerRegistry.listPlayers()[0];
+        const sdp = ['v=0', 'm=video 9 UDP/TLS/RTP/SAVPF 96', `a=rtpmap:96 ${codec}/90000`, ''].join('\r\n');
+        function negotiate(socket, player) {
+            socket.receive({ type: 'scaleWorldCodecCapabilities', supportedCodecs: [codec] });
+            socket.receive({ type: 'subscribe', streamerId: 'test-streamer' });
+            streamer.receive({ type: 'offer', playerId: player.streamerPlayerId, sdp });
+            socket.receive({ type: 'answer', sdp: socket.messages.at(-1).sdp, mediaGeneration: 0 });
+        }
+        negotiate(viewer, owner);
+        const beforeShadow = streamer.messages.length;
+        server.onPlayerConnected(shadowSocket, request({ shadowSessionRequestId: 'signed-request', codecPolicy: policy }));
+        if (codec === 'H264') {
+            assert.equal(shadowSocket.readyState, WebSocket.CLOSED);
+            assert.equal(server.playerRegistry.count(), 1);
+            assert.equal(viewer.readyState, WebSocket.OPEN);
+            assert.equal(owner.codecNegotiated, true);
+            assert.equal(streamer.messages.length, beforeShadow);
+            // A second owner ticket must not bypass the one-viewer protection.
+            const duplicateSocket = new Socket();
+            server.onPlayerConnected(duplicateSocket, request({ sessionRequestId: 'signed-request', activeSessionId: 'signed-session', codecPolicy: policy }));
+            duplicateSocket.receive({ type: 'scaleWorldCodecCapabilities', supportedCodecs: [codec] });
+            duplicateSocket.receive({ type: 'subscribe', streamerId: 'test-streamer' });
+            assert.equal(duplicateSocket.readyState, WebSocket.CLOSED);
+            assert.equal(server.playerRegistry.count(), 1);
+            assert.equal(streamer.messages.length, beforeShadow);
+            assert.equal(viewer.readyState, WebSocket.OPEN);
+            viewer.close(); streamer.close();
+            return;
+        }
+        const shadow = server.playerRegistry.listPlayers()[1];
+        negotiate(shadowSocket, shadow);
+        const ownerId = owner.streamerPlayerId;
+        const shadowId = shadow.streamerPlayerId;
+        const before = streamer.messages.length;
+        shadowSocket.close();
+        assert.deepEqual(streamer.messages.slice(before), [{ type: 'playerDisconnected', playerId: shadowId }]);
+        assert.equal(viewer.readyState, WebSocket.OPEN);
+        assert.equal(streamer.readyState, WebSocket.OPEN);
+        assert.equal(server.playerRegistry.count(), 1);
+        assert.equal(owner.streamerPlayerId, ownerId);
+        assert.equal(owner.codecNegotiated, true);
+        assert.deepEqual([...owner.subscribedStreamer.subscribers], [owner.playerId]);
+        viewer.close(); streamer.close();
+    });
+}
+
+for (const stage of ['before-subscribe', 'no-streamer-offer', 'no-browser-answer', 'negotiated']) {
+    test(`governed negotiation deadline: ${stage}`, (t) => {
+        t.mock.timers.enable({ apis: ['setTimeout'] });
+        const server = serverWith(); const events = []; const stalls = [];
+        server.codecEvidenceRecorder = event => events.push(event);
+        server.playerRegistry.on('streamer_negotiation_timeout', streamer => stalls.push(streamer));
+        const streamer = new Socket(); const viewer = new Socket();
+        server.onStreamerConnected(streamer, request());
+        streamer.receive({ type: 'endpointId', id: 'test-streamer' });
+        server.onPlayerConnected(viewer, request({ sessionRequestId: 'signed-request' }));
+        const player = server.playerRegistry.listPlayers()[0];
+        if (stage !== 'before-subscribe') viewer.receive({ type: 'subscribe', streamerId: 'test-streamer' });
+        if (['no-browser-answer', 'negotiated'].includes(stage)) {
+            const sdp = 'v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 98\r\na=rtpmap:98 VP9/90000\r\n';
+            streamer.receive({ type: 'offer', playerId: player.streamerPlayerId, sdp });
+            if (stage === 'negotiated') viewer.receive({ type: 'answer', sdp, mediaGeneration: 0 });
+        }
+        t.mock.timers.tick(60_001);
+        assert.equal(viewer.readyState, stage === 'negotiated' ? WebSocket.OPEN : WebSocket.CLOSED);
+        assert.equal(server.playerRegistry.count(), stage === 'negotiated' ? 1 : 0);
+        assert.equal(stalls.length, stage === 'no-streamer-offer' ? 1 : 0);
+        if (stage !== 'negotiated') assert.match(events.find(event => event.eventType === 'switch_failed').reason, /timed out/);
+        viewer.close(); streamer.close();
+    });
+}
