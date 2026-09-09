@@ -48,7 +48,8 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     private selectedCodec?: VideoCodec;
     private codecSelectionFinalized = false;
     private codecSelectionFailed = false;
-    private lastCodecObservation = { frames: 0, bytes: 0, at: 0 };
+    private lastCodecObservation = { frames: 0, bytes: 0 };
+    private observedCodec?: string;
     private negotiationTimer?: ReturnType<typeof setTimeout>;
     private streamerDescriptionReceived = false;
 
@@ -330,10 +331,12 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             frames! <= this.lastCodecObservation.frames ||
             bytes! <= this.lastCodecObservation.bytes ||
             frames! > 1e12 ||
-            bytes! > 1e15 ||
-            Date.now() - this.lastCodecObservation.at < 4000
+            bytes! > 1e15
         )
             return true;
+        // Persist the first decoded codec per media generation, not periodic samples.
+        // Older clients may still report repeatedly; contradictions must never be suppressed.
+        if (data.codec === this.observedCodec) return true;
         try {
             // Browser observations are explicitly untrusted evidence, retained even when contradictory.
             this.recordCodec('observed', {
@@ -342,7 +345,8 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
                 framesDecoded: frames,
                 bytesReceived: bytes
             });
-            this.lastCodecObservation = { frames: frames!, bytes: bytes!, at: Date.now() };
+            this.lastCodecObservation = { frames: frames!, bytes: bytes! };
+            this.observedCodec = data.codec;
             if (data.codec !== this.selectedCodec) {
                 this.failCodecNegotiation('Observed codec differs from negotiated policy');
                 return true;
@@ -720,7 +724,8 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
                 this.codecOffer = undefined;
                 this.codecOfferFromStreamer = undefined;
                 this.codecNegotiated = false;
-                this.lastCodecObservation = { frames: 0, bytes: 0, at: 0 };
+                this.lastCodecObservation = { frames: 0, bytes: 0 };
+                this.observedCodec = undefined;
                 this.sendCodecState('restarting');
             }
             this.codecHasSubscribed = true;

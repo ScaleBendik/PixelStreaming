@@ -115,7 +115,7 @@ export class WebRtcPlayerController {
     private codecMediaGeneration = 0;
     private codecCapabilitiesSent = false;
     private applyingCodecState = false;
-    private lastCodecReport = 0;
+    private lastReportedCodec?: string;
     private codecStatusElement?: HTMLDivElement;
 
     private sendSignallingMessage<T extends BaseMessage>(message: T): void {
@@ -179,7 +179,7 @@ export class WebRtcPlayerController {
                 this.config.setOptionSettingValue(OptionParameters.PreferredCodec, state.selectedCodec);
             this.preferredCodec = state.selectedCodec;
             if (state.status === 'restarting' && newGeneration) {
-                this.lastCodecReport = 0;
+                this.lastReportedCodec = undefined;
                 this.replacePeerConnectionController(this.peerConfig, false);
             }
         } finally {
@@ -309,7 +309,7 @@ export class WebRtcPlayerController {
             this.config.scaleWorldCodecPolicy = undefined;
             this.codecMediaGeneration = 0;
             this.codecCapabilitiesSent = false;
-            this.lastCodecReport = 0;
+            this.lastReportedCodec = undefined;
             this.signallingConnectionGeneration++;
             this.subscribedSignallingConnectionGeneration = -1;
             this.activeSubscribedStreamerId = '';
@@ -2285,9 +2285,9 @@ export class WebRtcPlayerController {
             codec &&
             inbound.framesDecoded > 0 &&
             inbound.bytesReceived > 0 &&
-            Date.now() - this.lastCodecReport >= 5000
+            codec !== this.lastReportedCodec
         ) {
-            this.lastCodecReport = Date.now();
+            this.lastReportedCodec = codec;
             this.sendSignallingMessage({
                 type: 'scaleWorldCodecObservation',
                 mediaGeneration: this.codecMediaGeneration,

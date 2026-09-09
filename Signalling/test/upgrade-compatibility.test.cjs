@@ -99,6 +99,17 @@ test('policy-selected codec rejects legacy switches and retains actual codec evi
     assert.equal(events.at(-1).evidenceSource, 'browser');
     assert.equal(new Set(events.map(e => e.connectionId)).size, 1);
     assert.deepEqual(events.map(e => e.sequence), [1, 2, 3]);
+    // Old browsers may continue sending periodic samples. None add journal/SQL rows.
+    for (let i = 1; i <= 720; i++) {
+        viewer.receive({ type: 'scaleWorldCodecObservation', codec: 'VP9', mediaGeneration: 0, framesDecoded: 100 + i, bytesReceived: 999999 + i });
+    }
+    assert.equal(events.filter(e => e.eventType === 'observed').length, 1);
+    // A contradiction immediately after the first observation must still be retained
+    // and disconnect, even if the codec is otherwise in the policy allowlist.
+    viewer.receive({ type: 'scaleWorldCodecObservation', codec: 'H264', mediaGeneration: 0, framesDecoded: 1000, bytesReceived: 1999999 });
+    assert.deepEqual(events.filter(e => e.eventType === 'observed').map(e => e.codec), ['VP9', 'H264']);
+    assert.equal(viewer.readyState, WebSocket.CLOSED);
+    assert.equal(events.find(e => e.eventType === 'switch_failed').reason, 'Observed codec differs from negotiated policy');
     viewer.close(); streamer.close();
 });
 
