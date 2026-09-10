@@ -13,6 +13,7 @@ import {
     TextParameters
 } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.8';
 import { Application, PixelStreamingApplicationStyle } from '@epicgames-ps/lib-pixelstreamingfrontend-ui-ue5.8';
+import { installResolutionRecovery } from './resolutionRecovery';
 const PixelStreamingApplicationStyles =
     new PixelStreamingApplicationStyle();
 PixelStreamingApplicationStyles.applyStyleSheet();
@@ -1038,11 +1039,13 @@ document.body.onload = function() {
         const eventData = (event as { data?: { eventString?: string } }).data;
         const reason = eventData?.eventString ?? '';
         if (isInactivityDisconnectReason(reason)) {
+            resolutionRecovery.cancel();
             showInactivityDisconnectGuidance();
             return;
         }
 
         if (isScaleWorldSessionEndedReason(reason)) {
+            resolutionRecovery.cancel();
             removeSessionStorage(connectTicketStorageKey);
             removeSessionStorage(reconnectContextStorageKey);
             showSessionEndedGuidance();
@@ -1059,6 +1062,7 @@ document.body.onload = function() {
             return;
         }
 
+        resolutionRecovery.cancel();
         const redirected = redirectToSessionManagerForReconnect(reason);
         if (!redirected) {
             showExpiredConnectionGuidance();
@@ -1075,6 +1079,12 @@ document.body.onload = function() {
         application.onMediaPresented();
     }
     document.body.appendChild(application.rootElement);
+
+    const resolutionRecovery = installResolutionRecovery(stream, () => {
+        // An explicit in-game size must not compete with automatic browser viewport resizing.
+        config.setFlagEnabled(Flags.MatchViewportResolution, false);
+    });
+    window.addEventListener('pagehide', () => resolutionRecovery.dispose(), { once: true });
 
     if (shouldAutoConnect) {
         stream.connect();

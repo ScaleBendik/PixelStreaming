@@ -66,6 +66,42 @@ Unreal-only recovery. CUDA texture sharing can have resource-layout compatibilit
 and synchronization costs; check image correctness and latency under GPU load.
 Compression still uses NVENC hardware. Startup readiness alone is not media proof.
 
+## Blueprint-driven resize recovery
+
+The reference TypeScript player handles this Pixel Streaming 2 Send Response
+Descriptor after the in-game resolution change:
+
+```json
+{"type":"resolutionApplied","width":2560,"height":1440}
+```
+
+Width/height must be integer dimensions between 1 and 8192. Unrelated, malformed
+or oversized responses are ignored. The user-selected initial Blueprint sequence
+is r.setres, a 0.2-second Delay, then Send Response. That delay is an experimental
+settling interval, not proof that Unreal has completed the resize.
+
+The player disables MatchViewportResolution for the explicit choice, shows
+Applying resolution, and calls the existing reconnect path once. It does not
+request a new managed session, restart Unreal, change codec policy, or bypass
+H264 single-viewer admission. Rapid notifications coalesce to the latest size.
+Recovery completes only after a presented-frame callback from a replacement video
+source reports the requested dimensions. Old sources/callbacks cannot complete
+it. After 30 seconds it displays Retry connection instead of starting another
+resize-driven retry; normal transport/ticket recovery remains independently owned
+by the existing player. Explicit session-end, inactivity and ticket-expiry guidance
+takes precedence. Page exit removes the handler and pending timers/callbacks.
+
+This is a reconnect mitigation, not an encoder/resource fix. Frame dimensions do
+not prove freedom from tiled/shifted output. Host-validate the exact player/runtime
+and Blueprint build with repeated changes among 1920x1080, 2240x1260, 2560x1440 and
+3840x2160, direct and forced TURN, mouse alignment, unchanged session/application
+state, reconnect grace, H264 viewer removal, memory stability, rapid clicks and
+expired tickets. Confirm that 0.2 seconds is sufficient; use applied-size
+acknowledgement if it is not. Do not close the media gate on local tests alone.
+
+Focused regression command (under the pinned Node):
+`npm test --workspace Frontend/implementations/typescript`.
+
 ## d1 closeout
 
 d1 was restored to its original scheduled launcher and VP9 configuration.
