@@ -26,15 +26,17 @@ export class DataChannelSender {
     /**
      * Send Data over the Data channel to the UE Instance
      * @param data - Message Data Array Buffer
+     * @param countsAsActivity - Whether this send should extend AFK (defaults to legacy behavior)
      */
-    sendData(data: ArrayBuffer) {
-        // reset the afk inactivity
+    sendData(data: ArrayBuffer, countsAsActivity = true) {
         const dataChannelInstance = this.dataChannelProvider.getDataChannelInstance();
 
         if (dataChannelInstance.dataChannel.readyState === 'open') {
             dataChannelInstance.dataChannel.send(data);
             Logger.Info(`Message Sent: ${new Uint8Array(data)}`);
-            this.resetAfkWarningTimerOnDataSend();
+            if (countsAsActivity) {
+                this.resetAfkWarningTimerOnDataSend();
+            }
         } else {
             Logger.Error(`Message Failed: ${new Uint8Array(data)}`);
         }

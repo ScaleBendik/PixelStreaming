@@ -8,6 +8,8 @@ export class SendMessageController {
     toStreamerMessagesMapProvider: StreamMessageController;
     dataChannelSender: DataChannelSender;
 
+    private readonly gamepadAnalogActivityValues = new Map<string, number>();
+
     /**
      * @param dataChannelSender - Data channel instance
      * @param toStreamerMessagesMapProvider - Stream Messages instance
@@ -164,6 +166,50 @@ export class SendMessageController {
             return;
         }
 
-        this.dataChannelSender.sendData(data.buffer);
+        this.dataChannelSender.sendData(data.buffer, this.countsAsActivity(messageType, messageData));
+    }
+
+    /**
+     * Repeated gamepad polling is transport state, not evidence of new activity.
+     * Keep other senders' legacy AFK behavior in this narrowly scoped fix.
+     * These thresholds affect AFK only; Unreal still receives every original value.
+     */
+    private countsAsActivity(messageType: string, messageData: Array<number | string | Uint8Array>): boolean {
+        switch (messageType) {
+            case 'GamepadConnected':
+                return false;
+            case 'GamepadDisconnected': {
+                const prefix = String(messageData[0]) + ':';
+                for (const key of this.gamepadAnalogActivityValues.keys()) {
+                    if (key.startsWith(prefix)) {
+                        this.gamepadAnalogActivityValues.delete(key);
+                    }
+                }
+                return false;
+            }
+            case 'GamepadButtonPressed':
+                return messageData[2] === 0;
+            case 'GamepadAnalog': {
+                const value = messageData[2];
+                if (typeof value !== 'number' || !Number.isFinite(value)) {
+                    return false;
+                }
+                const key = String(messageData[0]) + ':' + String(messageData[1]);
+                const previous = this.gamepadAnalogActivityValues.get(key) ?? 0;
+                // Resting stick/trigger noise must not keep an unattended pad alive.
+                if (Math.abs(value) <= 0.1 && Math.abs(previous) <= 0.1) {
+                    this.gamepadAnalogActivityValues.set(key, value);
+                    return false;
+                }
+                // Compare against the last significant sample so slow movement accumulates.
+                if (Math.abs(value - previous) < 0.02) {
+                    return false;
+                }
+                this.gamepadAnalogActivityValues.set(key, value);
+                return true;
+            }
+            default:
+                return true;
+        }
     }
 }
