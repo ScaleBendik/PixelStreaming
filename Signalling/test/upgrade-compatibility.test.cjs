@@ -26,8 +26,10 @@ class Socket extends WebSocket {
     }
     send(message) { this.messages.push(JSON.parse(message)); }
     ping() { this.pings++; }
-    close() {
+    close(code, reason) {
         if (this._readyState === WebSocket.CLOSED) return;
+        this.closeCode = code;
+        this.closeReason = reason;
         this._readyState = WebSocket.CLOSED;
         this.emit('close', 1000, Buffer.alloc(0));
     }
@@ -671,9 +673,11 @@ test('admin shadow inherits the active fallback codec without managed identity a
     const stale = new Socket();
     server.onPlayerConnected(stale, request({ shadowSessionRequestId: 'signed-request', codecPolicy: policy }));
     assert.equal(stale.readyState, WebSocket.CLOSED);
+    assert.equal(stale.closeCode, 1008);
+    assert.match(stale.closeReason, /active owner with negotiated video and matching policy/);
     streamer.close();
 });
-for (const codec of ['H264', 'VP9']) {
+for (const codec of ['H264', 'VP9', 'AV1']) {
     test(`${codec} shadow admission protects the owner's Unreal peer`, () => {
         const server = serverWith();
         server.codecEvidenceRecorder = () => {};
@@ -769,3 +773,32 @@ test('session quality accepts only managed viewers and strips browser identity f
     assert.equal('sessionRequestId' in summaries[0][1], false);
     managed.close(); unsigned.close();
 });
+
+for (const state of ['absent', 'negotiating', 'policy-mismatch']) {
+    test(`Premium shadow rejection explains unavailable owner: ${state}`, () => {
+        const server = serverWith();
+        const streamer = new Socket(); const viewer = new Socket(); const shadow = new Socket();
+        server.onStreamerConnected(streamer, request());
+        streamer.receive({ type: 'endpointId', id: 'test-streamer' });
+        const policy = { version: 1, snapshotId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', policyHash: 'A'.repeat(64), allowedCodecs: ['AV1', 'VP9'], defaultCodec: 'AV1', allowSwitching: false };
+        if (state !== 'absent') {
+            server.onPlayerConnected(viewer, request({ sessionRequestId: 'signed-request', codecPolicy: policy }));
+            viewer.receive({ type: 'subscribe', streamerId: 'test-streamer' });
+            if (state === 'policy-mismatch') {
+                const owner = server.playerRegistry.listPlayers()[0];
+                const sdp = 'v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=rtpmap:96 AV1/90000\r\n';
+                streamer.receive({ type: 'offer', playerId: owner.streamerPlayerId, sdp });
+                viewer.receive({ type: 'answer', sdp, mediaGeneration: 0 });
+            }
+        }
+        const before = streamer.messages.length;
+        server.onPlayerConnected(shadow, request({ shadowSessionRequestId: 'signed-request', codecPolicy: { ...policy, policyHash: state === 'policy-mismatch' ? 'B'.repeat(64) : policy.policyHash } }));
+        assert.equal(shadow.readyState, WebSocket.CLOSED);
+        assert.equal(shadow.closeCode, 1008);
+        assert.match(shadow.closeReason, /active owner with negotiated video and matching policy/);
+        assert.equal(streamer.messages.length, before);
+        assert.equal(server.playerRegistry.count(), state === 'absent' ? 0 : 1);
+        assert.equal(viewer.readyState, WebSocket.OPEN);
+        viewer.close(); streamer.close();
+    });
+}

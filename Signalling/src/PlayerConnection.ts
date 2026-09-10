@@ -99,7 +99,15 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
         this.selectedCodec = policy.defaultCodec;
         if (shadowSessionRequestId) {
             const source = this.shadowSource();
-            if (!source || !policy.allowedCodecs.includes(source.selectedCodec!)) return false;
+            if (!source) {
+                this.codecAdmissionFailureReason =
+                    'Shadow connect requires an active owner with negotiated video and matching policy';
+                return false;
+            }
+            if (!policy.allowedCodecs.includes(source.selectedCodec!)) {
+                this.codecAdmissionFailureReason = 'Shadow connect policy does not permit the owner codec';
+                return false;
+            }
             if (source.selectedCodec === 'H264') {
                 this.codecAdmissionFailureReason = 'Shadow connect is unavailable for H264 sessions';
                 return false;
