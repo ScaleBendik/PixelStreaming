@@ -116,7 +116,6 @@ export class WebRtcPlayerController {
     private codecCapabilitiesSent = false;
     private applyingCodecState = false;
     private lastReportedCodec?: string;
-    private codecStatusElement?: HTMLDivElement;
 
     private sendSignallingMessage<T extends BaseMessage>(message: T): void {
         if (!this.codecCapabilitiesSent && ['subscribe', 'offer'].includes(message.type)) {
@@ -185,20 +184,6 @@ export class WebRtcPlayerController {
         } finally {
             this.applyingCodecState = false;
         }
-        if (!this.codecStatusElement) {
-            this.codecStatusElement = document.createElement('div');
-            this.codecStatusElement.setAttribute('role', 'status');
-            this.codecStatusElement.style.cssText =
-                'position:absolute;bottom:12px;left:12px;padding:6px 10px;background:#161b22;color:white;border-radius:4px;pointer-events:none;z-index:30;font:13px sans-serif';
-            this.pixelStreaming.videoElementParent.appendChild(this.codecStatusElement);
-        }
-        const text =
-            state.status === 'streaming'
-                ? 'Codec: ' + state.selectedCodec
-                : state.status === 'restarting' || state.status === 'negotiating'
-                  ? 'Connecting video using ' + state.selectedCodec + '…'
-                  : (state.reason ?? 'Codec unavailable');
-        this.codecStatusElement.textContent = text;
     }
 
     private signallingConnectionGeneration = 0;
