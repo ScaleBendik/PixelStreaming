@@ -829,20 +829,6 @@ describe('PixelStreaming', () => {
     //     expect(streamRejectedSpy).toHaveBeenCalled();
     // });
 
-    it('resolution requests validate dimensions and notify only after a successful send', () => {
-        const pixelStreaming = new PixelStreaming(new Config({ initialSettings: { ss: mockSignallingUrl } }));
-        const events = jest.fn();
-        pixelStreaming.addEventListener('resolutionRequested', events);
-        expect(pixelStreaming.requestResolution(1920, 1080)).toBe(false);
-        expect(events).not.toHaveBeenCalled();
-        const send = jest.spyOn(pixelStreaming, 'emitCommand').mockReturnValue(true);
-        expect(pixelStreaming.requestResolution(0, 1080)).toBe(false);
-        expect(pixelStreaming.requestResolution(3840, 2160)).toBe(true);
-        expect(send).toHaveBeenCalledTimes(1);
-        expect(send).toHaveBeenCalledWith({ 'Resolution.Width': 3840, 'Resolution.Height': 2160 });
-        expect(events.mock.calls[0][0].data).toEqual({ width: 3840, height: 2160 });
-    });
-
     it('should send data through the data channel when emitCommand is called', () => {
         mockHTMLMediaElement({ ableToPlay: true, readyState: 2 });
         
@@ -876,7 +862,7 @@ describe('PixelStreaming', () => {
         const sent = rtcPeerConnectionSpyFunctions.sendDataSpy as jest.Mock;
         sent.mockClear();
 
-        config.setNumericSetting(NumericParameters.ViewportResScale, 0.5);
+        config.setNumericSetting(NumericParameters.ViewportResScale, 2);
         jest.advanceTimersByTime(400);
 
         expect(sent).toHaveBeenCalledTimes(1);
@@ -885,7 +871,7 @@ describe('PixelStreaming', () => {
         const text = Array.from({ length: command.getUint16(1, true) }, (_, index) =>
             String.fromCharCode(command.getUint16(3 + index * 2, true))
         ).join('');
-        expect(JSON.parse(text)).toEqual({ 'Resolution.Width': 320, 'Resolution.Height': 180 });
+        expect(JSON.parse(text)).toEqual({ 'Resolution.Width': 1280, 'Resolution.Height': 720 });
 
         config.setFlagEnabled(Flags.MatchViewportResolution, false);
         sent.mockClear();

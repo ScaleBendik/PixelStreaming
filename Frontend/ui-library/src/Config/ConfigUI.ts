@@ -37,11 +37,8 @@ export class ConfigUI {
     private static readonly defaultExpandedSections = new Set<string>([
         SettingsSections.PixelStreaming,
         SettingsSections.WebRTC,
-        SettingsSections.Resolution,
         SettingsSections.Commands
     ]);
-
-    public onResolutionSelected: (width: number, height: number) => boolean = () => false;
 
     private customFlags = new Map<FlagsIdsExtended, SettingFlag<FlagsIdsExtended>>();
 
@@ -59,7 +56,7 @@ export class ConfigUI {
 
     // ------------ Settings -----------------
 
-    constructor(private config: Config) {
+    constructor(config: Config) {
         this.createCustomUISettings(config.useUrlParams);
         this.registerSettingsUIComponents(config);
     }
@@ -233,68 +230,18 @@ export class ConfigUI {
                 );
         }
 
-        if (isSectionEnabled(settingsConfig, SettingsSections.Resolution)) {
-            const section = this.buildSectionWithHeading(settingsElem, SettingsSections.Resolution);
-            const row = document.createElement('div');
-            row.classList.add('setting', 'form-group');
-            const title = document.createElement('div');
-            title.textContent = 'Fixed resolution (16:9)';
-            row.appendChild(title);
-            const label = document.createElement('label');
-            const presets = document.createElement('select');
-            presets.setAttribute('aria-label', 'Fixed resolution (16:9)');
-            presets.classList.add('form-control', 'settings-option');
-            for (const name of ['keydown', 'keyup', 'keypress']) {
-                presets.addEventListener(name, (event) => event.stopPropagation());
-            }
-            for (const [value, text] of [
-                ['', 'Choose resolution'],
-                ['1920x1080', '1920 × 1080'],
-                ['2240x1260', '2240 × 1260'],
-                ['2560x1440', '2560 × 1440'],
-                ['3840x2160', '3840 × 2160']
-            ]) {
-                const option = document.createElement('option');
-                option.value = value;
-                option.textContent = text;
-                presets.appendChild(option);
-            }
-            label.appendChild(presets);
-            row.appendChild(label);
-            section.appendChild(row);
-            const status = document.createElement('p');
-            status.setAttribute('role', 'status');
-            status.style.cssText = 'font-size:14px;line-height:1.4';
-            section.appendChild(status);
-            presets.addEventListener('change', () => {
-                if (!presets.value) return;
-                const [width, height] = presets.value.split('x').map(Number);
-                const matching = this.config.isFlagEnabled(Flags.MatchViewportResolution);
-                this.config.setFlagEnabled(Flags.MatchViewportResolution, false);
-                const sent = this.onResolutionSelected(width, height);
-                if (!sent) this.config.setFlagEnabled(Flags.MatchViewportResolution, matching);
-                status.textContent = sent
-                    ? `Requested ${width} × ${height}. See Information for received resolution.`
-                    : 'Connect to the stream before changing resolution.';
-                presets.value = '';
-            });
-            if (isSettingEnabled(settingsConfig, Flags.MatchViewportResolution))
-                this.addSettingFlag(section, this.flagsUi.get(Flags.MatchViewportResolution));
-            const warning = document.createElement('p');
-            warning.textContent =
-                'Viewport matching overrides fixed presets. Ultrawide and other non-16:9 layouts may not display correctly in ScaleWorld.';
-            warning.style.cssText = 'font-size:14px;line-height:1.4';
-            section.appendChild(warning);
-            if (isSettingEnabled(settingsConfig, NumericParameters.ViewportResScale))
-                this.addSettingNumeric(
-                    section,
-                    this.numericParametersUi.get(NumericParameters.ViewportResScale)
-                );
-        }
-
         if (isSectionEnabled(settingsConfig, SettingsSections.UI)) {
             /* Setup all view/ui related settings under this section */
             const viewSettingsSection = this.buildSectionWithHeading(settingsElem, SettingsSections.UI);
+            if (isSettingEnabled(settingsConfig, Flags.MatchViewportResolution))
+                this.addSettingFlag(viewSettingsSection, this.flagsUi.get(Flags.MatchViewportResolution));
+
+            if (isSettingEnabled(settingsConfig, NumericParameters.ViewportResScale))
+                this.addSettingNumeric(
+                    viewSettingsSection,
+                    this.numericParametersUi.get(NumericParameters.ViewportResScale)
+                );
+
             if (isSettingEnabled(settingsConfig, Flags.HoveringMouseMode))
                 this.addSettingFlag(viewSettingsSection, this.flagsUi.get(Flags.HoveringMouseMode));
 

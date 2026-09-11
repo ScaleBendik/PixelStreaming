@@ -130,7 +130,6 @@ export class Application {
 
         this.onColorModeChanged = options.onColorModeChanged;
         this.configUI = new ConfigUI(this.stream.config);
-        this.configUI.onResolutionSelected = (width, height) => this.stream.requestResolution(width, height);
 
         this.createOverlays();
 

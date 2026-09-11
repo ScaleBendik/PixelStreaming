@@ -37,7 +37,6 @@ function fixture(t) {
     const events = new Map();
     let listener;
     const stream = {
-        config: { scaleWorldCodecPolicy: { selectedCodec: 'H264' } },
         reconnects: 0,
         webRtcController: { videoPlayer: { getVideoElement: () => video } },
         reconnect() { this.reconnects++; },
@@ -48,7 +47,7 @@ function fixture(t) {
     };
     let explicitSizes = 0;
     const recovery = installResolutionRecovery(stream, () => explicitSizes++);
-    const emit = (name, event) => events.get(name)?.(event);
+    const emit = (name) => events.get(name)?.();
     return {
         stream, video, nodes, callbacks, recovery, emit,
         send: (message = response()) => listener?.(message),
@@ -139,28 +138,4 @@ test('unrelated responses do not change viewport policy or start recovery; recon
     f.stream.reconnect = () => { throw new Error('closed'); };
     f.send(); assert.equal(f.explicitSizes, 1);
     assert.match(f.nodes[0].children[0].textContent, /did not return/);
-});
-
-
-test('AV1 and VP9 resolution requests and Blueprint notifications never reconnect', t => {
-    const f = fixture(t);
-    for (const codec of ['AV1', 'VP9']) {
-        f.stream.config.scaleWorldCodecPolicy.selectedCodec = codec;
-        f.send();
-        f.emit('resolutionRequested', { data: { width: 3840, height: 2160 } });
-        f.present(3840, 2160);
-    }
-    assert.equal(f.stream.reconnects, 0);
-    assert.equal(f.nodes.length, 0);
-});
-
-test('H264 GUI request waits for resized frames, then verifies replacement frames', t => {
-    const f = fixture(t);
-    f.emit('resolutionRequested', { data: { width: 3840, height: 2160 } });
-    f.present(2240,1260);
-    assert.equal(f.stream.reconnects, 0);
-    f.present(3840,2160);
-    assert.equal(f.stream.reconnects, 1);
-    f.replace(); f.present(3840,2160);
-    assert.equal(f.nodes.length, 0);
 });

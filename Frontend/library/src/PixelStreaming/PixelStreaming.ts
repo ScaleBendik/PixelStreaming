@@ -9,7 +9,6 @@ import { Logger } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
 import { InitialSettings } from '../DataChannel/InitialSettings';
 import {
     PixelStreamingEventEmitter,
-    ResolutionRequestedEvent,
     InitialSettingsEvent,
     LatencyCalculatedEvent,
     LatencyTestResultEvent,
@@ -803,15 +802,6 @@ export class PixelStreaming {
             return false;
         }
         this._webRtcController.emitUIInteraction(descriptor);
-        return true;
-    }
-
-    /** Request dimensions through Pixel Streaming without changing the window mode. */
-    public requestResolution(width: number, height: number): boolean {
-        if (![width, height].every((value) => Number.isInteger(value) && value > 0 && value <= 8192))
-            return false;
-        if (!this.emitCommand({ 'Resolution.Width': width, 'Resolution.Height': height })) return false;
-        this.dispatchEvent(new ResolutionRequestedEvent({ width, height }));
         return true;
     }
 

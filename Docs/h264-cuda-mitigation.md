@@ -21,10 +21,8 @@ mechanism. Increasing RAM/pagefile would only postpone the observed exhaustion.
 ## Launcher behavior
 
 `SignallingWebServer/platform_scripts/powershell/start_scaleworld.ps1` adds
-CUDA=false for AV1 startup and CUDA=true for other initial codecs, which may
-negotiate H264 later. This is a process-wide choice: codec negotiation does not
-change the CUDA flag. An AV1-started process negotiating H264 still uses its
-native path and requires separate memory acceptance. Codec negotiation remains enabled.
+the CUDA flag for every initial codec, because governed sessions can negotiate
+H264 later. Codec negotiation is enabled in the same launcher.
 Standard VP9, premium AV1 and explicit codec-selection precedence are unchanged.
 The renderer is not switched. Because this is in the common Unreal launcher,
 normal startup and Unreal-only watchdog recovery both apply the option without
@@ -39,8 +37,7 @@ not publish an artifact; the user will perform the artifact update manually.
 On 2026-09-09 the user reported persistent tiled/shifted video after changing
 2240x1260 to 2560x1440 through an in-game Blueprint command with the CUDA path
 enabled. Reconnecting to the same session restores the image at the new size.
-Live resolution changes remain a known limitation (accepted as non-blocking
-for this release by the user on 2026-09-10); the prior
+Live resolution changes therefore remain a known acceptance blocker; the prior
 bounded-memory result does not establish correct resizing. The exact instance,
 negotiated codec and resource-level cause have not yet been verified for this report.
 
@@ -69,32 +66,6 @@ Unreal-only recovery. CUDA texture sharing can have resource-layout compatibilit
 and synchronization costs; check image correctness and latency under GPU load.
 Compression still uses NVENC hardware. Startup readiness alone is not media proof.
 
-## GUI resolution controls
-
-The Settings panel has a Resolution section with fixed 16:9 presets: 1920x1080,
-2240x1260, 2560x1440 and 3840x2160. These use the built-in Resolution.Width and
-Resolution.Height command, without r.setres or a fullscreen suffix. Selecting a
-preset disables viewport matching. The UI reports a request, not confirmed
-application; use the Information panel to verify received dimensions.
-
-Match viewport resolution remains available in this section with a warning that
-ultrawide/non-16:9 layouts may not display correctly. Viewport scale is clamped
-to 0.1–1, including initial and URL settings. Scaling cannot upscale the viewport;
-a wide viewport can still produce a non-16:9 image. Fixed presets avoid that.
-
-Both preset and viewport commands emit resolutionRequested only after the data
-channel accepts the command. The reference player leaves AV1/VP9 connected.
-For H264 it waits for a presented frame at the requested dimensions, then performs
-one existing reconnect and verifies a replacement-source frame. A 30-second
-manual-Retry timeout bounds either phase; matching dimensions are not proof of
-image correctness. Same-size viewport notifications do not trigger repeat refreshes.
-
-In-game controls remain in place until the user validates this GUI path. Their
-resolutionApplied messages remain supported with H264-only reconnect recovery.
-Test all four exact presets, repeated up/down changes, ultrawide letterboxing,
-viewport toggle/scale, direct/TURN, ticket expiry and H264 memory/reconnect behavior
-on the final artifact. AV1 CUDA-off does not itself establish resize stability.
-
 ## Blueprint-driven resize recovery
 
 The reference TypeScript player handles this Pixel Streaming 2 Send Response
@@ -110,8 +81,7 @@ is r.setres, a 0.2-second Delay, then Send Response. That delay is an experiment
 settling interval, not proof that Unreal has completed the resize.
 
 The player disables MatchViewportResolution for the explicit choice, shows
-Applying resolution, and calls the existing reconnect path once for H264 only.
-AV1 and VP9 responses do not initiate reconnects. It does not
+Applying resolution, and calls the existing reconnect path once. It does not
 request a new managed session, restart Unreal, change codec policy, or bypass
 H264 single-viewer admission. Rapid notifications coalesce to the latest size.
 Recovery completes only after a presented-frame callback from a replacement video

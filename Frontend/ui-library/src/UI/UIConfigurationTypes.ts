@@ -23,7 +23,6 @@ export class SettingsSections {
     static Encoder = 'Encoder' as const;
     static WebRTC = 'WebRTC' as const;
     static Commands = 'Commands' as const;
-    static Resolution = 'Resolution' as const;
 }
 
 export type SettingsSectionsKeys = Exclude<keyof typeof SettingsSections, 'prototype'>;
