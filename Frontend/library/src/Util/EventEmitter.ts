@@ -616,7 +616,15 @@ export class WebRtcTCPRelayDetectedEvent extends Event {
     }
 }
 
+export class ResolutionRequestedEvent extends Event {
+    override readonly type: 'resolutionRequested';
+    constructor(public readonly data: { width: number; height: number }) {
+        super('resolutionRequested');
+    }
+}
+
 export type PixelStreamingEvent =
+    | ResolutionRequestedEvent
     | AfkWarningActivateEvent
     | AfkWarningUpdateEvent
     | AfkWarningDeactivateEvent

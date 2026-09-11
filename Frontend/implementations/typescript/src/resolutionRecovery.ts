@@ -19,6 +19,8 @@ export function parseResolutionApplied(response: string): Resolution | null {
 
 /** One ordinary reconnect; success requires a presented frame from the replacement video source. */
 export function installResolutionRecovery(stream: PixelStreaming, onResolutionApplied: () => void = () => {}): { cancel: () => void; dispose: () => void } {
+    let phase: 'resize' | 'reconnect' = 'reconnect';
+    const needsReconnect = () => stream.config.scaleWorldCodecPolicy?.selectedCodec === 'H264';
     let target: Resolution | null = null;
     let completed: Resolution | null = null;
     let waiting = false;
@@ -50,7 +52,7 @@ export function installResolutionRecovery(stream: PixelStreaming, onResolutionAp
         overlay.setAttribute('role', 'status');
         overlay.setAttribute('aria-live', 'polite');
         overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;flex-direction:column;' +
-            'align-items:center;justify-content:center;gap:16px;background:rgba(0,0,0,.85);color:white;' +
+            'align-items:center;justify-content:center;gap:16px;background:#000;color:white;' +
             'font:18px sans-serif;text-align:center;padding:24px';
         const text = document.createElement('p');
         text.textContent = failed
@@ -79,6 +81,7 @@ export function installResolutionRecovery(stream: PixelStreaming, onResolutionAp
                 currentVideo.srcObject !== capturedSource) return;
             frame = undefined;
             if (target && metadata.width === target.width && metadata.height === target.height) {
+                if (phase === 'resize') { begin(target); return; }
                 completed = target;
                 cancel();
                 return;
@@ -89,6 +92,7 @@ export function installResolutionRecovery(stream: PixelStreaming, onResolutionAp
     };
     function begin(resolution: Resolution) {
         clearWait();
+        phase = 'reconnect';
         target = resolution;
         waiting = true;
         connected = false;
@@ -102,6 +106,7 @@ export function installResolutionRecovery(stream: PixelStreaming, onResolutionAp
         const resolution = parseResolutionApplied(response);
         if (!resolution || disposed) return;
         onResolutionApplied();
+        if (!needsReconnect()) return;
         if (waiting) {
             // Rapid Blueprint notifications coalesce into the latest dimensions without another viewer.
             target = resolution;
@@ -112,7 +117,24 @@ export function installResolutionRecovery(stream: PixelStreaming, onResolutionAp
             video().videoWidth === resolution.width && video().videoHeight === resolution.height) return;
         begin(resolution);
     };
+    const onRequested = (event: { data: Resolution }) => {
+        if (disposed || !needsReconnect()) return;
+        if (!waiting && video().videoWidth === event.data.width && video().videoHeight === event.data.height) return;
+        if (waiting && phase === 'reconnect') { target = event.data; return; }
+        clearWait();
+        target = event.data;
+        phase = 'resize';
+        waiting = true;
+        connected = true;
+        replacementSource = video().srcObject;
+        show(false);
+        timer = setTimeout(fail, RECOVERY_TIMEOUT_MS);
+        // A decoded frame at the requested size proves the command reached Unreal.
+        // Reconnect only then, rather than racing command delivery with teardown.
+        armFrame();
+    };
     const onDisconnected = () => {
+        if (waiting && phase === 'resize') { fail(); return; }
         connected = false;
         replacementSource = null;
         clearFrame();
@@ -120,6 +142,7 @@ export function installResolutionRecovery(stream: PixelStreaming, onResolutionAp
     };
     const onConnected = () => { connected = true; armFrame(); };
     const onVideo = () => {
+        if (phase === 'resize') return;
         const source = video().srcObject;
         if (!waiting || !source || source === oldSource) return;
         clearFrame();
@@ -127,6 +150,7 @@ export function installResolutionRecovery(stream: PixelStreaming, onResolutionAp
         replacementSource = source;
         armFrame();
     };
+    stream.addEventListener('resolutionRequested', onRequested);
     stream.addResponseEventListener('scaleWorldResolutionRecovery', onResponse);
     stream.addEventListener('webRtcDisconnected', onDisconnected);
     stream.addEventListener('webRtcConnected', onConnected);
@@ -136,6 +160,7 @@ export function installResolutionRecovery(stream: PixelStreaming, onResolutionAp
         dispose: () => {
             disposed = true;
             cancel();
+            stream.removeEventListener('resolutionRequested', onRequested);
             stream.removeResponseEventListener('scaleWorldResolutionRecovery');
             stream.removeEventListener('webRtcDisconnected', onDisconnected);
             stream.removeEventListener('webRtcConnected', onConnected);

@@ -858,9 +858,9 @@ export class Config {
             new SettingNumber(
                 NumericParameters.ViewportResScale,
                 'Viewport Resolution Scale',
-                'Scale factor for viewport resolution when MatchViewportResolution is enabled. 1.0 = 100%, 0.5 = 50%, 2.0 = 200%.',
+                'Viewport size multiplier. Maximum 1 (100%); use fixed presets for 16:9 output.',
                 0.1 /*min*/,
-                3.0 /*max*/,
+                1.0 /*max*/,
                 settings && Object.prototype.hasOwnProperty.call(settings, NumericParameters.ViewportResScale)
                     ? settings[NumericParameters.ViewportResScale]
                     : 1.0 /*value*/,

@@ -1,0 +1,31 @@
+const assert = require('node:assert/strict');
+const test = require('node:test');
+const { JSDOM } = require('jsdom');
+const { ConfigUI } = require('../dist/cjs/Config/ConfigUI.js');
+
+test('Resolution presets send fixed dimensions, disable viewport matching and preserve failed choices', t => {
+    const dom = new JSDOM('<body></body>');
+    const previous = global.document;
+    global.document = dom.window.document;
+    t.after(() => { global.document = previous; dom.window.close(); });
+    const ui = Object.create(ConfigUI.prototype);
+    let matching = true;
+    ui.config = { isFlagEnabled: () => matching, setFlagEnabled: (_id, value) => { matching = value; } };
+    ui.flagsUi = new Map(); ui.numericParametersUi = new Map();
+    const calls = [];
+    let connected = true;
+    ui.onResolutionSelected = (width, height) => { calls.push([width,height,matching]); return connected; };
+    const root = document.createElement('div');
+    ui.populateSettingsElement(root, { settingVisibility: {}, sectionVisibility: { "Pixel Streaming":false, UI:false, Input:false, Encoder:false, WebRTC:false, Commands:false, Resolution:true } });
+    const select = root.querySelector('select');
+    assert.deepEqual([...select.options].slice(1).map(x => x.value), ['1920x1080','2240x1260','2560x1440','3840x2160']);
+    select.value = '3840x2160'; select.dispatchEvent(new dom.window.Event('change'));
+    assert.deepEqual(calls, [[3840,2160,false]]);
+    assert.equal(matching, false);
+    assert.match(root.textContent, /Requested 3840/);
+    assert.match(root.textContent, /Ultrawide/);
+    matching = true; connected = false;
+    select.value = '1920x1080'; select.dispatchEvent(new dom.window.Event('change'));
+    assert.equal(matching, true);
+    assert.match(root.textContent, /Connect to the stream/);
+});

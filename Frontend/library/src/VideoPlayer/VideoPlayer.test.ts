@@ -53,26 +53,33 @@ describe('VideoPlayer.updateVideoStreamSize — ViewportResScale', () => {
         expect(callback).toHaveBeenCalledWith(375, 667);
     });
 
+    it('caps configured and initial viewport scales at one', () => {
+        config.setNumericSetting(NumericParameters.ViewportResScale, 3);
+        expect(config.getNumericSettingValue(NumericParameters.ViewportResScale)).toBe(1);
+        const initial = new Config({ initialSettings: { [NumericParameters.ViewportResScale]: 2 } });
+        expect(initial.getNumericSettingValue(NumericParameters.ViewportResScale)).toBe(1);
+    });
+
     it('multiplies both dimensions by the configured scale', () => {
-        config.setNumericSetting(NumericParameters.ViewportResScale, 2.0);
+        config.setNumericSetting(NumericParameters.ViewportResScale, 0.5);
         setViewportSize(375, 667);
 
         // lastTimeResized was updated on construction, reset again.
         (player as unknown as { lastTimeResized: number }).lastTimeResized = 0;
         player.updateVideoStreamSize();
 
-        expect(callback).toHaveBeenCalledWith(750, 1334);
+        expect(callback).toHaveBeenCalledWith(188, 334);
     });
 
     it('rounds non-integer products to integers', () => {
-        config.setNumericSetting(NumericParameters.ViewportResScale, 1.5);
+        config.setNumericSetting(NumericParameters.ViewportResScale, 0.75);
         setViewportSize(375, 667);
 
         (player as unknown as { lastTimeResized: number }).lastTimeResized = 0;
         player.updateVideoStreamSize();
 
-        // 375 * 1.5 = 562.5 → 563, 667 * 1.5 = 1000.5 → 1001
-        expect(callback).toHaveBeenCalledWith(563, 1001);
+        // Fractional scales round both dimensions.
+        expect(callback).toHaveBeenCalledWith(281, 500);
         const [w, h] = callback.mock.calls[0] as [number, number];
         expect(Number.isInteger(w)).toBe(true);
         expect(Number.isInteger(h)).toBe(true);
@@ -82,7 +89,7 @@ describe('VideoPlayer.updateVideoStreamSize — ViewportResScale', () => {
         const warnSpy = jest.spyOn(Logger, 'Warning').mockImplementation(() => {});
 
         config.setNumericSetting(NumericParameters.ViewportResScale, 3.0);
-        setViewportSize(2000, 1000); // 2000*3 = 6000 > 4096
+        setViewportSize(6000, 3000); // Scale is capped at 1, but a wide viewport still warns.
 
         (player as unknown as { lastTimeResized: number }).lastTimeResized = 0;
         player.updateVideoStreamSize();
@@ -96,7 +103,7 @@ describe('VideoPlayer.updateVideoStreamSize — ViewportResScale', () => {
     it('does not warn when scaled dimensions stay within the encoder limit', () => {
         const warnSpy = jest.spyOn(Logger, 'Warning').mockImplementation(() => {});
 
-        config.setNumericSetting(NumericParameters.ViewportResScale, 2.0);
+        config.setNumericSetting(NumericParameters.ViewportResScale, 0.5);
         setViewportSize(1920, 1080); // 3840 x 2160, under 4096
 
         (player as unknown as { lastTimeResized: number }).lastTimeResized = 0;

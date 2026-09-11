@@ -30,8 +30,9 @@ public static class CodecLaunchArgv {
 function Start-Process {
  param($FilePath,$ArgumentList,$WorkingDirectory,[switch]$PassThru)
  if($ArgumentList -notcontains "-PixelStreamingEncoderCodec=$ExpectedCodec"){throw 'Codec selection changed'}
- $cuda=@($ArgumentList|Where-Object {$_ -eq '-AVCodecs.NvEnc.D3D12UsesCUDA=true'})
- if($cuda.Count -ne 1){throw 'Negotiated H264 must enable CUDA once for every initial codec'}
+ $expectedCuda=if($ExpectedCodec -ieq 'AV1'){'false'}else{'true'}
+ $cuda=@($ArgumentList|Where-Object {$_ -like '-AVCodecs.NvEnc.D3D12UsesCUDA=*'})
+ if($cuda.Count -ne 1 -or $cuda[0] -ne "-AVCodecs.NvEnc.D3D12UsesCUDA=$expectedCuda"){throw 'CUDA policy mismatch: AV1 must disable CUDA'}
  # LaunchWindows.cpp decodes argv, then only restores ordinary quotes for
  # values with spaces. Literal escaped quotes must survive this first pass.
  $argc=0

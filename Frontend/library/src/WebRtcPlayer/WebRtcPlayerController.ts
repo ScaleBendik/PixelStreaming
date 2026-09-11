@@ -242,12 +242,7 @@ export class WebRtcPlayerController {
 
         // When in match viewport resolution mode, when the browser viewport is resized we send a resize command back to UE.
         this.videoPlayer.onMatchViewportResolutionCallback = (width: number, height: number) => {
-            const descriptor = {
-                'Resolution.Width': width,
-                'Resolution.Height': height
-            };
-
-            this.streamMessageController.toStreamerHandlers.get('Command')([JSON.stringify(descriptor)]);
+            this.pixelStreaming.requestResolution(width, height);
         };
 
         // Every time video player is resized in browser we need to reinitialize the mouse coordinate conversion and freeze frame sizing logic.

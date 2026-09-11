@@ -88,8 +88,9 @@ $arguments = @(
 
 # Keep D3D12 rendering, but avoid the native D3D12 NVENC reconfiguration
 # retention observed with H264. Apply here so Unreal-only recovery inherits it.
-# H264 can now be negotiated after startup; apply the mitigation for every initial codec.
-$arguments += '-AVCodecs.NvEnc.D3D12UsesCUDA=true'
+# AV1 uses native D3D12 NVENC; other startup codecs retain CUDA for negotiated H264.
+$cudaEnabled = if ($EncoderCodec -ieq 'AV1') { 'false' } else { 'true' }
+$arguments += "-AVCodecs.NvEnc.D3D12UsesCUDA=$cudaEnabled"
 
 if ($AdditionalArgs) {
     $arguments += $AdditionalArgs
