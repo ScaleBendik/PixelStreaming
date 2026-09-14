@@ -3,7 +3,8 @@
 Owns Wilbur, embedded agent, viewer admission, and runtime startup/update/recycle.
 
 Paths are repo-relative. When present, follow `../AGENTS.md` for shared workflow,
-verification, authorization, and maintenance; read the workspace context index once.
+verification, authorization, and maintenance. Use the workspace context index
+for unfamiliar areas, cross-repo work, or documentation ownership.
 Context names below are under `../docs/ai-context/`; load only relevant sections.
 Standalone: start with `Docs/README.md` and `SignallingWebServer/README.md`. Inspect Git status/diffs,
 preserve unrelated edits, verify against source, and report actual checks/gaps.
