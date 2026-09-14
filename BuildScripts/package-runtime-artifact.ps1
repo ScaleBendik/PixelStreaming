@@ -7,6 +7,8 @@ param(
     [ValidateSet("full", "runtime")]
     [string]$BuildScope = "full",
     [string]$ContractVersion,
+    [ValidateRange(1, 2147483647)]
+    [int]$MinimumApiContractVersion = 1,
     [string[]]$Capabilities = @(
         "runtime-status-v1",
         "instance-agent-bootstrap-v1",
@@ -572,6 +574,7 @@ $embeddedMetadata = [ordered]@{
     nodeVersion = (Get-Content -LiteralPath (Join-Path $repoRootPath "NODE_VERSION") -Raw).Trim()
     npmVersion = $npmVersion
     scaleWorldContractVersion = $contractVersion
+    minimumApiContractVersion = $MinimumApiContractVersion
     capabilities = $artifactCapabilities
     containsNodeModules = $containsNodeModules
     containsPortableNode = $containsPortableNode
@@ -609,6 +612,7 @@ $manifest = [ordered]@{
     npmVersion = $npmVersion
     buildScope = $BuildScope
     scaleWorldContractVersion = $contractVersion
+    minimumApiContractVersion = $MinimumApiContractVersion
     capabilities = $artifactCapabilities
     containsNodeModules = $containsNodeModules
     containsPortableNode = $containsPortableNode

@@ -49,6 +49,7 @@ Minimum manifest shape:
   "nodeVersion": "22.x",
   "npmVersion": "10.x",
   "scaleWorldContractVersion": "2026-05-21.1",
+  "minimumApiContractVersion": 1,
   "capabilities": [
     "runtime-status-v1",
     "instance-agent-bootstrap-v1",
@@ -66,7 +67,35 @@ Minimum manifest shape:
 }
 ```
 
-Compatibility fields are advisory at first. Capability entries are behavioral
+The nested `compatibility` fields remain advisory. The top-level positive integer
+`minimumApiContractVersion` is enforced by the API when resolving manifests for
+candidate capture, runtime/combined updates, provisioning runtime installation,
+and when pinning a manifest-backed Stage candidate to Prod. Older manifests that
+omit it use baseline 1; malformed requirements are rejected. Future requirements
+remain visible in the artifact catalog but cannot be selected on an older API.
+The packager writes the requirement to both the manifest and embedded metadata;
+`-MinimumApiContractVersion` defaults to 1. The existing date-based
+`scaleWorldContractVersion` and advisory fields retain their original meaning.
+
+The API declares `RuntimeApiContract.Version` (initially 1), also returned as
+`runtimeContractVersion` in the runtime-storage diagnostics object. Increment it
+only when runtimes need new API behavior, never for ordinary API fixes. Set the
+runtime's minimum to the first API contract providing its required behavior.
+When runtime source starts requiring newer behavior, raise the packager default
+in that same change so routine packaging cannot silently declare the old minimum.
+Candidate `ApiVersion` is the exact build validated against, not an equality pin
+or deployment dependency; an API-only fix does not require a new candidate.
+
+Keep API behavior backward compatible until affected runtimes are migrated.
+Intentional breaking changes require a coordinated deployment and rollback plan.
+Deploy the compatible API to all replicas before promoting/updating the runtime;
+the check describes the API handling the request, not every replica. It is not a
+continuous running-session check and does not make API rollback automatically
+safe. Manual/git installs, already-created jobs, and manifestless legacy candidates
+remain operator-managed. Older APIs predate this check: deploy this API support
+before relying on the new field. No existing artifact needs repackaging.
+
+Capability entries are behavioral
 contracts: a validator may require capability-specific files and behavior when
 one is declared. The other hard requirements are that the manifest exists, the
 runtime ZIP exists, the checksum matches, and the bundle id is immutable.
