@@ -14,6 +14,9 @@ Continue authorized local work; report missing shared context and update local d
 ## Reading routes
 
 - Runtime: `pixelstreaming.md`; toolchain/commands: PixelStreaming in `local-dev.md`.
+- Unreal entitlement consumers/refresh: read
+  `../scaleworld-server-manager-api/docs/runtime-entitlement-system.md#unreal-integration`
+  for the out-of-workspace Blueprint implementation and validation limits.
 - Admission/agent/startup/idle/recycle: relevant traps and `cross-system-flows.md`.
 - Artifacts/install/release: `release-update-flow.md` and local
   `Docs/pixelstreaming-runtime-artifact-contract.md`. Prefer ScaleWorld Docs over upstream README.

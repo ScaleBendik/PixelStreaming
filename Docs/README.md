@@ -18,6 +18,7 @@ Use these first for the Server Manager integration:
 | Unreal ZIP update artifact contract | `s3-build-archive-contract.md` |
 | PixelStreaming runtime artifact contract | `pixelstreaming-runtime-artifact-contract.md` |
 | SQL Access authority and entitlement source | `../../scaleworld-server-manager-api/docs/sql-access-authority.md` |
+| Unreal GameInstance/menu entitlement implementation and acceptance | [Runtime entitlement system](../../scaleworld-server-manager-api/docs/runtime-entitlement-system.md#unreal-integration) |
 | Release Train current state | `../../scaleworld-server-manager-web/docs/release-train-current-state-2026-05-22.md` |
 | Runtime watchdog and startup recovery | `watchdog-runbook.md` |
 | TURN server notes | `turnserverdoc.md` |
