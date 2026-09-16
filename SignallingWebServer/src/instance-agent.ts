@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 import { CodecEvidenceJournal } from './codec-evidence-journal';
+import { RuntimeRecovery, type RecoveryEvent, type RecoveryNotice } from './runtime-recovery';
 import fs from 'fs';
 import path from 'path';
 import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
@@ -264,6 +265,7 @@ export function applyInstanceAgentControlResponse(
 }
 
 export interface InstanceAgentClient {
+    getRuntimeRecoveryNotice(): RecoveryNotice | null;
     recordRuntimeStatus(update: RuntimeStatusUpdate): void;
     recordSessionNetworkPath(update: SessionNetworkPathReport): void;
     setReconnectGraceWindow(window: InstanceAgentReconnectGraceWindow | null): void;
@@ -347,6 +349,7 @@ export interface InstanceAgentClientOptions {
     connectTicketRuntimeGate?: Pick<
         ConnectTicketRuntimeGate,
         | 'getReconnectGraceEvidenceJournalBlockReason'
+        | 'getManagedViewerIdentity'
         | 'setReconnectGraceEvidenceJournalBlock'
         | 'markTeardownStarted'
         | 'isCommercialRecoveryRequired'
@@ -829,6 +832,7 @@ export function wireInstanceAgent(
         normalizeOptionalText(options.desiredStatePath ?? process.env.INSTANCE_AGENT_DESIRED_STATE_PATH) ??
         DEFAULT_DESIRED_STATE_PATH;
     const recycleMarkerPath = resolveInstanceAgentRecycleMarkerPath(desiredStatePath);
+    const runtimeRecovery = new RuntimeRecovery(desiredStatePath, log);
     const commandJournalPath = resolveInstanceAgentCommandJournalPath(desiredStatePath);
     const reconnectGraceElapsedEvidenceJournalPath =
         resolveInstanceAgentReconnectGraceElapsedEvidenceJournalPath(desiredStatePath);
@@ -2376,14 +2380,16 @@ export function wireInstanceAgent(
     };
 
     const flushEvents = async (): Promise<void> => {
-        if (eventFlushInFlight || !token || pendingEvents.length === 0) {
+        if (eventFlushInFlight || !token) {
             return;
         }
 
         eventFlushInFlight = true;
         try {
             const identity = await resolveBootstrapIdentity();
-            const eventsToSend = pendingEvents.slice(0, MAX_PENDING_EVENTS);
+            const recoveryEvents = runtimeRecovery.batch();
+            const eventsToSend = [...recoveryEvents, ...pendingEvents].slice(0, MAX_PENDING_EVENTS);
+            if (eventsToSend.length === 0) return;
             const controlSequence = ++controlRequestSequence;
             const response = await authorizedFetch('/agent/events/batch', 'POST', {
                 instanceId: identity.instanceId,
@@ -2404,6 +2410,11 @@ export function wireInstanceAgent(
             // Only remove acknowledged objects, retaining the order of surviving events.
             const acknowledged = new Set(acceptedEvents);
             pendingEvents = pendingEvents.filter((event) => !acknowledged.has(event));
+            runtimeRecovery.acknowledge(
+                acceptedEvents.filter((event) =>
+                    recoveryEvents.includes(event as RecoveryEvent)
+                ) as RecoveryEvent[]
+            );
             const applyControl = acceptControlResponse(controlSequence);
             const acceptedCompletedRecycleMarker = completedRecycleMarkerAwaitingEventAck;
             const acceptedResetCompletion = Boolean(
@@ -2670,6 +2681,7 @@ export function wireInstanceAgent(
             if (!hasPlayerSessionContext(sessionContext)) {
                 return;
             }
+            runtimeRecovery.mediaReceived(sessionContext.sessionRequestId);
 
             queueEvent(
                 'viewer_media_received',
@@ -2677,6 +2689,7 @@ export function wireInstanceAgent(
                     playerId,
                     viewerCount: server.playerRegistry.count(),
                     ...evidence,
+                    runtimeFaultEvidenceVersion: '1',
                     ...buildPlayerSessionMetadata(sessionContext)
                 },
                 getPlayerEventSessionId(sessionContext)
@@ -2809,6 +2822,19 @@ export function wireInstanceAgent(
         void flushCodecEvidence();
     }, 5000);
     codecUploadTimer.unref?.();
+    const publishRecoveryContext = (): void => {
+        const identity = options.connectTicketRuntimeGate?.getManagedViewerIdentity?.();
+        runtimeRecovery.context(
+            identity?.sessionRequestId,
+            !identity ||
+                currentDesiredState.shutdownRequested ||
+                options.connectTicketRuntimeGate?.isCommercialRecoveryRequired() === true ||
+                ['stopping', 'resetting', 'updating_infra'].includes(runtimeSnapshot.status ?? '')
+        );
+    };
+    publishRecoveryContext();
+    const recoveryContextTimer = setInterval(publishRecoveryContext, 2_000);
+    recoveryContextTimer.unref?.();
     scheduleHeartbeat(heartbeatMs);
     runtimeEntitlementPollTimer = setInterval(() => {
         if (!token) {
@@ -2825,6 +2851,7 @@ export function wireInstanceAgent(
     }
 
     return {
+        getRuntimeRecoveryNotice: () => runtimeRecovery.notice(),
         recordRuntimeStatus(update: RuntimeStatusUpdate) {
             const nextStatus = normalizeOptionalText(update.status);
             const nextReason = normalizeOptionalText(update.reason);
@@ -2835,6 +2862,7 @@ export function wireInstanceAgent(
                 reason: nextReason,
                 version: normalizeOptionalText(update.version) ?? runtimeSnapshot.version
             };
+            publishRecoveryContext();
 
             let completedCommercialRecoveryThisUpdate = false;
             if (

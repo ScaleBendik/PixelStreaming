@@ -14,6 +14,7 @@ import {
 } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.8';
 import { Application, PixelStreamingApplicationStyle } from '@epicgames-ps/lib-pixelstreamingfrontend-ui-ue5.8';
 import { installResolutionRecovery } from './resolutionRecovery';
+import { installRuntimeRecovery } from './runtimeRecovery';
 const PixelStreamingApplicationStyles =
     new PixelStreamingApplicationStyle();
 PixelStreamingApplicationStyles.applyStyleSheet();
@@ -1039,12 +1040,14 @@ document.body.onload = function() {
         const eventData = (event as { data?: { eventString?: string } }).data;
         const reason = eventData?.eventString ?? '';
         if (isInactivityDisconnectReason(reason)) {
+            runtimeRecovery.cancel();
             resolutionRecovery.cancel();
             showInactivityDisconnectGuidance();
             return;
         }
 
         if (isScaleWorldSessionEndedReason(reason)) {
+            runtimeRecovery.cancel();
             resolutionRecovery.cancel();
             removeSessionStorage(connectTicketStorageKey);
             removeSessionStorage(reconnectContextStorageKey);
@@ -1063,6 +1066,7 @@ document.body.onload = function() {
         }
 
         resolutionRecovery.cancel();
+        runtimeRecovery.cancel();
         const redirected = redirectToSessionManagerForReconnect(reason);
         if (!redirected) {
             showExpiredConnectionGuidance();
@@ -1085,6 +1089,9 @@ document.body.onload = function() {
         config.setFlagEnabled(Flags.MatchViewportResolution, false);
     });
     window.addEventListener('pagehide', () => resolutionRecovery.dispose(), { once: true });
+    const runtimeRecovery = installRuntimeRecovery(stream,
+        reconnectContext ? buildSessionManagerReconnectUrl(reconnectContext) : null);
+    window.addEventListener('pagehide', () => runtimeRecovery.dispose(), { once: true });
 
     if (shouldAutoConnect) {
         stream.connect();

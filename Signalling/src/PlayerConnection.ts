@@ -202,7 +202,11 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             const result = restrictVideoSdp(description.sdp, this.selectedCodec!);
             if (fromStreamer) {
                 this.streamerDescriptionReceived = true;
-                this.server.playerRegistry.emit('streamer_negotiation_response', this.subscribedStreamer);
+                this.server.playerRegistry.emit(
+                    'streamer_negotiation_response',
+                    this.subscribedStreamer,
+                    this.scaleWorldSessionRequestId
+                );
             }
             if (message.type === 'offer') {
                 this.codecOffer = result.sdp;
@@ -767,9 +771,29 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
             sfu: false
         });
         this.sendToStreamer(connectedMessage);
+        if (this.codecPolicy && this.scaleWorldSessionIdentityValidated && !this.shadowSessionRequestId) {
+            this.server.playerRegistry.emit(
+                'streamer_negotiation_started',
+                this.subscribedStreamer,
+                this.scaleWorldSessionRequestId,
+                this.playerId
+            );
+        }
     }
 
     private unsubscribe() {
+        if (
+            this.subscribedStreamer &&
+            this.scaleWorldSessionIdentityValidated &&
+            !this.shadowSessionRequestId
+        ) {
+            this.server.playerRegistry.emit(
+                'streamer_negotiation_abandoned',
+                this.subscribedStreamer,
+                this.scaleWorldSessionRequestId,
+                this.playerId
+            );
+        }
         this.codecOffer = undefined;
         this.codecOfferFromStreamer = undefined;
         this.codecNegotiated = false;

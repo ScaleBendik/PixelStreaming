@@ -95,6 +95,44 @@ async function harness(t, options = {}) {
     return h;
 }
 
+test('managed media advertises recovery reporting without trusting browser identity or version', async t => {
+    const { EventEmitter } = require('node:events');
+    const players = Object.assign(new EventEmitter(), {
+        count: () => 1, has: () => true, get: id => id === 'managed' ? {
+            scaleWorldSessionIdentityValidated: true, scaleWorldSessionRequestId: 'signed-request'
+        } : {}
+    });
+    const h = await harness(t, { playerRegistry: players });
+    players.emit('scaleWorldMediaReceived', 'unsigned', { runtimeFaultEvidenceVersion: '1' });
+    players.emit('scaleWorldMediaReceived', 'managed', { runtimeFaultEvidenceVersion: 'fake', sessionRequestId: 'spoofed' });
+    await h.poll();
+    const media = h.batches.flat().filter(event => event.eventType === 'viewer_media_received');
+    assert.equal(media.length, 1);
+    assert.equal(media[0].metadata.runtimeFaultEvidenceVersion, '1');
+    assert.equal(media[0].metadata.sessionRequestId, 'signed-request');
+});
+
+test('durable watchdog evidence retries failed delivery and is removed only after API acknowledgement', async t => {
+    let folder;
+    const h = await harness(t, { beforeWire: directory => { folder = directory; } });
+    const directory = path.join(folder, 'desired.json.recovery');
+    const evidenceId = '11111111-1111-4111-8111-111111111111';
+    const event = { eventType: 'runtime_fault', occurredAtUtc: new Date().toISOString(), metadata: {
+        runtimeFaultEvidenceVersion: '1', evidenceId, sessionRequestId: '22222222-2222-4222-8222-222222222222',
+        runtimeGeneration: '33333333-3333-4333-8333-333333333333', phase: 'detected', faultKind: 'unexpected_exit'
+    } };
+    const filename = path.join(directory, evidenceId + '.json');
+    fs.writeFileSync(filename, JSON.stringify(event));
+    h.eventReply = async () => new Response('unavailable', { status: 503 });
+    await h.poll(); assert.ok(fs.existsSync(filename));
+    h.eventReply = async () => Response.json({ acceptedCount: 0 });
+    await h.poll(); assert.ok(fs.existsSync(filename));
+    h.eventReply = async batch => Response.json({ acceptedCount: batch.length });
+    await h.poll(); assert.equal(fs.existsSync(filename), false);
+    assert.equal(h.batches.flat().filter(e => e.metadata.evidenceId === evidenceId).length, 3);
+    assert.ok(h.heartbeats.length >= 3, 'fault delivery does not stop control-plane polling');
+});
+
 for (const acceptedCount of [100, 50, 0, 'failed request']) {
     test('event acknowledgement ' + acceptedCount + ' cannot remove new arrivals after overflow', async t => {
         const held = deferred();

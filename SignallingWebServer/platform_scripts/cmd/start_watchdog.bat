@@ -3,6 +3,7 @@ setlocal
 
 set "SCRIPT_DIR=%~dp0"
 set "WATCHDOG_SCRIPT=%SCRIPT_DIR%..\powershell\watchdog.ps1"
+if not defined INSTANCE_AGENT_DESIRED_STATE_PATH set "INSTANCE_AGENT_DESIRED_STATE_PATH=C:\PixelStreaming\state\instance-agent-desired-state.json"
 
 if not exist "%WATCHDOG_SCRIPT%" (
   echo ERROR: Watchdog script not found at "%WATCHDOG_SCRIPT%".

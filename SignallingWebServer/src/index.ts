@@ -1082,6 +1082,12 @@ const runtimeStatusController = wireSignallingRuntimeStatus(signallingServer, ru
     source: String(options.runtime_status_source || 'signalling-server')
 });
 
+// Exposes only fixed recovery categories, never session IDs, logs or process details.
+app.get('/api/runtime-recovery', (_request, response) => {
+    response.setHeader('Cache-Control', 'no-store');
+    response.json({ recovery: instanceAgentClient?.getRuntimeRecoveryNotice() ?? null });
+});
+
 app.post('/api/session-network-path', express.json({ limit: '8kb' }), async (request, response) => {
     const body = request.body as
         | {

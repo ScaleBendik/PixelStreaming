@@ -1,6 +1,6 @@
 # Runtime Watchdog
 
-Last updated: 2026-09-09
+Last updated: 2026-09-16
 
 ## Purpose
 
@@ -48,6 +48,50 @@ this fault, retaining Wilbur's request identity, evidence journal and reconnect
 deadline. Combined process faults still use full-stack recovery. This does not
 detect every post-negotiation media stall or establish its engine-level cause.
 
+Unanswered Unreal wait also accumulates across short reconnects for the same
+signed request and streamer object. Only time with a waiting managed viewer
+counts; disconnected gaps do not. After 60 cumulative seconds, an active retry
+raises the same negotiation fault. A valid SDP response, streamer replacement,
+or five minutes without a waiting viewer clears the relevant history. Shadow
+and unsigned connections do not start this monitor. The commercial reconnect
+deadline is unchanged.
+
+The watchdog writes immutable `runtime_fault` evidence before publishing a fault
+or requesting recovery, under `<INSTANCE_AGENT_DESIRED_STATE_PATH>.recovery/`.
+The normal Windows launchers share `C:\PixelStreaming\state\instance-agent-desired-state.json`;
+custom launchers must supply the same absolute path to Wilbur and watchdog.
+Evidence includes a GUID, incident ID, fault reason, phase (`detected`,
+`restart_requested`, `restart_failed`, or agent-observed `media_restored`), signed
+request identity when known, and Wilbur process-generation UUID. This UUID is not
+an Unreal process identifier. Missing processes are `unexpected_exit`, not a
+confirmed crash; streamer health faults are `unresponsive`. There is no WER or
+Unreal crash-dump classifier yet. Normal teardown and update/provisioning are
+suppressed. Unknown/stale context remains unattributed rather than being assigned
+to the next session. Persistence errors and an unavailable reporting module are
+logged and do not prevent the existing watchdog recovery loop from running.
+
+Wilbur drains at most 20 durable records in an ordinary event batch, removing
+only acknowledged records. API session timelines deduplicate by instance/evidence
+ID and require exact request/generation evidence; raw delivery records may repeat.
+Recovery evidence does not replace the API's current lifecycle event marker,
+including `reset_started` and `reset_completed`, even when delivered late.
+Deploy this API consumer before the runtime producer. No schema change is needed.
+Real media received after an incident clears the active notice and journals the
+recovery observation; successful process launch or ping is not media recovery.
+
+The player polls a no-store `/api/runtime-recovery` response containing only
+fixed categories, phase and time. It shows a recovery notice with Retry connection
+and Open session manager actions. Without host evidence, twenty seconds without
+frames/opening progress produces an explicitly unconfirmed interruption message.
+Browser silence never initiates server recovery. Fresh frames clear the notice;
+intentional Unreal freeze frames and paused/click-to-play video suppress generic
+warnings. An independent watchdog fault can still be shown during those states.
+Unfreezing gives video a fresh interval to resume. Session-end/auth-expiry/idle
+handling cancels the notice. Managed first-video events advertise evidence version 1
+for the API's historical Unreal-health summary. Analytics badges and CSV preserve
+incident history after recovery; native Unreal crash collection and hosted
+fault/recovery acceptance remain open.
+
 After an EC2 stop/start, persisted ownership is reconciled against successful
 authenticated assignment responses. It can be released only when the previous
 admission predates the host boot, the API no longer assigns that request, and no
@@ -57,7 +101,8 @@ restart within the same host boot is insufficient proof. Previous tickets stay
 fenced by a durable cutoff; the next session needs a fresh ticket.
 
 Regression checks include `test_watchdog_negotiation_recovery.ps1` alongside
-`test_stack_launcher_policy.ps1` and the Signalling/Wilbur test suites.
+`test_runtime_recovery_evidence.ps1`, `test_stack_launcher_policy.ps1` and the
+Signalling/Wilbur/player test suites.
 
 The watchdog does not yet:
 

@@ -44,6 +44,7 @@ export interface ConnectTicketRuntimeGate {
     recordManagedViewerAdmission(identity: ManagedViewerAdmissionIdentity): string | null;
     reconcileAssignmentAfterHostBoot(sessionRequestId: string | null): boolean;
     getDurableManagedViewerEvidenceStatus(): DurableManagedViewerEvidenceStatus;
+    getManagedViewerIdentity?(): ManagedViewerAdmissionIdentity | null;
     markTeardownStarted(options?: ConnectTicketTeardownStartOptions): boolean;
     isCommercialRecoveryRequired(): boolean;
     prepareCommercialRecoveryAfterReset(): number | null;
@@ -751,6 +752,28 @@ export function createConnectTicketRuntimeGate(
                 '[connect-ticket-runtime-state] Released prior-boot ownership after authoritative assignment reconciliation; earlier tickets remain fenced.'
             );
             return true;
+        },
+        getManagedViewerIdentity(): ManagedViewerAdmissionIdentity | null {
+            const state = inspectRuntimeStateSnapshot(statePath, logger);
+            if (
+                runtimeStatePersistenceFailureReason ||
+                state.status !== 'valid' ||
+                state.snapshot.commercialRecoveryRequired ||
+                !state.snapshot.managedViewerSessionRequestId
+            )
+                return null;
+            const admittedAt = Date.parse(state.snapshot.managedViewerFirstAdmittedAtUtc ?? '') / 1000;
+            if (
+                !admittedInThisProcess &&
+                (!Number.isFinite(admittedAt) ||
+                    admittedAt + admissionClockSkewSeconds < hostBootEpochSeconds)
+            ) {
+                return null;
+            }
+            return {
+                sessionRequestId: state.snapshot.managedViewerSessionRequestId,
+                activeSessionId: state.snapshot.managedViewerActiveSessionId
+            };
         },
         getDurableManagedViewerEvidenceStatus(): DurableManagedViewerEvidenceStatus {
             if (runtimeStatePersistenceFailureReason) {

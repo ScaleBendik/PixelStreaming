@@ -464,6 +464,15 @@ function Publish-RuntimeStatus {
     }
 }
 
+function Publish-RecoveryEvidence {
+    param([string]$Reason, [string]$Phase)
+    try {
+        Write-RuntimeRecoveryEvidence -DesiredStatePath $recoveryDesiredStatePath -Reason $Reason -Phase $Phase -IncidentId $script:RecoveryIncidentId -Suppressed:($dryRunValue -or $isProvisioningMaintenance -or $isUpdateMaintenance)
+    } catch {
+        Write-WatchdogLog ('Failed to persist recovery evidence: ' + $_.Exception.Message) 'ERROR'
+    }
+}
+
 function Get-MaintenanceMode {
     if ($maintenanceModeRefreshSecondsValue -le 0) {
         return $null
@@ -959,6 +968,13 @@ $unrealCpuStallMinDeltaSecondsValue = ConvertTo-NonNegativeDouble -Value $Unreal
 $unrealCpuStallConfirmSecondsValue = ConvertTo-NonNegativeDouble -Value $UnrealCpuStallConfirmSeconds -Default 10 -Name 'UnrealCpuStallConfirmSeconds'
 $launcherGraceSecondsValue = ConvertTo-PositiveInt -Value $LauncherGraceSeconds -Default 135 -Name 'LauncherGraceSeconds'
 $resolvedStreamerHealthPath = if ([System.IO.Path]::IsPathRooted($StreamerHealthPath)) { $StreamerHealthPath } else { Join-Path $script:SignallingWebServerRoot $StreamerHealthPath }
+try {
+    Import-Module (Join-Path $PSScriptRoot 'runtime_recovery_evidence.psm1') -Force -ErrorAction Stop
+} catch {
+    # Reporting must never prevent the existing watchdog recovery loop from running.
+    Write-WatchdogLog ('Recovery evidence reporting unavailable: ' + $_.Exception.Message) 'ERROR'
+}
+$recoveryDesiredStatePath = if ($env:INSTANCE_AGENT_DESIRED_STATE_PATH) { $env:INSTANCE_AGENT_DESIRED_STATE_PATH } else { Join-Path $script:SignallingWebServerRoot 'state\instance-agent-desired-state.json' }
 
 $rules = [System.Collections.Generic.List[object]]::new()
 if (-not [string]::IsNullOrWhiteSpace($UnrealProcessName)) {
@@ -1402,6 +1418,8 @@ while ($true) {
     }) -join '; '
 
     if ($faultSignature -ne $lastFaultSignature) {
+        $script:RecoveryIncidentId = [guid]::NewGuid().ToString()
+        Publish-RecoveryEvidence -Reason $faultSignature -Phase 'detected'
         Write-WatchdogLog "Fault detected: $faultSummary" 'WARN'
         Publish-RuntimeStatus -Status 'runtime_fault' -Reason $faultSignature
         $lastFaultSignature = $faultSignature
@@ -1465,6 +1483,7 @@ while ($true) {
         continue
     }
 
+    Publish-RecoveryEvidence -Reason $faultSignature -Phase 'restart_requested'
     if ($terminateMatchedProcessesValue) {
         Stop-MatchingProcesses -Snapshot $snapshot -Rules $recoveryPlan.TerminationRules
     }
@@ -1495,6 +1514,7 @@ while ($true) {
         continue
     }
 
+    Publish-RecoveryEvidence -Reason $faultSignature -Phase 'restart_failed'
     Publish-RuntimeStatus -Status 'runtime_fault' -Reason 'watchdog_restart_failed'
     if ($runOnceValue) {
         break

@@ -6,6 +6,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { Logger, SignallingServer } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
 import { Messages } from '@epicgames-ps/lib-pixelstreamingcommon-ue5.8';
+import { NegotiationRecovery } from './negotiation-recovery';
 
 const execFileAsync = promisify(execFile);
 const IMDS_TOKEN_URL = 'http://169.254.169.254/latest/api/token';
@@ -455,7 +456,22 @@ export function wireSignallingRuntimeStatus(
     const getPlayerVisibleStreamers = () =>
         server.streamerRegistry.streamers.filter((streamer) => streamer.streaming);
 
+    const negotiationRecovery = new NegotiationRecovery((streamer) => {
+        server.playerRegistry.emit('streamer_negotiation_timeout', streamer);
+    });
+    server.playerRegistry.on(
+        'streamer_negotiation_started',
+        (streamer: object, request: string, player: string) =>
+            negotiationRecovery.started(streamer, request, player)
+    );
+    server.playerRegistry.on(
+        'streamer_negotiation_abandoned',
+        (streamer: object, request: string, player: string) =>
+            negotiationRecovery.abandoned(streamer, request, player)
+    );
+
     const writeStreamerHealthSnapshot = (): void => {
+        negotiationRecovery.check();
         if (!streamerHealthEnabled) return;
 
         const nowMs = Date.now();
@@ -653,6 +669,7 @@ export function wireSignallingRuntimeStatus(
             }
         });
         streamer.on('disconnect', () => {
+            negotiationRecovery.removed(streamer);
             if (
                 lastStreamerId &&
                 (lastStreamerId === streamer.streamerId || lastStreamerId === attachedStreamerId)
@@ -714,7 +731,8 @@ export function wireSignallingRuntimeStatus(
         log('[runtime-status] Managed viewer negotiation timed out without an Unreal SDP response.');
         writeStreamerHealthSnapshot();
     });
-    server.playerRegistry.on('streamer_negotiation_response', (streamer: object) => {
+    server.playerRegistry.on('streamer_negotiation_response', (streamer: object, request: string) => {
+        negotiationRecovery.responded(streamer, request);
         if (!streamer || !negotiationStalledStreamers.delete(streamer)) return;
         writeStreamerHealthSnapshot();
     });
