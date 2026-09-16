@@ -68,11 +68,14 @@ Minimum manifest shape:
 ```
 
 The nested `compatibility` fields remain advisory. The top-level positive integer
-`minimumApiContractVersion` is enforced by the API when resolving manifests for
+`minimumApiContractVersion` informs API compatibility warnings when resolving manifests for
 candidate capture, runtime/combined updates, provisioning runtime installation,
 and when pinning a manifest-backed Stage candidate to Prod. Older manifests that
 omit it use baseline 1; malformed requirements are rejected. Future requirements
-remain visible in the artifact catalog but cannot be selected on an older API.
+remain visible and usable: a newer minimum logs a warning rather than blocking
+the operation. Release cards/history and promotion review display the requirement
+against the responding API, with unknown when it cannot be read. Previously
+deployed APIs may retain strict rejection until updated.
 The packager writes the requirement to both the manifest and embedded metadata;
 `-MinimumApiContractVersion` defaults to 1. The existing date-based
 `scaleWorldContractVersion` and advisory fields retain their original meaning.
