@@ -713,6 +713,7 @@ document.body.onload = function() {
     // Create a config object.
     // Explicitly keep hovering mouse as the default for this project.
     const config = new Config({
+        disableViewportResolution: true,
         useUrlParams: true,
         initialSettings: {
             [Flags.HoveringMouseMode]: true

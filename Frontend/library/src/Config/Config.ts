@@ -131,6 +131,8 @@ export type AllSettings = {
 };
 
 export interface ConfigParams {
+    /** Disable automatic viewport resizing and cap its scale at 100%. Not URL-configurable. */
+    disableViewportResolution?: boolean;
     /** Initial Pixel Streaming settings */
     initialSettings?: Partial<AllSettings>;
     /** If useUrlParams is set true, will read initial values from URL parameters and persist changed settings into URL */
@@ -139,6 +141,7 @@ export interface ConfigParams {
     webSocketProtocols?: string | string[];
 }
 export class Config {
+    readonly disableViewportResolution: boolean;
     /** Server-authenticated session choices, independent of the current SDP. */
     scaleWorldCodecPolicy?: { availableCodecs: string[]; selectedCodec: string };
     /* A map of flags that can be toggled - options that can be set in the application - e.g. Use Mic? */
@@ -160,10 +163,12 @@ export class Config {
     // ------------ Settings -----------------
 
     constructor(config: ConfigParams = {}) {
+        this.disableViewportResolution = config.disableViewportResolution === true;
         const { initialSettings, useUrlParams, webSocketProtocols } = config;
         this._useUrlParams = !!useUrlParams;
         this._webSocketProtocols = webSocketProtocols;
         this.populateDefaultSettings(this._useUrlParams, initialSettings);
+        if (this.disableViewportResolution) this.setFlagEnabled(Flags.MatchViewportResolution, false);
     }
 
     /**
@@ -858,9 +863,9 @@ export class Config {
             new SettingNumber(
                 NumericParameters.ViewportResScale,
                 'Viewport Resolution Scale',
-                'Scale factor for viewport resolution when MatchViewportResolution is enabled. 1.0 = 100%, 0.5 = 50%, 2.0 = 200%.',
+                'Scale factor for viewport resolution when MatchViewportResolution is enabled. 1.0 = 100%, 0.5 = 50%.',
                 0.1 /*min*/,
-                3.0 /*max*/,
+                this.disableViewportResolution ? 1.0 : 3.0 /*max*/,
                 settings && Object.prototype.hasOwnProperty.call(settings, NumericParameters.ViewportResScale)
                     ? settings[NumericParameters.ViewportResScale]
                     : 1.0 /*value*/,
@@ -977,6 +982,7 @@ export class Config {
      * @returns True if the flag is enabled.
      */
     isFlagEnabled(id: FlagsIds): boolean {
+        if (this.disableViewportResolution && id === Flags.MatchViewportResolution) return false;
         return this.flags.get(id).flag;
     }
 
@@ -986,6 +992,7 @@ export class Config {
      * @param flagEnabled True if the flag should be enabled.
      */
     setFlagEnabled(id: FlagsIds, flagEnabled: boolean) {
+        if (this.disableViewportResolution && id === Flags.MatchViewportResolution) flagEnabled = false;
         if (!this.flags.has(id)) {
             Logger.Warning(`Cannot toggle flag called ${id} - it does not exist in the Config.flags map.`);
         } else {

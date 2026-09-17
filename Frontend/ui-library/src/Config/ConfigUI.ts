@@ -56,7 +56,7 @@ export class ConfigUI {
 
     // ------------ Settings -----------------
 
-    constructor(config: Config) {
+    constructor(private readonly config: Config) {
         this.createCustomUISettings(config.useUrlParams);
         this.registerSettingsUIComponents(config);
     }
@@ -233,7 +233,10 @@ export class ConfigUI {
         if (isSectionEnabled(settingsConfig, SettingsSections.UI)) {
             /* Setup all view/ui related settings under this section */
             const viewSettingsSection = this.buildSectionWithHeading(settingsElem, SettingsSections.UI);
-            if (isSettingEnabled(settingsConfig, Flags.MatchViewportResolution))
+            if (
+                !this.config.disableViewportResolution &&
+                isSettingEnabled(settingsConfig, Flags.MatchViewportResolution)
+            )
                 this.addSettingFlag(viewSettingsSection, this.flagsUi.get(Flags.MatchViewportResolution));
 
             if (isSettingEnabled(settingsConfig, NumericParameters.ViewportResScale))

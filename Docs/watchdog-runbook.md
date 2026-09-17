@@ -48,6 +48,24 @@ this fault, retaining Wilbur's request identity, evidence journal and reconnect
 deadline. Combined process faults still use full-stack recovery. This does not
 detect every post-negotiation media stall or establish its engine-level cause.
 
+Successful process replacement and SDP exchange do not establish recovered video.
+In the 2026-09-17 d2 incident, native crash context reported D3D12 video-memory
+exhaustion. The watchdog restarted Unreal, and subsequent H264 reconnects received
+offers and supplied answers, but the user still received no first video frame.
+This path does not trigger the unanswered-SDP monitor. The player's ten-second
+media-start error is evidence of missing presentation, not proof of another crash
+or exhaustion of watchdog retries. Diagnose transport/decoder/encoder/rendering
+evidence before authorizing further restarts; the exact post-restart cause in
+that incident remains unresolved.
+
+The ScaleWorld TypeScript player now disables automatic viewport matching and
+hides its settings control. Its viewport resolution scale is capped at 1.0,
+including URL/initial values and later setting updates. This prevents ultrawide
+browser dimensions from requesting a larger Unreal render target through that
+control. Explicit in-game resolution handling is unchanged. Automatic full-stack
+escalation after a failed Unreal recovery is deferred; this guard requires a new
+runtime artifact before it protects hosted sessions.
+
 Unanswered Unreal wait also accumulates across short reconnects for the same
 signed request and streamer object. Only time with a waiting managed viewer
 counts; disconnected gaps do not. After 60 cumulative seconds, an active retry

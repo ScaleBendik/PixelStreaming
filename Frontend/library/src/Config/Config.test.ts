@@ -30,6 +30,39 @@ const allParameters = [
 ];
 
 describe('Config', () => {
+    it('locks viewport matching off and caps scale despite URL, initial settings and later updates', () => {
+        window.history.replaceState({}, '', '/?MatchViewportRes=true&ViewportResScale=3');
+        try {
+            const config = new Config({
+                disableViewportResolution: true,
+                useUrlParams: true,
+                initialSettings: {
+                    [Flags.MatchViewportResolution]: true,
+                    [NumericParameters.ViewportResScale]: 2
+                }
+            });
+            expect(config.isFlagEnabled(Flags.MatchViewportResolution)).toBe(false);
+            expect(config.getNumericSettingValue(NumericParameters.ViewportResScale)).toBe(1);
+            config.setFlagEnabled(Flags.MatchViewportResolution, true);
+            config.setNumericSetting(NumericParameters.ViewportResScale, 2);
+            expect(config.isFlagEnabled(Flags.MatchViewportResolution)).toBe(false);
+            expect(config.getNumericSettingValue(NumericParameters.ViewportResScale)).toBe(1);
+            config.setNumericSetting(NumericParameters.ViewportResScale, 0.5);
+            expect(config.getNumericSettingValue(NumericParameters.ViewportResScale)).toBe(0.5);
+            const defaults = new Config({
+                disableViewportResolution: true,
+                initialSettings: {
+                    [Flags.MatchViewportResolution]: true,
+                    [NumericParameters.ViewportResScale]: 3
+                }
+            });
+            expect(defaults.isFlagEnabled(Flags.MatchViewportResolution)).toBe(false);
+            expect(defaults.getNumericSettingValue(NumericParameters.ViewportResScale)).toBe(1);
+        } finally {
+            window.history.replaceState({}, '', '/');
+        }
+    });
+
     beforeEach(() => {
         mockRTCRtpReceiver();
     });
