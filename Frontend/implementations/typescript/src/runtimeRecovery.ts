@@ -57,7 +57,7 @@ export function installRuntimeRecovery(stream: PixelStreaming, managerUrl: strin
         overlay.setAttribute('role', 'status');
         overlay.setAttribute('aria-live', 'polite');
         overlay.style.cssText = 'position:absolute;inset:0;z-index:10001;display:flex;flex-direction:column;' +
-            'align-items:center;justify-content:center;gap:20px;padding:32px;background:rgba(0,0,0,.88);' +
+            'align-items:center;justify-content:center;gap:20px;padding:32px;background:#000;' +
             'color:white;font:18px/1.5 sans-serif;text-align:center;text-transform:none';
         const text = document.createElement('p');
         text.textContent = message;
