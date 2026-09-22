@@ -76,7 +76,9 @@ try {
         } else { $candidate=$result.Text | ConvertFrom-Json }
         $reference=Get-ConfigProperty $candidate 'instanceConfig'
         $candidateRuntime=Get-ConfigProperty $candidate 'runtimeArtifact'
-        if ($reference -or $candidateRuntime) {
+        # Only a pinned configuration requires a matching artifact pair. Legacy
+        # candidates must keep startup defaults, including on first installation.
+        if ($reference) {
             $candidateBuildName=Split-Path -Leaf ([string](Get-ConfigProperty $candidate 'unrealBuildId' 'unknown.zip'))
             if ((Get-ConfigProperty $candidateRuntime 'bundleId') -ne $bundleId -or
                 $candidateBuildName -ne $buildName) {

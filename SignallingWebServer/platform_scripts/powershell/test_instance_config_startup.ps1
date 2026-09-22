@@ -74,6 +74,18 @@ if ($args[2] -like '*/current.json') {
 }
 return [IO.File]::ReadAllText((Join-Path $global:ConfigTestRoot (Split-Path -Leaf $args[2])))
 '@)
+    foreach ($environment in @('stage','prod')) {
+        foreach ($legacyCandidate in @(
+            @{candidateId='legacy-runtime';runtimeArtifact=@{bundleId='older-runtime'};unrealBuildId='ScaleWorld_test.zip'},
+            @{candidateId='legacy-build';runtimeArtifact=@{bundleId='runtime-1'};unrealBuildId='ScaleWorld_older.zip';instanceConfig=$null}
+        )) {
+            if (Test-Path -LiteralPath $snapshot) { Remove-Item -LiteralPath $snapshot }
+            Write-Json 'candidate.json' $legacyCandidate
+            Run-Startup -Environment $environment | Out-Null
+            $legacySnapshot=Read-InstanceConfigSnapshot $snapshot
+            Assert-True ($null -eq $legacySnapshot.profile -and $null -eq $legacySnapshot.reference) "Legacy $environment first start must not require candidate artifact identity."
+        }
+    }
     Run-Startup -Failure 'missing' | Out-Null
     Assert-True ($null -eq (Read-InstanceConfigSnapshot $snapshot).profile) 'Missing first Dev publication must preserve legacy startup.'
     $first=Set-Revision
@@ -97,6 +109,17 @@ return [IO.File]::ReadAllText((Join-Path $global:ConfigTestRoot (Split-Path -Lea
     Expect-Failure { Run-Startup -Class premium } 'checksum mismatch'
     Assert-True ((Read-InstanceConfigSnapshot $snapshot).reference.revisionId -eq $second.revisionId) 'Invalid data replaced the last good snapshot.'
     $stage=Set-Revision -Environment stage
+    $before=[IO.File]::ReadAllText($snapshot)
+    foreach ($environment in @('stage','prod')) {
+        foreach ($configuredCandidate in @(
+            @{candidateId='wrong-runtime';runtimeArtifact=@{bundleId='runtime-2'};unrealBuildId='ScaleWorld_test.zip';instanceConfig=$stage},
+            @{candidateId='wrong-build';runtimeArtifact=@{bundleId='runtime-1'};unrealBuildId='ScaleWorld_other.zip';instanceConfig=$stage}
+        )) {
+            Write-Json 'candidate.json' $configuredCandidate
+            Expect-Failure { Run-Startup -Environment $environment } 'Installed artifacts do not match'
+            Assert-True ([IO.File]::ReadAllText($snapshot) -ceq $before) 'Mismatched configured candidate replaced the snapshot.'
+        }
+    }
     Write-Json 'candidate.json' @{candidateId='stage-test';runtimeArtifact=@{bundleId='runtime-1'};unrealBuildId='ScaleWorld_test.zip';instanceConfig=$stage}
     Run-Startup -Environment stage | Out-Null
     Assert-True ((Read-InstanceConfigSnapshot $snapshot).reference.revisionId -eq $stage.revisionId) 'Stage did not pin its candidate configuration.'
@@ -111,9 +134,11 @@ return [IO.File]::ReadAllText((Join-Path $global:ConfigTestRoot (Split-Path -Lea
     Run-Startup -Environment prod -Mode validation | Out-Null
     Assert-True ((Read-InstanceConfigSnapshot $snapshot).reference.revisionId -eq $unused.revisionId) 'Prod did not read the Stage immutable revision.'
     Expect-Failure { Run-Startup -Environment dev } 'incorrect scope'
-    Write-Json 'candidate.json' @{candidateId='legacy';runtimeArtifact=@{bundleId='runtime-1'};unrealBuildId='ScaleWorld_test.zip'}
+    Run-Startup -Environment stage -Mode validation | Out-Null
+    Write-Json 'candidate.json' @{candidateId='legacy';runtimeArtifact=@{bundleId='older-runtime'};unrealBuildId='ScaleWorld_older.zip'}
     Run-Startup -Environment stage | Out-Null
-    Assert-True ($null -eq (Read-InstanceConfigSnapshot $snapshot).profile) 'Legacy candidate rollback did not clear custom configuration.'
+    $legacySnapshot=Read-InstanceConfigSnapshot $snapshot
+    Assert-True ($null -eq $legacySnapshot.profile -and $null -eq $legacySnapshot.reference) 'Legacy candidate rollback did not clear cached custom configuration.'
     Expect-Failure { Run-Startup -Environment prod -Mode recovery } 'matching startup configuration snapshot'
     Write-Output 'Instance config startup: legacy, served class, normal start, recovery, cache, checksum, environment and candidate tests passed.'
 } finally {
