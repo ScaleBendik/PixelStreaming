@@ -27,6 +27,26 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$instanceConfigSnapshot = $null
+$instanceProfile = $null
+if ($env:SCALEWORLD_INSTANCE_CONFIG_SNAPSHOT) {
+    Import-Module (Join-Path $PSScriptRoot 'instance_config.psm1') -Force
+    $instanceConfigSnapshot = Read-InstanceConfigSnapshot $env:SCALEWORLD_INSTANCE_CONFIG_SNAPSHOT
+    $instanceProfile = $instanceConfigSnapshot.profile
+    if ($instanceProfile) {
+        $ResX = $instanceProfile.values.resX
+        $ResY = $instanceProfile.values.resY
+        $Fps = $instanceProfile.values.fps
+        $MaxBitrateKbps = $instanceProfile.values.maxBitrateKbps
+        # Replace the historical tier scalability string; never append two ExecCmds switches.
+        $AdditionalArgs = @($AdditionalArgs | Where-Object { $_ -and $_ -notlike '-ExecCmds=*' -and $_ -ne '-ScaleWorldPremium' })
+        foreach ($arg in $AdditionalArgs) {
+            if ($arg -ne '-RunProvisioningPSOWarmup') { throw 'Remove legacy SCALEWORLD_UNREAL_STARTUP_ARGS when using an instance configuration profile.' }
+        }
+        if ($instanceConfigSnapshot.serviceClass -eq 'premium') { $AdditionalArgs += '-ScaleWorldPremium' }
+    }
+}
+
 $helperScriptPath = Join-Path $PSScriptRoot 'scaleworld_process_helpers.ps1'
 if (-not (Test-Path -LiteralPath $helperScriptPath)) {
     throw "ScaleWorld process helper '$helperScriptPath' was not found."
@@ -94,6 +114,7 @@ $arguments += '-AVCodecs.NvEnc.D3D12UsesCUDA=true'
 if ($AdditionalArgs) {
     $arguments += $AdditionalArgs
 }
+if ($instanceProfile) { $arguments += @(Get-InstanceConfigArguments $instanceProfile) }
 
 $process = Start-Process -FilePath $processPath -ArgumentList $arguments -WorkingDirectory $installRootPath -PassThru
 Write-Output ("Running: {0} {1}" -f $processPath, ($arguments -join ' '))
@@ -121,6 +142,18 @@ while ((Get-Date) -lt $deadline) {
 }
 
 if ($matchedRuntimeProcess) {
+    if ($instanceConfigSnapshot) {
+        # Diagnostic observation only; release selection remains the candidate/config document.
+        $revision = if ($instanceConfigSnapshot.reference) { $instanceConfigSnapshot.reference.revisionId } else { 'legacy' }
+        try {
+            & aws ec2 create-tags --resources $instanceConfigSnapshot.instanceId --region $instanceConfigSnapshot.region --tags `
+                "Key=ScaleWorldInstanceConfigRevision,Value=$revision" `
+                "Key=ScaleWorldInstanceConfigClass,Value=$($instanceConfigSnapshot.serviceClass)" `
+                "Key=ScaleWorldInstanceConfigSource,Value=$($instanceConfigSnapshot.source)" `
+                "Key=ScaleWorldInstanceConfigAppliedAtUtc,Value=$([DateTime]::UtcNow.ToString('o'))" | Out-Null
+            if ($LASTEXITCODE -ne 0) { Write-Warning 'Unable to publish instance config observation.' }
+        } catch { Write-Warning 'Unable to publish instance config observation.' }
+    }
     Write-Output ("Detected ScaleWorld runtime process {0} (PID {1})" -f $matchedRuntimeProcess.Name, $matchedRuntimeProcess.ProcessId)
     exit 0
 }

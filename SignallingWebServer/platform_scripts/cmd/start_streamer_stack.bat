@@ -245,6 +245,12 @@ if /i "%STACK_RUN_UNREAL_UPDATE_CHECK%"=="true" (
     echo WARNING: Update script not found at "%UPDATE_SCRIPT%". Skipping Unreal update check.
   )
 )
+set "SCALEWORLD_INSTANCE_CONFIG_SNAPSHOT=%ProgramData%\ScaleWorld\instance-config-snapshot.json"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%..\powershell\initialize_instance_config.ps1" -RuntimeRoot "%PIXELSTREAMING_ROOT%" -InstallBase "%SCALEWORLD_INSTALL_BASE%" -Environment "%SCALEWORLD_DEPLOYMENT_TRACK%" -Mode "%STACK_MODE%"
+if errorlevel 1 (
+  echo ERROR: Instance config initialization failed. See the instance-config snapshot error file in ProgramData\ScaleWorld.
+  exit /b 1
+)
 set "WILBUR_PROCESS_NAME=node.exe"
 if defined WATCHDOG_WILBUR_PROCESS_NAME set "WILBUR_PROCESS_NAME=%WATCHDOG_WILBUR_PROCESS_NAME%"
 set "WILBUR_COMMANDLINE_PATTERN=%PIXELSTREAMING_ROOT%\SignallingWebServer"

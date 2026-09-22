@@ -433,6 +433,7 @@ if ($artifactCapabilities -notcontains 'unreal-prerequisite-preflight-v1') {
     $artifactCapabilities += 'unreal-prerequisite-preflight-v1'
     $artifactCapabilities = @($artifactCapabilities | Sort-Object -Unique)
 }
+$artifactCapabilities = @($artifactCapabilities + 'instance-config-v1' | Sort-Object -Unique)
 
 $outputRoot = Normalize-Optional $OutputRoot
 if (-not $outputRoot) {
@@ -517,6 +518,8 @@ Copy-RequiredDirectory -RelativePath "SignallingWebServer\apidoc" -DestinationRo
 Copy-RequiredDirectory -RelativePath "SignallingWebServer\www" -DestinationRoot $stageRoot
 Copy-RuntimePlatformScripts -DestinationRoot $stageRoot
 Copy-RequiredFile -RelativePath "SignallingWebServer\platform_scripts\powershell\unreal_prerequisite.psm1" -DestinationRoot $stageRoot
+Copy-RequiredFile -RelativePath "SignallingWebServer\platform_scripts\powershell\instance_config.psm1" -DestinationRoot $stageRoot
+Copy-RequiredFile -RelativePath "SignallingWebServer\platform_scripts\powershell\initialize_instance_config.ps1" -DestinationRoot $stageRoot
 Copy-OptionalFile -RelativePath "SignallingWebServer\README.md" -DestinationRoot $stageRoot
 
 $nodeRuntimeSource = Join-Path $repoRootPath "SignallingWebServer\platform_scripts\cmd\node"

@@ -6,6 +6,13 @@ Status: active foundation
 
 ## Intent
 
+Instance config startup support ships in ordinary runtime artifacts with capability
+`instance-config-v1`. The initializer and launcher resolve General/serving-class
+profiles, freeze them for recovery, and use candidate-pinned Stage configuration
+in Stage/Prod. Existing artifacts remain unchanged; check config-prefix IAM before
+installing a new bundle. Details and hosted acceptance gates:
+[Instance config](../../scaleworld-server-manager-api/docs/instance-config.md).
+
 PixelStreaming runtime changes should deploy through immutable runtime artifacts, not by fetching Git and building on ordinary serving instances.
 
 This contract is intentionally separate from Unreal build ZIPs and from AMI/launch-template refreshes:
