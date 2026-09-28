@@ -6,6 +6,18 @@ Status: active foundation
 
 ## Intent
 
+Runtime artifacts also include `BuildScripts/invoke-api-ami-bake.ps1`. API bake
+jobs pin SHA256 hashes of this runner and `prepare-for-ami-bake.ps1`, which exposes
+shared helpers through `-FunctionsOnly`. The API runner requires artifact mode,
+checks the installed bundle/Unreal identity, executes prerequisite/GPU checks,
+cleans session state, verifies EC2Launch generalization and exports a job receipt
+to S3 before shutdown. It runs as a deduplicated SYSTEM task; old d1/s4 workstation
+wrappers retain their differing manual behavior and are not the API entry point.
+Enablement, IAM, evidence and recovery are owned by the
+[API bake runbook](../../scaleworld-server-manager-api/docs/ami-bake-workflow.md).
+No full Unreal packaging is required for these scripts; the next immutable runtime
+artifact and a hosted canary are required before enabling API bakes.
+
 Instance config startup support ships in ordinary runtime artifacts with capability
 `instance-config-v1`. The initializer and launcher resolve General/serving-class
 profiles, freeze them for recovery, and use candidate-pinned Stage configuration

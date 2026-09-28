@@ -14,7 +14,8 @@ param(
     [switch]$SkipRuntimeCacheCleanup,
     [switch]$SkipArtifactQueueCleanup,
     [switch]$SkipVerification,
-    [switch]$SysprepAndShutdown
+    [switch]$SysprepAndShutdown,
+    [switch]$FunctionsOnly
 )
 
 Set-StrictMode -Version Latest
@@ -781,6 +782,37 @@ function Write-FinalSummary {
         Write-BakePrepLog "Could not inspect remaining processes: $($_.Exception.Message)" 'WARN'
     }
 }
+
+function Complete-VerifiedAmiGeneralization {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][scriptblock]$Generalize,
+        [Parameter(Mandatory = $true)][scriptblock]$ReadImageState,
+        [Parameter(Mandatory = $true)][scriptblock]$SysprepIsRunning,
+        [Parameter(Mandatory = $true)][scriptblock]$PublishReceipt,
+        [Parameter(Mandatory = $true)][scriptblock]$Shutdown,
+        [scriptblock]$Wait = { Start-Sleep -Seconds 2 },
+        [int]$MaximumPolls = 600
+    )
+    $expectedState = 'IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE'
+    if ((& $ReadImageState) -eq $expectedState) {
+        throw 'Source is already generalized. Do not rerun Sysprep or reuse an old completion state.'
+    }
+    & $Generalize
+    for ($attempt = 0; $attempt -lt $MaximumPolls; $attempt++) {
+        $imageState = [string](& $ReadImageState)
+        if ($imageState -eq $expectedState -and -not (& $SysprepIsRunning)) {
+            # A failed evidence write must leave Windows running and fail closed.
+            & $PublishReceipt $imageState
+            & $Shutdown
+            return
+        }
+        & $Wait
+    }
+    throw 'Sysprep did not finish in the generalized OOBE state before the deadline.'
+}
+
+if ($FunctionsOnly) { return }
 
 $installRoot = (Resolve-DefaultPath -Value $InstallBasePath -DefaultValue 'C:\PixelStreaming').TrimEnd('\')
 $bootstrapRoot = Resolve-DefaultPath -Value $BootstrapRepoPath -DefaultValue (Join-Path $installRoot 'PixelStreaming')
