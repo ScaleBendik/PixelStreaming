@@ -1,5 +1,14 @@
 # H.264 encoding through CUDA with D3D12
 
+Current release status (2026-09-28): the operator reports the controlled H264
+stability acceptance completed for the deployed release, with no issue currently
+reported on Prod. The exact test matrix and measurements were not supplied in
+this task. The September investigations below remain useful failure evidence and
+diagnostic guidance if the symptom recurs; they do not establish that every
+historical black-frame or memory-growth mechanism has been identified. The
+remaining operation for this release is a new AMI bake, tracked in the master
+backlog and production rollback runbook.
+
 The 2026-09-08 d1 investigation concluded with a working short-run mitigation
 for UE5.8.2 on NVIDIA A10G / driver 595.59. Native D3D12 H.264 encoding retained
 about 1.93 GiB in a 46-second allocation trace at `nvEncReconfigureEncoder`,
@@ -65,6 +74,55 @@ presented frames, bounded private memory, resolution changes, reconnect and
 Unreal-only recovery. CUDA texture sharing can have resource-layout compatibility
 and synchronization costs; check image correctness and latency under GPU load.
 Compression still uses NVENC hardware. Startup readiness alone is not media proof.
+
+## Intermittent black-video diagnosis
+
+The September 25 recurrence at fixed 2240x1260 leaves H264/CUDA image stability
+open independently of resize recovery. Read-only d1 checks confirmed the CUDA
+argument, continuing Unreal process, memory headroom, zero reported GPU ECC/
+row-remap errors and no matching recent Windows graphics warning/error events.
+These checks do not establish correct encoder output. The user reports no
+equivalent symptom with VP9; this is not yet a controlled codec comparison.
+
+The later September 25 recurrence materially changes that assessment. Crash
+`UECC-Windows-5A0CB64A402CCCF297EFADB6FBC2D10F_0000` reports OutOfMemory on
+RenderThread 0 at D3D12Util.cpp:815 after 610 seconds. Process commit was
+36,022,620,160 bytes and remaining available commit only 16,637,952 bytes,
+with 12,549,730,304 bytes of physical RAM still available. The CUDA flag was
+enabled in that process. Thus the mitigation has not established bounded memory
+for this workload; the specific retaining allocation remains unidentified.
+The watchdog detected Unreal missing and restarted it after the crash.
+The associated WebRTC export shows ongoing decoded frames during the reported
+sustained blackout, zero loss/NACKs, and a final 34-second interval containing
+334 decoded frames but only 2,664 received video payload bytes. This differs
+from the morning decoder stall and does not itself reveal pixel content.
+Prefer a verified VP9 session for containment and compare same-scene process/
+system commit over a full reproduction. Increasing the pagefile only adds
+headroom if growth persists; native D3D12 H264 remains an unsafe blanket fallback.
+Preserved crash context/minidump and scoped stats are in the ignored
+`.review-tmp/black-frames-20260925/` evidence directory. Matching Shipping symbols
+and allocation tracing are needed to locate growth, independently of which
+render allocation finally fails.
+
+The local UE5.8.2 source exposes `PixelStreaming2.Encoder.DumpDebugFrames` in
+`PixelStreaming2PluginSettings.cpp`. `EpicRtcVideoEncoder.cpp` dynamically opens
+`encoded_frame*.raw` under `FPaths::ProjectSavedDir()` and writes encoded buffers
+before transport. This is encoded output, not a render-target/input capture.
+Verify the deployed binary supports it and establish a supported command route
+before use; source version alone does not prove packaged binary provenance.
+For a diagnostic run, bound duration and disk consumption, request a keyframe,
+record incident times, disable the CVar afterward, and software-decode the saved
+stream. Ignore missing-reference errors before its first usable keyframe.
+Black/corrupt output reproduced offline implicates the server output path;
+clean output during the same incident shifts investigation toward transport or
+client decoding/presentation. Per-frame file flushing may perturb timing.
+Only about 5.6 GB was free on d1 C: at the check, so do not leave dumping enabled.
+
+The inspected CUDA interop source imports D3D12 heaps/resources, carries texture
+offsets and shares fences. Resource allocation/mapping/synchronization remains a
+concrete investigation lead, not a verified defect or a reason to patch the
+engine without a reproduction. Do not revert to native D3D12 H264 as an
+unbounded diagnostic because of the established memory-retention failure.
 
 ## Blueprint-driven resize recovery
 

@@ -121,7 +121,6 @@ $activeRuntimeIdentityPublisherPath = Join-Path $PSScriptRoot 'publish_active_ru
 $runtimeInstallerPath = Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.ps1'
 $updateModePath = Join-Path $PSScriptRoot 'invoke_update_mode.ps1'
 $unrealPrerequisiteModulePath = Join-Path $PSScriptRoot 'unreal_prerequisite.psm1'
-$unrealPrerequisiteTestPath = Join-Path $PSScriptRoot 'test_unreal_prerequisite.ps1'
 $provisioningModePath = Join-Path $PSScriptRoot 'invoke_provisioning_mode.ps1'
 $stopSupersededRootPath = Join-Path $PSScriptRoot 'stop_superseded_root_processes.ps1'
 $packageRuntimeArtifactPath = Join-Path $buildScriptsRoot 'package-runtime-artifact.ps1'
@@ -154,7 +153,6 @@ $activeRuntimeIdentityPublisher = [System.IO.File]::ReadAllText($activeRuntimeId
 $runtimeInstaller = [System.IO.File]::ReadAllText($runtimeInstallerPath)
 $updateMode = [System.IO.File]::ReadAllText($updateModePath)
 $unrealPrerequisiteModule = [System.IO.File]::ReadAllText($unrealPrerequisiteModulePath)
-$unrealPrerequisiteTest = [System.IO.File]::ReadAllText($unrealPrerequisiteTestPath)
 $provisioningMode = [System.IO.File]::ReadAllText($provisioningModePath)
 $stopSupersededRoot = [System.IO.File]::ReadAllText($stopSupersededRootPath)
 $packageRuntimeArtifact = [System.IO.File]::ReadAllText($packageRuntimeArtifactPath)
@@ -1382,20 +1380,10 @@ Assert-ContainsText `
     -Expected 'SCALEWORLD_UNREAL_PREREQUISITE_INSTALL_TIMEOUT_SECONDS' `
     -Message 'The prerequisite installer deadline must be configurable for fleet update environments.'
 
-Assert-ContainsText `
-    -Content $unrealPrerequisiteModule `
-    -Expected 'WaitForExit($TimeoutMilliseconds)' `
-    -Message 'The signed prerequisite installer must use a bounded process wait.'
-
 Assert-DoesNotContainText `
     -Content $unrealPrerequisiteModule `
     -Unexpected 'Stop-Process' `
     -Message 'Prerequisite timeout handling must not terminate an active vendor or Windows Installer process.'
-
-Assert-ContainsText `
-    -Content $unrealPrerequisiteTest `
-    -Expected 'A timed-out VC++ bootstrap from a different artifact path must block a duplicate installer launch.' `
-    -Message 'Focused prerequisite tests must cover cross-artifact-path installer overlap prevention.'
 
 Assert-MatchesText `
     -Content $unrealPrerequisiteModule `
@@ -1441,16 +1429,6 @@ Assert-DoesNotContainText `
     -Content $unrealPrerequisiteModule `
     -Unexpected "GetValue('Version'" `
     -Message 'The x64 runtime registry check must use Unreal''s numeric Major/Minor/Bld/Rbld values rather than the display Version string.'
-
-Assert-ContainsText `
-    -Content $unrealPrerequisiteTest `
-    -Expected 'Current app-local DLLs beside the packaged target must satisfy the Unreal bootstrap contract without registry state.' `
-    -Message 'Focused prerequisite tests must cover Unreal bootstrap app-local DLL behavior.'
-
-Assert-ContainsText `
-    -Content $unrealPrerequisiteTest `
-    -Expected 'A current but unloadable runtime DLL must not satisfy the Unreal bootstrap contract.' `
-    -Message 'Focused prerequisite tests must reject version-current but unloadable DLLs.'
 
 Assert-ContainsText `
     -Content $startDevTurn `

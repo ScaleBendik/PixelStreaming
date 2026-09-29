@@ -121,12 +121,14 @@ npm exec --workspace SignallingWebServer tsc -- --noEmit
 powershell -ExecutionPolicy Bypass -File BuildScripts/test-runtime-package-dependencies.ps1
 powershell -ExecutionPolicy Bypass -File SignallingWebServer/platform_scripts/powershell/test_stack_launcher_policy.ps1
 powershell -ExecutionPolicy Bypass -File SignallingWebServer/platform_scripts/powershell/test_unreal_prerequisite.ps1
-powershell -ExecutionPolicy Bypass -File SignallingWebServer/platform_scripts/powershell/test_unreal_service_class_args.ps1
 powershell -ExecutionPolicy Bypass -File SignallingWebServer/platform_scripts/powershell/test_scaleworld_process_helpers.ps1
 powershell -ExecutionPolicy Bypass -File SignallingWebServer/platform_scripts/powershell/test_platform_node_setup.ps1
 # Bash/Git Bash, with LF checkout:
 bash SignallingWebServer/platform_scripts/bash/test_node_setup.sh
 ```
+
+The stack-policy harness also runs `test_unreal_service_class_args.ps1`; no second
+invocation is needed in this sequence.
 
 Root lint includes legacy example-workspace debt. JSStreamer reports 39 unsafe-type
 errors; the mediasoup bridge reports 3,278 errors with LF sources, plus CRLF errors
