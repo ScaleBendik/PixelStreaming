@@ -42,11 +42,11 @@ A manager connect acknowledgement alone does not establish usable media.
 With a current owner end capability, the player confirms and calls the same-origin
 /api/session-end relay. Wilbur forwards only the narrow credential and expected
 request ID to the fixed API endpoint. The manager tab and MessageChannel are not
-needed. The separate API-only signing key is never distributed to Wilbur.
+needed. The API automatically issues an opaque token and stores only its hash in SQL.
 
 The [owning API/runtime contract](../../scaleworld-server-manager-api/docs/player-session-end.md)
-defines authorization, expiry, rollout and hosted acceptance. The feature starts
-disabled and requires an API secret and flag plus the rebuilt runtime. Missing or
+defines authorization, expiry, rollout and hosted acceptance. No additional secret or enable flag is required. Use the updated API and direct-end
+runtime, then a fresh Connect. Missing or
 expired credentials retain the optional old bridge / authenticated manager handoff.
 Do not weaken the manager COOP header. Direct stop does not open the web's
 client-only feedback prompt. Stop/recycle and artifact ownership remain in the API.
