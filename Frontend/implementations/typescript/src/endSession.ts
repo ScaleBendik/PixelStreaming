@@ -38,6 +38,7 @@ export function installEndSession(options: {
     let pending = false;
     let ended = false;
     let uncertain = false;
+    let useManagerConfirmation = false;
     let timeout: number | undefined;
     const button = document.createElement('button');
     button.type = 'button';
@@ -72,7 +73,7 @@ export function installEndSession(options: {
     fallback.style.cssText = 'display:none;color:#9bd8ff';
     // Navigate this tab: works without popup permission or the original manager tab.
     const actions = document.createElement('div');
-    actions.style.cssText = 'display:flex;justify-content:flex-end;gap:12px;margin-top:24px';
+    actions.style.cssText = 'display:flex;flex-wrap:wrap;justify-content:flex-end;gap:12px;margin-top:24px';
     const cancel = document.createElement('button');
     cancel.type = 'button';
     cancel.textContent = 'Keep streaming';
@@ -90,7 +91,9 @@ export function installEndSession(options: {
         window.clearTimeout(timeout);
         status.textContent = text;
         fallback.style.display = 'block';
-        confirm.disabled = true;
+        useManagerConfirmation = true;
+        confirm.textContent = 'Continue in session manager';
+        confirm.disabled = false;
         cancel.disabled = false;
     };
     const markEnded = () => {
@@ -122,6 +125,8 @@ export function installEndSession(options: {
                 port?.postMessage({ type: 'pong' });
                 if (dialog.open && !pending && !ended && !uncertain) {
                     confirm.disabled = false;
+                    useManagerConfirmation = false;
+                    confirm.textContent = 'End session';
                     fallback.style.display = 'none';
                     status.textContent = '';
                 }
@@ -150,10 +155,12 @@ export function installEndSession(options: {
         status.textContent = '';
         fallback.style.display = 'none';
         confirm.disabled = false;
+        useManagerConfirmation = false;
+        confirm.textContent = 'End session';
         dialog.showModal();
         cancel.focus();
         if (!port) {
-            showFallback('The original session manager is unavailable. Open it to confirm ending this session.');
+            showFallback('Continue to the session manager to confirm ending this session.');
         }
     });
     cancel.addEventListener('click', () => { if (!pending && !ended) dialog.close(); });
@@ -161,8 +168,10 @@ export function installEndSession(options: {
     dialog.addEventListener('close', () => { if (!ended) options.setModalInput(false); });
     confirm.addEventListener('click', () => {
         if (pending || ended) return;
-        if (!port) {
-            showFallback('Open the session manager to confirm ending this session.');
+        if (useManagerConfirmation || !port) {
+            // Navigation is only an intent. The authenticated manager confirms and
+            // validates the exact session before any stop request is sent.
+            window.location.assign(buildEndSessionUrl(options.managerOrigin, context));
             return;
         }
         pending = true;
@@ -173,7 +182,7 @@ export function installEndSession(options: {
         status.textContent = 'Contacting session manager…';
         // Message delivery wakes a responsive background tab even if its timers were throttled.
         // No destructive request is sent until this live round trip completes.
-        timeout = window.setTimeout(() => showFallback('The original session manager is unavailable. Open it to confirm ending this session.'), 4_000);
+        timeout = window.setTimeout(() => showFallback('Continue to the session manager to confirm ending this session.'), 4_000);
         port.postMessage({ type: 'probe' });
     });
     return {

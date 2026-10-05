@@ -33,3 +33,25 @@ cases. Build both UI-library module formats before bundling the player; runtime
 artifacts must include the rebuilt UI library. Hosted acceptance must establish
 a presented frame, the visible End session control and working confirmation.
 A manager connect acknowledgement alone does not establish usable media.
+
+## Browser isolation and manager lifetime
+
+The deployed Dev manager sends Cross-Origin-Opener-Policy: same-origin while the
+player is on a different origin. This separates browsing context groups and
+severs the retained popup reference, so the MessageChannel bridge is unavailable
+even when both tabs are open. Do not weaken COOP to enable this feature. The
+bridge is an optional optimization only where browser policy permits it. It also
+depends on the launching SessionAccessPage remaining mounted; switching admin
+views, reloading or closing the manager can invalidate it. Server Ops launches
+do not currently install this bridge.
+
+Without a usable bridge, the player presents an enabled Continue in session
+manager action. Clicking it navigates the stream tab to the exact-session intent
+URL; it does not stop the session or close the tab. The authenticated manager
+requires confirmation and validates ownership and request identity before stopping.
+This handoff replaces the stream page, so cancellation there requires re-entering
+the stream. A direct in-player end under strict COOP remains separate server-
+mediated design work; keeping another manager tab open is not sufficient.
+
+Acceptance must test the actual hosted COOP headers, manager view navigation,
+manager reload and Server Ops entry, as well as healthy-channel operation.

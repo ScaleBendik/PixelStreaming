@@ -29,6 +29,7 @@ function fixture(t) {
     const nodes = [], events = new Map(), timers = new Map();
     let timerId = 0, closes = 0, ended = 0;
     const input = [];
+    const navigations = [];
     function element(tag) {
         const el = { tag, children: [], style: {}, attributes: {}, listeners: {}, open: false, disabled: false,
             setAttribute(k, v) { this.attributes[k] = v; }, append(...items) { this.children.push(...items); },
@@ -38,7 +39,7 @@ function fixture(t) {
         nodes.push(el); return el;
     }
     global.document = { createElement: element, exitPointerLock() {} };
-    global.window = { addEventListener(n, fn) { events.set(n, fn); }, removeEventListener(n) { events.delete(n); },
+    global.window = { location: { assign(url) { navigations.push(url); } }, addEventListener(n, fn) { events.set(n, fn); }, removeEventListener(n) { events.delete(n); },
         setTimeout(fn) { timers.set(++timerId, fn); return timerId; }, clearTimeout(id) { timers.delete(id); }, close() { closes++; } };
     const context = { region: 'r', instanceId: 'i', sessionRequestId: 's' };
     const controller = installEndSession({ controls: element('controls'), modalParent: element('parent'), managerOrigin: 'https://manager.test', context,
@@ -50,11 +51,11 @@ function fixture(t) {
         return { port, sent };
     };
     t.after(() => { controller.dispose(); global.window = originalWindow; global.document = originalDocument; });
-    return { nodes, input, controller, receive, timers,
+    return { nodes, input, controller, receive, timers, navigations,
         get closes() { return closes; }, get ended() { return ended; },
         get button() { return nodes.find(n => n.id === 'endSessionBtn'); },
         get dialog() { return nodes.find(n => n.tag === 'dialog'); },
-        get confirm() { return nodes.find(n => n.tag === 'button' && n.textContent === 'End session'); },
+        get confirm() { return nodes.find(n => n.tag === 'button' && (n.textContent === 'End session' || n.textContent === 'Continue in session manager')); },
         get cancel() { return nodes.find(n => n.textContent === 'Keep streaming'); } };
 }
 test('dialog cancels without mutation; matching channel requires confirmation and closes only after acceptance', t => {
@@ -76,7 +77,7 @@ test('rejects wrong origin, protocol, identity and missing source without granti
     for (const overrides of [{ origin: 'https://evil.test' }, { source: null }, { data: { type: 'sw-session-end-channel', version: 1, region: 'r', instanceId: 'i', sessionRequestId: 'new' } }, { data: { type: 'sw-session-end-channel', version: 2, region: 'r', instanceId: 'i', sessionRequestId: 's' } }]) {
         assert.deepEqual(f.receive(overrides).sent, []);
     }
-    f.button.click(); assert.equal(f.confirm.disabled, true);
+    f.button.click(); assert.equal(f.confirm.disabled, false);
     assert.equal(f.nodes.find(n => n.tag === 'a').style.display, 'block');
     assert.equal(f.closes, 0);
 });
@@ -85,8 +86,10 @@ test('failed and timed-out ends keep the tab open with manager fallback', t => {
     f.button.click(); f.confirm.click();
     port.onmessage({ data: { type: 'available' } });
     port.onmessage({ data: { type: 'end-result', accepted: false } });
-    assert.equal(f.closes, 0); assert.equal(f.confirm.disabled, true); assert.equal(f.cancel.disabled, false);
-    f.cancel.click(); f.button.click(); f.confirm.click();
+    assert.equal(f.closes, 0); assert.equal(f.confirm.disabled, false); assert.equal(f.cancel.disabled, false);
+    f.confirm.click();
+    assert.equal(f.navigations.length, 1);
+    assert.equal(f.ended, 0);
     for (const timeout of [...f.timers.values()]) timeout();
     assert.equal(f.closes, 0); assert.equal(f.nodes.find(n => n.tag === 'a').style.display, 'block');
 });
@@ -99,4 +102,31 @@ test('unresponsive manager never receives an end and a late probe cannot end aft
     port.onmessage({ data: { type: 'available' } });
     assert.equal(sent.filter(m => m.type === 'end').length, 0);
     assert.equal(f.closes, 0);
+});
+
+
+test('isolated or missing manager offers explicit authenticated navigation without ending or closing', t => {
+    const f = fixture(t);
+    f.button.click();
+    assert.equal(f.confirm.disabled, false);
+    assert.equal(f.confirm.textContent, 'Continue in session manager');
+    assert.deepEqual(f.navigations, []);
+    f.cancel.click();
+    assert.deepEqual(f.navigations, []);
+    f.button.click(); f.confirm.click();
+    assert.deepEqual(f.navigations, [buildEndSessionUrl('https://manager.test', { region: 'r', instanceId: 'i', sessionRequestId: 's' })]);
+    assert.equal(f.closes, 0);
+    assert.equal(f.ended, 0);
+});
+
+test('late healthy bridge restores direct confirmation before a request is made', t => {
+    const f = fixture(t);
+    f.button.click();
+    const { port, sent } = f.receive();
+    port.onmessage({ data: { type: 'ping' } });
+    assert.equal(f.confirm.textContent, 'End session');
+    f.confirm.click();
+    assert.deepEqual(f.navigations, []);
+    assert.equal(sent.at(-1).type, 'probe');
+    assert.equal(sent.filter(m => m.type === 'end').length, 0);
 });
