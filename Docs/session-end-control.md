@@ -17,3 +17,19 @@ are owned by [the web integration contract](../../scaleworld-server-manager-web/
 Run npm test and npm run build in Frontend/implementations/typescript. Browser
 acceptance must include fullscreen, input restoration, manager absence and timer
 throttling. Shipping source or building locally does not deploy the runtime.
+
+## Player startup safety
+
+Application.createButtons must assign its Controls instance to Application.controls
+before the player installs toolbar extensions. A declaration alone does not
+initialize that property. The initial End session release read the unassigned
+property and threw before stream.connect(), leaving a black player until recovery
+guidance appeared. Optional End session initialization is now isolated so its
+failure logs a warning and still reaches the normal auto/manual connection path.
+
+Regression coverage executes the real toolbar creation in the UI library and the
+full player onload bootstrap with healthy, missing-toolbar and throwing-extension
+cases. Build both UI-library module formats before bundling the player; runtime
+artifacts must include the rebuilt UI library. Hosted acceptance must establish
+a presented frame, the visible End session control and working confirmation.
+A manager connect acknowledgement alone does not establish usable media.

@@ -255,6 +255,7 @@ export class Application {
 
         // Setup controls
         const controls = new Controls(controlsUIConfig);
+        this.controls = controls;
         this.uiFeaturesElement.appendChild(controls.rootElement);
 
         // When we fullscreen we want this element to be the root
