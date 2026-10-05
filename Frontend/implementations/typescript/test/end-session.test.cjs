@@ -24,7 +24,7 @@ test('owner presentation excludes shadows, malformed tickets and previous reques
     assert.equal(url.searchParams.has('reconnectInstanceId'), false);
 });
 
-function fixture(t) {
+function fixture(t, extra = {}) {
     const originalWindow = global.window, originalDocument = global.document;
     const nodes = [], events = new Map(), timers = new Map();
     let timerId = 0, closes = 0, ended = 0;
@@ -35,7 +35,7 @@ function fixture(t) {
             setAttribute(k, v) { this.attributes[k] = v; }, append(...items) { this.children.push(...items); },
             appendChild(item) { this.children.push(item); }, addEventListener(n, fn) { this.listeners[n] = fn; },
             showModal() { this.open = true; }, close() { this.open = false; this.listeners.close?.(); },
-            focus() {}, remove() {}, click() { if (!this.disabled) this.listeners.click?.(); } };
+            focus() {}, remove() {}, click() { if (!this.disabled) return this.listeners.click?.(); } };
         nodes.push(el); return el;
     }
     global.document = { createElement: element, exitPointerLock() {} };
@@ -43,7 +43,7 @@ function fixture(t) {
         setTimeout(fn) { timers.set(++timerId, fn); return timerId; }, clearTimeout(id) { timers.delete(id); }, close() { closes++; } };
     const context = { region: 'r', instanceId: 'i', sessionRequestId: 's' };
     const controller = installEndSession({ controls: element('controls'), modalParent: element('parent'), managerOrigin: 'https://manager.test', context,
-        setModalInput(open) { input.push(open); }, onEnded() { ended++; } });
+        setModalInput(open) { input.push(open); }, onEnded() { ended++; }, ...extra });
     const receive = (overrides = {}) => {
         const sent = [];
         const port = { close() {}, postMessage(data) { sent.push(data); }, onmessage: null };
@@ -129,4 +129,26 @@ test('late healthy bridge restores direct confirmation before a request is made'
     assert.deepEqual(f.navigations, []);
     assert.equal(sent.at(-1).type, 'probe');
     assert.equal(sent.filter(m => m.type === 'end').length, 0);
+});
+
+
+test('direct end works without any manager port, coalesces clicks, and closes only after acceptance', async t => {
+    let calls = 0, finish;
+    const f = fixture(t, { endDirect: () => { calls++; return new Promise(resolve => { finish = resolve; }); } });
+    f.button.click();
+    assert.equal(f.confirm.textContent, 'End session');
+    f.cancel.click(); assert.equal(calls, 0);
+    f.button.click(); const completion = f.confirm.click(); f.confirm.click();
+    assert.equal(calls, 1); assert.equal(f.closes, 0); assert.equal(f.cancel.disabled, true);
+    finish(true); await completion;
+    assert.equal(f.closes, 1); assert.equal(f.ended, 1); assert.deepEqual(f.navigations, []);
+});
+test('failed direct end restores pending state, keeps stream open and offers manual fallback', async t => {
+    const pending = [];
+    const f = fixture(t, { endDirect: async () => false, onPending: v => pending.push(v) });
+    f.button.click(); await f.confirm.click();
+    assert.deepEqual(pending, [true, false]);
+    assert.equal(f.closes, 0); assert.equal(f.ended, 0); assert.equal(f.cancel.disabled, false);
+    assert.equal(f.confirm.textContent, 'Continue in session manager');
+    assert.deepEqual(f.navigations, []);
 });

@@ -31,6 +31,7 @@ export function installEndSession(options: {
     setModalInput: (open: boolean) => void;
     onEnded: () => void;
     onPending?: (pending: boolean) => void;
+    endDirect?: () => Promise<boolean>;
 }) {
     const { context } = options;
     let port: MessagePort | null = null;
@@ -159,15 +160,30 @@ export function installEndSession(options: {
         confirm.textContent = 'End session';
         dialog.showModal();
         cancel.focus();
-        if (!port) {
+        if (!port && !options.endDirect) {
             showFallback('Continue to the session manager to confirm ending this session.');
         }
     });
     cancel.addEventListener('click', () => { if (!pending && !ended) dialog.close(); });
     dialog.addEventListener('cancel', (event) => { if (pending || ended) event.preventDefault(); });
     dialog.addEventListener('close', () => { if (!ended) options.setModalInput(false); });
-    confirm.addEventListener('click', () => {
+    confirm.addEventListener('click', async () => {
         if (pending || ended) return;
+        if (options.endDirect && !useManagerConfirmation) {
+            pending = true;
+            uncertain = true;
+            checkingManager = false;
+            confirm.disabled = true;
+            cancel.disabled = true;
+            status.textContent = 'Ending session…';
+            options.onPending?.(true);
+            let accepted = false;
+            try { accepted = await options.endDirect(); } catch { /* Retain the player on any uncertainty. */ }
+            if (ended) return;
+            if (accepted) markEnded();
+            else showFallback('The session end could not be confirmed. Check the session manager.');
+            return;
+        }
         if (useManagerConfirmation || !port) {
             // Navigation is only an intent. The authenticated manager confirms and
             // validates the exact session before any stop request is sent.

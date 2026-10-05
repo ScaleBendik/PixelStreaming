@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 import express from 'express';
+import { createSessionEndProxy } from './session-end-proxy';
 import fs from 'fs';
 import path from 'path';
 import {
@@ -1087,6 +1088,12 @@ app.get('/api/runtime-recovery', (_request, response) => {
     response.setHeader('Cache-Control', 'no-store');
     response.json({ recovery: instanceAgentClient?.getRuntimeRecoveryNotice() ?? null });
 });
+
+const sessionEndProxy = createSessionEndProxy(
+    String(options.instance_agent_api_base_url || process.env.INSTANCE_AGENT_API_BASE_URL || '')
+);
+app.get('/api/session-end', sessionEndProxy);
+app.post('/api/session-end', sessionEndProxy);
 
 app.post('/api/session-network-path', express.json({ limit: '8kb' }), async (request, response) => {
     const body = request.body as

@@ -3,16 +3,19 @@
 The TypeScript reference player owns the toolbar button and native confirmation
 in Frontend/implementations/typescript/src/endSession.ts. player.ts supplies the
 managed owner context, environment-specific manager origin, input isolation and
-reconnect controls. No Unreal package or Wilbur shutdown endpoint is changed.
+reconnect controls. No Unreal package change is required.
 
-The authenticated manager initiates an exact-origin, request-bound MessageChannel.
-Confirmation probes the live channel before sending an end request. The player
-closes only after acceptance or the existing runtime session-ended notification;
-failure retains the tab with a manager confirmation link. Shadow viewers do not
-receive the destructive control. Decoding ticket claims is display-only.
+With the direct feature enabled, confirmation sends a purpose-specific capability
+through Wilbur to the existing API stop operation. The player closes only after
+acceptance or the existing runtime session-ended notification. Failure retains
+the tab with a manager confirmation link. Shadow viewers do not receive the
+destructive control. The older manager MessageChannel is optional compatibility
+behavior when no direct credential exists. Decoding ticket claims is display-only.
 
-The protocol, timeouts, fallback URL, deployment order and hosted acceptance gates
-are owned by [the web integration contract](../../scaleworld-server-manager-web/docs/pixelstreaming-session-end-control.md).
+The protocol, timeouts, deployment order and hosted acceptance gates are owned by
+[the API contract](../../scaleworld-server-manager-api/docs/player-session-end.md).
+The [web integration contract](../../scaleworld-server-manager-web/docs/pixelstreaming-session-end-control.md)
+describes manager handoff and compatibility.
 
 Run npm test and npm run build in Frontend/implementations/typescript. Browser
 acceptance must include fullscreen, input restoration, manager absence and timer
@@ -34,24 +37,16 @@ artifacts must include the rebuilt UI library. Hosted acceptance must establish
 a presented frame, the visible End session control and working confirmation.
 A manager connect acknowledgement alone does not establish usable media.
 
-## Browser isolation and manager lifetime
+## Direct end and compatibility
 
-The deployed Dev manager sends Cross-Origin-Opener-Policy: same-origin while the
-player is on a different origin. This separates browsing context groups and
-severs the retained popup reference, so the MessageChannel bridge is unavailable
-even when both tabs are open. Do not weaken COOP to enable this feature. The
-bridge is an optional optimization only where browser policy permits it. It also
-depends on the launching SessionAccessPage remaining mounted; switching admin
-views, reloading or closing the manager can invalidate it. Server Ops launches
-do not currently install this bridge.
+With a current owner end capability, the player confirms and calls the same-origin
+/api/session-end relay. Wilbur forwards only the narrow credential and expected
+request ID to the fixed API endpoint. The manager tab and MessageChannel are not
+needed. The separate API-only signing key is never distributed to Wilbur.
 
-Without a usable bridge, the player presents an enabled Continue in session
-manager action. Clicking it navigates the stream tab to the exact-session intent
-URL; it does not stop the session or close the tab. The authenticated manager
-requires confirmation and validates ownership and request identity before stopping.
-This handoff replaces the stream page, so cancellation there requires re-entering
-the stream. A direct in-player end under strict COOP remains separate server-
-mediated design work; keeping another manager tab open is not sufficient.
-
-Acceptance must test the actual hosted COOP headers, manager view navigation,
-manager reload and Server Ops entry, as well as healthy-channel operation.
+The [owning API/runtime contract](../../scaleworld-server-manager-api/docs/player-session-end.md)
+defines authorization, expiry, rollout and hosted acceptance. The feature starts
+disabled and requires an API secret and flag plus the rebuilt runtime. Missing or
+expired credentials retain the optional old bridge / authenticated manager handoff.
+Do not weaken the manager COOP header. Direct stop does not open the web's
+client-only feedback prompt. Stop/recycle and artifact ownership remain in the API.

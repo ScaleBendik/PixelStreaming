@@ -16,6 +16,7 @@ import { Application, PixelStreamingApplicationStyle } from '@epicgames-ps/lib-p
 import { installResolutionRecovery } from './resolutionRecovery';
 import { installRuntimeRecovery } from './runtimeRecovery';
 import { installEndSession, isManagedEndContext } from './endSession';
+import { requestSessionEnd } from './sessionEndRequest';
 const PixelStreamingApplicationStyles =
     new PixelStreamingApplicationStyle();
 PixelStreamingApplicationStyles.applyStyleSheet();
@@ -617,6 +618,13 @@ document.body.onload = function() {
 
     const pageUrl = new URL(window.location.href);
     const pageHashParams = getHashParams(pageUrl);
+    const endCapabilityKey = 'sw-session-end:' + window.location.host + window.location.pathname;
+    // Fragments are never sent in HTTP requests. Consume and scrub before connecting.
+    const incomingEndCapability = pageHashParams.get('sw_end');
+    if (pageUrl.searchParams.has(CONNECT_TICKET_PARAM)) removeSessionStorage(endCapabilityKey);
+    if (incomingEndCapability) writeSessionStorage(endCapabilityKey, incomingEndCapability);
+    const endCapability = incomingEndCapability || readSessionStorage(endCapabilityKey);
+    pageHashParams.delete('sw_end');
     const connectTicketStorageKey = getConnectTicketStorageKey();
     const reconnectContextStorageKey = getReconnectContextStorageKey();
     const playerQueryStateStorageKey = getPlayerQueryStateStorageKey();
@@ -672,7 +680,7 @@ document.body.onload = function() {
     const storedPlayerQuery =
         readSessionStorage(playerQueryStateStorageKey)?.trim() ?? '';
 
-    if (hasConnectTicketQueryParam || hasReconnectQueryParams || hasReconnectHashParams) {
+    if (incomingEndCapability || hasConnectTicketQueryParam || hasReconnectQueryParams || hasReconnectHashParams) {
         pageUrl.searchParams.delete(CONNECT_TICKET_PARAM);
         deleteReconnectContextParams(pageUrl.searchParams);
         deleteReconnectContextParams(pageHashParams);
@@ -698,6 +706,7 @@ document.body.onload = function() {
         );
         persistPlayerQueryState(playerQueryStateStorageKey);
         removeSessionStorage(connectTicketStorageKey);
+        removeSessionStorage(endCapabilityKey);
         window.location.replace(reconnectUrl);
         return true;
     };
@@ -1055,6 +1064,7 @@ document.body.onload = function() {
             runtimeRecovery.cancel();
             resolutionRecovery.cancel();
             removeSessionStorage(connectTicketStorageKey);
+            removeSessionStorage(endCapabilityKey);
             removeSessionStorage(reconnectContextStorageKey);
             showSessionEndedGuidance();
             endSessionControl?.markEnded();
@@ -1108,6 +1118,7 @@ document.body.onload = function() {
             let previousReconnectAttempts: number | null = null;
             endSessionControl = installEndSession({
                 controls: application.controls.rootElement,
+                endDirect: endCapability ? () => requestSessionEnd(endCapability, reconnectContext.sessionRequestId!) : undefined,
                 modalParent: stream.videoElementParent,
                 managerOrigin: SESSION_MANAGER_BASE_URLS[reconnectContext.sessionManagerEnvironment],
                 context: { region: reconnectContext.region, instanceId: reconnectContext.instanceId,
@@ -1137,6 +1148,7 @@ document.body.onload = function() {
                     resolutionRecovery.cancel();
                     config.setNumericSetting(NumericParameters.MaxReconnectAttempts, 0);
                     removeSessionStorage(connectTicketStorageKey);
+                    removeSessionStorage(endCapabilityKey);
                     removeSessionStorage(reconnectContextStorageKey);
                 }
             });
