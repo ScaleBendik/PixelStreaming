@@ -50,3 +50,7 @@ disabled and requires an API secret and flag plus the rebuilt runtime. Missing o
 expired credentials retain the optional old bridge / authenticated manager handoff.
 Do not weaken the manager COOP header. Direct stop does not open the web's
 client-only feedback prompt. Stop/recycle and artifact ownership remain in the API.
+
+The relay accepts only explicit GET (status) and POST (end). Express also routes
+HEAD through GET handlers, so reject HEAD with 405 before forwarding; never map
+an unknown method to POST. An HTTP regression test covers the real routing.

@@ -32,3 +32,33 @@ test('upstream rejection, malformed reply, redirect/network failure are never su
         const r = await run({ send }); assert.equal(r.result.body, undefined); assert.ok([403,502,503].includes(r.result.status));
     }
 });
+
+test('HEAD through the Express GET route never becomes a destructive request', async () => {
+    const express = require('express');
+    const app = express();
+    const methods = [];
+    const proxy = createSessionEndProxy('https://api.test/', async (_url, options) => {
+        methods.push(options.method);
+        return { ok: true, json: async () => ({ accepted: false, sessionRequestId: id }) };
+    });
+    app.get('/api/session-end', proxy);
+    app.post('/api/session-end', proxy);
+    const server = app.listen(0, '127.0.0.1');
+    try {
+        await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
+        const url = 'http://127.0.0.1:' + server.address().port + '/api/session-end';
+        const headers = { 'X-SW-Session-End': 'signed.token.value', 'X-SW-Session-Request': id };
+        const head = await fetch(url, { method: 'HEAD', headers });
+        assert.equal(head.status, 405);
+        assert.equal(head.headers.get('allow'), 'GET, POST');
+        assert.deepEqual(methods, []);
+        for (const method of ['GET', 'POST']) {
+            const response = await fetch(url, { method, headers });
+            assert.equal(response.status, 200);
+            await response.json();
+        }
+        assert.deepEqual(methods, ['GET', 'POST']);
+    } finally {
+        await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+});

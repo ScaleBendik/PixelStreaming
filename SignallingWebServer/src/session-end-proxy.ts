@@ -14,6 +14,12 @@ export function createSessionEndProxy(apiBaseUrl: string, send: typeof fetch = f
     }
     return async (request, response) => {
         response.setHeader('Cache-Control', 'no-store');
+        // Express dispatches HEAD through GET routes; never promote it to a stop.
+        if (request.method !== 'GET' && request.method !== 'POST') {
+            response.setHeader('Allow', 'GET, POST');
+            response.sendStatus(405);
+            return;
+        }
         const credential = request.get('X-SW-Session-End');
         const expectedRequest = request.get('X-SW-Session-Request');
         if (
@@ -32,7 +38,7 @@ export function createSessionEndProxy(apiBaseUrl: string, send: typeof fetch = f
         }
         try {
             const upstream = await send(endpoint, {
-                method: request.method === 'GET' ? 'GET' : 'POST',
+                method: request.method,
                 headers: { 'X-SW-Session-End': credential, 'X-SW-Session-Request': expectedRequest },
                 redirect: 'error',
                 signal: AbortSignal.timeout(20_000)
