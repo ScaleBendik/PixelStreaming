@@ -4,6 +4,8 @@ Last updated: 2026-09-07
 
 This directory mixes upstream Pixel Streaming reference documentation with ScaleWorld operational docs for the customized streamer runtime.
 
+[End session control and manager integration](session-end-control.md) documents the owner-only toolbar action.
+
 ## ScaleWorld Operational Docs
 
 Use these first for the Server Manager integration:

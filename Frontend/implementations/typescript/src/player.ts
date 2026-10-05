@@ -15,6 +15,7 @@ import {
 import { Application, PixelStreamingApplicationStyle } from '@epicgames-ps/lib-pixelstreamingfrontend-ui-ue5.8';
 import { installResolutionRecovery } from './resolutionRecovery';
 import { installRuntimeRecovery } from './runtimeRecovery';
+import { installEndSession, isManagedEndContext } from './endSession';
 const PixelStreamingApplicationStyles =
     new PixelStreamingApplicationStyle();
 PixelStreamingApplicationStyles.applyStyleSheet();
@@ -1033,6 +1034,8 @@ document.body.onload = function() {
         });
     }
 
+    let endSessionControl: ReturnType<typeof installEndSession> | undefined;
+    let endSessionPending = false;
     stream.addEventListener('webRtcDisconnected', (event) => {
         reportSessionQuality(true);
         sessionQuality.setConnected(false);
@@ -1040,6 +1043,7 @@ document.body.onload = function() {
         mediaStartStalePromptGeneration = -1;
         const eventData = (event as { data?: { eventString?: string } }).data;
         const reason = eventData?.eventString ?? '';
+        if (endSessionPending && !isScaleWorldSessionEndedReason(reason)) return;
         if (isInactivityDisconnectReason(reason)) {
             runtimeRecovery.cancel();
             resolutionRecovery.cancel();
@@ -1053,6 +1057,7 @@ document.body.onload = function() {
             removeSessionStorage(connectTicketStorageKey);
             removeSessionStorage(reconnectContextStorageKey);
             showSessionEndedGuidance();
+            endSessionControl?.markEnded();
             window.setTimeout(() => {
                 window.close();
             }, 0);
@@ -1093,6 +1098,48 @@ document.body.onload = function() {
     const runtimeRecovery = installRuntimeRecovery(stream,
         reconnectContext ? buildSessionManagerReconnectUrl(reconnectContext) : null);
     window.addEventListener('pagehide', () => runtimeRecovery.dispose(), { once: true });
+
+    if (reconnectContext?.sessionManagerEnvironment && reconnectContext.sessionRequestId &&
+        isManagedEndContext(connectTicket, reconnectContext.sessionRequestId)) {
+        const inputFlags = [Flags.KeyboardInput, Flags.MouseInput, Flags.TouchInput, Flags.GamepadInput];
+        let previousInputs: boolean[] | null = null;
+        let previousReconnectAttempts: number | null = null;
+        endSessionControl = installEndSession({
+            controls: application.controls.rootElement,
+            modalParent: stream.videoElementParent,
+            managerOrigin: SESSION_MANAGER_BASE_URLS[reconnectContext.sessionManagerEnvironment],
+            context: { region: reconnectContext.region, instanceId: reconnectContext.instanceId,
+                sessionRequestId: reconnectContext.sessionRequestId },
+            setModalInput: (open) => {
+                if (open && !previousInputs) {
+                    previousInputs = inputFlags.map((flag) => config.isFlagEnabled(flag));
+                    inputFlags.forEach((flag) => config.setFlagEnabled(flag, false));
+                } else if (!open && previousInputs) {
+                    const restore = previousInputs;
+                    previousInputs = null;
+                    inputFlags.forEach((flag, index) => config.setFlagEnabled(flag, restore[index]));
+                }
+            },
+            onPending: (pending) => {
+                endSessionPending = pending;
+                if (pending && previousReconnectAttempts === null) {
+                    previousReconnectAttempts = config.getNumericSettingValue(NumericParameters.MaxReconnectAttempts);
+                    config.setNumericSetting(NumericParameters.MaxReconnectAttempts, 0);
+                } else if (!pending && previousReconnectAttempts !== null) {
+                    config.setNumericSetting(NumericParameters.MaxReconnectAttempts, previousReconnectAttempts);
+                    previousReconnectAttempts = null;
+                }
+            },
+            onEnded: () => {
+                runtimeRecovery.cancel();
+                resolutionRecovery.cancel();
+                config.setNumericSetting(NumericParameters.MaxReconnectAttempts, 0);
+                removeSessionStorage(connectTicketStorageKey);
+                removeSessionStorage(reconnectContextStorageKey);
+            }
+        });
+        window.addEventListener('pagehide', () => endSessionControl?.dispose(), { once: true });
+    }
 
     if (shouldAutoConnect) {
         stream.connect();
