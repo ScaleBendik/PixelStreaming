@@ -152,3 +152,18 @@ test('failed direct end restores pending state, keeps stream open and offers man
     assert.equal(f.confirm.textContent, 'Continue in session manager');
     assert.deepEqual(f.navigations, []);
 });
+
+test('initial connection hint appears once, expires, and is dismissed when opening the dialog', t => {
+    const f = fixture(t);
+    const hint = f.nodes.find(n => n.id === 'endSessionHint');
+    assert.equal(hint.style.display, undefined);
+    f.controller.showInitialHint();
+    assert.equal(hint.textContent, 'Click here to end your session');
+    assert.equal(hint.style.display, 'block');
+    for (const timer of [...f.timers.values()]) timer();
+    assert.equal(hint.style.display, 'none');
+    f.controller.showInitialHint();
+    assert.equal(hint.style.display, 'none');
+    f.button.click();
+    assert.equal(hint.style.display, 'none');
+});

@@ -51,6 +51,23 @@ export function installEndSession(options: {
     button.innerHTML = '<svg viewBox="0 0 32 32" width="100%" height="100%" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M16 4v12M9 7a12 12 0 1 0 14 0"/></g></svg>';
     options.controls.appendChild(button);
 
+    const hint = document.createElement('span');
+    hint.id = 'endSessionHint';
+    hint.textContent = 'Click here to end your session';
+    hint.style.cssText = 'display:none;position:absolute;left:calc(100% + 12px);top:50%;transform:translateY(-50%);width:max-content;max-width:65vw;padding:9px 12px;border-radius:6px;background:#20262e;color:#fff;font:14px/1.4 system-ui;text-transform:none;pointer-events:none;box-shadow:0 2px 10px #0008;z-index:20';
+    button.style.position = 'relative';
+    button.style.overflow = 'visible';
+    button.appendChild(hint);
+    let hintShown = false;
+    let hintTimer: number | undefined;
+    const hideHint = () => { hint.style.display = 'none'; window.clearTimeout(hintTimer); };
+    const showInitialHint = () => {
+        if (hintShown || ended) return;
+        hintShown = true;
+        hint.style.display = 'block';
+        hintTimer = window.setTimeout(hideHint, 7_000);
+    };
+
     const dialog = document.createElement('dialog');
     dialog.id = 'endSessionDialog';
     dialog.setAttribute('aria-labelledby', 'stream-end-session-title');
@@ -99,6 +116,7 @@ export function installEndSession(options: {
     };
     const markEnded = () => {
         if (ended) return;
+        hideHint();
         ended = true;
         pending = false;
         window.clearTimeout(timeout);
@@ -151,6 +169,7 @@ export function installEndSession(options: {
     };
     window.addEventListener('message', receive);
     button.addEventListener('click', () => {
+        hideHint();
         document.exitPointerLock?.();
         options.setModalInput(true);
         status.textContent = '';
@@ -203,7 +222,9 @@ export function installEndSession(options: {
     });
     return {
         markEnded,
+        showInitialHint,
         dispose: () => {
+            hideHint();
             window.removeEventListener('message', receive);
             window.clearTimeout(timeout);
             port?.close();

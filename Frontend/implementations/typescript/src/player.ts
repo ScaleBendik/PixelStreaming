@@ -917,6 +917,7 @@ document.body.onload = function() {
         armMediaFrameEvidence(mediaEvidenceConnectionGeneration);
     });
     stream.addEventListener('webRtcConnected', () => {
+        endSessionControl?.showInitialHint();
         sessionQuality.setConnected(true);
         armMediaStartStaleTimer(mediaEvidenceConnectionGeneration);
     });

@@ -48,8 +48,10 @@ The [owning API/runtime contract](../../scaleworld-server-manager-api/docs/playe
 defines authorization, expiry, rollout and hosted acceptance. No additional secret or enable flag is required. Use the updated API and direct-end
 runtime, then a fresh Connect. Missing or
 expired credentials retain the optional old bridge / authenticated manager handoff.
-Do not weaken the manager COOP header. Direct stop does not open the web's
-client-only feedback prompt. Stop/recycle and artifact ownership remain in the API.
+Do not weaken the manager COOP header. Accepted direct stops persist an API feedback
+reminder; the manager offers feedback on return. Stop/recycle and artifact ownership
+remain in the API. The owner button shows 'Click here to end your session' for seven
+seconds after the first connection, hiding immediately when its dialog opens.
 
 The relay accepts only explicit GET (status) and POST (end). Express also routes
 HEAD through GET handlers, so reject HEAD with 405 before forwarding; never map
