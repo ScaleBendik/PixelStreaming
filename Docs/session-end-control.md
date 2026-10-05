@@ -6,7 +6,7 @@ managed owner context, environment-specific manager origin, input isolation and
 reconnect controls. No Unreal package change is required.
 
 With the direct feature enabled, confirmation sends a purpose-specific capability
-through Wilbur to the existing API stop operation. The player closes only after
+through Wilbur to the existing API stop operation. The player returns to the manager only after
 acceptance or the existing runtime session-ended notification. Failure retains
 the tab with a manager confirmation link. Shadow viewers do not receive the
 destructive control. The older manager MessageChannel is optional compatibility
@@ -56,3 +56,5 @@ seconds after the first connection, hiding immediately when its dialog opens.
 The relay accepts only explicit GET (status) and POST (end). Express also routes
 HEAD through GET handlers, so reject HEAD with 405 before forwarding; never map
 an unknown method to POST. An HTTP regression test covers the real routing.
+
+After confirmed end, navigate this tab to the configured manager /servers/ page. Do not call window.close or depend on opener focus: browser tab selection is unreliable. This return carries no end intent and cannot trigger a second stop. The manager displays pending feedback inline beneath its session status.

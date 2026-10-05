@@ -123,13 +123,13 @@ export function installEndSession(options: {
         options.onEnded();
         options.setModalInput(true);
         title.textContent = 'Session ended';
-        message.textContent = 'You can close this tab.';
+        message.textContent = 'Returning to the session manager…';
         status.textContent = '';
         fallback.style.display = 'none';
         actions.style.display = 'none';
         button.disabled = true;
         if (!dialog.open) dialog.showModal();
-        window.close();
+        window.location.assign(new URL('/servers/', options.managerOrigin).toString());
     };
     const receive = (event: MessageEvent) => {
         const data = event.data;

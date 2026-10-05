@@ -58,7 +58,7 @@ function fixture(t, extra = {}) {
         get confirm() { return nodes.find(n => n.tag === 'button' && (n.textContent === 'End session' || n.textContent === 'Continue in session manager')); },
         get cancel() { return nodes.find(n => n.textContent === 'Keep streaming'); } };
 }
-test('dialog cancels without mutation; matching channel requires confirmation and closes only after acceptance', t => {
+test('dialog cancels without mutation; matching channel requires confirmation and returns to the manager only after acceptance', t => {
     const f = fixture(t), { port, sent } = f.receive();
     f.button.click(); assert.equal(f.dialog.open, true); assert.deepEqual(f.input, [true]);
     f.cancel.click(); assert.equal(f.dialog.open, false); assert.deepEqual(sent, [{ type: 'ready' }]);
@@ -70,7 +70,8 @@ test('dialog cancels without mutation; matching channel requires confirmation an
     assert.equal(f.closes, 0); assert.equal(f.cancel.disabled, true);
     let prevented = false; f.dialog.listeners.cancel({ preventDefault() { prevented = true; } }); assert.equal(prevented, true);
     port.onmessage({ data: { type: 'end-result', accepted: true } });
-    assert.equal(f.closes, 1); assert.equal(f.ended, 1);
+    assert.equal(f.closes, 0); assert.equal(f.ended, 1);
+    assert.deepEqual(f.navigations, ['https://manager.test/servers/']);
 });
 test('rejects wrong origin, protocol, identity and missing source without granting a channel', t => {
     const f = fixture(t);
@@ -88,7 +89,7 @@ test('failed and timed-out ends keep the tab open with manager fallback', t => {
     port.onmessage({ data: { type: 'end-result', accepted: false } });
     assert.equal(f.closes, 0); assert.equal(f.confirm.disabled, false); assert.equal(f.cancel.disabled, false);
     f.confirm.click();
-    assert.equal(f.navigations.length, 1);
+
     assert.equal(f.ended, 0);
     for (const timeout of [...f.timers.values()]) timeout();
     assert.equal(f.closes, 0); assert.equal(f.nodes.find(n => n.tag === 'a').style.display, 'block');
@@ -132,7 +133,7 @@ test('late healthy bridge restores direct confirmation before a request is made'
 });
 
 
-test('direct end works without any manager port, coalesces clicks, and closes only after acceptance', async t => {
+test('direct end works without any manager port, coalesces clicks, and returns to the manager only after acceptance', async t => {
     let calls = 0, finish;
     const f = fixture(t, { endDirect: () => { calls++; return new Promise(resolve => { finish = resolve; }); } });
     f.button.click();
@@ -141,7 +142,9 @@ test('direct end works without any manager port, coalesces clicks, and closes on
     f.button.click(); const completion = f.confirm.click(); f.confirm.click();
     assert.equal(calls, 1); assert.equal(f.closes, 0); assert.equal(f.cancel.disabled, true);
     finish(true); await completion;
-    assert.equal(f.closes, 1); assert.equal(f.ended, 1); assert.deepEqual(f.navigations, []);
+    assert.equal(f.closes, 0); assert.equal(f.ended, 1);
+    assert.deepEqual(f.navigations, ['https://manager.test/servers/']);
+    assert.equal(f.navigations.length, 1);
 });
 test('failed direct end restores pending state, keeps stream open and offers manual fallback', async t => {
     const pending = [];
