@@ -7,7 +7,7 @@ const source = ts.transpileModule(fs.readFileSync(require.resolve('../src/player
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
 }).outputText;
 
-function boot({ missingControls = false, installationFails = false, autoConnect = true, capability, storedCapability, freshTicket = true } = {}) {
+function boot({ missingControls = false, installationFails = false, navigationFails = false, autoConnect = true, capability, storedCapability, freshTicket = true } = {}) {
     const state = { connections: 0, installed: 0, warnings: [] };
     const ids = new Proxy({}, { get: (_, key) => key });
     const toolbar = {};
@@ -39,6 +39,10 @@ function boot({ missingControls = false, installationFails = false, autoConnect 
             },
             PixelStreamingApplicationStyle: class { applyStyleSheet() {} }
         },
+        './navigationMode': { installNavigationMode: () => {
+            if (navigationFails) throw new Error('Simulated navigation failure');
+            return { dispose() {} };
+        } },
         './resolutionRecovery': { installResolutionRecovery: () => ({ cancel() {}, dispose() {} }) },
         './runtimeRecovery': { installRuntimeRecovery: () => ({ cancel() {}, dispose() {} }) },
         './sessionEndRequest': { requestSessionEnd: async (token, requestId) => { state.directRequest = { token, requestId }; return true; } },
@@ -85,6 +89,14 @@ for (const options of [{ missingControls: true }, { installationFails: true }]) 
 }
 test('manual-connect configuration remains manual after an optional control failure', () => {
     assert.equal(boot({ autoConnect: false, installationFails: true }).connections, 0);
+});
+
+test('navigation initialization failure cannot block player connection or optional session controls', () => {
+    const state = boot({ navigationFails: true });
+    assert.equal(state.connections, 1);
+    assert.equal(state.installed, 1);
+    assert.equal(state.warnings.length, 1);
+    assert.equal(boot({ navigationFails: true, autoConnect: false }).connections, 0);
 });
 
 

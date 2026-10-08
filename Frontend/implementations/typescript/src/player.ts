@@ -14,6 +14,7 @@ import {
 } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.8';
 import { Application, PixelStreamingApplicationStyle } from '@epicgames-ps/lib-pixelstreamingfrontend-ui-ue5.8';
 import { installResolutionRecovery } from './resolutionRecovery';
+import { installNavigationMode } from './navigationMode';
 import { installRuntimeRecovery } from './runtimeRecovery';
 import { installEndSession, isManagedEndContext } from './endSession';
 import { requestSessionEnd } from './sessionEndRequest';
@@ -1101,6 +1102,12 @@ document.body.onload = function() {
     }
     document.body.appendChild(application.rootElement);
 
+    try {
+        const navigationMode = installNavigationMode(stream);
+        window.addEventListener('pagehide', () => navigationMode.dispose(), { once: true });
+    } catch {
+        Logger.Warning('Optional navigation mouse integration unavailable; continuing player startup.');
+    }
     const resolutionRecovery = installResolutionRecovery(stream, () => {
         // An explicit in-game size must not compete with automatic browser viewport resizing.
         config.setFlagEnabled(Flags.MatchViewportResolution, false);

@@ -48,6 +48,11 @@ Use these first for the Server Manager integration:
 16. The durable recycle path uses a one-shot recycle token plus replacement-generation proof; recovered command/desired-state journals stay quarantined until the API accepts the exact current generation. Do not weaken these fences to repair readiness symptoms.
 17. The long-term backlog still tracks splitting the instance agent into a separate service once current warm-pool behavior is stable.
 
+## Player navigation
+
+- [Unreal navigation and browser mouse mode](navigation-mouse-mode.md): response strings,
+  pointer capture, reconnect synchronization and acceptance checks.
+
 ## Upstream Pixel Streaming Docs
 
 The upstream docs remain relevant for general Pixel Streaming behavior:
