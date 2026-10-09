@@ -1435,10 +1435,10 @@ test('runtime entitlement projection atomically replaces stale assigned state wi
             audience: 'external',
             groups: ['testcustomer'],
             entitlements: ['session.premium.request', 'feature.maps.secure'],
-            requestedServiceClass: 'premium',
+            requestedServiceClass: 'standard',
             grantedServiceClass: 'premium',
-            minimumComputeCapability: 'premium',
-            placementPolicy: 'premium-only',
+            minimumComputeCapability: 'gpu-standard-v1',
+            placementPolicy: 'allow-upward-provider-substitution',
             decidedAtUtc: '2026-09-01T20:00:00Z',
             policyVersion: 'access-v2'
         },
@@ -1446,6 +1446,15 @@ test('runtime entitlement projection atomically replaces stale assigned state wi
     );
     writeRuntimeEntitlementProjection(manifestPath, projected);
     assert.equal(runtimeEntitlementProjectionReport(projected).status, 'projected');
+    const assigned = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    assert.equal(assigned.projectionSchemaVersion, 1);
+    assert.equal(assigned.manifest.schemaVersion, 2);
+    assert.equal(assigned.manifest.requestedServiceClass, 'standard');
+    assert.equal(assigned.manifest.grantedServiceClass, 'premium');
+    assert.equal(assigned.manifest.minimumComputeCapability, 'gpu-standard-v1');
+    assert.deepEqual(assigned.manifest.entitlements, ['feature.maps.secure', 'session.premium.request']);
+    assert.deepEqual(assigned.manifest.groups, ['testcustomer']);
+    assert.equal(assigned.manifest.audience, 'external');
 
     const unassigned = createUnassignedRuntimeEntitlementProjection('2026-09-01T20:00:02Z');
     writeRuntimeEntitlementProjection(manifestPath, unassigned);
