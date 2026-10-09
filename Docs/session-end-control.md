@@ -58,3 +58,18 @@ HEAD through GET handlers, so reject HEAD with 405 before forwarding; never map
 an unknown method to POST. An HTTP regression test covers the real routing.
 
 After confirmed end, navigate this tab to the configured manager /servers/ page. Do not call window.close or depend on opener focus: browser tab selection is unreliable. This return carries no end intent and cannot trigger a second stop. The manager displays pending feedback inline beneath its session status.
+
+## Shutdown after viewer removal
+
+The player registry emits `removed` before deleting the player entry. When an
+acknowledged Shutdown command removes the last managed viewer, defer its
+zero-viewer handling until the registry settles. Re-read the current command and
+viewer state before starting shutdown; do not bypass the live viewer or generation
+checks. Otherwise shutdown can abort on the departing entry, never retry, and
+expire into a recovery recycle while SQL correctly retains ownership.
+
+This applies to automatic demo expiry and quota stops as well as other managed
+Shutdown commands. It changes no API contract. Deploy a rebuilt runtime and
+verify command completion, actual teardown, and ownership release. A host already
+stranded after command timeout still needs normal, exact-instance stop/recovery;
+a reset marker alone is not proof that its Shutdown command completed.

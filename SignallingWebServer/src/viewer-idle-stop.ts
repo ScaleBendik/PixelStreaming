@@ -2627,7 +2627,15 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             log(
                 `[idle-stop] Last validated managed viewer for session request ${removedManagedSessionIdentity.sessionRequestId} disconnected; starting its commercial reconnect grace independently of ${effectiveCount} claimless viewer(s).`
             );
-            handleZeroViewersAfterRemoval(true);
+            // Registry removal events fire before the entry is deleted. Shutdown
+            // checks the real registry again, so defer it until removal settles;
+            // otherwise it aborts once and the acknowledged command times out.
+            // Re-read command/viewer state in the callback, never bypass its gates.
+            if (removedEntryStillPresent && getActiveShutdownCommand()) {
+                setTimeout(() => handleZeroViewersAfterRemoval(true), 0);
+            } else {
+                handleZeroViewersAfterRemoval(true);
+            }
             return;
         }
 

@@ -130,6 +130,7 @@ function createViewerIdleHarness(graceMs = 1_234) {
         scheduledTimeouts,
         publishedWindows,
         elapsedEvidences,
+        instanceAgentClient,
         restoreTimers() {
             global.setTimeout = originalSetTimeout;
         },
@@ -142,6 +143,37 @@ function createViewerIdleHarness(graceMs = 1_234) {
             for (const listener of listeners.added) listener(playerId);
         }
     };
+}
+
+for (const reconnectBeforeCallback of [false, true]) {
+    test(`managed shutdown waits for registry removal and respects a replacement viewer (${reconnectBeforeCallback})`, () => {
+        const harness = createViewerIdleHarness();
+        try {
+            const starts = [];
+            harness.instanceAgentClient.getActiveCommand = () => ({
+                instanceCommandId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+                commandType: 'Shutdown',
+                sessionRequestId: harness.player.scaleWorldSessionRequestId,
+                requestedAtUtc: new Date().toISOString(),
+                status: 'Acked'
+            });
+            harness.instanceAgentClient.startCommand = async (command) => {
+                starts.push(command.instanceCommandId);
+                // Stop before any infrastructure side effect in this harness.
+                return { accepted: false, commandStatus: 'Cancelled' };
+            };
+            const before = harness.scheduledTimeouts.length;
+            harness.removeViewer();
+            assert.deepEqual(starts, []);
+            const deferred = harness.scheduledTimeouts.slice(before).filter(timer => timer.delay === 0);
+            assert.equal(deferred.length, 1);
+            if (reconnectBeforeCallback) harness.reconnectViewer();
+            deferred[0].callback();
+            assert.equal(starts.length, reconnectBeforeCallback ? 0 : 1);
+        } finally {
+            harness.restoreTimers();
+        }
+    });
 }
 
 test('live reconnect-grace report is accepted only for the matching zero-viewer lifecycle', () => {
