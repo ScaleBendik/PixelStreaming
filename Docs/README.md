@@ -23,6 +23,7 @@ Use these first for the Server Manager integration:
 | Unreal GameInstance/menu entitlement implementation and acceptance | [Runtime entitlement system](../../scaleworld-server-manager-api/docs/runtime-entitlement-system.md#unreal-integration) |
 | Release Train current state | `../../scaleworld-server-manager-web/docs/release-train-current-state-2026-05-22.md` |
 | Runtime watchdog and startup recovery | `watchdog-runbook.md` |
+| Cold startup measurements, recovery proof and iterative investigation | [Cold startup recovery](cold-start-recovery.md) |
 | TURN server notes | `turnserverdoc.md` |
 | Security guidelines | `Security-Guidelines.md` |
 | Active cross-repo backlog | `../../scaleworld-server-manager-web/MASTER_BACKLOG.md` |
