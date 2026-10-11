@@ -1,5 +1,9 @@
 # Task Scheduler delay investigation — 2026-10-12
 
+Follow-up: [guarded 20 → 15-second Dev validation](task-scheduler-delay-results.md)
+records the subsequent experiment and its adoption limits. This investigation
+retains the original, unchanged 20-second observation below.
+
 ## Result and scope
 
 The installed Dev d1 task has a **20-second boot delay**. This makes the user's

@@ -24,6 +24,7 @@ Use these first for the Server Manager integration:
 | Release Train current state | `../../scaleworld-server-manager-web/docs/release-train-current-state-2026-05-22.md` |
 | Runtime watchdog and startup recovery | `watchdog-runbook.md` |
 | Cold startup measurements, recovery proof and iterative investigation | [Cold startup recovery](cold-start-recovery.md) |
+| Isolated Dev boot-delay measurements, guarded operator procedure and AMI rollback limit | [Boot-delay results](task-scheduler-delay-results.md) |
 | TURN server notes | `turnserverdoc.md` |
 | Security guidelines | `Security-Guidelines.md` |
 | Active cross-repo backlog | `../../scaleworld-server-manager-web/MASTER_BACKLOG.md` |

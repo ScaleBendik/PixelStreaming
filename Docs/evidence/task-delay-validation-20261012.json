@@ -1,0 +1,2870 @@
+{
+    "schemaVersion": 1,
+    "analysis": "Local-only retained boot-delay evidence; ISO strings preserved",
+    "samples": [17, 18, 19, 20, 21],
+    "receipts": {
+        "capture": {
+            "sourceFile": "outputs/boot-delay-capture-result.json",
+            "schemaVersion": 1,
+            "mode": "Capture",
+            "status": "verified",
+            "instanceId": "i-0ce5ffd16bd50eb24",
+            "deploymentTrack": "dev",
+            "taskName": "start_streamer_stack",
+            "bootDelay": "PT20S",
+            "nonDelayDefinitionVerified": true,
+            "taskXmlSha256": "560190b2e5a031752112e8f18312f190b4c6a0022a1b9d9cc9a4d20ac6904344",
+            "receiptSha256": "613dd3208b9625b121eb73472985f443dcb76e400c5ab5f7183808a5c8461ddb",
+            "baselineSemanticSha256": "decdcbb9446148271c5f458999f50523b27f88b2b1cb71ed68e2e5c48537697b",
+            "candidateSemanticSha256": "22ba61a20de479cf95827ccfe8999767a19aa52915ecd41a5e3120d83fb266c0",
+            "currentSemanticSha256": "decdcbb9446148271c5f458999f50523b27f88b2b1cb71ed68e2e5c48537697b",
+            "historyBaselineEnabled": false,
+            "historyEnabled": true,
+            "historyRecordCount": 0,
+            "taskStartedByHelper": false,
+            "helperSourceSha256": "226864a1236a5c25e45b1115b22439340d467f792405d34e05a72ff0bb49223b",
+            "commandId": "dadc35cc-0f20-4eb2-a9b9-85940a8f56be"
+        },
+        "apply": {
+            "sourceFile": "outputs/boot-delay-apply-result.json",
+            "schemaVersion": 1,
+            "mode": "Apply",
+            "status": "verified",
+            "instanceId": "i-0ce5ffd16bd50eb24",
+            "deploymentTrack": "dev",
+            "taskName": "start_streamer_stack",
+            "bootDelay": "PT15S",
+            "nonDelayDefinitionVerified": true,
+            "taskXmlSha256": "560190b2e5a031752112e8f18312f190b4c6a0022a1b9d9cc9a4d20ac6904344",
+            "receiptSha256": "613dd3208b9625b121eb73472985f443dcb76e400c5ab5f7183808a5c8461ddb",
+            "baselineSemanticSha256": "decdcbb9446148271c5f458999f50523b27f88b2b1cb71ed68e2e5c48537697b",
+            "candidateSemanticSha256": "22ba61a20de479cf95827ccfe8999767a19aa52915ecd41a5e3120d83fb266c0",
+            "currentSemanticSha256": "22ba61a20de479cf95827ccfe8999767a19aa52915ecd41a5e3120d83fb266c0",
+            "historyBaselineEnabled": false,
+            "historyEnabled": true,
+            "historyRecordCount": 67,
+            "taskStartedByHelper": false,
+            "helperSourceSha256": "226864a1236a5c25e45b1115b22439340d467f792405d34e05a72ff0bb49223b",
+            "commandId": "abf921bc-3d2e-49ed-974a-0fa74d6e649e"
+        },
+        "restore-history": {
+            "sourceFile": "outputs/boot-delay-restorehistory-result.json",
+            "schemaVersion": 1,
+            "mode": "RestoreHistory",
+            "status": "verified",
+            "instanceId": "i-0ce5ffd16bd50eb24",
+            "deploymentTrack": "dev",
+            "taskName": "start_streamer_stack",
+            "bootDelay": "PT15S",
+            "nonDelayDefinitionVerified": true,
+            "taskXmlSha256": "560190b2e5a031752112e8f18312f190b4c6a0022a1b9d9cc9a4d20ac6904344",
+            "receiptSha256": "613dd3208b9625b121eb73472985f443dcb76e400c5ab5f7183808a5c8461ddb",
+            "baselineSemanticSha256": "decdcbb9446148271c5f458999f50523b27f88b2b1cb71ed68e2e5c48537697b",
+            "candidateSemanticSha256": "22ba61a20de479cf95827ccfe8999767a19aa52915ecd41a5e3120d83fb266c0",
+            "currentSemanticSha256": "22ba61a20de479cf95827ccfe8999767a19aa52915ecd41a5e3120d83fb266c0",
+            "historyBaselineEnabled": false,
+            "historyEnabled": false,
+            "historyRecordCount": 259,
+            "taskStartedByHelper": false,
+            "helperSourceSha256": "226864a1236a5c25e45b1115b22439340d467f792405d34e05a72ff0bb49223b",
+            "commandId": "bf6e4c83-2311-4399-94da-a61cff290181"
+        }
+    },
+    "cycles": [
+        {
+            "sample": 17,
+            "cohort": "boot-delay-experiment-preparation",
+            "identities": {
+                "bootDelaySeconds": 20,
+                "runtimeBundle": "pixelstreaming-runtime-20261011-003",
+                "runtimeCommit": "26ee94ea453d5d6f01f1a5268d9bf08dd3d26046",
+                "webCommit": "5bc95c6c06cb2bb7e635b505a0598b22cd8a56a8"
+            },
+            "times": {
+                "clickUtc": "2026-10-11T22:28:40.939Z",
+                "bootUtc": "2026-10-11T22:28:52.6741120Z",
+                "kernelBootEvents": [
+                    {
+                        "utc": "2026-10-11T22:28:51.6941546Z",
+                        "id": 12
+                    }
+                ],
+                "normalStackBirthUtc": "2026-10-11T22:29:16.5864990Z",
+                "normalJournalBeginUtc": "2026-10-11T22:29:16.8703621Z",
+                "runtimeReadyUtc": "2026-10-11T22:30:44.041Z",
+                "apiRequestUtc": "2026-10-11T22:28:41.5075004+00:00",
+                "apiReadyUtc": "2026-10-11T22:30:47.1326049+00:00",
+                "apiConnectedUtc": "2026-10-11T22:31:09.9693415+00:00",
+                "apiEndUtc": "2026-10-11T22:40:02.0458335+00:00",
+                "sourceState": "Teardown Completed",
+                "interpretation": "Retained single API row: times in request/Ready/connected/End order; verify owning API extraction.",
+                "uiReadyFirstObservedUtc": "2026-10-11T22:30:58.654Z"
+            },
+            "durationsSeconds": {
+                "rawBootToNormalProcess": 23.912387,
+                "normalProcessToJournal": 0.2838631,
+                "clickToRuntimeReady": 123.102,
+                "clickToApiReady": 126.1936049,
+                "requestToApiReady": 125.6251045,
+                "normalProcessToApiReady": 90.5461059
+            },
+            "task": {
+                "observedUtc": "2026-10-11T22:31:20.3622252Z",
+                "principal": {
+                    "runLevel": "Highest",
+                    "logonType": "ServiceAccount",
+                    "class": "system"
+                },
+                "triggers": [
+                    {
+                        "type": "MSFT_TaskBootTrigger",
+                        "enabled": true,
+                        "delay": "PT20S",
+                        "logonScope": null,
+                        "startBoundary": null,
+                        "endBoundary": null,
+                        "executionTimeLimit": null,
+                        "repetitionInterval": null,
+                        "repetitionDuration": null,
+                        "stopAtDurationEnd": false
+                    },
+                    {
+                        "type": "MSFT_TaskLogonTrigger",
+                        "enabled": true,
+                        "delay": "PT30S",
+                        "logonScope": "any-user",
+                        "startBoundary": null,
+                        "endBoundary": null,
+                        "executionTimeLimit": null,
+                        "repetitionInterval": null,
+                        "repetitionDuration": null,
+                        "stopAtDurationEnd": false
+                    }
+                ],
+                "settings": {
+                    "MultipleInstances": 2,
+                    "StartWhenAvailable": true,
+                    "RunOnlyIfNetworkAvailable": false,
+                    "ExecutionTimeLimit": "PT0S",
+                    "RestartInterval": "PT1M",
+                    "RestartCount": 15,
+                    "AllowDemandStart": true,
+                    "Enabled": true,
+                    "DisallowStartIfOnBatteries": false,
+                    "StopIfGoingOnBatteries": true,
+                    "RunOnlyIfIdle": false,
+                    "WakeToRun": false,
+                    "Priority": 7
+                },
+                "actions": [
+                    {
+                        "executable": "start_streamer_stack.bat",
+                        "canonicalStackAction": false,
+                        "canonicalDirectStackAction": true,
+                        "argumentsEmpty": true,
+                        "canonicalWorkingDirectory": false,
+                        "workingDirectorySet": false,
+                        "workingDirectoryExists": null
+                    }
+                ],
+                "history": {
+                    "name": "Microsoft-Windows-TaskScheduler/Operational",
+                    "available": true,
+                    "enabled": false,
+                    "recordCount": null,
+                    "queryStatus": "disabled-or-empty"
+                },
+                "lastRunUtc": "2026-10-11T22:29:29.0000000Z",
+                "lastTaskResult": 0,
+                "events": [],
+                "eventsWithNormalStackPid": [],
+                "lastRunIsFirstActionEvidence": false
+            },
+            "taskActionEvidence": {
+                "matchedNormalProcessEventUtc": null,
+                "rawBootToMatchedTaskProcessSeconds": null,
+                "taskEventToProcessBirthSeconds": null,
+                "capturedTaskInstanceCount": 0,
+                "capturedActionStartCount": 0,
+                "capturedTaskProcessEventCount": 0,
+                "capturedSuccessfulActionCompletionCount": 0,
+                "nonzeroCapturedActionResults": [],
+                "basis": "Retained Scheduler process event PID is matched to observed normal CMD birth; one GUID plus one successful action is evidence within the retained window, not universal retry exclusion."
+            },
+            "clockChanges": [
+                {
+                    "utc": "2026-10-11T22:28:59.5090360Z",
+                    "id": 1,
+                    "OldTime": "2026-10-11T22:28:58.3350143Z",
+                    "NewTime": "2026-10-11T22:28:59.5088063Z",
+                    "changeSeconds": 1.173792
+                },
+                {
+                    "utc": "2026-10-11T22:28:59.5093164Z",
+                    "id": 1,
+                    "OldTime": "2026-10-11T22:28:59.5088063Z",
+                    "NewTime": "2026-10-11T22:28:59.5091266Z",
+                    "changeSeconds": 0.0003203
+                }
+            ],
+            "phaseSpans": [
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "utcBase": "2026-10-11T22:29:33.0727806Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 0.01,
+                            "exitCode": 0
+                        },
+                        "parameters": {
+                            "seconds": 1.19,
+                            "exitCode": 0
+                        },
+                        "bootstrap_secret": {
+                            "seconds": 1.12,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": []
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "utcBase": "2026-10-11T22:29:16.8703621Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 3.97,
+                            "exitCode": 0
+                        },
+                        "identity": {
+                            "seconds": 2.35,
+                            "exitCode": 0
+                        },
+                        "update_control": {
+                            "seconds": 1.6,
+                            "exitCode": 0
+                        },
+                        "provisioning_control": {
+                            "seconds": 2.6,
+                            "exitCode": 0
+                        },
+                        "maintenance_control": {
+                            "seconds": 1.51,
+                            "exitCode": 0
+                        },
+                        "service_class": {
+                            "seconds": 1.5,
+                            "exitCode": 0
+                        },
+                        "old_roots": {
+                            "seconds": 0.35,
+                            "exitCode": 0
+                        },
+                        "config": {
+                            "seconds": 1.58,
+                            "exitCode": 0
+                        },
+                        "wilbur_tcp": {
+                            "seconds": 13.73,
+                            "exitCode": 0
+                        },
+                        "unreal_launch": {
+                            "seconds": 4.99,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": [
+                        {
+                            "phase": "metadata.lane.attempt_1",
+                            "exitCode": 0
+                        },
+                        {
+                            "phase": "metadata.track.attempt_1",
+                            "exitCode": 0
+                        },
+                        {
+                            "phase": "metadata.delivery.attempt_1",
+                            "exitCode": 0
+                        }
+                    ]
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "utcBase": "2026-10-11T22:29:57.5727810Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 0.01,
+                            "exitCode": 0
+                        },
+                        "parameters": {
+                            "seconds": 1.15,
+                            "exitCode": 0
+                        },
+                        "bootstrap_secret": {
+                            "seconds": 0.01,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": []
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "utcBase": "2026-10-11T22:29:48.2626612Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 1.95,
+                            "exitCode": 0
+                        },
+                        "identity": {
+                            "seconds": 2.36,
+                            "exitCode": 0
+                        },
+                        "maintenance_control": {
+                            "seconds": 1.59,
+                            "exitCode": 0
+                        },
+                        "service_class": {
+                            "seconds": 1.63,
+                            "exitCode": 0
+                        },
+                        "old_roots": {
+                            "seconds": 0.56,
+                            "exitCode": 0
+                        },
+                        "config": {
+                            "seconds": 0.51,
+                            "exitCode": 0
+                        },
+                        "wilbur_tcp": {
+                            "seconds": 11.64,
+                            "exitCode": 0
+                        },
+                        "unreal_launch": {
+                            "seconds": 0.46,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": [
+                        {
+                            "phase": "metadata.lane.attempt_1",
+                            "exitCode": 0
+                        },
+                        {
+                            "phase": "metadata.track.attempt_1",
+                            "exitCode": 0
+                        }
+                    ]
+                }
+            ],
+            "configPhases": [
+                {
+                    "mode": "normal",
+                    "phases": [
+                        {
+                            "utc": "2026-10-11T22:29:31.3217792Z",
+                            "phase": "service_class",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 10.542,
+                            "clockBasis": "stopwatch"
+                        },
+                        {
+                            "utc": "2026-10-11T22:29:32.4857802Z",
+                            "phase": "pointer_fetch",
+                            "result": "failed",
+                            "exitCode": 1,
+                            "durationMs": 1028.78,
+                            "clockBasis": "stopwatch"
+                        },
+                        {
+                            "utc": "2026-10-11T22:29:32.5387805Z",
+                            "phase": "config.completed",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 1386.619,
+                            "clockBasis": "stopwatch"
+                        }
+                    ]
+                },
+                {
+                    "mode": "recovery",
+                    "phases": [
+                        {
+                            "utc": "2026-10-11T22:29:56.8957864Z",
+                            "phase": "service_class",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 11.34,
+                            "clockBasis": "stopwatch"
+                        },
+                        {
+                            "utc": "2026-10-11T22:29:57.0017852Z",
+                            "phase": "config.completed",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 285.646,
+                            "clockBasis": "stopwatch"
+                        }
+                    ]
+                }
+            ],
+            "configSnapshot": {
+                "status": "readable",
+                "source": "published",
+                "environment": "dev",
+                "serviceClass": "standard",
+                "bundleId": "pixelstreaming-runtime-20261011-003",
+                "loadedAtUtc": "2026-10-11T22:29:32.4917795Z",
+                "referencePresent": false,
+                "errorFilePresent": false,
+                "snapshotLastWriteUtc": "2026-10-11T22:29:32.4967793Z"
+            },
+            "configClassification": {
+                "branch": "fresh-published-defaults-after-optional-missing-Dev-pointer",
+                "basis": "Source contract: successful fresh Dev no-reference snapshot is written published; eligible storage fallback changes source to cached. Optional nonzero Dev pointer can return null only for a missing-object result. Future failed required reads still need their own evidence."
+            },
+            "recovery": {
+                "requestedAtUtc": "2026-10-11T22:29:46.687Z",
+                "replacementStartedAtUtc": "2026-10-11T22:29:47.8594750+00:00",
+                "resetCompletedAtUtc": "2026-10-11T22:30:44.010Z",
+                "cutoffEpochSeconds": 1791757838,
+                "readyNotBeforeEpochSeconds": 1791757843,
+                "cutoffUtcDerived": "2026-10-11T22:30:38.000Z",
+                "readyNotBeforeUtcDerived": "2026-10-11T22:30:43.000Z",
+                "publishedReadyAfterNotBeforeSeconds": 1.041,
+                "currentRequestAdmissionRecordedUtc": "2026-10-11T22:31:10.000Z",
+                "currentRequestAdmissionMatchCaptured": true,
+                "admissionAfterCutoffSeconds": 32,
+                "marginObservationUtc": "2026-10-11T22:30:35.5378322Z",
+                "latestGateObservation": {
+                    "observedUtc": "2026-10-11T22:31:11.6422543Z",
+                    "status": "readable",
+                    "commercialRecoveryRequiredFieldPresent": false,
+                    "commercialRecoveryRequired": null,
+                    "readyNotBeforeFieldPresent": false,
+                    "cutoffEpochSeconds": 1791757838,
+                    "recycleMarkerStatus": "missing",
+                    "desiredState": {
+                        "status": "readable",
+                        "shutdownRequested": false,
+                        "warmHoldEnabled": false,
+                        "drainEnabled": false
+                    }
+                },
+                "caveat": "Published Ready and matching-current-request admission timestamps support gate ordering; sparse state snapshots do not capture every reset ACK or prove old-ticket rejection."
+            },
+            "ancestry": {
+                "normalStacks": [
+                    {
+                        "pid": 2204,
+                        "parentPid": 1676,
+                        "startedUtc": "2026-10-11T22:29:16.5864990Z"
+                    }
+                ],
+                "replacementStacks": [
+                    {
+                        "pid": 5528,
+                        "parentPid": 6044,
+                        "startedUtc": "2026-10-11T22:29:48.0088930Z"
+                    }
+                ],
+                "shipping": [
+                    {
+                        "name": "ScaleWorld-Win64-Shipping.exe",
+                        "pid": 4400,
+                        "parentPid": 2464,
+                        "startedUtc": "2026-10-11T22:29:49.5519400Z",
+                        "role": "unreal-runtime",
+                        "recoveryArgument": false
+                    }
+                ],
+                "shippingAncestry": [
+                    {
+                        "pid": 4400,
+                        "startedUtc": "2026-10-11T22:29:49.5519400Z",
+                        "capturedParentPids": [2464, 2868, 2204],
+                        "owner": "original-stack",
+                        "stackPid": 2204,
+                        "birthAfterReplacementMarker": true,
+                        "shippingToPublishedRuntimeReadySeconds": 54.48906
+                    }
+                ],
+                "processTreeSnapshotCount": 4,
+                "maximumShippingProcessesInCapturedSnapshot": 1,
+                "transientDuplicatesExcluded": false,
+                "uncapturedParentGenerationExcluded": false
+            },
+            "observers": {
+                "stateStatus": "Success",
+                "journalStatus": "Success",
+                "originalStateRowCount": 24,
+                "postconnectStateStatus": null,
+                "postconnectStateCommandId": null,
+                "postconnectStateRowCount": 0,
+                "orderedMergedStateRowCount": 24,
+                "journalSelectionComplete": true
+            },
+            "requestPageLag": null,
+            "media": [
+                {
+                    "observedUtc": "2026-10-11T22:32:49.580Z",
+                    "framerate": "30",
+                    "packetsLost": "482",
+                    "framesDropped": "0",
+                    "video": [
+                        {
+                            "currentTime": 98.603713,
+                            "width": 2240,
+                            "height": 1260,
+                            "paused": false,
+                            "readyState": 4
+                        }
+                    ]
+                },
+                {
+                    "observedUtc": "2026-10-11T22:39:56.746Z",
+                    "framerate": "30",
+                    "packetsLost": "0",
+                    "framesDropped": "0",
+                    "video": [
+                        {
+                            "currentTime": 47.464233,
+                            "width": 2240,
+                            "height": 1260,
+                            "paused": false,
+                            "readyState": 4
+                        }
+                    ]
+                }
+            ],
+            "completion": {
+                "endClickUtc": "2026-10-11T22:40:01.333Z",
+                "teardownState": "Teardown Completed",
+                "teardownObservedUtc": "2026-10-11T22:43:42.202Z",
+                "providerStopped": {
+                    "observedUtc": "2026-10-11T22:45:29.6581092Z",
+                    "fleet": [
+                        {
+                            "Id": "i-0ce5ffd16bd50eb24",
+                            "State": "stopped"
+                        },
+                        {
+                            "Id": "i-0226e3c475b1b76f0",
+                            "State": "stopped"
+                        },
+                        {
+                            "Id": "i-0209fd65e0ed93501",
+                            "State": "stopped"
+                        }
+                    ]
+                }
+            },
+            "limitations": [
+                "Task history disabled during this cycle.",
+                "No retained task event PID matched the captured normal stack; first-action origin unresolved.",
+                "Boot-to-process is a raw wall-clock difference containing an early clock correction; no exact elapsed-time correction applied.",
+                "Known original-stack late Unreal launch captured after replacement marker; compare this ownership stratum separately.",
+                "Reconnect failure recorded on the unchanged preparation/control cycle; cause not established by these startup records."
+            ],
+            "acceptance": "Diagnostic summary only; does not automatically accept a task-delay change or exclude unobserved launch/retry/media regressions."
+        },
+        {
+            "sample": 18,
+            "cohort": "boot-delay-20s-control",
+            "identities": {
+                "bootDelaySeconds": 20,
+                "runtimeBundle": "pixelstreaming-runtime-20261011-003",
+                "runtimeCommit": "26ee94ea453d5d6f01f1a5268d9bf08dd3d26046",
+                "webCommit": "5bc95c6c06cb2bb7e635b505a0598b22cd8a56a8"
+            },
+            "times": {
+                "clickUtc": "2026-10-11T22:45:44.760Z",
+                "bootUtc": "2026-10-11T22:45:57.5000000Z",
+                "kernelBootEvents": [
+                    {
+                        "utc": "2026-10-11T22:45:57.7044108Z",
+                        "id": 12
+                    }
+                ],
+                "normalStackBirthUtc": "2026-10-11T22:46:22.4763350Z",
+                "normalJournalBeginUtc": "2026-10-11T22:46:22.7605986Z",
+                "runtimeReadyUtc": "2026-10-11T22:47:51.043Z",
+                "apiRequestUtc": "2026-10-11T22:45:46.3053574+00:00",
+                "apiReadyUtc": "2026-10-11T22:47:54.3463569+00:00",
+                "apiConnectedUtc": "2026-10-11T22:48:02.5488051+00:00",
+                "apiEndUtc": "2026-10-11T22:50:06.8636594+00:00",
+                "sourceState": "Teardown Completed",
+                "interpretation": "Retained single API row: times in request/Ready/connected/End order; verify owning API extraction.",
+                "uiReadyFirstObservedUtc": "2026-10-11T22:48:01.439Z"
+            },
+            "durationsSeconds": {
+                "rawBootToNormalProcess": 24.976335,
+                "normalProcessToJournal": 0.2842636,
+                "clickToRuntimeReady": 126.283,
+                "clickToApiReady": 129.5863569,
+                "requestToApiReady": 128.0409995,
+                "normalProcessToApiReady": 91.8700219
+            },
+            "task": {
+                "observedUtc": "2026-10-11T22:48:12.6816581Z",
+                "principal": {
+                    "runLevel": "Highest",
+                    "logonType": "ServiceAccount",
+                    "class": "system"
+                },
+                "triggers": [
+                    {
+                        "type": "MSFT_TaskBootTrigger",
+                        "enabled": true,
+                        "delay": "PT20S",
+                        "logonScope": null,
+                        "startBoundary": null,
+                        "endBoundary": null,
+                        "executionTimeLimit": null,
+                        "repetitionInterval": null,
+                        "repetitionDuration": null,
+                        "stopAtDurationEnd": false
+                    },
+                    {
+                        "type": "MSFT_TaskLogonTrigger",
+                        "enabled": true,
+                        "delay": "PT30S",
+                        "logonScope": "any-user",
+                        "startBoundary": null,
+                        "endBoundary": null,
+                        "executionTimeLimit": null,
+                        "repetitionInterval": null,
+                        "repetitionDuration": null,
+                        "stopAtDurationEnd": false
+                    }
+                ],
+                "settings": {
+                    "MultipleInstances": 2,
+                    "StartWhenAvailable": true,
+                    "RunOnlyIfNetworkAvailable": false,
+                    "ExecutionTimeLimit": "PT0S",
+                    "RestartInterval": "PT1M",
+                    "RestartCount": 15,
+                    "AllowDemandStart": true,
+                    "Enabled": true,
+                    "DisallowStartIfOnBatteries": false,
+                    "StopIfGoingOnBatteries": true,
+                    "RunOnlyIfIdle": false,
+                    "WakeToRun": false,
+                    "Priority": 7
+                },
+                "actions": [
+                    {
+                        "executable": "start_streamer_stack.bat",
+                        "canonicalStackAction": false,
+                        "canonicalDirectStackAction": true,
+                        "argumentsEmpty": true,
+                        "canonicalWorkingDirectory": false,
+                        "workingDirectorySet": false,
+                        "workingDirectoryExists": null
+                    }
+                ],
+                "history": {
+                    "name": "Microsoft-Windows-TaskScheduler/Operational",
+                    "available": true,
+                    "enabled": true,
+                    "recordCount": 54,
+                    "queryStatus": "queried",
+                    "scannedEventCount": 6,
+                    "scanLimit": 150,
+                    "capReached": false,
+                    "taskFilteredBeforeLimit": true,
+                    "oldestScannedUtc": "2026-10-11T22:46:22.4754015Z"
+                },
+                "lastRunUtc": "2026-10-11T22:46:46.0000000Z",
+                "lastTaskResult": 0,
+                "events": [
+                    {
+                        "utc": "2026-10-11T22:46:22.4769796Z",
+                        "id": 100,
+                        "recordId": 33,
+                        "InstanceId": "{7e0cd507-d9e1-4173-8440-b6a86eabcb61}"
+                    },
+                    {
+                        "utc": "2026-10-11T22:46:22.4768683Z",
+                        "id": 129,
+                        "recordId": 32,
+                        "ProcessId": "5216"
+                    },
+                    {
+                        "utc": "2026-10-11T22:46:22.4754015Z",
+                        "id": 118,
+                        "recordId": 31,
+                        "InstanceId": "{7e0cd507-d9e1-4173-8440-b6a86eabcb61}"
+                    },
+                    {
+                        "utc": "2026-10-11T22:46:57.1467005Z",
+                        "id": 102,
+                        "recordId": 36,
+                        "InstanceId": "{7e0cd507-d9e1-4173-8440-b6a86eabcb61}"
+                    },
+                    {
+                        "utc": "2026-10-11T22:46:57.1465553Z",
+                        "id": 201,
+                        "recordId": 35,
+                        "TaskInstanceId": "{7e0cd507-d9e1-4173-8440-b6a86eabcb61}",
+                        "ResultCode": "0",
+                        "actionIsCmd": true
+                    },
+                    {
+                        "utc": "2026-10-11T22:46:22.4769809Z",
+                        "id": 200,
+                        "recordId": 34,
+                        "TaskInstanceId": "{7e0cd507-d9e1-4173-8440-b6a86eabcb61}",
+                        "actionIsCmd": true
+                    }
+                ],
+                "eventsWithNormalStackPid": [
+                    {
+                        "utc": "2026-10-11T22:46:22.4768683Z",
+                        "id": 129,
+                        "recordId": 32,
+                        "ProcessId": "5216"
+                    }
+                ],
+                "lastRunIsFirstActionEvidence": false
+            },
+            "taskActionEvidence": {
+                "matchedNormalProcessEventUtc": "2026-10-11T22:46:22.4768683Z",
+                "rawBootToMatchedTaskProcessSeconds": 24.9768683,
+                "taskEventToProcessBirthSeconds": -0.0005333,
+                "capturedTaskInstanceCount": 1,
+                "capturedActionStartCount": 1,
+                "capturedTaskProcessEventCount": 1,
+                "capturedSuccessfulActionCompletionCount": 1,
+                "nonzeroCapturedActionResults": [],
+                "basis": "Retained Scheduler process event PID is matched to observed normal CMD birth; one GUID plus one successful action is evidence within the retained window, not universal retry exclusion."
+            },
+            "clockChanges": [],
+            "phaseSpans": [
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "utcBase": "2026-10-11T22:46:38.1911325Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 0.01,
+                            "exitCode": 0
+                        },
+                        "parameters": {
+                            "seconds": 1.23,
+                            "exitCode": 0
+                        },
+                        "bootstrap_secret": {
+                            "seconds": 1.27,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": []
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "utcBase": "2026-10-11T22:46:22.7605986Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 3.95,
+                            "exitCode": 0
+                        },
+                        "identity": {
+                            "seconds": 2.36,
+                            "exitCode": 0
+                        },
+                        "update_control": {
+                            "seconds": 1.58,
+                            "exitCode": 0
+                        },
+                        "provisioning_control": {
+                            "seconds": 1.75,
+                            "exitCode": 0
+                        },
+                        "maintenance_control": {
+                            "seconds": 1.52,
+                            "exitCode": 0
+                        },
+                        "service_class": {
+                            "seconds": 1.5,
+                            "exitCode": 0
+                        },
+                        "old_roots": {
+                            "seconds": 0.36,
+                            "exitCode": 0
+                        },
+                        "config": {
+                            "seconds": 1.66,
+                            "exitCode": 0
+                        },
+                        "wilbur_tcp": {
+                            "seconds": 13.76,
+                            "exitCode": 0
+                        },
+                        "unreal_launch": {
+                            "seconds": 4.83,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": [
+                        {
+                            "phase": "metadata.lane.attempt_1",
+                            "exitCode": 0
+                        },
+                        {
+                            "phase": "metadata.track.attempt_1",
+                            "exitCode": 0
+                        },
+                        {
+                            "phase": "metadata.delivery.attempt_1",
+                            "exitCode": 0
+                        }
+                    ]
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "utcBase": "2026-10-11T22:47:02.9879262Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 0.01,
+                            "exitCode": 0
+                        },
+                        "parameters": {
+                            "seconds": 1.2,
+                            "exitCode": 0
+                        },
+                        "bootstrap_secret": {
+                            "seconds": 0.01,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": []
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "utcBase": "2026-10-11T22:46:53.6561589Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 1.93,
+                            "exitCode": 0
+                        },
+                        "identity": {
+                            "seconds": 2.35,
+                            "exitCode": 0
+                        },
+                        "maintenance_control": {
+                            "seconds": 1.59,
+                            "exitCode": 0
+                        },
+                        "service_class": {
+                            "seconds": 1.67,
+                            "exitCode": 0
+                        },
+                        "old_roots": {
+                            "seconds": 0.59,
+                            "exitCode": 0
+                        },
+                        "config": {
+                            "seconds": 0.48,
+                            "exitCode": 0
+                        },
+                        "wilbur_tcp": {
+                            "seconds": 12.3,
+                            "exitCode": 0
+                        },
+                        "unreal_launch": {
+                            "seconds": 4.82,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": [
+                        {
+                            "phase": "metadata.lane.attempt_1",
+                            "exitCode": 0
+                        },
+                        {
+                            "phase": "metadata.track.attempt_1",
+                            "exitCode": 0
+                        }
+                    ]
+                }
+            ],
+            "configPhases": [
+                {
+                    "mode": "normal",
+                    "phases": [
+                        {
+                            "utc": "2026-10-11T22:46:36.3496184Z",
+                            "phase": "service_class",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 10.604,
+                            "clockBasis": "stopwatch"
+                        },
+                        {
+                            "utc": "2026-10-11T22:46:37.5853009Z",
+                            "phase": "pointer_fetch",
+                            "result": "failed",
+                            "exitCode": 1,
+                            "durationMs": 1095.106,
+                            "clockBasis": "stopwatch"
+                        },
+                        {
+                            "utc": "2026-10-11T22:46:37.6383757Z",
+                            "phase": "config.completed",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 1460.545,
+                            "clockBasis": "stopwatch"
+                        }
+                    ]
+                },
+                {
+                    "mode": "recovery",
+                    "phases": [
+                        {
+                            "utc": "2026-10-11T22:47:02.3001341Z",
+                            "phase": "service_class",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 10.836,
+                            "clockBasis": "stopwatch"
+                        },
+                        {
+                            "utc": "2026-10-11T22:47:02.4052600Z",
+                            "phase": "config.completed",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 279.408,
+                            "clockBasis": "stopwatch"
+                        }
+                    ]
+                }
+            ],
+            "configSnapshot": {
+                "status": "readable",
+                "source": "published",
+                "environment": "dev",
+                "serviceClass": "standard",
+                "bundleId": "pixelstreaming-runtime-20261011-003",
+                "loadedAtUtc": "2026-10-11T22:46:37.5923118Z",
+                "referencePresent": false,
+                "errorFilePresent": false,
+                "snapshotLastWriteUtc": "2026-10-11T22:46:37.5973192Z"
+            },
+            "configClassification": {
+                "branch": "fresh-published-defaults-after-optional-missing-Dev-pointer",
+                "basis": "Source contract: successful fresh Dev no-reference snapshot is written published; eligible storage fallback changes source to cached. Optional nonzero Dev pointer can return null only for a missing-object result. Future failed required reads still need their own evidence."
+            },
+            "recovery": {
+                "requestedAtUtc": "2026-10-11T22:46:52.040Z",
+                "replacementStartedAtUtc": "2026-10-11T22:46:53.2286331+00:00",
+                "resetCompletedAtUtc": null,
+                "cutoffEpochSeconds": 1791758865,
+                "readyNotBeforeEpochSeconds": 1791758870,
+                "cutoffUtcDerived": "2026-10-11T22:47:45.000Z",
+                "readyNotBeforeUtcDerived": "2026-10-11T22:47:50.000Z",
+                "publishedReadyAfterNotBeforeSeconds": 1.043,
+                "currentRequestAdmissionRecordedUtc": "2026-10-11T22:48:02.000Z",
+                "currentRequestAdmissionMatchCaptured": true,
+                "admissionAfterCutoffSeconds": 17,
+                "marginObservationUtc": "2026-10-11T22:47:40.8736280Z",
+                "latestGateObservation": {
+                    "observedUtc": "2026-10-11T22:48:04.9713775Z",
+                    "status": "readable",
+                    "commercialRecoveryRequiredFieldPresent": false,
+                    "commercialRecoveryRequired": null,
+                    "readyNotBeforeFieldPresent": false,
+                    "cutoffEpochSeconds": 1791758865,
+                    "recycleMarkerStatus": "missing",
+                    "desiredState": {
+                        "status": "readable",
+                        "shutdownRequested": false,
+                        "warmHoldEnabled": false,
+                        "drainEnabled": false
+                    }
+                },
+                "caveat": "Published Ready and matching-current-request admission timestamps support gate ordering; sparse state snapshots do not capture every reset ACK or prove old-ticket rejection."
+            },
+            "ancestry": {
+                "normalStacks": [
+                    {
+                        "pid": 5216,
+                        "parentPid": 1676,
+                        "startedUtc": "2026-10-11T22:46:22.4763350Z"
+                    }
+                ],
+                "replacementStacks": [
+                    {
+                        "pid": 3180,
+                        "parentPid": 2248,
+                        "startedUtc": "2026-10-11T22:46:53.3938070Z"
+                    }
+                ],
+                "shipping": [
+                    {
+                        "name": "ScaleWorld-Win64-Shipping.exe",
+                        "pid": 3968,
+                        "parentPid": 1080,
+                        "startedUtc": "2026-10-11T22:46:54.4517560Z",
+                        "role": "unreal-runtime",
+                        "recoveryArgument": false
+                    }
+                ],
+                "shippingAncestry": [
+                    {
+                        "pid": 3968,
+                        "startedUtc": "2026-10-11T22:46:54.4517560Z",
+                        "capturedParentPids": [1080, 1180, 5216],
+                        "owner": "original-stack",
+                        "stackPid": 5216,
+                        "birthAfterReplacementMarker": true,
+                        "shippingToPublishedRuntimeReadySeconds": 56.591244
+                    }
+                ],
+                "processTreeSnapshotCount": 4,
+                "maximumShippingProcessesInCapturedSnapshot": 1,
+                "transientDuplicatesExcluded": false,
+                "uncapturedParentGenerationExcluded": false
+            },
+            "observers": {
+                "stateStatus": "Success",
+                "journalStatus": "Success",
+                "originalStateRowCount": 23,
+                "postconnectStateStatus": null,
+                "postconnectStateCommandId": null,
+                "postconnectStateRowCount": 0,
+                "orderedMergedStateRowCount": 23,
+                "journalSelectionComplete": true
+            },
+            "requestPageLag": null,
+            "media": [
+                {
+                    "observedUtc": "2026-10-11T22:48:19.735Z",
+                    "framerate": "30",
+                    "packetsLost": "0",
+                    "framesDropped": "0",
+                    "video": [
+                        {
+                            "currentTime": 16.083244,
+                            "width": 2240,
+                            "height": 1260,
+                            "paused": false,
+                            "readyState": 4
+                        }
+                    ]
+                },
+                {
+                    "observedUtc": "2026-10-11T22:49:33.652Z",
+                    "framerate": "30",
+                    "packetsLost": "0",
+                    "framesDropped": "0",
+                    "video": [
+                        {
+                            "currentTime": 89.995896,
+                            "width": 2240,
+                            "height": 1260,
+                            "paused": false,
+                            "readyState": 4
+                        }
+                    ]
+                },
+                {
+                    "observedUtc": "2026-10-11T22:50:04.571Z",
+                    "framerate": "30",
+                    "packetsLost": "0",
+                    "framesDropped": "0",
+                    "video": [
+                        {
+                            "currentTime": 120.909815,
+                            "width": 2240,
+                            "height": 1260,
+                            "paused": false,
+                            "readyState": 4
+                        }
+                    ]
+                }
+            ],
+            "completion": {
+                "endClickUtc": "2026-10-11T22:50:05.641Z",
+                "teardownState": "Teardown Completed",
+                "teardownObservedUtc": "2026-10-11T22:54:44.997Z",
+                "providerStopped": {
+                    "observedUtc": "2026-10-11T22:55:51.1654838Z",
+                    "fleet": [
+                        {
+                            "Id": "i-0ce5ffd16bd50eb24",
+                            "State": "stopped"
+                        },
+                        {
+                            "Id": "i-0226e3c475b1b76f0",
+                            "State": "stopped"
+                        },
+                        {
+                            "Id": "i-0209fd65e0ed93501",
+                            "State": "stopped"
+                        }
+                    ]
+                }
+            },
+            "limitations": [
+                "Known original-stack late Unreal launch captured after replacement marker; compare this ownership stratum separately."
+            ],
+            "acceptance": "Diagnostic summary only; does not automatically accept a task-delay change or exclude unobserved launch/retry/media regressions."
+        },
+        {
+            "sample": 19,
+            "cohort": "boot-delay-15s-candidate",
+            "identities": {
+                "bootDelaySeconds": 15,
+                "runtimeBundle": "pixelstreaming-runtime-20261011-003",
+                "runtimeCommit": "26ee94ea453d5d6f01f1a5268d9bf08dd3d26046",
+                "webCommit": "5bc95c6c06cb2bb7e635b505a0598b22cd8a56a8"
+            },
+            "times": {
+                "clickUtc": "2026-10-11T22:56:23.231Z",
+                "bootUtc": "2026-10-11T22:56:35.5000000Z",
+                "kernelBootEvents": [
+                    {
+                        "utc": "2026-10-11T22:56:35.7087881Z",
+                        "id": 12
+                    }
+                ],
+                "normalStackBirthUtc": "2026-10-11T22:56:55.4645930Z",
+                "normalJournalBeginUtc": "2026-10-11T22:56:55.7488713Z",
+                "runtimeReadyUtc": "2026-10-11T22:58:24.041Z",
+                "apiRequestUtc": "2026-10-11T22:56:24.7337925+00:00",
+                "apiReadyUtc": "2026-10-11T22:58:27.884018+00:00",
+                "apiConnectedUtc": "2026-10-11T22:58:33.1778329+00:00",
+                "apiEndUtc": "2026-10-11T23:00:22.1589442+00:00",
+                "sourceState": "Teardown Completed",
+                "interpretation": "Retained single API row: times in request/Ready/connected/End order; verify owning API extraction.",
+                "uiReadyFirstObservedUtc": "2026-10-11T22:58:28.016Z"
+            },
+            "durationsSeconds": {
+                "rawBootToNormalProcess": 19.964593,
+                "normalProcessToJournal": 0.2842783,
+                "clickToRuntimeReady": 120.81,
+                "clickToApiReady": 124.653018,
+                "requestToApiReady": 123.1502255,
+                "normalProcessToApiReady": 92.419425
+            },
+            "task": {
+                "observedUtc": "2026-10-11T22:58:44.8027126Z",
+                "principal": {
+                    "runLevel": "Highest",
+                    "logonType": "ServiceAccount",
+                    "class": "system"
+                },
+                "triggers": [
+                    {
+                        "type": "MSFT_TaskBootTrigger",
+                        "enabled": true,
+                        "delay": "PT15S",
+                        "logonScope": null,
+                        "startBoundary": null,
+                        "endBoundary": null,
+                        "executionTimeLimit": null,
+                        "repetitionInterval": null,
+                        "repetitionDuration": null,
+                        "stopAtDurationEnd": false
+                    },
+                    {
+                        "type": "MSFT_TaskLogonTrigger",
+                        "enabled": true,
+                        "delay": "PT30S",
+                        "logonScope": "any-user",
+                        "startBoundary": null,
+                        "endBoundary": null,
+                        "executionTimeLimit": null,
+                        "repetitionInterval": null,
+                        "repetitionDuration": null,
+                        "stopAtDurationEnd": false
+                    }
+                ],
+                "settings": {
+                    "MultipleInstances": 2,
+                    "StartWhenAvailable": true,
+                    "RunOnlyIfNetworkAvailable": false,
+                    "ExecutionTimeLimit": "PT0S",
+                    "RestartInterval": "PT1M",
+                    "RestartCount": 15,
+                    "AllowDemandStart": true,
+                    "Enabled": true,
+                    "DisallowStartIfOnBatteries": false,
+                    "StopIfGoingOnBatteries": true,
+                    "RunOnlyIfIdle": false,
+                    "WakeToRun": false,
+                    "Priority": 7
+                },
+                "actions": [
+                    {
+                        "executable": "start_streamer_stack.bat",
+                        "canonicalStackAction": false,
+                        "canonicalDirectStackAction": true,
+                        "argumentsEmpty": true,
+                        "canonicalWorkingDirectory": false,
+                        "workingDirectorySet": false,
+                        "workingDirectoryExists": null
+                    }
+                ],
+                "history": {
+                    "name": "Microsoft-Windows-TaskScheduler/Operational",
+                    "available": true,
+                    "enabled": true,
+                    "recordCount": 117,
+                    "queryStatus": "queried",
+                    "scannedEventCount": 6,
+                    "scanLimit": 150,
+                    "capReached": false,
+                    "taskFilteredBeforeLimit": true,
+                    "oldestScannedUtc": "2026-10-11T22:56:55.4636254Z"
+                },
+                "lastRunUtc": "2026-10-11T22:56:56.0000000Z",
+                "lastTaskResult": 0,
+                "events": [
+                    {
+                        "utc": "2026-10-11T22:56:55.4652227Z",
+                        "id": 100,
+                        "recordId": 98,
+                        "InstanceId": "{e24c5543-075d-4a91-aeca-712d9f795fc3}"
+                    },
+                    {
+                        "utc": "2026-10-11T22:56:55.4651135Z",
+                        "id": 129,
+                        "recordId": 97,
+                        "ProcessId": "5408"
+                    },
+                    {
+                        "utc": "2026-10-11T22:56:55.4636254Z",
+                        "id": 118,
+                        "recordId": 96,
+                        "InstanceId": "{e24c5543-075d-4a91-aeca-712d9f795fc3}"
+                    },
+                    {
+                        "utc": "2026-10-11T22:57:30.1789181Z",
+                        "id": 102,
+                        "recordId": 101,
+                        "InstanceId": "{e24c5543-075d-4a91-aeca-712d9f795fc3}"
+                    },
+                    {
+                        "utc": "2026-10-11T22:57:30.1787889Z",
+                        "id": 201,
+                        "recordId": 100,
+                        "TaskInstanceId": "{e24c5543-075d-4a91-aeca-712d9f795fc3}",
+                        "ResultCode": "0",
+                        "actionIsCmd": true
+                    },
+                    {
+                        "utc": "2026-10-11T22:56:55.4652241Z",
+                        "id": 200,
+                        "recordId": 99,
+                        "TaskInstanceId": "{e24c5543-075d-4a91-aeca-712d9f795fc3}",
+                        "actionIsCmd": true
+                    }
+                ],
+                "eventsWithNormalStackPid": [
+                    {
+                        "utc": "2026-10-11T22:56:55.4651135Z",
+                        "id": 129,
+                        "recordId": 97,
+                        "ProcessId": "5408"
+                    }
+                ],
+                "lastRunIsFirstActionEvidence": false
+            },
+            "taskActionEvidence": {
+                "matchedNormalProcessEventUtc": "2026-10-11T22:56:55.4651135Z",
+                "rawBootToMatchedTaskProcessSeconds": 19.9651135,
+                "taskEventToProcessBirthSeconds": -0.0005205,
+                "capturedTaskInstanceCount": 1,
+                "capturedActionStartCount": 1,
+                "capturedTaskProcessEventCount": 1,
+                "capturedSuccessfulActionCompletionCount": 1,
+                "nonzeroCapturedActionResults": [],
+                "basis": "Retained Scheduler process event PID is matched to observed normal CMD birth; one GUID plus one successful action is evidence within the retained window, not universal retry exclusion."
+            },
+            "clockChanges": [],
+            "phaseSpans": [
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "utcBase": "2026-10-11T22:57:11.0090841Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 0.01,
+                            "exitCode": 0
+                        },
+                        "parameters": {
+                            "seconds": 1.18,
+                            "exitCode": 0
+                        },
+                        "bootstrap_secret": {
+                            "seconds": 1.11,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": []
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "utcBase": "2026-10-11T22:56:55.7488713Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 4.02,
+                            "exitCode": 0
+                        },
+                        "identity": {
+                            "seconds": 2.37,
+                            "exitCode": 0
+                        },
+                        "update_control": {
+                            "seconds": 1.58,
+                            "exitCode": 0
+                        },
+                        "provisioning_control": {
+                            "seconds": 1.59,
+                            "exitCode": 0
+                        },
+                        "maintenance_control": {
+                            "seconds": 1.49,
+                            "exitCode": 0
+                        },
+                        "service_class": {
+                            "seconds": 1.5,
+                            "exitCode": 0
+                        },
+                        "old_roots": {
+                            "seconds": 0.35,
+                            "exitCode": 0
+                        },
+                        "config": {
+                            "seconds": 1.6,
+                            "exitCode": 0
+                        },
+                        "wilbur_tcp": {
+                            "seconds": 13.75,
+                            "exitCode": 0
+                        },
+                        "unreal_launch": {
+                            "seconds": 5.02,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": [
+                        {
+                            "phase": "metadata.lane.attempt_1",
+                            "exitCode": 0
+                        },
+                        {
+                            "phase": "metadata.track.attempt_1",
+                            "exitCode": 0
+                        },
+                        {
+                            "phase": "metadata.delivery.attempt_1",
+                            "exitCode": 0
+                        }
+                    ]
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "utcBase": "2026-10-11T22:57:35.5166329Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 0.01,
+                            "exitCode": 0
+                        },
+                        "parameters": {
+                            "seconds": 1.18,
+                            "exitCode": 0
+                        },
+                        "bootstrap_secret": {
+                            "seconds": 0.01,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": []
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "utcBase": "2026-10-11T22:57:26.2422912Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 1.89,
+                            "exitCode": 0
+                        },
+                        "identity": {
+                            "seconds": 2.37,
+                            "exitCode": 0
+                        },
+                        "maintenance_control": {
+                            "seconds": 1.58,
+                            "exitCode": 0
+                        },
+                        "service_class": {
+                            "seconds": 1.63,
+                            "exitCode": 0
+                        },
+                        "old_roots": {
+                            "seconds": 0.58,
+                            "exitCode": 0
+                        },
+                        "config": {
+                            "seconds": 0.51,
+                            "exitCode": 0
+                        },
+                        "wilbur_tcp": {
+                            "seconds": 12.87,
+                            "exitCode": 0
+                        },
+                        "unreal_launch": {
+                            "seconds": 4.09,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": [
+                        {
+                            "phase": "metadata.lane.attempt_1",
+                            "exitCode": 0
+                        },
+                        {
+                            "phase": "metadata.track.attempt_1",
+                            "exitCode": 0
+                        }
+                    ]
+                }
+            ],
+            "configPhases": [
+                {
+                    "mode": "normal",
+                    "phases": [
+                        {
+                            "utc": "2026-10-11T22:57:09.2453942Z",
+                            "phase": "service_class",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 10.657,
+                            "clockBasis": "stopwatch"
+                        },
+                        {
+                            "utc": "2026-10-11T22:57:10.4171849Z",
+                            "phase": "pointer_fetch",
+                            "result": "failed",
+                            "exitCode": 1,
+                            "durationMs": 1020.958,
+                            "clockBasis": "stopwatch"
+                        },
+                        {
+                            "utc": "2026-10-11T22:57:10.4712661Z",
+                            "phase": "config.completed",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 1395.249,
+                            "clockBasis": "stopwatch"
+                        }
+                    ]
+                },
+                {
+                    "mode": "recovery",
+                    "phases": [
+                        {
+                            "utc": "2026-10-11T22:57:34.8377557Z",
+                            "phase": "service_class",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 11.214,
+                            "clockBasis": "stopwatch"
+                        },
+                        {
+                            "utc": "2026-10-11T22:57:34.9468983Z",
+                            "phase": "config.completed",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 293.109,
+                            "clockBasis": "stopwatch"
+                        }
+                    ]
+                }
+            ],
+            "configSnapshot": {
+                "status": "readable",
+                "source": "published",
+                "environment": "dev",
+                "serviceClass": "standard",
+                "bundleId": "pixelstreaming-runtime-20261011-003",
+                "loadedAtUtc": "2026-10-11T22:57:10.4231917Z",
+                "referencePresent": false,
+                "errorFilePresent": false,
+                "snapshotLastWriteUtc": "2026-10-11T22:57:10.4282021Z"
+            },
+            "configClassification": {
+                "branch": "fresh-published-defaults-after-optional-missing-Dev-pointer",
+                "basis": "Source contract: successful fresh Dev no-reference snapshot is written published; eligible storage fallback changes source to cached. Optional nonzero Dev pointer can return null only for a missing-object result. Future failed required reads still need their own evidence."
+            },
+            "recovery": {
+                "requestedAtUtc": "2026-10-11T22:57:24.630Z",
+                "replacementStartedAtUtc": "2026-10-11T22:57:25.8207103+00:00",
+                "resetCompletedAtUtc": null,
+                "cutoffEpochSeconds": 1791759498,
+                "readyNotBeforeEpochSeconds": 1791759503,
+                "cutoffUtcDerived": "2026-10-11T22:58:18.000Z",
+                "readyNotBeforeUtcDerived": "2026-10-11T22:58:23.000Z",
+                "publishedReadyAfterNotBeforeSeconds": 1.041,
+                "currentRequestAdmissionRecordedUtc": "2026-10-11T22:58:33.000Z",
+                "currentRequestAdmissionMatchCaptured": true,
+                "admissionAfterCutoffSeconds": 15,
+                "marginObservationUtc": "2026-10-11T22:58:14.0504890Z",
+                "latestGateObservation": {
+                    "observedUtc": "2026-10-11T22:58:35.1340762Z",
+                    "status": "readable",
+                    "commercialRecoveryRequiredFieldPresent": false,
+                    "commercialRecoveryRequired": null,
+                    "readyNotBeforeFieldPresent": false,
+                    "cutoffEpochSeconds": 1791759498,
+                    "recycleMarkerStatus": "missing",
+                    "desiredState": {
+                        "status": "readable",
+                        "shutdownRequested": false,
+                        "warmHoldEnabled": false,
+                        "drainEnabled": false
+                    }
+                },
+                "caveat": "Published Ready and matching-current-request admission timestamps support gate ordering; sparse state snapshots do not capture every reset ACK or prove old-ticket rejection."
+            },
+            "ancestry": {
+                "normalStacks": [
+                    {
+                        "pid": 5408,
+                        "parentPid": 1664,
+                        "startedUtc": "2026-10-11T22:56:55.4645930Z"
+                    }
+                ],
+                "replacementStacks": [
+                    {
+                        "pid": 836,
+                        "parentPid": 1636,
+                        "startedUtc": "2026-10-11T22:57:25.9841360Z"
+                    }
+                ],
+                "shipping": [
+                    {
+                        "name": "ScaleWorld-Win64-Shipping.exe",
+                        "pid": 5608,
+                        "parentPid": 5920,
+                        "startedUtc": "2026-10-11T22:57:27.5209930Z",
+                        "role": "unreal-runtime",
+                        "recoveryArgument": false
+                    }
+                ],
+                "shippingAncestry": [
+                    {
+                        "pid": 5608,
+                        "startedUtc": "2026-10-11T22:57:27.5209930Z",
+                        "capturedParentPids": [5920, 5984, 5408],
+                        "owner": "original-stack",
+                        "stackPid": 5408,
+                        "birthAfterReplacementMarker": true,
+                        "shippingToPublishedRuntimeReadySeconds": 56.520007
+                    }
+                ],
+                "processTreeSnapshotCount": 5,
+                "maximumShippingProcessesInCapturedSnapshot": 1,
+                "transientDuplicatesExcluded": false,
+                "uncapturedParentGenerationExcluded": false
+            },
+            "observers": {
+                "stateStatus": "Success",
+                "journalStatus": "Success",
+                "originalStateRowCount": 25,
+                "postconnectStateStatus": null,
+                "postconnectStateCommandId": null,
+                "postconnectStateRowCount": 0,
+                "orderedMergedStateRowCount": 25,
+                "journalSelectionComplete": true
+            },
+            "requestPageLag": null,
+            "media": [
+                {
+                    "observedUtc": "2026-10-11T22:58:55.872Z",
+                    "framerate": "30",
+                    "packetsLost": "0",
+                    "framesDropped": "0",
+                    "video": [
+                        {
+                            "currentTime": 21.654244,
+                            "width": 2240,
+                            "height": 1260,
+                            "paused": false,
+                            "readyState": 4
+                        }
+                    ]
+                },
+                {
+                    "observedUtc": "2026-10-11T23:00:17.229Z",
+                    "framerate": "30",
+                    "packetsLost": "0",
+                    "framesDropped": "0",
+                    "video": [
+                        {
+                            "currentTime": 103.006255,
+                            "width": 2240,
+                            "height": 1260,
+                            "paused": false,
+                            "readyState": 4
+                        }
+                    ]
+                }
+            ],
+            "completion": {
+                "endClickUtc": "2026-10-11T23:00:21.539Z",
+                "teardownState": "Teardown Completed",
+                "teardownObservedUtc": "2026-10-11T23:03:22.853Z",
+                "providerStopped": {
+                    "observedUtc": "2026-10-11T23:05:47.8305067Z",
+                    "fleet": [
+                        {
+                            "Id": "i-0ce5ffd16bd50eb24",
+                            "State": "stopped"
+                        },
+                        {
+                            "Id": "i-0226e3c475b1b76f0",
+                            "State": "stopped"
+                        },
+                        {
+                            "Id": "i-0209fd65e0ed93501",
+                            "State": "stopped"
+                        }
+                    ]
+                }
+            },
+            "limitations": [
+                "Known original-stack late Unreal launch captured after replacement marker; compare this ownership stratum separately."
+            ],
+            "acceptance": "Diagnostic summary only; does not automatically accept a task-delay change or exclude unobserved launch/retry/media regressions."
+        },
+        {
+            "sample": 20,
+            "cohort": "boot-delay-15s-candidate",
+            "identities": {
+                "bootDelaySeconds": 15,
+                "runtimeBundle": "pixelstreaming-runtime-20261011-003",
+                "runtimeCommit": "26ee94ea453d5d6f01f1a5268d9bf08dd3d26046",
+                "webCommit": "5bc95c6c06cb2bb7e635b505a0598b22cd8a56a8"
+            },
+            "times": {
+                "clickUtc": "2026-10-11T23:06:04.963Z",
+                "bootUtc": "2026-10-11T23:06:18.5000000Z",
+                "kernelBootEvents": [
+                    {
+                        "utc": "2026-10-11T23:06:18.7064374Z",
+                        "id": 12
+                    }
+                ],
+                "normalStackBirthUtc": "2026-10-11T23:06:38.6244480Z",
+                "normalJournalBeginUtc": "2026-10-11T23:06:38.9078178Z",
+                "runtimeReadyUtc": "2026-10-11T23:08:05.043Z",
+                "apiRequestUtc": "2026-10-11T23:06:07.3053281+00:00",
+                "apiReadyUtc": "2026-10-11T23:08:08.2295855+00:00",
+                "apiConnectedUtc": "2026-10-11T23:08:33.4952289+00:00",
+                "apiEndUtc": "2026-10-11T23:10:51.9515602+00:00",
+                "sourceState": "Teardown Completed",
+                "interpretation": "Retained single API row: times in request/Ready/connected/End order; verify owning API extraction.",
+                "uiReadyFirstObservedUtc": "2026-10-11T23:08:32.506Z"
+            },
+            "durationsSeconds": {
+                "rawBootToNormalProcess": 20.124448,
+                "normalProcessToJournal": 0.2833698,
+                "clickToRuntimeReady": 120.08,
+                "clickToApiReady": 123.2665855,
+                "requestToApiReady": 120.9242574,
+                "normalProcessToApiReady": 89.6051375
+            },
+            "task": {
+                "observedUtc": "2026-10-11T23:08:46.3109637Z",
+                "principal": {
+                    "runLevel": "Highest",
+                    "logonType": "ServiceAccount",
+                    "class": "system"
+                },
+                "triggers": [
+                    {
+                        "type": "MSFT_TaskBootTrigger",
+                        "enabled": true,
+                        "delay": "PT15S",
+                        "logonScope": null,
+                        "startBoundary": null,
+                        "endBoundary": null,
+                        "executionTimeLimit": null,
+                        "repetitionInterval": null,
+                        "repetitionDuration": null,
+                        "stopAtDurationEnd": false
+                    },
+                    {
+                        "type": "MSFT_TaskLogonTrigger",
+                        "enabled": true,
+                        "delay": "PT30S",
+                        "logonScope": "any-user",
+                        "startBoundary": null,
+                        "endBoundary": null,
+                        "executionTimeLimit": null,
+                        "repetitionInterval": null,
+                        "repetitionDuration": null,
+                        "stopAtDurationEnd": false
+                    }
+                ],
+                "settings": {
+                    "MultipleInstances": 2,
+                    "StartWhenAvailable": true,
+                    "RunOnlyIfNetworkAvailable": false,
+                    "ExecutionTimeLimit": "PT0S",
+                    "RestartInterval": "PT1M",
+                    "RestartCount": 15,
+                    "AllowDemandStart": true,
+                    "Enabled": true,
+                    "DisallowStartIfOnBatteries": false,
+                    "StopIfGoingOnBatteries": true,
+                    "RunOnlyIfIdle": false,
+                    "WakeToRun": false,
+                    "Priority": 7
+                },
+                "actions": [
+                    {
+                        "executable": "start_streamer_stack.bat",
+                        "canonicalStackAction": false,
+                        "canonicalDirectStackAction": true,
+                        "argumentsEmpty": true,
+                        "canonicalWorkingDirectory": false,
+                        "workingDirectorySet": false,
+                        "workingDirectoryExists": null
+                    }
+                ],
+                "history": {
+                    "name": "Microsoft-Windows-TaskScheduler/Operational",
+                    "available": true,
+                    "enabled": true,
+                    "recordCount": 183,
+                    "queryStatus": "queried",
+                    "scannedEventCount": 6,
+                    "scanLimit": 150,
+                    "capReached": false,
+                    "taskFilteredBeforeLimit": true,
+                    "oldestScannedUtc": "2026-10-11T23:06:38.6234897Z"
+                },
+                "lastRunUtc": "2026-10-11T23:06:06.0000000Z",
+                "lastTaskResult": 0,
+                "events": [
+                    {
+                        "utc": "2026-10-11T23:06:38.6251111Z",
+                        "id": 100,
+                        "recordId": 162,
+                        "InstanceId": "{79f92e2f-ff5e-4106-9771-baca366af58a}"
+                    },
+                    {
+                        "utc": "2026-10-11T23:06:38.6250008Z",
+                        "id": 129,
+                        "recordId": 161,
+                        "ProcessId": "5416"
+                    },
+                    {
+                        "utc": "2026-10-11T23:06:38.6234897Z",
+                        "id": 118,
+                        "recordId": 160,
+                        "InstanceId": "{79f92e2f-ff5e-4106-9771-baca366af58a}"
+                    },
+                    {
+                        "utc": "2026-10-11T23:07:13.1981039Z",
+                        "id": 102,
+                        "recordId": 165,
+                        "InstanceId": "{79f92e2f-ff5e-4106-9771-baca366af58a}"
+                    },
+                    {
+                        "utc": "2026-10-11T23:07:13.1979675Z",
+                        "id": 201,
+                        "recordId": 164,
+                        "TaskInstanceId": "{79f92e2f-ff5e-4106-9771-baca366af58a}",
+                        "ResultCode": "0",
+                        "actionIsCmd": true
+                    },
+                    {
+                        "utc": "2026-10-11T23:06:38.6251126Z",
+                        "id": 200,
+                        "recordId": 163,
+                        "TaskInstanceId": "{79f92e2f-ff5e-4106-9771-baca366af58a}",
+                        "actionIsCmd": true
+                    }
+                ],
+                "eventsWithNormalStackPid": [
+                    {
+                        "utc": "2026-10-11T23:06:38.6250008Z",
+                        "id": 129,
+                        "recordId": 161,
+                        "ProcessId": "5416"
+                    }
+                ],
+                "lastRunIsFirstActionEvidence": false
+            },
+            "taskActionEvidence": {
+                "matchedNormalProcessEventUtc": "2026-10-11T23:06:38.6250008Z",
+                "rawBootToMatchedTaskProcessSeconds": 20.1250008,
+                "taskEventToProcessBirthSeconds": -0.0005528,
+                "capturedTaskInstanceCount": 1,
+                "capturedActionStartCount": 1,
+                "capturedTaskProcessEventCount": 1,
+                "capturedSuccessfulActionCompletionCount": 1,
+                "nonzeroCapturedActionResults": [],
+                "basis": "Retained Scheduler process event PID is matched to observed normal CMD birth; one GUID plus one successful action is evidence within the retained window, not universal retry exclusion."
+            },
+            "clockChanges": [],
+            "phaseSpans": [
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "utcBase": "2026-10-11T23:06:54.1417461Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 0.01,
+                            "exitCode": 0
+                        },
+                        "parameters": {
+                            "seconds": 1.16,
+                            "exitCode": 0
+                        },
+                        "bootstrap_secret": {
+                            "seconds": 1.11,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": []
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "utcBase": "2026-10-11T23:06:38.9078178Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 4.06,
+                            "exitCode": 0
+                        },
+                        "identity": {
+                            "seconds": 2.37,
+                            "exitCode": 0
+                        },
+                        "update_control": {
+                            "seconds": 1.58,
+                            "exitCode": 0
+                        },
+                        "provisioning_control": {
+                            "seconds": 1.57,
+                            "exitCode": 0
+                        },
+                        "maintenance_control": {
+                            "seconds": 1.5,
+                            "exitCode": 0
+                        },
+                        "service_class": {
+                            "seconds": 1.49,
+                            "exitCode": 0
+                        },
+                        "old_roots": {
+                            "seconds": 0.36,
+                            "exitCode": 0
+                        },
+                        "config": {
+                            "seconds": 1.58,
+                            "exitCode": 0
+                        },
+                        "wilbur_tcp": {
+                            "seconds": 13.76,
+                            "exitCode": 0
+                        },
+                        "unreal_launch": {
+                            "seconds": 4.93,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": [
+                        {
+                            "phase": "metadata.lane.attempt_1",
+                            "exitCode": 0
+                        },
+                        {
+                            "phase": "metadata.track.attempt_1",
+                            "exitCode": 0
+                        },
+                        {
+                            "phase": "metadata.delivery.attempt_1",
+                            "exitCode": 0
+                        }
+                    ]
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "utcBase": "2026-10-11T23:07:18.6428075Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 0.01,
+                            "exitCode": 0
+                        },
+                        "parameters": {
+                            "seconds": 1.18,
+                            "exitCode": 0
+                        },
+                        "bootstrap_secret": {
+                            "seconds": 0.01,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": []
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "utcBase": "2026-10-11T23:07:09.3501455Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 1.9,
+                            "exitCode": 0
+                        },
+                        "identity": {
+                            "seconds": 2.36,
+                            "exitCode": 0
+                        },
+                        "maintenance_control": {
+                            "seconds": 1.61,
+                            "exitCode": 0
+                        },
+                        "service_class": {
+                            "seconds": 1.64,
+                            "exitCode": 0
+                        },
+                        "old_roots": {
+                            "seconds": 0.57,
+                            "exitCode": 0
+                        },
+                        "config": {
+                            "seconds": 0.51,
+                            "exitCode": 0
+                        },
+                        "wilbur_tcp": {
+                            "seconds": 12.35,
+                            "exitCode": 0
+                        },
+                        "unreal_launch": {
+                            "seconds": 0.53,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": [
+                        {
+                            "phase": "metadata.lane.attempt_1",
+                            "exitCode": 0
+                        },
+                        {
+                            "phase": "metadata.track.attempt_1",
+                            "exitCode": 0
+                        }
+                    ]
+                }
+            ],
+            "configPhases": [
+                {
+                    "mode": "normal",
+                    "phases": [
+                        {
+                            "utc": "2026-10-11T23:06:52.3937373Z",
+                            "phase": "service_class",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 10.562,
+                            "clockBasis": "stopwatch"
+                        },
+                        {
+                            "utc": "2026-10-11T23:06:53.5497295Z",
+                            "phase": "pointer_fetch",
+                            "result": "failed",
+                            "exitCode": 1,
+                            "durationMs": 1017.34,
+                            "clockBasis": "stopwatch"
+                        },
+                        {
+                            "utc": "2026-10-11T23:06:53.6038198Z",
+                            "phase": "config.completed",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 1380.755,
+                            "clockBasis": "stopwatch"
+                        }
+                    ]
+                },
+                {
+                    "mode": "recovery",
+                    "phases": [
+                        {
+                            "utc": "2026-10-11T23:07:17.9567977Z",
+                            "phase": "service_class",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 11.336,
+                            "clockBasis": "stopwatch"
+                        },
+                        {
+                            "utc": "2026-10-11T23:07:18.0619548Z",
+                            "phase": "config.completed",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 288.013,
+                            "clockBasis": "stopwatch"
+                        }
+                    ]
+                }
+            ],
+            "configSnapshot": {
+                "status": "readable",
+                "source": "published",
+                "environment": "dev",
+                "serviceClass": "standard",
+                "bundleId": "pixelstreaming-runtime-20261011-003",
+                "loadedAtUtc": "2026-10-11T23:06:53.5567417Z",
+                "referencePresent": false,
+                "errorFilePresent": false,
+                "snapshotLastWriteUtc": "2026-10-11T23:06:53.5617485Z"
+            },
+            "configClassification": {
+                "branch": "fresh-published-defaults-after-optional-missing-Dev-pointer",
+                "basis": "Source contract: successful fresh Dev no-reference snapshot is written published; eligible storage fallback changes source to cached. Optional nonzero Dev pointer can return null only for a missing-object result. Future failed required reads still need their own evidence."
+            },
+            "recovery": {
+                "requestedAtUtc": "2026-10-11T23:07:07.737Z",
+                "replacementStartedAtUtc": "2026-10-11T23:07:08.9325001+00:00",
+                "resetCompletedAtUtc": "2026-10-11T23:08:05.012Z",
+                "cutoffEpochSeconds": 1791760079,
+                "readyNotBeforeEpochSeconds": 1791760084,
+                "cutoffUtcDerived": "2026-10-11T23:07:59.000Z",
+                "readyNotBeforeUtcDerived": "2026-10-11T23:08:04.000Z",
+                "publishedReadyAfterNotBeforeSeconds": 1.043,
+                "currentRequestAdmissionRecordedUtc": "2026-10-11T23:08:33.000Z",
+                "currentRequestAdmissionMatchCaptured": true,
+                "admissionAfterCutoffSeconds": 34,
+                "marginObservationUtc": "2026-10-11T23:07:56.2090642Z",
+                "latestGateObservation": {
+                    "observedUtc": "2026-10-11T23:08:35.3751427Z",
+                    "status": "readable",
+                    "commercialRecoveryRequiredFieldPresent": false,
+                    "commercialRecoveryRequired": null,
+                    "readyNotBeforeFieldPresent": false,
+                    "cutoffEpochSeconds": 1791760079,
+                    "recycleMarkerStatus": "missing",
+                    "desiredState": {
+                        "status": "readable",
+                        "shutdownRequested": false,
+                        "warmHoldEnabled": false,
+                        "drainEnabled": false
+                    }
+                },
+                "caveat": "Published Ready and matching-current-request admission timestamps support gate ordering; sparse state snapshots do not capture every reset ACK or prove old-ticket rejection."
+            },
+            "ancestry": {
+                "normalStacks": [
+                    {
+                        "pid": 5416,
+                        "parentPid": 1704,
+                        "startedUtc": "2026-10-11T23:06:38.6244480Z"
+                    }
+                ],
+                "replacementStacks": [
+                    {
+                        "pid": 4248,
+                        "parentPid": 5900,
+                        "startedUtc": "2026-10-11T23:07:09.0859990Z"
+                    }
+                ],
+                "shipping": [
+                    {
+                        "name": "ScaleWorld-Win64-Shipping.exe",
+                        "pid": 5928,
+                        "parentPid": 5924,
+                        "startedUtc": "2026-10-11T23:07:10.5080330Z",
+                        "role": "unreal-runtime",
+                        "recoveryArgument": false
+                    }
+                ],
+                "shippingAncestry": [
+                    {
+                        "pid": 5928,
+                        "startedUtc": "2026-10-11T23:07:10.5080330Z",
+                        "capturedParentPids": [5924, 3592, 5416],
+                        "owner": "original-stack",
+                        "stackPid": 5416,
+                        "birthAfterReplacementMarker": true,
+                        "shippingToPublishedRuntimeReadySeconds": 54.534967
+                    }
+                ],
+                "processTreeSnapshotCount": 4,
+                "maximumShippingProcessesInCapturedSnapshot": 1,
+                "transientDuplicatesExcluded": false,
+                "uncapturedParentGenerationExcluded": false
+            },
+            "observers": {
+                "stateStatus": "Success",
+                "journalStatus": "Success",
+                "originalStateRowCount": 24,
+                "postconnectStateStatus": null,
+                "postconnectStateCommandId": null,
+                "postconnectStateRowCount": 0,
+                "orderedMergedStateRowCount": 24,
+                "journalSelectionComplete": true
+            },
+            "requestPageLag": null,
+            "media": [
+                {
+                    "observedUtc": "2026-10-11T23:08:54.621Z",
+                    "framerate": "30",
+                    "packetsLost": "0",
+                    "framesDropped": "0",
+                    "video": [
+                        {
+                            "currentTime": 20.08222,
+                            "width": 2240,
+                            "height": 1260,
+                            "paused": false,
+                            "readyState": 4
+                        }
+                    ]
+                },
+                {
+                    "observedUtc": "2026-10-11T23:10:49.707Z",
+                    "framerate": "30",
+                    "packetsLost": "0",
+                    "framesDropped": "0",
+                    "video": [
+                        {
+                            "currentTime": 135.15886,
+                            "width": 2240,
+                            "height": 1260,
+                            "paused": false,
+                            "readyState": 4
+                        }
+                    ]
+                }
+            ],
+            "completion": {
+                "endClickUtc": "2026-10-11T23:10:50.783Z",
+                "teardownState": "Teardown Completed",
+                "teardownObservedUtc": "2026-10-11T23:17:39.861Z",
+                "providerStopped": {
+                    "observedUtc": "2026-10-11T23:16:21.2814577Z",
+                    "fleet": [
+                        {
+                            "Id": "i-0ce5ffd16bd50eb24",
+                            "State": "stopped"
+                        },
+                        {
+                            "Id": "i-0226e3c475b1b76f0",
+                            "State": "stopped"
+                        },
+                        {
+                            "Id": "i-0209fd65e0ed93501",
+                            "State": "stopped"
+                        }
+                    ]
+                }
+            },
+            "limitations": [
+                "Known original-stack late Unreal launch captured after replacement marker; compare this ownership stratum separately."
+            ],
+            "acceptance": "Diagnostic summary only; does not automatically accept a task-delay change or exclude unobserved launch/retry/media regressions."
+        },
+        {
+            "sample": 21,
+            "cohort": "boot-delay-15s-candidate",
+            "identities": {
+                "bootDelaySeconds": 15,
+                "runtimeBundle": "pixelstreaming-runtime-20261011-003",
+                "runtimeCommit": "26ee94ea453d5d6f01f1a5268d9bf08dd3d26046",
+                "webCommit": "5bc95c6c06cb2bb7e635b505a0598b22cd8a56a8"
+            },
+            "times": {
+                "clickUtc": "2026-10-11T23:17:58.223Z",
+                "bootUtc": "2026-10-11T23:18:10.5000000Z",
+                "kernelBootEvents": [
+                    {
+                        "utc": "2026-10-11T23:18:10.6943510Z",
+                        "id": 12
+                    }
+                ],
+                "normalStackBirthUtc": "2026-10-11T23:18:30.6903750Z",
+                "normalJournalBeginUtc": "2026-10-11T23:18:30.9748413Z",
+                "runtimeReadyUtc": "2026-10-11T23:19:57.041Z",
+                "apiRequestUtc": "2026-10-11T23:17:59.6696744+00:00",
+                "apiReadyUtc": "2026-10-11T23:20:02.1563385+00:00",
+                "apiConnectedUtc": "2026-10-11T23:21:43.9369075+00:00",
+                "apiEndUtc": "2026-10-11T23:24:40.558544+00:00",
+                "sourceState": "Teardown Completed",
+                "interpretation": "Retained single API row: times in request/Ready/connected/End order; verify owning API extraction.",
+                "uiReadyFirstObservedUtc": "2026-10-11T23:21:35.854Z"
+            },
+            "durationsSeconds": {
+                "rawBootToNormalProcess": 20.190375,
+                "normalProcessToJournal": 0.2844663,
+                "clickToRuntimeReady": 118.818,
+                "clickToApiReady": 123.9333385,
+                "requestToApiReady": 122.4866641,
+                "normalProcessToApiReady": 91.4659635
+            },
+            "task": {
+                "observedUtc": "2026-10-11T23:20:29.5374645Z",
+                "principal": {
+                    "runLevel": "Highest",
+                    "logonType": "ServiceAccount",
+                    "class": "system"
+                },
+                "triggers": [
+                    {
+                        "type": "MSFT_TaskBootTrigger",
+                        "enabled": true,
+                        "delay": "PT15S",
+                        "logonScope": null,
+                        "startBoundary": null,
+                        "endBoundary": null,
+                        "executionTimeLimit": null,
+                        "repetitionInterval": null,
+                        "repetitionDuration": null,
+                        "stopAtDurationEnd": false
+                    },
+                    {
+                        "type": "MSFT_TaskLogonTrigger",
+                        "enabled": true,
+                        "delay": "PT30S",
+                        "logonScope": "any-user",
+                        "startBoundary": null,
+                        "endBoundary": null,
+                        "executionTimeLimit": null,
+                        "repetitionInterval": null,
+                        "repetitionDuration": null,
+                        "stopAtDurationEnd": false
+                    }
+                ],
+                "settings": {
+                    "MultipleInstances": 2,
+                    "StartWhenAvailable": true,
+                    "RunOnlyIfNetworkAvailable": false,
+                    "ExecutionTimeLimit": "PT0S",
+                    "RestartInterval": "PT1M",
+                    "RestartCount": 15,
+                    "AllowDemandStart": true,
+                    "Enabled": true,
+                    "DisallowStartIfOnBatteries": false,
+                    "StopIfGoingOnBatteries": true,
+                    "RunOnlyIfIdle": false,
+                    "WakeToRun": false,
+                    "Priority": 7
+                },
+                "actions": [
+                    {
+                        "executable": "start_streamer_stack.bat",
+                        "canonicalStackAction": false,
+                        "canonicalDirectStackAction": true,
+                        "argumentsEmpty": true,
+                        "canonicalWorkingDirectory": false,
+                        "workingDirectorySet": false,
+                        "workingDirectoryExists": null
+                    }
+                ],
+                "history": {
+                    "name": "Microsoft-Windows-TaskScheduler/Operational",
+                    "available": true,
+                    "enabled": true,
+                    "recordCount": 247,
+                    "queryStatus": "queried",
+                    "scannedEventCount": 6,
+                    "scanLimit": 150,
+                    "capReached": false,
+                    "taskFilteredBeforeLimit": true,
+                    "oldestScannedUtc": "2026-10-11T23:18:30.6894478Z"
+                },
+                "lastRunUtc": "2026-10-11T23:18:18.0000000Z",
+                "lastTaskResult": 0,
+                "events": [
+                    {
+                        "utc": "2026-10-11T23:18:30.6909762Z",
+                        "id": 100,
+                        "recordId": 226,
+                        "InstanceId": "{0e500548-db9c-4ac1-b89d-2753a46d9dcf}"
+                    },
+                    {
+                        "utc": "2026-10-11T23:18:30.6908659Z",
+                        "id": 129,
+                        "recordId": 225,
+                        "ProcessId": "5356"
+                    },
+                    {
+                        "utc": "2026-10-11T23:18:30.6894478Z",
+                        "id": 118,
+                        "recordId": 224,
+                        "InstanceId": "{0e500548-db9c-4ac1-b89d-2753a46d9dcf}"
+                    },
+                    {
+                        "utc": "2026-10-11T23:19:05.1657789Z",
+                        "id": 102,
+                        "recordId": 229,
+                        "InstanceId": "{0e500548-db9c-4ac1-b89d-2753a46d9dcf}"
+                    },
+                    {
+                        "utc": "2026-10-11T23:19:05.1656412Z",
+                        "id": 201,
+                        "recordId": 228,
+                        "TaskInstanceId": "{0e500548-db9c-4ac1-b89d-2753a46d9dcf}",
+                        "ResultCode": "0",
+                        "actionIsCmd": true
+                    },
+                    {
+                        "utc": "2026-10-11T23:18:30.6909776Z",
+                        "id": 200,
+                        "recordId": 227,
+                        "TaskInstanceId": "{0e500548-db9c-4ac1-b89d-2753a46d9dcf}",
+                        "actionIsCmd": true
+                    }
+                ],
+                "eventsWithNormalStackPid": [
+                    {
+                        "utc": "2026-10-11T23:18:30.6908659Z",
+                        "id": 129,
+                        "recordId": 225,
+                        "ProcessId": "5356"
+                    }
+                ],
+                "lastRunIsFirstActionEvidence": false
+            },
+            "taskActionEvidence": {
+                "matchedNormalProcessEventUtc": "2026-10-11T23:18:30.6908659Z",
+                "rawBootToMatchedTaskProcessSeconds": 20.1908659,
+                "taskEventToProcessBirthSeconds": -0.0004909,
+                "capturedTaskInstanceCount": 1,
+                "capturedActionStartCount": 1,
+                "capturedTaskProcessEventCount": 1,
+                "capturedSuccessfulActionCompletionCount": 1,
+                "nonzeroCapturedActionResults": [],
+                "basis": "Retained Scheduler process event PID is matched to observed normal CMD birth; one GUID plus one successful action is evidence within the retained window, not universal retry exclusion."
+            },
+            "clockChanges": [],
+            "phaseSpans": [
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "utcBase": "2026-10-11T23:18:46.2495737Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 0.01,
+                            "exitCode": 0
+                        },
+                        "parameters": {
+                            "seconds": 1.2,
+                            "exitCode": 0
+                        },
+                        "bootstrap_secret": {
+                            "seconds": 1.12,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": []
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "utcBase": "2026-10-11T23:18:30.9748413Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 4.04,
+                            "exitCode": 0
+                        },
+                        "identity": {
+                            "seconds": 2.37,
+                            "exitCode": 0
+                        },
+                        "update_control": {
+                            "seconds": 1.59,
+                            "exitCode": 0
+                        },
+                        "provisioning_control": {
+                            "seconds": 1.58,
+                            "exitCode": 0
+                        },
+                        "maintenance_control": {
+                            "seconds": 1.51,
+                            "exitCode": 0
+                        },
+                        "service_class": {
+                            "seconds": 1.5,
+                            "exitCode": 0
+                        },
+                        "old_roots": {
+                            "seconds": 0.36,
+                            "exitCode": 0
+                        },
+                        "config": {
+                            "seconds": 1.6,
+                            "exitCode": 0
+                        },
+                        "wilbur_tcp": {
+                            "seconds": 13.79,
+                            "exitCode": 0
+                        },
+                        "unreal_launch": {
+                            "seconds": 4.76,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": [
+                        {
+                            "phase": "metadata.lane.attempt_1",
+                            "exitCode": 0
+                        },
+                        {
+                            "phase": "metadata.track.attempt_1",
+                            "exitCode": 0
+                        },
+                        {
+                            "phase": "metadata.delivery.attempt_1",
+                            "exitCode": 0
+                        }
+                    ]
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "utcBase": "2026-10-11T23:19:10.8627637Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 0.01,
+                            "exitCode": 0
+                        },
+                        "parameters": {
+                            "seconds": 1.24,
+                            "exitCode": 0
+                        },
+                        "bootstrap_secret": {
+                            "seconds": 0.02,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": []
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "utcBase": "2026-10-11T23:19:01.6030569Z",
+                    "clockBasis": "cmd-local-wall-clock",
+                    "spans": {
+                        "metadata": {
+                            "seconds": 1.9,
+                            "exitCode": 0
+                        },
+                        "identity": {
+                            "seconds": 2.36,
+                            "exitCode": 0
+                        },
+                        "maintenance_control": {
+                            "seconds": 1.6,
+                            "exitCode": 0
+                        },
+                        "service_class": {
+                            "seconds": 1.64,
+                            "exitCode": 0
+                        },
+                        "old_roots": {
+                            "seconds": 0.55,
+                            "exitCode": 0
+                        },
+                        "config": {
+                            "seconds": 0.5,
+                            "exitCode": 0
+                        },
+                        "wilbur_tcp": {
+                            "seconds": 12.84,
+                            "exitCode": 0
+                        },
+                        "unreal_launch": {
+                            "seconds": 3.51,
+                            "exitCode": 0
+                        }
+                    },
+                    "metadataAttempts": [
+                        {
+                            "phase": "metadata.lane.attempt_1",
+                            "exitCode": 0
+                        },
+                        {
+                            "phase": "metadata.track.attempt_1",
+                            "exitCode": 0
+                        }
+                    ]
+                }
+            ],
+            "configPhases": [
+                {
+                    "mode": "normal",
+                    "phases": [
+                        {
+                            "utc": "2026-10-11T23:18:44.4866545Z",
+                            "phase": "service_class",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 10.58,
+                            "clockBasis": "stopwatch"
+                        },
+                        {
+                            "utc": "2026-10-11T23:18:45.6555767Z",
+                            "phase": "pointer_fetch",
+                            "result": "failed",
+                            "exitCode": 1,
+                            "durationMs": 1025.184,
+                            "clockBasis": "stopwatch"
+                        },
+                        {
+                            "utc": "2026-10-11T23:18:45.7078409Z",
+                            "phase": "config.completed",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 1388.755,
+                            "clockBasis": "stopwatch"
+                        }
+                    ]
+                },
+                {
+                    "mode": "recovery",
+                    "phases": [
+                        {
+                            "utc": "2026-10-11T23:19:10.1788306Z",
+                            "phase": "service_class",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 11.187,
+                            "clockBasis": "stopwatch"
+                        },
+                        {
+                            "utc": "2026-10-11T23:19:10.2862921Z",
+                            "phase": "config.completed",
+                            "result": "ok",
+                            "exitCode": null,
+                            "durationMs": 284.739,
+                            "clockBasis": "stopwatch"
+                        }
+                    ]
+                }
+            ],
+            "configSnapshot": {
+                "status": "readable",
+                "source": "published",
+                "environment": "dev",
+                "serviceClass": "standard",
+                "bundleId": "pixelstreaming-runtime-20261011-003",
+                "loadedAtUtc": "2026-10-11T23:18:45.6616070Z",
+                "referencePresent": false,
+                "errorFilePresent": false,
+                "snapshotLastWriteUtc": "2026-10-11T23:18:45.6666327Z"
+            },
+            "configClassification": {
+                "branch": "fresh-published-defaults-after-optional-missing-Dev-pointer",
+                "basis": "Source contract: successful fresh Dev no-reference snapshot is written published; eligible storage fallback changes source to cached. Optional nonzero Dev pointer can return null only for a missing-object result. Future failed required reads still need their own evidence."
+            },
+            "recovery": {
+                "requestedAtUtc": "2026-10-11T23:18:59.959Z",
+                "replacementStartedAtUtc": "2026-10-11T23:19:01.1720903+00:00",
+                "resetCompletedAtUtc": null,
+                "cutoffEpochSeconds": 1791760791,
+                "readyNotBeforeEpochSeconds": 1791760796,
+                "cutoffUtcDerived": "2026-10-11T23:19:51.000Z",
+                "readyNotBeforeUtcDerived": "2026-10-11T23:19:56.000Z",
+                "publishedReadyAfterNotBeforeSeconds": 1.041,
+                "currentRequestAdmissionRecordedUtc": "2026-10-11T23:21:44.000Z",
+                "currentRequestAdmissionMatchCaptured": true,
+                "admissionAfterCutoffSeconds": 113,
+                "marginObservationUtc": "2026-10-11T23:19:47.7340401Z",
+                "latestGateObservation": {
+                    "observedUtc": "2026-10-11T23:23:36.7162403Z",
+                    "status": "readable",
+                    "commercialRecoveryRequiredFieldPresent": false,
+                    "commercialRecoveryRequired": null,
+                    "readyNotBeforeFieldPresent": false,
+                    "cutoffEpochSeconds": 1791760791,
+                    "recycleMarkerStatus": "missing",
+                    "desiredState": {
+                        "status": "readable",
+                        "shutdownRequested": false,
+                        "warmHoldEnabled": false,
+                        "drainEnabled": false
+                    }
+                },
+                "caveat": "Published Ready and matching-current-request admission timestamps support gate ordering; sparse state snapshots do not capture every reset ACK or prove old-ticket rejection."
+            },
+            "ancestry": {
+                "normalStacks": [
+                    {
+                        "pid": 5356,
+                        "parentPid": 1676,
+                        "startedUtc": "2026-10-11T23:18:30.6903750Z"
+                    }
+                ],
+                "replacementStacks": [
+                    {
+                        "pid": 5972,
+                        "parentPid": 6044,
+                        "startedUtc": "2026-10-11T23:19:01.3397010Z"
+                    }
+                ],
+                "shipping": [
+                    {
+                        "name": "ScaleWorld-Win64-Shipping.exe",
+                        "pid": 4324,
+                        "parentPid": 5960,
+                        "startedUtc": "2026-10-11T23:19:02.5436980Z",
+                        "role": "unreal-runtime",
+                        "recoveryArgument": false
+                    }
+                ],
+                "shippingAncestry": [
+                    {
+                        "pid": 4324,
+                        "startedUtc": "2026-10-11T23:19:02.5436980Z",
+                        "capturedParentPids": [5960, 2392, 5356],
+                        "owner": "original-stack",
+                        "stackPid": 5356,
+                        "birthAfterReplacementMarker": true,
+                        "shippingToPublishedRuntimeReadySeconds": 54.497302
+                    }
+                ],
+                "processTreeSnapshotCount": 6,
+                "maximumShippingProcessesInCapturedSnapshot": 1,
+                "transientDuplicatesExcluded": false,
+                "uncapturedParentGenerationExcluded": false
+            },
+            "observers": {
+                "stateStatus": "Success",
+                "journalStatus": "Success",
+                "originalStateRowCount": 23,
+                "postconnectStateStatus": "Success",
+                "postconnectStateCommandId": "ac635c4b-33fb-43cf-960e-b0ca4b2381ea",
+                "postconnectStateRowCount": 9,
+                "orderedMergedStateRowCount": 32,
+                "journalSelectionComplete": true
+            },
+            "requestPageLag": {
+                "runtimeReadyUtc": "2026-10-11T23:19:57.041Z",
+                "apiReadyUtc": "2026-10-11T23:20:02.1563385+00:00",
+                "lastStaleObservedUtc": "2026-10-11T23:21:15.020Z",
+                "intervention": "Analytics check, then return to User View",
+                "recoveryAction": "One explicit page reload",
+                "recoveredObservedUtc": "2026-10-11T23:21:43.332Z",
+                "uiReadyFirstObservedUtc": "2026-10-11T23:21:35.854Z",
+                "clickToUiReadyFirstObservedSeconds": 217.631,
+                "staleObservationAfterApiReadySeconds": 72.8636615,
+                "firstUiReadyAfterApiReadySeconds": 93.6976615,
+                "caveat": "The first visible Ready observation followed an explicit page reload. The later recovered observation is separate confirmation. This does not establish autonomous request-page recovery or identify the cause of stale status."
+            },
+            "media": [
+                {
+                    "observedUtc": "2026-10-11T23:22:10.127Z",
+                    "framerate": "30",
+                    "packetsLost": "0",
+                    "framesDropped": "0",
+                    "video": [
+                        {
+                            "currentTime": 25.054274,
+                            "width": 2240,
+                            "height": 1260,
+                            "paused": false,
+                            "readyState": 4
+                        }
+                    ]
+                },
+                {
+                    "observedUtc": "2026-10-11T23:22:57.556Z",
+                    "framerate": "30",
+                    "packetsLost": "0",
+                    "framesDropped": "0",
+                    "video": [
+                        {
+                            "currentTime": 72.483686,
+                            "width": 2240,
+                            "height": 1260,
+                            "paused": false,
+                            "readyState": 4
+                        }
+                    ]
+                },
+                {
+                    "observedUtc": "2026-10-11T23:23:54.071Z",
+                    "framerate": "30",
+                    "packetsLost": "0",
+                    "framesDropped": "0",
+                    "video": [
+                        {
+                            "currentTime": 128.996107,
+                            "width": 2240,
+                            "height": 1260,
+                            "paused": false,
+                            "readyState": 4
+                        }
+                    ]
+                }
+            ],
+            "completion": {
+                "endClickUtc": "2026-10-11T23:24:39.384Z",
+                "teardownState": "Teardown Completed",
+                "teardownObservedUtc": "2026-10-11T23:25:28.396Z",
+                "providerStopped": {
+                    "observedUtc": "2026-10-11T23:29:48.5501784Z",
+                    "fleet": [
+                        {
+                            "Id": "i-0ce5ffd16bd50eb24",
+                            "State": "stopped"
+                        },
+                        {
+                            "Id": "i-0226e3c475b1b76f0",
+                            "State": "stopped"
+                        },
+                        {
+                            "Id": "i-0209fd65e0ed93501",
+                            "State": "stopped"
+                        }
+                    ]
+                }
+            },
+            "limitations": [
+                "Known original-stack late Unreal launch captured after replacement marker; compare this ownership stratum separately.",
+                "Request page remained stale after canonical API Ready and required an explicit reload; instance/task timing and first user-visible Ready are separate outcomes. Cause remains unresolved."
+            ],
+            "acceptance": "Diagnostic summary only; does not automatically accept a task-delay change or exclude unobserved launch/retry/media regressions."
+        }
+    ],
+    "comparisons": [
+        {
+            "controlSample": 18,
+            "sample": 17,
+            "capturedNonDelayTaskShapeMatched": true,
+            "capturedRuntimeWebIdentityMatched": true,
+            "sameCapturedShippingOwnershipStratum": true,
+            "configuredDelayDifferenceSeconds": 0,
+            "observedRawBootToProcessDifferenceSeconds": 1.063948,
+            "observedRawBootToMatchedTaskProcessDifferenceSeconds": null,
+            "observedClickToApiReadyDifferenceSeconds": 3.3927520000000015,
+            "configBranchMatched": true,
+            "causalSavingsEstablished": false,
+            "caution": "Single-control observational comparison. Check clock changes, first-action proof, complete reads/recovery/admission/media/teardown and exact task semantic receipts separately; equal captured ownership does not prove exclusive generation."
+        },
+        {
+            "controlSample": 18,
+            "sample": 19,
+            "capturedNonDelayTaskShapeMatched": true,
+            "capturedRuntimeWebIdentityMatched": true,
+            "sameCapturedShippingOwnershipStratum": true,
+            "configuredDelayDifferenceSeconds": 5,
+            "observedRawBootToProcessDifferenceSeconds": 5.011741999999998,
+            "observedRawBootToMatchedTaskProcessDifferenceSeconds": 5.0117547999999985,
+            "observedClickToApiReadyDifferenceSeconds": 4.933338899999995,
+            "configBranchMatched": true,
+            "causalSavingsEstablished": false,
+            "caution": "Single-control observational comparison. Check clock changes, first-action proof, complete reads/recovery/admission/media/teardown and exact task semantic receipts separately; equal captured ownership does not prove exclusive generation."
+        },
+        {
+            "controlSample": 18,
+            "sample": 20,
+            "capturedNonDelayTaskShapeMatched": true,
+            "capturedRuntimeWebIdentityMatched": true,
+            "sameCapturedShippingOwnershipStratum": true,
+            "configuredDelayDifferenceSeconds": 5,
+            "observedRawBootToProcessDifferenceSeconds": 4.851886999999998,
+            "observedRawBootToMatchedTaskProcessDifferenceSeconds": 4.851867500000001,
+            "observedClickToApiReadyDifferenceSeconds": 6.319771399999993,
+            "configBranchMatched": true,
+            "causalSavingsEstablished": false,
+            "caution": "Single-control observational comparison. Check clock changes, first-action proof, complete reads/recovery/admission/media/teardown and exact task semantic receipts separately; equal captured ownership does not prove exclusive generation."
+        },
+        {
+            "controlSample": 18,
+            "sample": 21,
+            "capturedNonDelayTaskShapeMatched": true,
+            "capturedRuntimeWebIdentityMatched": true,
+            "sameCapturedShippingOwnershipStratum": true,
+            "configuredDelayDifferenceSeconds": 5,
+            "observedRawBootToProcessDifferenceSeconds": 4.785959999999999,
+            "observedRawBootToMatchedTaskProcessDifferenceSeconds": 4.786002400000001,
+            "observedClickToApiReadyDifferenceSeconds": 5.6530183999999934,
+            "configBranchMatched": true,
+            "causalSavingsEstablished": false,
+            "caution": "Single-control observational comparison. Check clock changes, first-action proof, complete reads/recovery/admission/media/teardown and exact task semantic receipts separately; equal captured ownership does not prove exclusive generation."
+        }
+    ],
+    "inputTextSha256": {
+        "outputs/iteration-candidate17-ui.json": "0162c2c8a52dca34f152bca1755cabb532a657b593e172a94fec5b77bd2716f8",
+        "outputs/iteration-candidate17-api-times.json": "798c6355e883711918dbb06ad584ae6052d9946cace506e541bf7da092e8fce0",
+        "outputs/iteration-candidate17-task.json": "6322e3caa4658bd0b091286a6c6997286b674c0fbb8cc13d029c2b752ac59a89",
+        "outputs/iteration-candidate17-state.json": "ccdea2897cd8531e6466e7781a17a0fd9b9cd2a29b0b7b5c9f5caa8341d9f2fb",
+        "outputs/iteration-candidate17-stopped.json": "7f53935a812536d9c05799a088e40967bebf77d65715c80f29d136715395ddfc",
+        "outputs/iteration-candidate17-journals.json": "02eac5bfa1bcc0b265fbde62972cb4953135c13ab5eff3a4b2143c1c8073879a",
+        "outputs/iteration-candidate17-provider.jsonl": "d9ad11511e5c31e279f71997c351a53e736930468b7b94b403f7876cae2e9129",
+        "outputs/iteration-candidate18-ui.json": "f0459effa9a23afd85ce393040b28245200bf7853c606a000ccc4cf23b3c1d7d",
+        "outputs/iteration-candidate18-api-times.json": "84d36882a0c6497e90b5f90227d4f2458108b72c0db4b60ec3985b5060a39c06",
+        "outputs/iteration-candidate18-task.json": "6043d701f7c48944550b6f63b112a8166508ae0e96b4897c09bd9804f6ab4f5e",
+        "outputs/iteration-candidate18-state.json": "5e715cea0ad597d429008e3310cdee2d296de8c48253cfffbea2da898e44aeb0",
+        "outputs/iteration-candidate18-stopped.json": "1851255916ad034c42298dc3a2e0778403b2a8d31739fccf4861f5595e97bcd2",
+        "outputs/iteration-candidate18-journals.json": "0ab7b82d87f9e53f84135a201afabeb578b75a04d3ad97311ea1cd6a1f5bb8d0",
+        "outputs/iteration-candidate18-provider.jsonl": "8176027ededb254ffab638c1b07739b624a7db8039a5dde9f360a71317204044",
+        "outputs/iteration-candidate19-ui.json": "a117a5730a5de4e5c0990364c63a8ddd6d3ec253642e37dd74c9dcc3f0bfc9a8",
+        "outputs/iteration-candidate19-api-times.json": "b73d5dc98239db6357e21d1ca0ed92e79aa74e7823942bc209fa93040aefcca4",
+        "outputs/iteration-candidate19-task.json": "62081e46ec55a52ad17f49eab75f3643da70a4681793c497839ac4efec49b1b0",
+        "outputs/iteration-candidate19-state.json": "0da0293f2ae08cdbb4d27412d87eb2ac145b59b032b2a2a6e133c6aef4420cb9",
+        "outputs/iteration-candidate19-stopped.json": "c76b621334c8cd840f6c023b3008096faed7c70422b4489406215014a0c48381",
+        "outputs/iteration-candidate19-journals.json": "0f402664fac46138dc2fae3b5495f81f00e7aaa26cc64192469fbe1c256a4d15",
+        "outputs/iteration-candidate19-provider.jsonl": "2604a3c5f4cecadc4580b8e0a01edd22f3cb0d4cb7959b4f5bf13ade0dc998d7",
+        "outputs/iteration-candidate20-ui.json": "bce47934bf2fd0eec710c5441f0b4a8452ad2f162790045ad9b793bc54ea487f",
+        "outputs/iteration-candidate20-api-times.json": "ed32e53942a156e98db2416bb3ec8203af2c2948c9283f59661045b49ddb787f",
+        "outputs/iteration-candidate20-task.json": "5728c7c87822f7fed9603419e2c498ab2fe48f0bcd64cb60ea07029a0e394b68",
+        "outputs/iteration-candidate20-state.json": "67f6b39320cdabf4b34cd52456bf8aa580c6c579f63e6329fabae87348c87a98",
+        "outputs/iteration-candidate20-stopped.json": "36d7d33b9cd91ea4975cc514a8805682f81be913785265ce40c64d2bb483c3da",
+        "outputs/iteration-candidate20-journals.json": "4bbb834a34b0de4b402fc1393900ce6cab7f56947fdd8aaf6b5b366f0f928864",
+        "outputs/iteration-candidate20-provider.jsonl": "d4e1cc3008a5ee269344092902a5978de1abf2f1416563b9219e6123342cd64d",
+        "outputs/iteration-candidate21-ui.json": "e1ec535f2da68c465b87defec4889dbbca4e637a83ec5030340fe31fd61338e9",
+        "outputs/iteration-candidate21-api-times.json": "f5cc644c84f12dfaf70701d53a34831c37678649a6ddc4355b7ac6368119d17e",
+        "outputs/iteration-candidate21-task.json": "06466e5222e1dd902ebaab20966f40397e06ef0d4651b606a9847ee2e48d5f8d",
+        "outputs/iteration-candidate21-state.json": "cfa3e532fc6491b8f5e35d3acc9ca5235a96e5f6740c4b0c62200b81e4922635",
+        "outputs/iteration-candidate21-postconnect-state.json": "37bf36d61cf08cb83991c14775904d7d4c9e39235fac006dcfb246f53f32a546",
+        "outputs/iteration-candidate21-stopped.json": "3c89d30553facd2d59f4da13fd736c684e55207110bf5f1176886d6014d9cec5",
+        "outputs/iteration-candidate21-journals.json": "5d8bbd00dbeed9b0f8d1581b9bbcc8a8b5c7f0d454641bb424726f6f4cdca6b8",
+        "outputs/iteration-candidate21-provider.jsonl": "7aa9f58b1d079ca5d355f152c2d9e7aa9869a6291534d7bd29df3f4227e4f201",
+        "outputs/boot-delay-capture-result.json": "48b827ea2bd22e56a0f2cbceb19615ca32e6aaac3dbbfbc83a2ab65e990d32f2",
+        "outputs/boot-delay-apply-result.json": "28314f1af7382de60811bb1e415b5d50af400008b3a6a0a2799ccbb9fa392bb6",
+        "outputs/boot-delay-restorehistory-result.json": "1ad51b72aecc7172e11d962c803f44bd4240b1e9a0580b8cb603f9b4d195b7d2"
+    },
+    "comparisonRule": "Compare task action/process shift only with proven action origin and clock basis. Compare whole Ready within matching Unreal-generation ownership; no automatic causal savings claim."
+}
