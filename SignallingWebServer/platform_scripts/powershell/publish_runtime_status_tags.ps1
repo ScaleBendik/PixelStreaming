@@ -12,7 +12,8 @@ param(
     [string]$Reason,
     [string]$Version = '',
     [string]$StatusAtUtc = '',
-    [string]$AwsCliPath = $(if ($env:RUNTIME_STATUS_AWS_CLI_PATH) { $env:RUNTIME_STATUS_AWS_CLI_PATH } else { 'aws' })
+    [string]$AwsCliPath = $(if ($env:RUNTIME_STATUS_AWS_CLI_PATH) { $env:RUNTIME_STATUS_AWS_CLI_PATH } else { 'aws' }),
+    [string]$StartupStateFilePath = ''
 )
 
 Set-StrictMode -Version Latest
@@ -42,6 +43,21 @@ function Normalize-TagValue {
     }
 
     return $normalized
+}
+
+function Write-StartupStatusState {
+    param([string]$Path, [string]$TransitionAtUtc)
+
+    # Match the startup heartbeat's existing raw five-line state contract. Tag
+    # normalization belongs only to the AWS payload below, not this local file.
+    $lines = @(
+        "status=$Status",
+        "source=$Source",
+        "reason=$Reason",
+        "version=$Version",
+        "status_at_utc=$TransitionAtUtc"
+    )
+    [System.IO.File]::WriteAllText($Path, (($lines -join "`r`n") + "`r`n"), [System.Text.Encoding]::ASCII)
 }
 
 function Invoke-AwsCliCapture {
@@ -125,12 +141,30 @@ function Set-InstanceTags {
 }
 
 try {
+    $effectiveStatusAtUtc = $StatusAtUtc
+    if (-not [string]::IsNullOrWhiteSpace($StartupStateFilePath)) {
+        if ([string]::IsNullOrWhiteSpace($effectiveStatusAtUtc)) {
+            $effectiveStatusAtUtc = [DateTime]::UtcNow.ToString('o')
+        }
+        # The launcher previously wrote this state before invoking the publisher
+        # and continued publishing even if that write failed. Keep that ordering
+        # and best-effort behavior while sharing the same PowerShell process.
+        try {
+            Write-StartupStatusState -Path $StartupStateFilePath -TransitionAtUtc $effectiveStatusAtUtc
+        } catch {
+            Write-RuntimeStatusLog "Failed to write startup status state: $($_.Exception.Message)" 'WARN'
+            # The CMD caller suppresses normal publisher output. Keep the former
+            # state-write diagnostic visible without sending path/tag data into
+            # the caller's shell or changing the tag-publish exit outcome.
+            [Console]::Error.WriteLine('WARNING: Failed to write startup status state. Runtime status tag publishing will continue.')
+        }
+    }
     $heartbeatAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     $effectiveStatusAtUtc =
-        if ([string]::IsNullOrWhiteSpace($StatusAtUtc)) {
+        if ([string]::IsNullOrWhiteSpace($effectiveStatusAtUtc)) {
             $heartbeatAtUtc
         } else {
-            $StatusAtUtc
+            $effectiveStatusAtUtc
         }
 
     Set-InstanceTags -AwsCli $AwsCliPath -TargetRegion $Region -TargetInstanceId $InstanceId -Tags @{

@@ -869,17 +869,19 @@ set "STATUS_REASON=%~3"
 set "STATUS_VERSION=%~4"
 if not defined STATUS_SOURCE set "STATUS_SOURCE=startup-script"
 
+rem The publisher owns UTC generation and the pre-publish state write in one
+rem process. Preserve the legacy state-only path when its helper is absent.
+if exist "%ROOT%\platform_scripts\powershell\publish_runtime_status_tags.ps1" goto publish_runtime_status
 set "UTC_TIMESTAMP="
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "[DateTime]::UtcNow.ToString('o')"`) do set "UTC_TIMESTAMP=%%I"
 if not defined UTC_TIMESTAMP exit /b 0
 
 call :write_startup_status_state
 
-if not exist "%ROOT%\platform_scripts\powershell\publish_runtime_status_tags.ps1" (
-  echo WARNING: Runtime status publish helper not found. Skipping EC2 tag publish for "%STATUS_VALUE%".
-  exit /b 0
-)
+echo WARNING: Runtime status publish helper not found. Skipping EC2 tag publish for "%STATUS_VALUE%".
+exit /b 0
 
+:publish_runtime_status
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\platform_scripts\powershell\publish_runtime_status_tags.ps1" ^
   -InstanceId "%INSTANCE_ID%" ^
   -Region "%REGION%" ^
@@ -888,7 +890,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\platform_scripts\pow
   -Source "%STATUS_SOURCE%" ^
   -Reason "%STATUS_REASON%" ^
   -Version "%STATUS_VERSION%" ^
-  -StatusAtUtc "%UTC_TIMESTAMP%" >nul 2>nul
+  -StartupStateFilePath "%STARTUP_HEARTBEAT_STATE_FILE%" >nul
 
 if errorlevel 1 (
   echo WARNING: Failed to publish runtime status "%STATUS_VALUE%" ^(reason=%STATUS_REASON%^).
