@@ -1,12 +1,11 @@
 # Cold startup measurement and recovery investigation
 
-This document owns the measurement method and proposed investigation sequence
+This document owns the measurement method, results and next investigation steps
 for stopped-instance startup without warm capacity. It does not authorize a
-change to admission, recovery or commercial lifecycle rules. Measurements below
-are from Dev on 2026-10-11 using the already deployed metadata-handoff candidate.
-This investigation changed no recovery, admission, lifecycle or startup code.
-The subsequent authorized implementation iteration is described below; the
-observation sections retain their original runtime identities.
+change to admission, recovery or commercial lifecycle rules. Measurements are
+from Dev on 2026-10-11. The initial observation pass changed documentation only;
+the subsequent authorized metadata, telemetry and Web implementation is described
+below. Historical observation sections retain their original runtime identities.
 
 ## What recovery currently protects
 
@@ -259,8 +258,12 @@ outside versioned bundles. Launchers enable them unless
 Per-context files separate concurrent launches and parent launch IDs connect
 stack/Wilbur/config contexts. No credentials, command arguments or entitlement
 contents are recorded. Journals are diagnostics and never lifecycle authority.
-They survive a launcher exit without a final record and have per-file caps;
-they are retained for investigation, with no deletion on the startup path.
+They survive a launcher exit without a final record. PowerShell appends and
+CMD reading/finalization have size/record caps; raw CMD phase echoes do not
+enforce a writer size cap. Current finite launcher phases/retries keep those
+files small, but an oversized raw file is rejected by the reader rather than
+truncated on write. Journals are retained for investigation, with no deletion
+on the startup path; operational retention belongs outside startup.
 CMD timestamps use local wall-clock centiseconds with an explicit UTC base;
 the reader marks clock regression uncertain. Config phases use Stopwatch.
 Parent process lookup is opt-in because CIM added startup delay; a zero launcher
@@ -278,7 +281,148 @@ A fresh runtime-005 post-End baseline on 2026-10-11 reached canonical API Ready
 in 150.169 seconds (runtime Ready 147.364 seconds); H264/30 FPS, zero reported
 loss/drops and normal End/Teardown Completed were verified. It is recorded as
 sample 6 in the timing ledger. Candidate deployment and matched measurements
-are the remaining hosted gate for this iteration.
+were the hosted gate for this iteration; acceptance results follow below.
+
+### Hosted acceptance and timing results
+
+Runtime `e04dbb6dcd86233bf02cdf053bc96bd54041096c` was packaged through the
+standard runtime publisher and automatically uploaded as
+`pixelstreaming-runtime-20261011-002`. This was an unused artifact ID, not an
+overwrite or an ordering assertion. ZIP size was 148,901,270 bytes; SHA256 was
+`9ee49ea6817e9fcfcef689063f84df932eb443af9ec85c646e981e1eb73e3972`.
+Dev update job `78b57d13-11ff-45f9-b9df-ec2ebe781c19` targeted only
+`i-0ce5ffd16bd50eb24` and completed validation at 18:57:52 UTC on 2026-10-11.
+API `e9756bf7838e9bbd899aaa35118fbbb81ef48d33` and Unreal
+`ScaleWorld_20261008b.zip` were retained. No disposable instance was needed.
+
+Web `6796143` corrected pending estimates and fresh-finalizing copy. Follow-up
+`5bc95c6c06cb2bb7e635b505a0598b22cd8a56a8` only hid two decorative button
+spinners from accessibility. Manual Dev workflow 1365/run `38167435055`
+succeeded; the freshly loaded client was `index-Cjj904Ce.js`.
+
+The comparable runtime-005 normal-End baseline is samples 4/5/6: canonical
+API Ready **130.146 / 151.762 / 150.169 seconds** from the Request button click,
+mean **144.026**, median **150.169**. Sample 4's stale Web client excludes its
+UI estimate from that comparison; the canonical API endpoint remains useful.
+Samples 5/6 alone average **150.966 seconds**. Provider runtime Ready and
+canonical API Ready are distinct; a sparse browser observation is a bound,
+not the exact Enter transition.
+
+| Runtime-002 sample | Cohort | Runtime Ready (s) | API Ready (s) | Last disabled / first enabled UI (s) |
+|---|---|---:|---:|---|
+| 7 | First stopped boot after update | 111.438 | 113.766 | 95.126 / 116.291 |
+| 8 | Normal End, stopped, no warm capacity, SQL awake | 123.526 | 126.311 | 122.766 / 132.764 |
+| 9 | Normal End, stopped, no warm capacity, SQL awake | 143.813 | 146.378 | 140.642 / 149.543 |
+| 10 | Normal End, stopped, no warm capacity, SQL awake | 125.924 | 129.006 | 113.751 / 129.043 |
+
+Samples 8/9/10 average API Ready **133.898 seconds**, median **129.006**,
+range **126.311–146.378**. The observed mean difference from baseline 4/5/6 is
+**10.127 seconds (7.0%)**. Baseline and candidate ranges overlap. These are
+three instrumented same-instance cases per cohort, not percentile confidence
+or causal attribution. Comparing against only fresh-client baseline 5/6 changes
+the reference mean to 150.966 seconds and the observed difference to 17.067;
+that sensitivity must not replace the disclosed three-sample baseline.
+
+Sample 7 had one launcher generation and recovery already cleared by update
+validation. It is excluded from end-to-end savings. Samples 8/9/10 had both
+original and recovery launcher generations; all six selected journals per run
+were collected without rejected, omitted or partial records. Recollection also recovered all
+three sample-7 journals after the diagnostic reader was updated to recognize
+the newly recorded bounded metadata-attempt phase names.
+
+A separate read-only paired measurement ran after sample 7 was playing video.
+Three alternating standalone/batched pairs used fresh PowerShell processes and
+the deployed scripts, with all three fields resolved successfully. Standalone
+means were **6.176 seconds**, batched **2.028 seconds**: **4.147 seconds saved
+per initial full-stack metadata lookup** (67.2%). This component result is
+separate from total session-start time and must not be multiplied into a
+guaranteed end-to-end saving.
+
+Samples 8 and 10 captured the previously documented launcher overlap. In 8, original
+stack 6000 launched native Unreal after the recovery intent/cutoff and
+replacement marker. That fresh Unreal remained beside replacement Node 2728.
+The current recovery contract checks old-process absence at its witness,
+replacement Node/streamer health, durable completion and the Ready margin; it
+does not establish exclusive replacement-launcher ancestry. The original
+full-stack parent is not cancelled by the recycle matcher. This is an unresolved
+generation-isolation/TOCTOU limitation, not evidence of a pre-reset Unreal
+surviving cleanup. It confounds attribution of a faster total time. No recovery,
+admission or margin change was made to exploit that overlap.
+
+Sample 10 similarly retained fresh native Unreal from the original stack after
+the replacement marker. Sample 9's captured final Unreal descended from the
+recovery stack, matching baseline 6; a brief original Unreal cannot be excluded
+by three-second sampling. Sample 9 reached API Ready 3.791 seconds earlier than
+baseline 6. The larger advantage in samples 8/10 follows earlier native Unreal
+birth, not a demonstrated faster final warmup. Native Unreal-to-runtime-Ready
+was about 54–56 seconds in the matched candidates; that interval includes
+initialization, stream stabilization and recovery holds and is not a removable
+sleep. It needs finer profiling before an optimization recommendation.
+
+| Sample | Retained cutoff UTC | Ready-not-before UTC | Runtime Ready UTC | Owner/flag observed absent by UTC |
+|---|---|---|---|---|
+| 8 | 19:22:45 | 19:22:50 | 19:22:51.034 | 19:22:53.300 |
+| 9 | 19:34:20 | 19:34:25 | 19:34:26.034 | 19:34:28.473 |
+| 10 | 19:45:07 | 19:45:12 | 19:45:13.041 | 19:45:15.205 |
+
+All are 2026-10-11 UTC. Previous ownership and the recovery flag were observed
+retained before these holds; cutoffs remained after clearing. New admission
+followed the hold and clearing in every sampled run. These are observation
+bounds: exact reset-completion/API reset-ack timestamps were not captured in
+8/9/10. A previous Shutdown reason/command ID is inherited teardown metadata,
+not proof of a new current idle/grace Shutdown. No unrequested idle/grace stop
+was observed during the active canaries.
+
+All three matched candidates delivered H264 2240×1260 at 30 FPS with decoded
+frames and zero reported packet loss/drops over sustained playback, then used
+normal End Session. Canonical End and Teardown Completed are recorded in the
+ledger. No Ready/admission failure, stranded ownership or unexplained stop was
+observed. This acceptance covers the sampled normal-End Dev path; it does not
+prove SQL wake, fresh-image provisioning, outage or percentile behavior.
+
+The user-facing comparison uses the canonical API endpoint because baseline
+Enter observations had human/polling gaps. Main-ring 100% and enabled Enter
+were observed together after API Ready; the hidden decorative ring is excluded.
+Matched sampled `less than` bounds held. Numeric progress briefly fell back to
+indeterminate preparation in 8/9; 10 captured `Verifying stream` at 92% while
+Enter was disabled. No `Almost ready` observation tested its positive eligibility.
+The raw 150-second calibration and existing 10-second display buffer are retained:
+the slower matched sample was 146.378 seconds. Lowering the budget from the two
+faster overlap cases would overfit an unresolved lifecycle timing difference.
+
+### Next safe iterations and rollback
+
+1. Measure, then combine Wilbur's separate UTC-generation PowerShell call with
+   its existing state-file/tag publisher. Preserve state-write-before-network,
+   exact format/status order, heartbeat semantics, warning behavior, exit codes
+   and standalone fallback. Verify failed writes/tag failures and real CMD
+   arguments, then repeat matched Dev starts. This removes process overhead
+   without caching mutable lifecycle policy.
+2. Profile the native Unreal-to-Ready interval and the roughly 24-second
+   OS-boot-to-first-stack gap using actual task action/runtime timestamps.
+   Do not infer savings from task LastRun, phase percentages or a recovery's
+   total elapsed time; do not reduce Boot/Logon delays without that evidence.
+3. Address original-parent cancellation/generation fencing as a separate safety
+   change. First reproduce late launch, original/replacement overlap, duplicate
+   Unreal, interrupted replacement, config/secret failures and stale readiness
+   deterministically. A broad parent-process kill is not an approved substitute.
+4. For UI copy, distinguish fresh current runtime Ready while API admission is
+   pending with `Finalizing session access`; retain the API gate and avoid an
+   invented countdown. Add SQL-wake/queue/failed-start cohorts before statistical
+   or per-phase estimate calibration.
+
+Runtime rollback is the immutable `pixelstreaming-runtime-20261011-005`
+manifest through the normal Dev update path. Web rollback is the previously
+validated `4330a799` Dev image/workflow 1360 (run 38158507506), with a fresh-client
+asset check. API/Unreal need no rollback because this iteration did not change
+them. Stage/Prod were not promoted. Larger recovery changes require their own
+safety gate rather than a startup-speed justification.
+
+Verification passed runtime TypeScript/lint, 99 Node + 18 Jest tests and focused
+real CMD metadata retry/refusal, config/class-handoff, launcher-policy and
+telemetry failure/exit-code harnesses. Web passed 1,203 tests across 129 files,
+382-file source checks and Dev build. Explicit app TypeScript checking retained
+103 pre-existing diagnostics, with zero added in the baseline-overlay comparison.
 
 ### History and attribution limits
 
@@ -305,7 +449,7 @@ change, prove the user's original 90-to-150-second trend, or account for image,
 driver, task, OS, region or Unreal-content changes. Matched historical artifacts
 and deployment/request timelines are required for that attribution.
 
-### Recovery acceptance before any hosted optimization
+### Acceptance required before changing recovery
 
 Use real gate/agent/launcher integration coverage for connected and never-connected
 Shutdown→stop→boot; same-boot Wilbur restart and full recycle; active/expired/newer
@@ -322,7 +466,7 @@ fallback. Stage/Prod remain separate promotion gates. No disposable instance is
 needed for normal observation; fault injection or host/task changes should use an
 isolated instance when shared Dev would be affected.
 
-## Observation completion
+## Historical observation completion (before this implementation)
 
 Both follow-up sessions ended through End Session. Analytics recorded candidate
 4 and 5 as Teardown Completed; candidate 5's End timestamp was
@@ -346,3 +490,14 @@ physical runtime 005 root and the retained reset diagnostic bundles for recycle
 Canonical click-relative timings and exact build identities are maintained in
 the Web owning docs' `docs/evidence/cold-start-20261011.csv`. Raw observations are
 retained locally rather than committing actor or payload data.
+
+## Implementation completion
+
+The authorized implementation and matched Dev acceptance are documented above;
+the historical observation-only statements describe the earlier pass. Runtime
+`e04dbb6d` / artifact `pixelstreaming-runtime-20261011-002` and Web `5bc95c6`
+remain deployed in Dev. Documentation commits do not change those identities.
+Both repositories use `perf/cold-start-iteration`. All candidate sessions ended
+through normal End Session and reached Teardown Completed. At 19:58:40 UTC on
+2026-10-11, Dev d1/d2/d4 were verified stopped. Only d1 received the runtime update;
+no disposable instance was provisioned and Stage/Prod were not promoted.
