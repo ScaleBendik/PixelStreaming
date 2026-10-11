@@ -5,6 +5,8 @@ for stopped-instance startup without warm capacity. It does not authorize a
 change to admission, recovery or commercial lifecycle rules. Measurements below
 are from Dev on 2026-10-11 using the already deployed metadata-handoff candidate.
 This investigation changed no recovery, admission, lifecycle or startup code.
+The subsequent authorized implementation iteration is described below; the
+observation sections retain their original runtime identities.
 
 ## What recovery currently protects
 
@@ -237,6 +239,46 @@ those prerequisites before deciding which are safely redundant.
 Do not clear the recovery flag or delete journals for speed, shorten the skew
 margin, treat raw streamer/TCP health as commercial Ready, or remove Boot/Logon
 delays without task-action evidence.
+
+### First implementation iteration
+
+The next candidate batches the first lane/track/delivery read into one fresh
+IMDS/tag lookup. Each field retains its retry budget, delay and missing-versus-
+failure policy; later attempts read again. Only fixed enum tokens enter CMD.
+Standalone resolvers are unchanged. A successful full-stack service-class lookup
+is passed explicitly to config initialization in that launch; an outer Standard
+fallback after a failure is never handed off. Config and lifecycle storage rules,
+fresh maintenance/update/provisioning reads, recovery order and Ready margins
+remain unchanged. Real CMD tests also fence delivery failure exit status: calling
+GOTO-based retries from the prior parenthesized block could exit successfully
+after refusal, so that call now runs outside the block.
+
+Best-effort phase journals live under the install base's `diagnostics/startup`,
+outside versioned bundles. Launchers enable them unless
+`SCALEWORLD_STARTUP_TELEMETRY_ENABLED=false`; explicit caller settings are retained.
+Per-context files separate concurrent launches and parent launch IDs connect
+stack/Wilbur/config contexts. No credentials, command arguments or entitlement
+contents are recorded. Journals are diagnostics and never lifecycle authority.
+They survive a launcher exit without a final record and have per-file caps;
+they are retained for investigation, with no deletion on the startup path.
+CMD timestamps use local wall-clock centiseconds with an explicit UTC base;
+the reader marks clock regression uncertain. Config phases use Stopwatch.
+Parent process lookup is opt-in because CIM added startup delay; a zero launcher
+PID means unknown. Local Begin measured about 0.44–0.49 seconds per process,
+and an in-process phase append about 1.1–1.3 ms. Hosted samples must therefore
+remain labelled instrumented. Explicit false disables new journal work.
+
+Web keeps the configured 150-second calibration. The initial pending phase uses
+the same timing model, longer configured budgets retain their appropriate slow
+threshold, and `Almost ready` needs fresh finalizing evidence for the current
+launch. Enter and 100% remain API-gated. More timing evidence is required before
+replacing this calibration with a statistical estimate.
+
+A fresh runtime-005 post-End baseline on 2026-10-11 reached canonical API Ready
+in 150.169 seconds (runtime Ready 147.364 seconds); H264/30 FPS, zero reported
+loss/drops and normal End/Teardown Completed were verified. It is recorded as
+sample 6 in the timing ledger. Candidate deployment and matched measurements
+are the remaining hosted gate for this iteration.
 
 ### History and attribution limits
 

@@ -25,6 +25,8 @@ set "RESOLVED_DEPLOYMENT_TRACK=dev"
 exit /b 0
 :lookup_failure
 exit /b 1
+:startup_phase
+exit /b %errorlevel%
 '@
 $cases = @(
     @{ Name='initial child'; Parent='true'; Lane='prod'; Track='prod'; Fail=''; Expected='RESULT=prod,prod,'; Lookups=0; Exit=0 },

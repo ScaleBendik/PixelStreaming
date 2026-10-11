@@ -5,17 +5,36 @@ param(
     [string]$Environment = $env:SCALEWORLD_DEPLOYMENT_TRACK,
     [string]$Mode = 'normal',
     [string]$Bucket = 'scaleworlddepot',
-    [string]$SnapshotPath = $env:SCALEWORLD_INSTANCE_CONFIG_SNAPSHOT
+    [string]$SnapshotPath = $env:SCALEWORLD_INSTANCE_CONFIG_SNAPSHOT,
+    # Only the current full-stack launch may pass its successful lookup. Standalone
+    # calls and failed outer lookups still resolve the class strictly here.
+    [ValidateSet('standard','premium')][string]$ResolvedServiceClass
 )
 $ErrorActionPreference='Stop'
 $OutputEncoding = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $OutputEncoding
+$configStarted=[Diagnostics.Stopwatch]::GetTimestamp()
+$configSucceeded=$false
+$configTelemetry=$null
+try {
+    $telemetryHelper=Join-Path $PSScriptRoot 'startup_telemetry.ps1'
+    if (Test-Path -LiteralPath $telemetryHelper) {
+        . $telemetryHelper
+        $configTelemetry=New-ScaleWorldStartupTelemetryContext -Role instance-config -Mode $Mode -JournalDirectory (Join-Path $InstallBase 'diagnostics\startup') -RecoveryStatePath (Join-Path $InstallBase 'state\connect-ticket-runtime-state.json')
+    }
+} catch { }
+try {
 Import-Module (Join-Path $PSScriptRoot 'instance_config.psm1') -Force
 if ($Environment -notin @('dev','stage','prod')) { throw 'Explicit deployment environment is required for instance config.' }
 if (!$SnapshotPath) { throw 'Snapshot path is required.' }
 [void][IO.Directory]::CreateDirectory((Split-Path -Parent $SnapshotPath))
-$serviceClass=(& (Join-Path $PSScriptRoot 'resolve_service_class_from_instance_tag.ps1') | Select-Object -Last 1)
+$classStarted=[Diagnostics.Stopwatch]::GetTimestamp()
+$serviceClass=$ResolvedServiceClass
+if (!$serviceClass) {
+    $serviceClass=(& (Join-Path $PSScriptRoot 'resolve_service_class_from_instance_tag.ps1') | Select-Object -Last 1)
+}
 if ($serviceClass -notin @('standard','premium')) { throw 'Cannot resolve serving instance class.' }
+if ($configTelemetry) { Write-ScaleWorldStartupTelemetryPhase $configTelemetry 'service_class' -StartedTimestamp $classStarted }
 $metadataPath=Join-Path $RuntimeRoot 'runtime-bundle-metadata.json'
 $bundleId=if (Test-Path -LiteralPath $metadataPath) { (Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json).bundleId } else { 'git_ref' }
 $buildPath=Join-Path $InstallBase 'state\current-release.json'
@@ -37,18 +56,26 @@ $components=@(Get-CimInstance Win32_Process | Where-Object {
 if ($Mode -eq 'recovery' -or $components.Count -gt 0) {
     if (!$cached) { throw 'Recovery requires a matching startup configuration snapshot.' }
     Write-Output 'Retaining instance config snapshot for recovery/running stack.'
+    $configSucceeded=$true
     exit 0
 }
 function Invoke-ConfigAws {
-    param([string[]]$Arguments)
+    param([string[]]$Arguments, [string]$TelemetryPhase='storage')
     # Windows PowerShell turns native stderr into error records; inspect the exit code ourselves.
     $ErrorActionPreference='Continue'
+    $storageStarted=[Diagnostics.Stopwatch]::GetTimestamp()
     $output=& $aws @Arguments 2>&1
-    return [pscustomobject]@{ExitCode=$LASTEXITCODE; Text=($output -join "`n")}
+    $storageExit=$LASTEXITCODE
+    if ($configTelemetry) {
+        $storageResult=if ($storageExit -eq 0) { 'ok' } else { 'failed' }
+        Write-ScaleWorldStartupTelemetryPhase $configTelemetry $TelemetryPhase -Result $storageResult -StartedTimestamp $storageStarted -ExitCode $storageExit
+    }
+    return [pscustomobject]@{ExitCode=$storageExit; Text=($output -join "`n")}
 }
 function Read-StartupS3Json {
     param([string]$Key, [switch]$Optional)
-    $result=Invoke-ConfigAws @('s3','cp',"s3://$Bucket/$Key",'-','--region',$region,'--cli-connect-timeout','5','--cli-read-timeout','10')
+    $phase=if ($Key -like '*/current.json') { 'pointer_fetch' } else { 'revision_fetch' }
+    $result=Invoke-ConfigAws -Arguments @('s3','cp',"s3://$Bucket/$Key",'-','--region',$region,'--cli-connect-timeout','5','--cli-read-timeout','10') -TelemetryPhase $phase
     if ($result.ExitCode -ne 0) {
         if ($Optional -and $result.Text -match '(404|NoSuchKey|Not Found)') { return $null }
         throw "Unable to read configuration object $Key."
@@ -68,7 +95,7 @@ try {
         $pointer=Read-StartupS3Json -Key 'InstanceConfig/v1/dev/current.json' -Optional
         if ($pointer) { $reference=$pointer | ConvertFrom-Json }
     } else {
-        $result=Invoke-ConfigAws @('ssm','get-parameter','--name',"/scaleworld/release/$Environment/current-candidate",'--region',$region,'--query','Parameter.Value','--output','text','--cli-connect-timeout','5','--cli-read-timeout','10')
+        $result=Invoke-ConfigAws -Arguments @('ssm','get-parameter','--name',"/scaleworld/release/$Environment/current-candidate",'--region',$region,'--query','Parameter.Value','--output','text','--cli-connect-timeout','5','--cli-read-timeout','10') -TelemetryPhase 'release_pointer_fetch'
         $candidate=$null
         if ($result.ExitCode -ne 0) {
             if ($result.Text -notmatch 'ParameterNotFound') { throw 'Unable to resolve release candidate for instance config.' }
@@ -85,7 +112,7 @@ try {
                 # The installer validates new binaries before they can be captured as a new candidate.
                 # That maintenance run may use the current profile; it does not validate a release candidate.
                 if ($Mode -eq 'validation') { Write-Output 'Artifact validation uses the current profile pending candidate capture.' }
-                elseif ($cached) { Write-Output 'Retaining config for installed artifacts; newer candidate requires an artifact update.'; exit 0 }
+                elseif ($cached) { Write-Output 'Retaining config for installed artifacts; newer candidate requires an artifact update.'; $configSucceeded=$true; exit 0 }
                 else { throw 'Installed artifacts do not match the configuration candidate. Update the instance first.' }
             }
         }
@@ -113,14 +140,22 @@ try {
         loadedAtUtc=[DateTime]::UtcNow.ToString('o'); source='published'
     })
     Write-Output "Instance config resolved for $Environment/$serviceClass."
+    $configSucceeded=$true
 } catch {
     # Only a previously validated snapshot for these exact installed artifacts can be reused.
     if ($cached -and $_.Exception.Message -match 'Unable to (read configuration|resolve release candidate)') {
         $cached.source='cached'
         Write-InstanceConfigAtomic -Path $SnapshotPath -Value $cached
         Write-Warning 'Configuration storage unavailable; retaining the matching cached snapshot.'
+        $configSucceeded=$true
         exit 0
     }
     [IO.File]::WriteAllText($SnapshotPath+'.error.txt', $_.Exception.Message)
     throw
+}
+} finally {
+    if ($configTelemetry) {
+        $configResult=if ($configSucceeded) { 'ok' } else { 'failed' }
+        Write-ScaleWorldStartupTelemetryPhase $configTelemetry 'config.completed' -Result $configResult -StartedTimestamp $configStarted
+    }
 }

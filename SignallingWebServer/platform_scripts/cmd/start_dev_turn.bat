@@ -6,6 +6,14 @@ for %%I in ("%SCRIPT_DIR%\..\..") do set "ROOT=%%~fI"
 if defined SCALEWORLD_WILBUR_ROOT set "ROOT=%SCALEWORLD_WILBUR_ROOT%"
 if not defined SCALEWORLD_INSTALL_BASE set "SCALEWORLD_INSTALL_BASE=C:\PixelStreaming"
 set "RUNTIME_BUNDLE_METADATA=%ROOT%\..\runtime-bundle-metadata.json"
+set "STARTUP_TELEMETRY_CMD=%SCRIPT_DIR%startup_telemetry.bat"
+set "WILBUR_TELEMETRY_MODE=normal"
+if /i "%STACK_MODE%"=="recovery" set "WILBUR_TELEMETRY_MODE=recovery"
+if /i "%STACK_MODE%"=="validation" set "WILBUR_TELEMETRY_MODE=validation"
+if /i "%~1"=="--recovery" set "WILBUR_TELEMETRY_MODE=recovery"
+if /i "%~1"=="--validation" set "WILBUR_TELEMETRY_MODE=validation"
+if exist "%STARTUP_TELEMETRY_CMD%" call "%STARTUP_TELEMETRY_CMD%" begin wilbur %WILBUR_TELEMETRY_MODE%
+call :startup_phase metadata.started 0
 set "REGION=eu-north-1"
 if not defined STREAMING_LANE_TAG_RETRY_COUNT set "STREAMING_LANE_TAG_RETRY_COUNT=12"
 if not defined STREAMING_LANE_TAG_RETRY_DELAY_SECONDS set "STREAMING_LANE_TAG_RETRY_DELAY_SECONDS=5"
@@ -29,6 +37,7 @@ if not defined SCALEWORLD_DEPLOYMENT_TRACK (
 )
 :startup_metadata_resolved
 set "SCALEWORLD_PARENT_RESOLVED_STARTUP_METADATA="
+call :startup_phase metadata.completed 0
 if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" goto apply_streaming_lane_prod
 if /i "%SCALEWORLD_STREAMING_LANE%"=="nonprod" goto apply_streaming_lane_nonprod
 echo ERROR: Unsupported SCALEWORLD_STREAMING_LANE "%SCALEWORLD_STREAMING_LANE%". Expected nonprod or prod.
@@ -192,13 +201,17 @@ if /i not "%AWS_EXE%"=="aws" (
 
 set "TURN_USERNAME="
 set "TURN_CREDENTIAL="
+call :startup_phase parameters.started 0
 call :load_runtime_parameters
+call :startup_phase parameters.completed %errorlevel%
 if errorlevel 1 exit /b 1
 call :resolve_instance_agent_control_plane_env
 if errorlevel 1 exit /b 1
 call :apply_instance_agent_control_plane_defaults
 if errorlevel 1 exit /b 1
+call :startup_phase bootstrap_secret.started 0
 call :load_instance_agent_bootstrap_shared_secret
+call :startup_phase bootstrap_secret.completed %errorlevel%
 if errorlevel 1 exit /b 1
 
 if not defined TURN_USERNAME (
@@ -261,10 +274,12 @@ if /i "%CONNECT_TICKET_AUTH_MODE%"=="off" (
 )
 
 :after_instance_id
+call :startup_phase identity.completed 0
 call :apply_instance_agent_defaults
 call :reset_startup_heartbeat
 call :set_runtime_status "booting" "startup-script" "startup_sequence"
 call :start_startup_heartbeat
+call :startup_phase heartbeat.started 0
 
 if /i "%ENABLE_GIT_SYNC_BEFORE_START%"=="true" (
   if /i "%REQUIRE_EC2_INSTANCE_FOR_GIT_SYNC%"=="true" if not defined INSTANCE_ID (
@@ -282,6 +297,7 @@ call :stop_startup_heartbeat
 call :set_runtime_status "waiting_for_streamer" "startup-script" "signalling_server_starting"
 cd /d "%ROOT%\platform_scripts\cmd"
 
+call :startup_phase node.started 0
 if /i "%ENABLE_REVERSE_PROXY%"=="true" goto start_signalling_with_reverse_proxy
 
 call start.bat -- ^
@@ -385,6 +401,10 @@ call start.bat -- ^
   --reverse-proxy ^
   --reverse-proxy-num-proxies="%REVERSE_PROXY_NUM_PROXIES%"
 
+exit /b %errorlevel%
+
+:startup_phase
+if exist "%STARTUP_TELEMETRY_CMD%" call "%STARTUP_TELEMETRY_CMD%" phase %~1 %~2
 exit /b %errorlevel%
 
 :load_runtime_parameters

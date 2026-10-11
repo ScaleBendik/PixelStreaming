@@ -23,12 +23,12 @@ function Set-Revision([string]$Environment='dev', [int]$Fps=45) {
     Write-Json 'pointer.json' $reference
     return $reference
 }
-function Run-Startup([string]$Environment='dev', [string]$Mode='normal', [string]$Class='standard', [string]$Failure='', [bool]$Running=$false) {
+function Run-Startup([string]$Environment='dev', [string]$Mode='normal', [string]$Class='standard', [string]$Failure='', [bool]$Running=$false, [string]$ResolvedClass='') {
     # Execute the unmodified production script. Cloud, process inspection and tag resolution are mocked.
     $ps=[PowerShell]::Create()
     try {
         [void]$ps.AddScript({
-            param($Root,$Initializer,$Environment,$Mode,$Class,$Failure,$Running)
+            param($Root,$Initializer,$Environment,$Mode,$Class,$Failure,$Running,$ResolvedClass)
             $global:ConfigTestRoot=$Root
             $global:ConfigTestClass=$Class
             $global:ConfigTestFailure=$Failure
@@ -44,8 +44,10 @@ function Run-Startup([string]$Environment='dev', [string]$Mode='normal', [string
                 param($ClassName)
                 if ($global:ConfigTestRunning) { [pscustomobject]@{Name='ScaleWorld.exe';CommandLine='mock'} }
             }
-            & $Initializer -RuntimeRoot $Root -InstallBase $Root -Environment $Environment -Mode $Mode -SnapshotPath (Join-Path $Root 'snapshot.json')
-        }).AddArgument($testRoot).AddArgument($initializer).AddArgument($Environment).AddArgument($Mode).AddArgument($Class).AddArgument($Failure).AddArgument($Running)
+            $handoff=@{}
+            if ($ResolvedClass) { $handoff.ResolvedServiceClass=$ResolvedClass }
+            & $Initializer -RuntimeRoot $Root -InstallBase $Root -Environment $Environment -Mode $Mode -SnapshotPath (Join-Path $Root 'snapshot.json') @handoff
+        }).AddArgument($testRoot).AddArgument($initializer).AddArgument($Environment).AddArgument($Mode).AddArgument($Class).AddArgument($Failure).AddArgument($Running).AddArgument($ResolvedClass)
         $output=$ps.Invoke()
         if ($ps.HadErrors) { throw ($ps.Streams.Error | Out-String) }
         return $output
@@ -62,7 +64,11 @@ try {
     Write-Json 'state/current-release.json' @{BuildId='s3-etag-not-the-build-name';ZipKey='scaleworldbuilds/ScaleWorld_test.zip'}
     [IO.File]::WriteAllText((Join-Path $testRoot 'aws-mock.ps1'), @'
 $global:LASTEXITCODE=0
-if ($args[0] -eq 'ec2') { return $global:ConfigTestClass }
+if ($args[0] -eq 'ec2') {
+    [IO.File]::AppendAllText((Join-Path $global:ConfigTestRoot 'class-lookups.txt'),"lookup`n")
+    if ($global:ConfigTestClass -eq 'lookup-failure') { $global:LASTEXITCODE=1; return 'AccessDenied' }
+    return $global:ConfigTestClass
+}
 if ($global:ConfigTestFailure -eq 'unavailable') { $global:LASTEXITCODE=1; return 'AccessDenied' }
 if ($args[0] -eq 'ssm') {
     if ($global:ConfigTestFailure -eq 'missing') { $global:LASTEXITCODE=1; return 'ParameterNotFound' }
@@ -140,6 +146,17 @@ return [IO.File]::ReadAllText((Join-Path $global:ConfigTestRoot (Split-Path -Lea
     $legacySnapshot=Read-InstanceConfigSnapshot $snapshot
     Assert-True ($null -eq $legacySnapshot.profile -and $null -eq $legacySnapshot.reference) 'Legacy candidate rollback did not clear cached custom configuration.'
     Expect-Failure { Run-Startup -Environment prod -Mode recovery } 'matching startup configuration snapshot'
+    # A current-launch success avoids a second lookup; without that explicit
+    # handoff, storage fallback must never hide a class-lookup failure.
+    Set-Revision | Out-Null
+    $lookupsBefore=@(Get-Content -LiteralPath (Join-Path $testRoot 'class-lookups.txt')).Count
+    Run-Startup -ResolvedClass premium -Class lookup-failure | Out-Null
+    $handoffSnapshot=Read-InstanceConfigSnapshot $snapshot
+    Assert-True ($handoffSnapshot.serviceClass -eq 'premium' -and $handoffSnapshot.profile.values.fps -eq 60) 'Successful launch-local class did not select the correct profile.'
+    Assert-True (@(Get-Content -LiteralPath (Join-Path $testRoot 'class-lookups.txt')).Count -eq $lookupsBefore) 'Successful class handoff still performed a tag lookup.'
+    Expect-Failure { Run-Startup -Class lookup-failure -Failure unavailable } 'resolve ScaleWorldServiceClass|Cannot resolve serving instance class'
+    Assert-True (@(Get-Content -LiteralPath (Join-Path $testRoot 'class-lookups.txt')).Count -eq ($lookupsBefore+1)) 'Standalone class resolution was skipped.'
+    Expect-Failure { Run-Startup -ResolvedClass 'unsupported' } 'ValidateSet|does not belong to the set'
     Write-Output 'Instance config startup: legacy, served class, normal start, recovery, cache, checksum, environment and candidate tests passed.'
 } finally {
     $resolved=[IO.Path]::GetFullPath($testRoot)
