@@ -1,0 +1,735 @@
+{
+    "schemaVersion": 1,
+    "investigationDate": "2026-10-12",
+    "investigationTimeZone": "Europe/Oslo",
+    "scope": "Existing stopped Dev d1; read-only startup/task investigation; one normal hosted session",
+    "instanceId": "i-0ce5ffd16bd50eb24",
+    "region": "eu-north-1",
+    "sample": 16,
+    "runtimeBundle": "pixelstreaming-runtime-20261011-003",
+    "runtimeCommit": "26ee94ea453d5d6f01f1a5268d9bf08dd3d26046",
+    "webCommit": "5bc95c6c06cb2bb7e635b505a0598b22cd8a56a8",
+    "apiCommit": "e9756bf7838e9bbd899aaa35118fbbb81ef48d33",
+    "unrealBuild": "ScaleWorld_20261008b.zip",
+    "changes": {
+        "taskDelayChanged": false,
+        "runtimeCodeChanged": false,
+        "apiWebChanged": false,
+        "estimateBudgetChanged": false,
+        "disposableInstanceProvisioned": false,
+        "stageProdPromoted": false
+    },
+    "timings": {
+        "sample": 16,
+        "requestId": "fb4b46663ab14dcfb18b93ccc6c72d86",
+        "clickUtc": "2026-10-11T22:08:19.328Z",
+        "bootS": 11.172,
+        "runtimeReadyS": 143.712,
+        "apiReadyS": 146.228,
+        "requestToApiReadyS": 144.689,
+        "lastNotReadyObservedS": 79.046,
+        "uiReadyObservedS": 159.841,
+        "apiRequestUtc": "2026-10-11T22:08:20.867384+00:00",
+        "runtimeReadyUtc": "2026-10-11T22:10:43.04Z",
+        "apiReadyUtc": "2026-10-11T22:10:45.5564159+00:00",
+        "apiConnectedUtc": "2026-10-11T22:11:10.0284698+00:00",
+        "endUtc": "2026-10-11T22:13:58.2469075+00:00"
+    },
+    "normalLauncher": {
+        "pid": 5144,
+        "startedUtc": "2026-10-11T22:08:55.7796470Z",
+        "journalBeginUtc": "2026-10-11T22:08:56.0791766Z",
+        "bootToProcessSeconds": 25.279647,
+        "bootToJournalSeconds": 25.5791766,
+        "processToJournalSeconds": 0.2995296,
+        "configuredBootDelaySeconds": 20,
+        "unallocatedBeyondConfiguredDelaySeconds": 5.279647
+    },
+    "phaseSpansSeconds": {
+        "normal": {
+            "metadata": 4.2,
+            "identity": 2.4,
+            "updateControl": 1.62,
+            "provisioningControl": 1.64,
+            "maintenanceControl": 1.57,
+            "serviceClass": 1.52,
+            "oldRoots": 0.36,
+            "config": 1.59,
+            "wilburTcp": 13.81,
+            "unrealLaunchCall": 1.27
+        },
+        "recovery": {
+            "metadata": 1.86,
+            "identity": 2.35,
+            "maintenanceControl": 1.6,
+            "serviceClass": 1.58,
+            "oldRoots": 0.45,
+            "config": 0.47,
+            "wilburTcp": 10.79,
+            "unrealLaunchCall": 4.84
+        }
+    },
+    "configuration": {
+        "metadataFirstAttemptsOnly": true,
+        "normalPointerFetchExitCode": 1,
+        "normalPointerFetchSeconds": 1.025,
+        "normalOverallConfigSucceeded": true,
+        "normalPointerBranch": "Unresolved: optional missing Dev pointer/defaults versus matching-cache storage fallback",
+        "recoveryMatchingSnapshotReused": true
+    },
+    "ancestry": {
+        "normalStackPid": 5144,
+        "replacementStackPid": 2976,
+        "firstNodePid": 5140,
+        "replacementNodePid": 4624,
+        "replacementNodeChain": [2976, 4756, 4624],
+        "finalUnrealWrapperPid": 2596,
+        "shippingPid": 5364,
+        "shippingStartedUtc": "2026-10-11T22:09:49.4413129Z",
+        "shippingToRuntimeReadySeconds": 53.5986871,
+        "finalUnrealLauncherAncestry": "Unresolved: parent PowerShell PID6044 was not sampled",
+        "simultaneousNativeDuplicatesCaptured": false,
+        "transientDuplicatesExcluded": false,
+        "exclusiveGenerationIsolationEstablished": false
+    },
+    "recovery": {
+        "cutoffUtc": "2026-10-11T22:10:37Z",
+        "readyNotBeforeUtc": "2026-10-11T22:10:42Z",
+        "runtimeReadyAfterHoldSeconds": 1.04,
+        "fieldsClearedByObservedUtc": "2026-10-11T22:10:45.907884Z",
+        "currentRequestAdmissionRecordedUtc": "2026-10-11T22:11:10Z",
+        "exactResetAckCaptured": false,
+        "behaviorChanged": false
+    },
+    "taskCapture": {
+        "schemaVersion": 1,
+        "observedUtc": "2026-10-11T22:13:30.4469389Z",
+        "bootUtc": "2026-10-11T22:08:30.5000000Z",
+        "taskName": "start_streamer_stack",
+        "taskPath": "\\",
+        "state": "Ready",
+        "principal": {
+            "runLevel": "Highest",
+            "logonType": "ServiceAccount",
+            "class": "system"
+        },
+        "triggers": [
+            {
+                "type": "MSFT_TaskBootTrigger",
+                "enabled": true,
+                "delay": "PT20S",
+                "logonScope": null,
+                "startBoundary": null,
+                "endBoundary": null,
+                "executionTimeLimit": null,
+                "repetitionInterval": null,
+                "repetitionDuration": null,
+                "stopAtDurationEnd": false
+            },
+            {
+                "type": "MSFT_TaskLogonTrigger",
+                "enabled": true,
+                "delay": "PT30S",
+                "logonScope": "any-user",
+                "startBoundary": null,
+                "endBoundary": null,
+                "executionTimeLimit": null,
+                "repetitionInterval": null,
+                "repetitionDuration": null,
+                "stopAtDurationEnd": false
+            }
+        ],
+        "settings": {
+            "MultipleInstances": 2,
+            "StartWhenAvailable": true,
+            "RunOnlyIfNetworkAvailable": false,
+            "ExecutionTimeLimit": "PT0S",
+            "RestartInterval": "PT1M",
+            "RestartCount": 15,
+            "AllowDemandStart": true,
+            "Enabled": true,
+            "DisallowStartIfOnBatteries": false,
+            "StopIfGoingOnBatteries": true,
+            "RunOnlyIfIdle": false,
+            "WakeToRun": false,
+            "Priority": 7
+        },
+        "actions": [
+            {
+                "executable": "start_streamer_stack.bat",
+                "canonicalStackAction": false,
+                "canonicalDirectStackAction": true,
+                "argumentsEmpty": true,
+                "canonicalWorkingDirectory": false,
+                "workingDirectorySet": false,
+                "workingDirectoryExists": null
+            }
+        ],
+        "lastRunUtc": "2026-10-11T22:08:08.0000000Z",
+        "lastRunUnconverted": "2026-10-11T22:08:08.0000000+00:00",
+        "lastRunKind": "Local",
+        "timeZoneId": "UTC",
+        "lastTaskResult": 0,
+        "lastRunCaveat": "May be overwritten by a later trigger or reflect an early clock correction; not first-action evidence",
+        "taskHistory": {
+            "name": "Microsoft-Windows-TaskScheduler/Operational",
+            "available": true,
+            "enabled": false,
+            "recordCount": null,
+            "queryStatus": "disabled-or-empty"
+        },
+        "taskEvents": [],
+        "systemEvents": [
+            {
+                "utc": "2026-10-11T22:08:30.6882664Z",
+                "provider": "Microsoft-Windows-Kernel-General",
+                "id": 12
+            }
+        ],
+        "clockChanges": [],
+        "systemEventCaveat": "SCM scan cap and retention make absent service events inconclusive",
+        "pathChecks": [
+            {
+                "path": "C:\\PixelStreaming\\PixelStreaming\\SignallingWebServer\\platform_scripts\\cmd\\start_streamer_stack.bat",
+                "exists": true
+            },
+            {
+                "path": "C:\\PixelStreaming\\PixelStreaming\\SignallingWebServer\\platform_scripts\\cmd\\start_dev_turn.bat",
+                "exists": true
+            }
+        ],
+        "graphics": [
+            {
+                "name": "Microsoft Basic Display Adapter",
+                "driverVersion": "10.0.20348.1",
+                "status": "OK",
+                "configManagerErrorCode": 0
+            },
+            {
+                "name": "NVIDIA A10G",
+                "driverVersion": "32.0.15.9559",
+                "status": "OK",
+                "configManagerErrorCode": 0
+            }
+        ],
+        "availabilityCaveat": "Post-Ready availability does not establish earliest boot readiness"
+    },
+    "ui": {
+        "clickUtc": "2026-10-11T22:08:19.328Z",
+        "observations": [
+            {
+                "buttons": [],
+                "observedUtc": "2026-10-11T22:08:20.379Z",
+                "progress": [
+                    {
+                        "hidden": "true",
+                        "label": null,
+                        "value": "100"
+                    },
+                    {
+                        "hidden": null,
+                        "label": "ScaleWorld session progress",
+                        "value": null
+                    },
+                    {
+                        "hidden": "true",
+                        "label": null,
+                        "value": null
+                    }
+                ],
+                "text": "USER VIEW\nSERVER OPS\nCAPACITY\nRELEASE\nARTIFACTS\nUPDATE JOBS\nINSTANCE CONFIG\nUSER PAGE & MAINTENANCE\nANALYTICS\nBILLING\nPRIVACY & RETENTION\nDIAGNOSTICS\nACCESS\n! Critical 1\nScaleWorld session access\nRequesting Access\nREQUESTING...\n\nRequesting access...\n\nChecking the next available session.\nRegion: Europe (Stockholm)\nLast ScaleWorld update: 22.2.2026",
+                "visibility": "visible",
+                "elapsedS": 1.051
+            },
+            {
+                "buttons": [
+                    {
+                        "disabled": false,
+                        "text": "END SESSION"
+                    }
+                ],
+                "observedUtc": "2026-10-11T22:08:55.834Z",
+                "progress": [
+                    {
+                        "hidden": "true",
+                        "label": null,
+                        "value": "100"
+                    },
+                    {
+                        "hidden": null,
+                        "label": "ScaleWorld session progress",
+                        "value": "30"
+                    },
+                    {
+                        "hidden": "true",
+                        "label": null,
+                        "value": null
+                    }
+                ],
+                "text": "USER VIEW\nSERVER OPS\nCAPACITY\nRELEASE\nARTIFACTS\nUPDATE JOBS\nINSTANCE CONFIG\nUSER PAGE & MAINTENANCE\nANALYTICS\nBILLING\nPRIVACY & RETENTION\nDIAGNOSTICS\nACCESS\n! Critical 1\nScaleWorld session access\nPreparing Session\nPREPARING SCALEWORLD...\nReady in about 2 minutes.\n\nPreparing streaming services\n\nEND SESSION\nRegion: Europe (Stockholm)\nLast ScaleWorld update: 22.2.2026",
+                "visibility": "visible",
+                "elapsedS": 36.506
+            },
+            {
+                "buttons": [
+                    {
+                        "disabled": false,
+                        "text": "END SESSION"
+                    }
+                ],
+                "observedUtc": "2026-10-11T22:09:15.267Z",
+                "progress": [
+                    {
+                        "hidden": "true",
+                        "label": null,
+                        "value": "100"
+                    },
+                    {
+                        "hidden": null,
+                        "label": "ScaleWorld session progress",
+                        "value": "37"
+                    },
+                    {
+                        "hidden": "true",
+                        "label": null,
+                        "value": null
+                    }
+                ],
+                "text": "USER VIEW\nSERVER OPS\nCAPACITY\nRELEASE\nARTIFACTS\nUPDATE JOBS\nINSTANCE CONFIG\nUSER PAGE & MAINTENANCE\nANALYTICS\nBILLING\nPRIVACY & RETENTION\nDIAGNOSTICS\nACCESS\n! Critical 1\nScaleWorld session access\nPreparing Session\nPREPARING SCALEWORLD...\nReady in less than 2 minutes.\n\nPreparing streaming services\n\nEND SESSION\nRegion: Europe (Stockholm)\nLast ScaleWorld update: 22.2.2026",
+                "visibility": "visible",
+                "elapsedS": 55.939
+            },
+            {
+                "buttons": [
+                    {
+                        "disabled": false,
+                        "text": "END SESSION"
+                    }
+                ],
+                "observedUtc": "2026-10-11T22:09:38.374Z",
+                "progress": [
+                    {
+                        "hidden": "true",
+                        "label": null,
+                        "value": "100"
+                    },
+                    {
+                        "hidden": null,
+                        "label": "ScaleWorld session progress",
+                        "value": "55"
+                    },
+                    {
+                        "hidden": "true",
+                        "label": null,
+                        "value": null
+                    }
+                ],
+                "text": "USER VIEW\nSERVER OPS\nCAPACITY\nRELEASE\nARTIFACTS\nUPDATE JOBS\nINSTANCE CONFIG\nUSER PAGE & MAINTENANCE\nANALYTICS\nBILLING\nPRIVACY & RETENTION\nDIAGNOSTICS\nACCESS\n! Critical 1\nScaleWorld session access\nPreparing Session\nPREPARING SCALEWORLD...\nReady in less than 2 minutes.\n\nStarting ScaleWorld\n\nEND SESSION\nRegion: Europe (Stockholm)\nLast ScaleWorld update: 22.2.2026",
+                "visibility": "visible",
+                "elapsedS": 79.046
+            },
+            {
+                "buttons": [
+                    {
+                        "disabled": false,
+                        "text": "ENTER SCALEWORLD"
+                    },
+                    {
+                        "disabled": false,
+                        "text": "END SESSION"
+                    }
+                ],
+                "observedUtc": "2026-10-11T22:10:59.169Z",
+                "progress": [
+                    {
+                        "hidden": "true",
+                        "label": null,
+                        "value": "100"
+                    },
+                    {
+                        "hidden": null,
+                        "label": "ScaleWorld session progress",
+                        "value": "100"
+                    }
+                ],
+                "text": "USER VIEW\nSERVER OPS\nCAPACITY\nRELEASE\nARTIFACTS\nUPDATE JOBS\nINSTANCE CONFIG\nUSER PAGE & MAINTENANCE\nANALYTICS\nBILLING\nPRIVACY & RETENTION\nDIAGNOSTICS\nACCESS\n! Critical 1\nScaleWorld session access\nSession Ready\nENTER SCALEWORLD\n\nSession ready.\n\nOpens in a new tab.\nEND SESSION\nThis reserved ScaleWorld session will be released if you do not connect within 9m 45s.\nRegion: Europe (Stockholm)\nLast ScaleWorld update: 22.2.2026",
+                "visibility": "visible",
+                "elapsedS": 159.841
+            },
+            {
+                "buttons": [],
+                "observedUtc": "2026-10-11T22:13:57.919Z",
+                "progress": [
+                    {
+                        "hidden": "true",
+                        "label": null,
+                        "value": "100"
+                    },
+                    {
+                        "hidden": null,
+                        "label": "ScaleWorld session progress",
+                        "value": null
+                    }
+                ],
+                "text": "USER VIEW\nSERVER OPS\nCAPACITY\nRELEASE\nARTIFACTS\nUPDATE JOBS\nINSTANCE CONFIG\nUSER PAGE & MAINTENANCE\nANALYTICS\nBILLING\nPRIVACY & RETENTION\nDIAGNOSTICS\nACCESS\n! Critical 1\nScaleWorld session access\nRecycling Session\n\nFinishing cleanup.\n\nMaking ScaleWorld available again.\nRegion: Europe (Stockholm)\nLast ScaleWorld update: 22.2.2026",
+                "visibility": "visible",
+                "elapsedS": 338.591
+            }
+        ],
+        "media": [
+            {
+                "observedUtc": "2026-10-11T22:11:33.459Z",
+                "stats": "Information\nSession Stats\nReceived: 70.46 MiB\nPackets Lost: 0\nVideo resolution: 2240x1260\nFrames Decoded: 677\nFramerate: 30\nFrames dropped: 0\nVideo codec: H264\nAudio codec: OPUS\nNet RTT (ms): 17\nDuration: 00:00:22\nControls stream input: true\nVideo quantization parameter: 14\nVideo Bitrate (kbps): 26593\nAudio Bitrate (kbps): 1\n",
+                "video": [
+                    {
+                        "currentTime": 22.536319,
+                        "height": 1260,
+                        "paused": false,
+                        "readyState": 4,
+                        "width": 2240
+                    }
+                ]
+            },
+            {
+                "observedUtc": "2026-10-11T22:12:44.621Z",
+                "stats": "Information\nSession Stats\nReceived: 293.61 MiB\nPackets Lost: 0\nVideo resolution: 2240x1260\nFrames Decoded: 2,807\nFramerate: 30\nFrames dropped: 0\nVideo codec: H264\nAudio codec: OPUS\nNet RTT (ms): 17\nDuration: 00:01:33\nControls stream input: true\nVideo quantization parameter: 14\nVideo Bitrate (kbps): 25765\nAudio Bitrate (kbps): 1\n",
+                "video": [
+                    {
+                        "currentTime": 93.696481,
+                        "height": 1260,
+                        "paused": false,
+                        "readyState": 4,
+                        "width": 2240
+                    }
+                ]
+            }
+        ],
+        "canonicalTimes": {
+            "requestId": "fb4b46663ab14dcfb18b93ccc6c72d86",
+            "apiRequestUtc": "2026-10-11T22:08:20.867384+00:00",
+            "apiReadyUtc": "2026-10-11T22:10:45.5564159+00:00",
+            "apiConnectedUtc": "2026-10-11T22:11:10.0284698+00:00",
+            "apiEndUtc": "2026-10-11T22:13:58.2469075+00:00"
+        },
+        "teardownState": "Teardown Completed",
+        "teardownObservedUtc": "2026-10-11T22:21:50.787Z",
+        "firstReadyObservationIsPollingBound": true,
+        "strictUpperBoundsSampled": 2,
+        "strictUpperBoundsHeld": 2
+    },
+    "journals": {
+        "selection": {
+            "fromUtc": "2026-10-11T22:08:18.3280000Z",
+            "toUtc": "2026-10-11T22:11:50.5743452Z",
+            "fileOffset": 0,
+            "maxFiles": 6,
+            "maxOutputChars": 20000,
+            "totalMatchingFiles": 6,
+            "nextFileOffset": 6,
+            "hasMore": false
+        },
+        "files": [
+            {
+                "fileName": "112ca7331e7a474b9abe69c4a5cd6a0b.instance-config.6aa29db4143f431cad53698aa0f2404c.jsonl",
+                "lastWriteUtc": "2026-10-11T22:09:11.1741793Z",
+                "byteLength": 1477,
+                "status": "readable",
+                "header": {
+                    "schemaVersion": 1,
+                    "kind": "begin",
+                    "launchId": "112ca733-1e7a-474b-9abe-69c4a5cd6a0b",
+                    "parentLaunchId": null,
+                    "contextId": "6aa29db4-143f-431c-ad53-698aa0f2404c",
+                    "role": "instance-config",
+                    "mode": "normal",
+                    "writerPid": 4716,
+                    "launcherPid": 0,
+                    "utcBase": "2026-10-11T22:09:09.8572484Z",
+                    "localTimeBase": "22:09:09.85",
+                    "localUtcOffsetMinutes": 0,
+                    "clockBasis": "stopwatch",
+                    "stopwatchTimestamp": 394065937,
+                    "stopwatchFrequency": 10000000,
+                    "recoveryStateStatus": "readable",
+                    "commercialRecoveryRequired": true
+                },
+                "lines": [
+                    "{\"schemaVersion\":1,\"kind\":\"phase\",\"launchId\":\"112ca733-1e7a-474b-9abe-69c4a5cd6a0b\",\"contextId\":\"6aa29db4-143f-431c-ad53-698aa0f2404c\",\"role\":\"instance-config\",\"writerPid\":4716,\"utc\":\"2026-10-11T22:09:09.9558668Z\",\"phase\":\"service_class\",\"result\":\"ok\",\"exitCode\":null,\"clockBasis\":\"stopwatch\",\"elapsedMs\":78.999,\"durationMs\":10.519}",
+                    "{\"schemaVersion\":1,\"kind\":\"phase\",\"launchId\":\"112ca733-1e7a-474b-9abe-69c4a5cd6a0b\",\"contextId\":\"6aa29db4-143f-431c-ad53-698aa0f2404c\",\"role\":\"instance-config\",\"writerPid\":4716,\"utc\":\"2026-10-11T22:09:11.1208984Z\",\"phase\":\"pointer_fetch\",\"result\":\"failed\",\"exitCode\":1,\"clockBasis\":\"stopwatch\",\"elapsedMs\":1257.306,\"durationMs\":1024.733}",
+                    "{\"schemaVersion\":1,\"kind\":\"phase\",\"launchId\":\"112ca733-1e7a-474b-9abe-69c4a5cd6a0b\",\"contextId\":\"6aa29db4-143f-431c-ad53-698aa0f2404c\",\"role\":\"instance-config\",\"writerPid\":4716,\"utc\":\"2026-10-11T22:09:11.1731730Z\",\"phase\":\"config.completed\",\"result\":\"ok\",\"exitCode\":null,\"clockBasis\":\"stopwatch\",\"elapsedMs\":1309.684,\"durationMs\":1382.588}"
+                ],
+                "rejectedRecords": 0,
+                "partialTail": false,
+                "omittedRecords": 0
+            },
+            {
+                "fileName": "603f5af1c22f483bbda81f3cb101f367.wilbur.6be1d5d728a345b5a35c1943234aed8f.cmd.log",
+                "lastWriteUtc": "2026-10-11T22:09:21.4761662Z",
+                "byteLength": 827,
+                "status": "readable",
+                "header": {
+                    "schemaVersion": 1,
+                    "kind": "begin",
+                    "launchId": "603f5af1-c22f-483b-bda8-1f3cb101f367",
+                    "parentLaunchId": "112ca733-1e7a-474b-9abe-69c4a5cd6a0b",
+                    "contextId": "6be1d5d7-28a3-45b5-a35c-1943234aed8f",
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "writerPid": 4864,
+                    "launcherPid": 0,
+                    "utcBase": "2026-10-11T22:09:11.7200269Z",
+                    "localTimeBase": "22:09:11.72",
+                    "localUtcOffsetMinutes": 0,
+                    "clockBasis": "cmd-local-wall-clock",
+                    "stopwatchTimestamp": 412591425,
+                    "stopwatchFrequency": 10000000,
+                    "recoveryStateStatus": "readable",
+                    "commercialRecoveryRequired": true
+                },
+                "lines": [
+                    "metadata.started|22:09:11.84|0",
+                    "metadata.completed|22:09:11.85|0",
+                    "parameters.started|22:09:11.94|0",
+                    "parameters.completed|22:09:13.13|0",
+                    "bootstrap_secret.started|22:09:13.16|0",
+                    "bootstrap_secret.completed|22:09:14.28|0",
+                    "identity.completed|22:09:16.79|0",
+                    "heartbeat.started|22:09:19.14|0",
+                    "node.started|22:09:21.47|0"
+                ],
+                "rejectedRecords": 0,
+                "partialTail": false,
+                "omittedRecords": 0
+            },
+            {
+                "fileName": "112ca7331e7a474b9abe69c4a5cd6a0b.stack.c45fc0180fdb4598b2d2b56a80ea2ea0.cmd.log",
+                "lastWriteUtc": "2026-10-11T22:09:27.1477877Z",
+                "byteLength": 1654,
+                "status": "readable",
+                "header": {
+                    "schemaVersion": 1,
+                    "kind": "begin",
+                    "launchId": "112ca733-1e7a-474b-9abe-69c4a5cd6a0b",
+                    "parentLaunchId": null,
+                    "contextId": "c45fc018-0fdb-4598-b2d2-b56a80ea2ea0",
+                    "role": "stack",
+                    "mode": "normal",
+                    "writerPid": 5468,
+                    "launcherPid": 0,
+                    "utcBase": "2026-10-11T22:08:56.0791766Z",
+                    "localTimeBase": "22:08:56.07",
+                    "localUtcOffsetMinutes": 0,
+                    "clockBasis": "cmd-local-wall-clock",
+                    "stopwatchTimestamp": 257047125,
+                    "stopwatchFrequency": 10000000,
+                    "recoveryStateStatus": "readable",
+                    "commercialRecoveryRequired": true
+                },
+                "lines": [
+                    "metadata.started|22:08:56.22|0",
+                    "metadata.lane.attempt_1|22:09:00.17|0",
+                    "metadata.track.attempt_1|22:09:00.19|0",
+                    "metadata.delivery.attempt_1|22:09:00.21|0",
+                    "metadata.completed|22:09:00.42|0",
+                    "identity.started|22:09:00.43|0",
+                    "identity.completed|22:09:02.83|0",
+                    "update_control.started|22:09:02.84|0",
+                    "update_control.completed|22:09:04.46|0",
+                    "provisioning_control.started|22:09:04.47|0",
+                    "provisioning_control.completed|22:09:06.11|0",
+                    "maintenance_control.started|22:09:06.12|0",
+                    "maintenance_control.completed|22:09:07.69|0",
+                    "service_class.started|22:09:07.70|0",
+                    "service_class.completed|22:09:09.22|0",
+                    "old_roots.started|22:09:09.23|0",
+                    "old_roots.completed|22:09:09.59|0",
+                    "config.started|22:09:09.60|0",
+                    "config.completed|22:09:11.19|0",
+                    "wilbur_process_check.completed|22:09:11.45|1",
+                    "wilbur_launch.scheduled|22:09:11.46|0",
+                    "wilbur_tcp.started|22:09:11.47|0",
+                    "wilbur_tcp.completed|22:09:25.28|0",
+                    "unreal_launch.started|22:09:25.29|0",
+                    "unreal_launch.completed|22:09:26.56|0",
+                    "stack.completed|22:09:26.86|0",
+                    "{\"schemaVersion\":1,\"kind\":\"end\",\"contextId\":\"c45fc018-0fdb-4598-b2d2-b56a80ea2ea0\",\"launchId\":\"112ca733-1e7a-474b-9abe-69c4a5cd6a0b\",\"utc\":\"2026-10-11T22:09:27.1236744Z\",\"writerPid\":1208,\"exitCode\":0}"
+                ],
+                "rejectedRecords": 0,
+                "partialTail": false,
+                "omittedRecords": 0
+            },
+            {
+                "fileName": "d43fbde6b0d64d5f98f4c2a5b51b7622.instance-config.dc8a45d21d8040d48dab797c6595e2d0.jsonl",
+                "lastWriteUtc": "2026-10-11T22:09:35.5731575Z",
+                "byteLength": 1143,
+                "status": "readable",
+                "header": {
+                    "schemaVersion": 1,
+                    "kind": "begin",
+                    "launchId": "d43fbde6-b0d6-4d5f-98f4-c2a5b51b7622",
+                    "parentLaunchId": null,
+                    "contextId": "dc8a45d2-1d80-40d4-8dab-797c6595e2d0",
+                    "role": "instance-config",
+                    "mode": "recovery",
+                    "writerPid": 5376,
+                    "launcherPid": 0,
+                    "utcBase": "2026-10-11T22:09:35.3722641Z",
+                    "localTimeBase": "22:09:35.37",
+                    "localUtcOffsetMinutes": 0,
+                    "clockBasis": "stopwatch",
+                    "stopwatchTimestamp": 647973347,
+                    "stopwatchFrequency": 10000000,
+                    "recoveryStateStatus": "readable",
+                    "commercialRecoveryRequired": true
+                },
+                "lines": [
+                    "{\"schemaVersion\":1,\"kind\":\"phase\",\"launchId\":\"d43fbde6-b0d6-4d5f-98f4-c2a5b51b7622\",\"contextId\":\"dc8a45d2-1d80-40d4-8dab-797c6595e2d0\",\"role\":\"instance-config\",\"writerPid\":5376,\"utc\":\"2026-10-11T22:09:35.4686936Z\",\"phase\":\"service_class\",\"result\":\"ok\",\"exitCode\":null,\"clockBasis\":\"stopwatch\",\"elapsedMs\":77.081,\"durationMs\":11.012}",
+                    "{\"schemaVersion\":1,\"kind\":\"phase\",\"launchId\":\"d43fbde6-b0d6-4d5f-98f4-c2a5b51b7622\",\"contextId\":\"dc8a45d2-1d80-40d4-8dab-797c6595e2d0\",\"role\":\"instance-config\",\"writerPid\":5376,\"utc\":\"2026-10-11T22:09:35.5721565Z\",\"phase\":\"config.completed\",\"result\":\"ok\",\"exitCode\":null,\"clockBasis\":\"stopwatch\",\"elapsedMs\":199.247,\"durationMs\":272.277}"
+                ],
+                "rejectedRecords": 0,
+                "partialTail": false,
+                "omittedRecords": 0
+            },
+            {
+                "fileName": "16e8c8aa570a4c5e95e2a4d8f81ac999.wilbur.d5e129d7c0e4427a8e0ad17ac42eef1e.cmd.log",
+                "lastWriteUtc": "2026-10-11T22:09:44.6526989Z",
+                "byteLength": 829,
+                "status": "readable",
+                "header": {
+                    "schemaVersion": 1,
+                    "kind": "begin",
+                    "launchId": "16e8c8aa-570a-4c5e-95e2-a4d8f81ac999",
+                    "parentLaunchId": "d43fbde6-b0d6-4d5f-98f4-c2a5b51b7622",
+                    "contextId": "d5e129d7-c0e4-427a-8e0a-d17ac42eef1e",
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "writerPid": 5864,
+                    "launcherPid": 0,
+                    "utcBase": "2026-10-11T22:09:36.1276333Z",
+                    "localTimeBase": "22:09:36.12",
+                    "localUtcOffsetMinutes": 0,
+                    "clockBasis": "cmd-local-wall-clock",
+                    "stopwatchTimestamp": 655490990,
+                    "stopwatchFrequency": 10000000,
+                    "recoveryStateStatus": "readable",
+                    "commercialRecoveryRequired": true
+                },
+                "lines": [
+                    "metadata.started|22:09:36.24|0",
+                    "metadata.completed|22:09:36.25|0",
+                    "parameters.started|22:09:36.31|0",
+                    "parameters.completed|22:09:37.45|0",
+                    "bootstrap_secret.started|22:09:37.47|0",
+                    "bootstrap_secret.completed|22:09:37.48|0",
+                    "identity.completed|22:09:39.98|0",
+                    "heartbeat.started|22:09:42.32|0",
+                    "node.started|22:09:44.65|0"
+                ],
+                "rejectedRecords": 0,
+                "partialTail": false,
+                "omittedRecords": 0
+            },
+            {
+                "fileName": "d43fbde6b0d64d5f98f4c2a5b51b7622.stack.23d612a500d8403b8628fc3c297fb681.cmd.log",
+                "lastWriteUtc": "2026-10-11T22:09:52.0651470Z",
+                "byteLength": 1479,
+                "status": "readable",
+                "header": {
+                    "schemaVersion": 1,
+                    "kind": "begin",
+                    "launchId": "d43fbde6-b0d6-4d5f-98f4-c2a5b51b7622",
+                    "parentLaunchId": "603f5af1-c22f-483b-bda8-1f3cb101f367",
+                    "contextId": "23d612a5-00d8-403b-8628-fc3c297fb681",
+                    "role": "stack",
+                    "mode": "recovery",
+                    "writerPid": 5156,
+                    "launcherPid": 0,
+                    "utcBase": "2026-10-11T22:09:27.1276931Z",
+                    "localTimeBase": "22:09:27.12",
+                    "localUtcOffsetMinutes": 0,
+                    "clockBasis": "cmd-local-wall-clock",
+                    "stopwatchTimestamp": 565900631,
+                    "stopwatchFrequency": 10000000,
+                    "recoveryStateStatus": "readable",
+                    "commercialRecoveryRequired": true
+                },
+                "lines": [
+                    "metadata.started|22:09:27.24|0",
+                    "metadata.lane.attempt_1|22:09:28.89|0",
+                    "metadata.track.attempt_1|22:09:28.90|0",
+                    "metadata.completed|22:09:29.10|0",
+                    "identity.started|22:09:29.11|0",
+                    "identity.completed|22:09:31.46|0",
+                    "maintenance_control.started|22:09:31.47|0",
+                    "maintenance_control.completed|22:09:33.07|0",
+                    "service_class.started|22:09:33.07|0",
+                    "service_class.completed|22:09:34.65|0",
+                    "old_roots.started|22:09:34.66|0",
+                    "old_roots.completed|22:09:35.11|0",
+                    "config.started|22:09:35.12|0",
+                    "config.completed|22:09:35.59|0",
+                    "wilbur_process_check.completed|22:09:35.85|1",
+                    "wilbur_launch.scheduled|22:09:35.85|0",
+                    "wilbur_tcp.started|22:09:35.86|0",
+                    "wilbur_tcp.completed|22:09:46.65|0",
+                    "unreal_launch.started|22:09:46.66|0",
+                    "unreal_launch.completed|22:09:51.50|0",
+                    "stack.completed|22:09:51.79|0",
+                    "{\"schemaVersion\":1,\"kind\":\"end\",\"contextId\":\"23d612a5-00d8-403b-8628-fc3c297fb681\",\"launchId\":\"d43fbde6-b0d6-4d5f-98f4-c2a5b51b7622\",\"utc\":\"2026-10-11T22:09:52.0420546Z\",\"writerPid\":2108,\"exitCode\":0}"
+                ],
+                "rejectedRecords": 0,
+                "partialTail": false,
+                "omittedRecords": 0
+            }
+        ]
+    },
+    "observerProvenance": {
+        "stateCommandId": "43a64fb1-40d6-4e5d-a285-466648b7f164",
+        "stateStatus": "Success",
+        "journalCommandId": "9efcf488-c815-4343-98d4-eb91389fa218",
+        "journalStatus": "Success",
+        "taskCommandId": "41765363-1d5b-472e-a4d1-5b9265bc3e25",
+        "taskCollectorPhase": "after Ready"
+    },
+    "hostedCompletion": {
+        "normalEndUtc": "2026-10-11T22:13:58.2469075+00:00",
+        "teardownState": "Teardown Completed",
+        "teardownObservedUtc": "2026-10-11T22:21:50.787Z",
+        "fleetObservedUtc": "2026-10-11T22:19:39.841Z",
+        "fleet": [
+            {
+                "id": "i-0ce5ffd16bd50eb24",
+                "state": "stopped",
+                "runtime": ["pixelstreaming-runtime-20261011-003"]
+            },
+            {
+                "id": "i-0226e3c475b1b76f0",
+                "state": "stopped",
+                "runtime": ["pixelstreaming-runtime-20261009-003"]
+            },
+            {
+                "id": "i-0209fd65e0ed93501",
+                "state": "stopped",
+                "runtime": ["pixelstreaming-runtime-20261009-003"]
+            }
+        ]
+    },
+    "limitations": [
+        "Task history disabled; no reliable initial task trigger/action timestamp",
+        "LastRun predates reported boot and was not used for action timing",
+        "Post-Ready paths/graphics do not establish earliest readiness",
+        "Normal config pointer branch and earlier dependency readiness unresolved",
+        "Polling/sampling cannot exclude transient duplicates or prove exact client latency",
+        "Recovery overlap remains separate; total timing is not a delay-reduction experiment"
+    ],
+    "recommendedNextTrial": {
+        "baselineBootDelaySeconds": 20,
+        "candidateBootDelaySeconds": 15,
+        "nominalOpportunitySeconds": 5,
+        "validatedSavingSeconds": null,
+        "requiresReliableBaselineTaskAndConfigEvidence": true,
+        "minSuccessfulCandidateColdBoots": 3,
+        "preserveOtherTaskSettings": true,
+        "keepRecoveryFixSeparate": true
+    }
+}

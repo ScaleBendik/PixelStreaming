@@ -647,3 +647,14 @@ The fixed-cohort evidence includes these independently verified hosted completio
 gates alongside the separate pre-End startup observer limits. Both repositories
 remain on `perf/cold-start-iteration`; documentation commits do not alter the
 deployed runtime/API/Web/Unreal identities.
+
+## Task delay investigation follow-up (2026-10-12)
+
+The [Task Scheduler investigation](task-scheduler-delay-investigation.md) confirms
+Dev d1's inherited 20-second Boot and 30-second Logon delays. One additional
+unchanged-runtime baseline (16) measured 25.280s from OS boot to the normal stack
+process and 146.228s from click to canonical API Ready. Task history is disabled;
+first-action timing, early prerequisite readiness and the normal optional-pointer
+configuration branch remain unresolved. No delay or deployed behavior changed.
+The report defines a gated 20-to-15-second Dev trial and restoration criteria,
+with launcher-overlap recovery work kept separate.
