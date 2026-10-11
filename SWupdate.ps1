@@ -397,6 +397,12 @@ function Remove-CurrentReleaseForUpdate {
     }
 
     $rollbackBackup = New-RollbackBackupState -CurrentReleaseState $CurrentReleaseState
+    if (-not $rollbackBackup) {
+        throw 'Could not create a rollback backup; the current release will not be removed.'
+    }
+    # Register the completed backup before destructive work. A later activation
+    # failure or restart must still allow -RollbackToPrevious to recover it.
+    Write-StateMetadata -Path $script:PreviousReleaseStatePath -Value $rollbackBackup
 
     if (Test-Path -LiteralPath $script:ActiveInstallPath) {
         if (Test-IsReparsePoint -Path $script:ActiveInstallPath) {
@@ -410,7 +416,7 @@ function Remove-CurrentReleaseForUpdate {
         Remove-Item -LiteralPath $CurrentReleaseState.ReleasePath -Recurse -Force
     }
 
-    Set-ReleaseState -Current $null -Previous $null
+    Set-ReleaseState -Current $null -Previous $rollbackBackup
     Write-UpdateLog "Removed current active release '$($CurrentReleaseState.BuildId)' to free space before activation." 'WARN'
     return $rollbackBackup
 }
