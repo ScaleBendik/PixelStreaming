@@ -390,9 +390,10 @@ The raw 150-second calibration and existing 10-second display buffer are retaine
 the slower matched sample was 146.378 seconds. Lowering the budget from the two
 faster overlap cases would overfit an unresolved lifecycle timing difference.
 
-### Next safe iterations and rollback
+### Next safe iterations and rollback at the previous completion
 
-1. Measure, then combine Wilbur's separate UTC-generation PowerShell call with
+1. Completed by the PowerShell publication iteration below: measure, then
+   combine Wilbur's separate UTC-generation PowerShell call with
    its existing state-file/tag publisher. Preserve state-write-before-network,
    exact format/status order, heartbeat semantics, warning behavior, exit codes
    and standalone fallback. Verify failed writes/tag failures and real CMD
@@ -491,13 +492,158 @@ Canonical click-relative timings and exact build identities are maintained in
 the Web owning docs' `docs/evidence/cold-start-20261011.csv`. Raw observations are
 retained locally rather than committing actor or payload data.
 
-## Implementation completion
+## Previous implementation completion
 
 The authorized implementation and matched Dev acceptance are documented above;
 the historical observation-only statements describe the earlier pass. Runtime
 `e04dbb6d` / artifact `pixelstreaming-runtime-20261011-002` and Web `5bc95c6`
-remain deployed in Dev. Documentation commits do not change those identities.
+were deployed at completion of that iteration. Documentation commits do not
+change those identities.
 Both repositories use `perf/cold-start-iteration`. All candidate sessions ended
 through normal End Session and reached Teardown Completed. At 19:58:40 UTC on
 2026-10-11, Dev d1/d2/d4 were verified stopped. Only d1 received the runtime update;
 no disposable instance was provisioned and Stage/Prod were not promoted.
+
+## PowerShell publication iteration (2026-10-11)
+
+Runtime code `26ee94ea453d5d6f01f1a5268d9bf08dd3d26046` consolidates Wilbur's
+UTC generation and local startup state write into its existing synchronous tag
+publisher. The two ordinary status transitions now use two PowerShell processes,
+previously four; both AWS writes remain. This count is verified by source and
+the focused execution harness, not by process telemetry in the timing fixture.
+Recovery, launcher generation handling, admission, readiness and hold rules
+were not changed. The launcher-overlap recovery fix remains separate work.
+
+The optional `StartupStateFilePath` parameter is appended after existing
+parameters. State still precedes the AWS call, retains its raw five-line format
+and transition timestamp, and receives a separately fresh publication heartbeat.
+State I/O failure warns and permits tag publication; AWS failure remains nonfatal
+to the launcher. Missing-helper state-only fallback, standalone default/explicit
+timestamps and existing positional callers are preserved.
+
+The clean immutable `pixelstreaming-runtime-20261011-003` artifact was built with
+Node `v22.23.2` / npm `11.6.0`, using the normal runtime publisher. Its ZIP is
+146,797,197 bytes with SHA-256
+`33e4e61f0ceda8c49a67661db0cc8382dda0038b17043532a2f0d189153989d0`.
+Both changed packaged source files matched the reviewed checkout. Dev update
+job `24b438f1-d913-4555-ac68-c78c3de9d301` targeted only d1 and validated the runtime
+at 20:54:18.4996861 UTC. API `e9756bf7`, Web `5bc95c6` (fresh client asset
+`index-Cjj904Ce.js`) and Unreal `ScaleWorld_20261008b.zip` stayed unchanged.
+
+### Controlled component measurement
+
+On the playing Dev d1, three alternating paired trials ran the actual old/current
+CMD status labels and publishers in unique temporary fixtures with a native AWS
+stub. Each trial covered two transitions. Baseline source `5fcac6a0` is identical
+for these files to deployed baseline code `e04dbb6d` / runtime 002.
+
+| Pair | Order | Baseline | Candidate | Difference |
+| --- | --- | ---: | ---: | ---: |
+| 1 | baseline, candidate | 3.186232s | 2.858814s | 0.327418s |
+| 2 | candidate, baseline | 3.158373s | 2.884182s | 0.274191s |
+| 3 | baseline, candidate | 3.119286s | 2.856391s | 0.262895s |
+| Mean | alternating | 3.154630s | 2.866462s | **0.288168s** |
+
+SSM command `e57de66f-124c-4d95-aaee-225661cfdea2` succeeded with stable exact
+artifact/source provenance, two stub calls per trial, state-before-AWS, argument,
+payload and timestamp checks, and fixture cleanup all passing. It made no real
+EC2 calls or lifecycle state writes. This establishes component savings per two
+transitions; it does not measure real AWS latency or whole cold-start savings.
+The sanitized [component evidence](../../scaleworld-server-manager-web/docs/evidence/powershell-overhead-component-20261011.json)
+retains per-trial results, source hashes and verification flags.
+
+### Matched cold-start observations
+
+The primary comparison uses all four comparable runtime-002 post-normal-End
+starts (8–11) and three runtime-003 post-normal-End starts (13–15). The fresh
+baseline 11 was measured before this update. SQL was active, d1 was fully stopped
+before each request, and no warm pool was available. API/Web/Unreal identities,
+instance class and the read-only SSM instrumentation were held constant.
+Sample 12, the first boot after the artifact update, is recorded separately.
+
+| Cohort | Samples | Click → runtime Ready | Click → canonical API Ready |
+| --- | --- | ---: | ---: |
+| Baseline runtime 002 | 8–11 | 134.146s mean | **137.121s mean** (126.311–146.789s) |
+| Candidate runtime 003 | 13–15 | 124.272s mean | **127.280s mean** (125.349–130.632s) |
+| Separate post-update | 12 | 111.437s | 114.319s |
+
+Candidate API times were 125.349 / 130.632 / 125.859s. The observed mean
+difference is 9.841s (7.18%). This is not a causal saving established for the
+PowerShell change: small instrumented sequential cohorts have no concurrent
+control and different original/replacement launcher ancestry distributions.
+The isolated component measurement above is the attributable saving.
+
+Live normal-launch identity→heartbeat→Node-scheduled spans decreased from
+4.890s mean (4.88–4.91s) to 4.677s (4.67–4.68s), an observed 0.213s difference.
+Recovery spans increased from 5.865s mean (4.87–7.13s) to 7.700s (7.03–8.94s).
+Candidate recovery spans were 8.94 / 7.13 / 7.03s; retain the slower result.
+These live spans include synchronous AWS process/network time, heartbeat
+handling, scheduling and diagnostics. Node-scheduled timestamps are distinct
+from actual process birth. No evidence supports removing either AWS write or
+making lifecycle publication asynchronous in this iteration.
+
+All candidate startup journal collections were complete, with no rejected,
+omitted or partial records, uncertain clocks or observed config failures.
+Recovery cutoff/hold and admission ordering were checked against timestamped
+state observations. The five-second hold is unchanged; exact API reset
+acknowledgements were not captured, so marker/field removal remains bounded by
+observation timestamps. Usable sustained video was observed in each candidate
+cycle: 29–30fps and zero lost packets/dropped frames at the sampled checkpoints.
+Baseline 11 later had 1,568 lost packets and must not be reported as zero-loss
+throughout. The known original-launcher Unreal/replacement-Node overlap persists;
+exclusive generation isolation is not established by this change.
+
+See the [timing ledger](../../scaleworld-server-manager-web/docs/evidence/cold-start-20261011.csv) and
+the [fixed-cohort results](../../scaleworld-server-manager-web/docs/evidence/powershell-overhead-results-20261011.json)
+for raw per-cycle endpoints, phases, recovery bounds, media and ancestry limits.
+
+### User-facing estimate evaluation
+
+The unchanged main progress ring had no sampled decrease, premature 100% or
+early Enter across 16 visible matched-candidate checkpoints. All 5/5 strict
+upper-bound messages held for API and bounded page readiness; five rounded
+"about" messages are recorded separately. No Almost-ready or late generic
+handoff checkpoint was captured. First-page-Ready observation bounds were
+13 (95.084,142.537]s, 14 (105.353,130.911]s and 15 (106.188,133.381]s;
+gaps from canonical API Ready are not exact client detection latency.
+
+The raw 150s reference budget's MAE was 12.879s on baseline 8–11 and 22.720s on
+candidate 13–15. It was more conservative against these faster observations;
+this is separate from displayed-copy/countdown error and does not establish
+improved estimate algorithm accuracy. Retain 150s and its existing initial 10s
+display buffer. See the [ETA evidence](../../scaleworld-server-manager-web/docs/evidence/powershell-overhead-eta-20261011.json).
+
+### Verification and follow-up scope
+
+Windows PowerShell 5.1 real-CMD/native-shim tests passed for state-before-AWS,
+all six tags, fresh heartbeat/default/explicit timestamps, positional callers,
+disabled/no-identity behavior, missing-helper and UTC failure, visible state-I/O
+failure continuation, nonfatal launcher AWS failure, raw state versus normalized
+tag payload, and the actual heartbeat reader with ASCII/UTF-8 BOM fixtures.
+The stack-launcher policy/service-class execution harness passed. Pinned Node
+22 runtime TypeScript, lint, 99 Node tests and 18 Jest tests passed. Independent
+source and actual benchmark reviews found no remaining scope/semantic concern.
+No Web source changed, so prior Web suite results remain historical evidence.
+
+Retain the current estimate budget and API Ready gate. Further calibration needs
+more starts with comparable generation behavior and separate SQL-wake/queue
+cohorts. The next measurement work should profile actual task execution and the
+native Unreal-to-Ready interval. Launcher cancellation/generation fencing remains
+separate recovery safety work with the integration gates documented above.
+Current runtime rollback is immutable `pixelstreaming-runtime-20261011-002`
+through the normal Dev artifact update path; API/Web/Unreal were unchanged.
+
+### Iteration completion
+
+Samples 11–15 ended through normal End Session and were verified as Teardown
+Completed in Session Manager Analytics. Final sample 15's canonical End was
+21:35:26.6307275 UTC. At 21:41:54.8315402 UTC on 2026-10-11, Dev d1/d2/d4 were
+verified stopped. Only d1 received runtime 003; d2/d4 retained runtime
+`pixelstreaming-runtime-20261009-003`. The final allowlisted fleet check found
+no current owner, session-mode, maintenance, warm-pool or runtime-status keys;
+d2's retained LastInstanceStartWarmPoolPolicyId is historical metadata.
+No disposable instance, host/task override or Stage/Prod promotion was performed.
+The fixed-cohort evidence includes these independently verified hosted completion
+gates alongside the separate pre-End startup observer limits. Both repositories
+remain on `perf/cold-start-iteration`; documentation commits do not alter the
+deployed runtime/API/Web/Unreal identities.
