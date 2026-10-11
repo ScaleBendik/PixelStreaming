@@ -1836,7 +1836,7 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $viewerIdleStop `
-    -Expected "scheduleStackRecycleRetry('replacement_recycle_in_progress')" `
+    -Expected "scheduleStackRecycleRetry('replacement_recycle_in_progress', false)" `
     -Message 'A new recycle token must remain pending while an earlier replacement marker is active.'
 
 Assert-ContainsText `

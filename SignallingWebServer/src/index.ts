@@ -24,12 +24,11 @@ import {
 } from './instance-agent-reconnect-grace-evidence-state';
 import { wireViewerIdleStop } from './viewer-idle-stop';
 import { wireInstanceAgent } from './instance-agent';
+import { createCommercialRuntimeStatusPublisher } from './commercial-runtime-status';
 import {
     createRuntimeStatusPublisher,
     createSessionNetworkPathReporter,
-    wireSignallingRuntimeStatus,
-    type RuntimeStatusPublisher,
-    type RuntimeStatusUpdate
+    wireSignallingRuntimeStatus
 } from './runtime-status';
 import configHandler from './paths/config';
 import playersHandler from './paths/players';
@@ -984,93 +983,12 @@ const baseRuntimeStatusPublisher = createRuntimeStatusPublisher({
     version: String(options.runtime_status_version || pjson.version || ''),
     logger: (message: string) => Logger.info(message)
 });
-let externallyPublishedCommercialReadinessBlock = false;
-let observedRuntimeStatus: string | null = null;
-let commercialReadinessReleaseTimer: NodeJS.Timeout | null = null;
-let pendingCommercialReadyUpdate: RuntimeStatusUpdate | null = null;
-let runtimeStatusPublisher: RuntimeStatusPublisher | null = null;
-const cancelCommercialReadinessRelease = (): void => {
-    pendingCommercialReadyUpdate = null;
-    if (commercialReadinessReleaseTimer) {
-        clearTimeout(commercialReadinessReleaseTimer);
-        commercialReadinessReleaseTimer = null;
-    }
-};
-const scheduleCommercialReadinessRelease = (
-    readyNotBeforeEpochSeconds: number,
-    update: RuntimeStatusUpdate
-): void => {
-    pendingCommercialReadyUpdate = { ...update, heartbeatOnly: false };
-    if (commercialReadinessReleaseTimer) {
-        return;
-    }
-
-    const delayMs = Math.max(25, (readyNotBeforeEpochSeconds + 1) * 1000 - Date.now());
-    commercialReadinessReleaseTimer = setTimeout(() => {
-        commercialReadinessReleaseTimer = null;
-        const readyUpdate = pendingCommercialReadyUpdate;
-        pendingCommercialReadyUpdate = null;
-        if (readyUpdate) {
-            void runtimeStatusPublisher?.publish(readyUpdate);
-        }
-    }, delayMs);
-    commercialReadinessReleaseTimer.unref();
-};
-runtimeStatusPublisher = baseRuntimeStatusPublisher
-    ? {
-          async publish(update) {
-              const normalizedStatus = update.status.trim().toLowerCase();
-              if (
-                  update.heartbeatOnly === true &&
-                  observedRuntimeStatus &&
-                  normalizedStatus !== observedRuntimeStatus
-              ) {
-                  return baseRuntimeStatusPublisher.publish(update);
-              }
-              if (update.heartbeatOnly !== true) {
-                  observedRuntimeStatus = normalizedStatus;
-                  if (normalizedStatus !== 'ready') {
-                      // Never replay a stale Ready edge if the replacement regresses while the
-                      // admission margin is still being held.
-                      cancelCommercialReadinessRelease();
-                  }
-              }
-
-              // The instance agent must observe the real Ready edge so it can durably finish a
-              // completed recovery recycle. External readiness stays fail-closed until that write succeeds.
-              instanceAgentClient?.recordRuntimeStatus(update);
-              const commercialReadinessBlockReason =
-                  connectTicketRuntimeGate.getReconnectGraceEvidenceJournalBlockReason() ??
-                  (connectTicketRuntimeGate.isCommercialRecoveryRequired()
-                      ? 'commercial session recovery is incomplete'
-                      : null);
-              if (normalizedStatus === 'ready' && commercialReadinessBlockReason) {
-                  const readyNotBeforeEpochSeconds =
-                      connectTicketRuntimeGate.getCommercialRecoveryReadyNotBeforeEpochSeconds();
-                  if (readyNotBeforeEpochSeconds !== null) {
-                      scheduleCommercialReadinessRelease(readyNotBeforeEpochSeconds, update);
-                  }
-                  const wasAlreadyBlocked = externallyPublishedCommercialReadinessBlock;
-                  externallyPublishedCommercialReadinessBlock = true;
-                  return baseRuntimeStatusPublisher.publish({
-                      ...update,
-                      status: 'resetting',
-                      reason: 'commercial_session_recovery_required',
-                      heartbeatOnly: wasAlreadyBlocked ? update.heartbeatOnly : false
-                  });
-              }
-
-              const forceReadyTransition =
-                  normalizedStatus === 'ready' && externallyPublishedCommercialReadinessBlock;
-              if (normalizedStatus === 'ready') {
-                  externallyPublishedCommercialReadinessBlock = false;
-                  cancelCommercialReadinessRelease();
-              }
-              return baseRuntimeStatusPublisher.publish(
-                  forceReadyTransition ? { ...update, heartbeatOnly: false } : update
-              );
-          }
-      }
+const runtimeStatusPublisher = baseRuntimeStatusPublisher
+    ? createCommercialRuntimeStatusPublisher(
+          baseRuntimeStatusPublisher,
+          connectTicketRuntimeGate,
+          instanceAgentClient
+      )
     : null;
 const sessionNetworkPathReporter = createSessionNetworkPathReporter({
     enabled: options.runtime_status,
