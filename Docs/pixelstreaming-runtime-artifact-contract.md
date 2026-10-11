@@ -143,6 +143,15 @@ When a portable Windows Node directory is included, its executable must report t
 
 Ordinary serving startup must not run `git fetch`, `npm install`, or TypeScript builds.
 
+The stack launcher can hand its successful lane and deployment-track tag
+resolutions to the initial Wilbur child through the launch-local
+`SCALEWORLD_PARENT_RESOLVED_STARTUP_METADATA` marker. Missing parent resolutions
+retain the child's existing lookup/retry behavior. The marker is cleared after
+handoff and in the child before component startup; standalone and watchdog
+launches resolve their own metadata. Maintenance, provisioning, update and
+entitlement checks remain fresh. Run `test_startup_metadata_handoff.ps1` with the
+launcher policy harness when changing this boundary.
+
 The external `manifest.json` is intentionally not embedded in the ZIP before checksum calculation, because it carries `runtimeZipSha256`. The installer copies the verified external manifest into the installed bundle root after extraction.
 
 ## Packaging

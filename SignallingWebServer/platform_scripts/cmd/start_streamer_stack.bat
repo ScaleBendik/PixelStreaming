@@ -264,7 +264,12 @@ set "TEST_UNREAL_RUNTIME_SCRIPT=%SCRIPT_DIR%..\powershell\test_scaleworld_runtim
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$wilbur = Get-CimInstance Win32_Process | Where-Object { ($_.Name -ieq '%WILBUR_PROCESS_NAME%' -and $_.CommandLine -like '*%WILBUR_COMMANDLINE_PATTERN%*') -or ($_.Name -ieq 'cmd.exe' -and $_.CommandLine -like '*%WILBUR_LAUNCHER_PATTERN%*') } | Select-Object -First 1; if ($wilbur) { exit 0 } else { exit 1 }"
 if errorlevel 1 (
   echo Starting Wilbur in %STACK_MODE% mode...
+  rem Pass only this launch's successful tag resolutions to the child. Watchdog
+  rem and later standalone launches must still resolve their own metadata.
+  set "SCALEWORLD_PARENT_RESOLVED_STARTUP_METADATA="
+  if defined RESOLVED_STREAMING_LANE if defined RESOLVED_DEPLOYMENT_TRACK set "SCALEWORLD_PARENT_RESOLVED_STARTUP_METADATA=true"
   start "ScaleWorld Wilbur" "%SCRIPT_DIR%start_dev_turn.bat" %*
+  set "SCALEWORLD_PARENT_RESOLVED_STARTUP_METADATA="
 ) else (
   echo Wilbur is already running or launch is already in progress. Skipping launch.
 )
