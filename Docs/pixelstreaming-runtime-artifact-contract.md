@@ -203,6 +203,14 @@ S3 manifests under `PixelStreamingRuntime/`. If S3 listing is not allowed, it
 prints a warning, falls back to local names, and probes the selected manifest key
 before publishing.
 
+Keep deployable bundle IDs in this numbered convention. The Windows installer
+extracts into `C:\PixelStreaming\rt-stage\<bundleId>.staging-<pid>` using .NET;
+longer custom IDs can push nested workspace dependency paths beyond the Windows
+path limit even when catalog and checksum validation pass. Validate the full
+extraction path when changing either the bundle naming or dependency layout.
+Place the installed 7-Zip directory on the publishing process's `PATH` to select
+the packager's supported fast ZIP path.
+
 Shortcut wrapper:
 
 ```text
