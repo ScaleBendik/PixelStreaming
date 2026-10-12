@@ -20,12 +20,90 @@ current-build tag publication and secret retrieval for the immediate replacement
 Later recycles and maintenance/validation launches retain full preparation.
 `SCALEWORLD_STACK_PREPARATION_REUSE_ENABLED=false` disables this optimization.
 
-Hosted acceptance is pending. Compare disabled and enabled runs of the same
-candidate at the captured Dev task delay; keep runtime `20261011-003` as rollback.
-The temporary early-boot probe only records local/IMDS prerequisite availability.
-It does not launch stack components or prove GPU encoder readiness. Neither the
-20-second fleet default nor the previous isolated Dev 15-second setting changes.
-Legacy migration safety remains a separate promotion gate.
+The corrected implementation is `7e753c6e`, deployed only to Dev d1 as
+`pixelstreaming-runtime-20261012-004`. Both `75768d8f` and `d17821a` remain
+ancestors. Keep **`pixelstreaming-runtime-20261011-003`** as the rollback baseline.
+The 20-second fleet default and the previous isolated Dev 15-second setting are
+unchanged. Legacy migration safety remains a separate promotion gate.
+
+### Dev result and qualification
+
+One matched recovery comparison used the same d1 AMI, Unreal build, API/Web,
+portable Node 22.23.2 and task XML. The control disabled reuse in `24486fb9`;
+the corrected candidate enabled it in `7e753c6e`. The correction preserves
+inherited TURN/instance-ID inputs only after reuse validation; disabled and
+ordinary initialization retain their previous behavior.
+
+| Recovery measurement | Disabled control | Corrected reuse | Saving |
+| --- | ---: | ---: | ---: |
+| Replacement CMD birth to Node birth | 19.362 s | 13.597 s | 5.765 s |
+| Replacement CMD birth to Shipping birth | 23.308 s | 18.338 s | 4.970 s |
+| Request click to runtime Ready tag | 145.012 s | 138.396 s | 6.616 s |
+
+These are one-pair observations, not a distribution or proof that the result is
+as fast as legacy 003. Runtime Ready is the `signalling-server/stream_stable`
+status timestamp. Sparse page samples do not measure exact API/UI Ready or
+user-facing savings. Ordinary starts were 107.123 and 111.991 seconds to runtime
+Ready; their launcher-to-Node preparation was 27.532 and 27.487 seconds. Do not
+attribute ordinary whole-start variation to preparation reuse.
+
+The corrected recovery had a source-bound receipt, an observed live recycler
+and independent monitor, and no old Node/native process in the replacement
+sample. Its completed lease retained the exact replacement Node identity;
+the final sample had one Node and one Shipping process. The recovery cutoff
+and Ready hold were retained. Playback reached 10,607 frames over 353 seconds
+at 30 FPS, with zero displayed packet loss or dropped frames. Normal End Session
+was used. Helper log content had already been cleared before collection;
+ownership evidence therefore uses captured state/processes and startup journals.
+
+The first enabled canary (`20261012-003`, `24486fb9`) failed: existing launcher
+initialization cleared TURN values before the new loader shortcut. Required-field
+checks refused Node and recovery timed out; it never became Ready. End Session
+could not complete through the absent runtime, so the Dev admin provider-stop
+action cleaned it up. The real CMD fixture reproduces that failure and passes
+the corrected reuse, disabled and ordinary modes. This failure is retained in
+the evidence, not counted as a successful timing sample. `20261012-002` was an
+unused packaging attempt without portable Node and was never deployed.
+
+Local gates passed: preparation 23 assertions, lease 129, maintenance integration
+51 assertions in five real CMD/PowerShell scenarios, monitor and launcher-policy
+checks, Wilbur 124 tests, lint/type checking and the full build. The concurrency
+suite passed 239 checks in 39 cases with `-TimingScale 2`; short default harness
+checkpoints failed on both the candidate and unchanged prior production code.
+Production waits were not scaled. Wider hosted/fault and migration acceptance
+remains open. See the [bounded Dev receipt](evidence/recovery-preparation-hosted-20261012.json).
+
+### Earlier preparation investigation
+
+Seven read-only boot probes observed IMDS identity, instance-role credentials,
+local runtime metadata and a healthy GPU device enumeration at 11.94–12.38
+seconds after OS boot. This does not prove early SSM parameter/API access,
+required volume readiness or GPU encoder readiness. The captured 15-second Dev
+task began its launcher about 20 seconds after boot, suggesting roughly eight
+seconds of overlap to investigate. A larger window at the fleet's 20-second
+delay is a hypothesis, not measured savings.
+
+The next bounded experiment should prepare instance identity, physical local
+runtime/build resolution and parameter I/O early, then retain fresh control
+checks and the existing spawn/ownership gates. One boot-bound preparation actor
+should have a bounded lifetime and a full-preparation fallback. Do not infer
+that Node/Unreal can safely start with zero delay from these probes.
+
+Two alternative channels merit evaluation: [IMDS instance tags](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/work-with-tags-in-IMDS.html)
+for routing inputs (currently disabled on d1), and [EC2Launch v2 stages](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2launch-v2.html)
+for sequencing preparation after network initialization. Metadata tags still
+need reachable IMDS and freshness checks; EC2Launch stages do not establish GPU
+encoding readiness. Neither setting was changed in this pass.
+
+The original task XML was restored byte-for-byte by hash. The temporary boot
+probe was removed and the original absent machine override restored; diagnostics
+were retained. A late read-only SSM verification timed out during shutdown and
+was canceled. Final provider stop is recorded in the receipt.
+
+One page sample in final preparation lacked the labeled numeric progress value.
+Other captured percentages were nondecreasing. Visual behavior during that gap
+was not captured; it is logged for a separate projection/permission investigation.
+This runtime pass did not change Web estimates or progress rendering.
 
 ## Scope and baseline
 

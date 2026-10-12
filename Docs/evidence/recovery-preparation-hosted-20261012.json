@@ -1,0 +1,1923 @@
+{
+    "schemaVersion": 1,
+    "scope": "Bounded Dev preparation reuse follow-up",
+    "target": {
+        "webCommit": "f512a2d",
+        "instanceId": "i-0ce5ffd16bd50eb24",
+        "apiCommit": "e9756bf",
+        "ami": "ami-0741b9701d29bbb6d",
+        "portableNode": "v22.23.2",
+        "unrealBuild": "ScaleWorld_20261008b",
+        "region": "eu-north-1"
+    },
+    "branch": "perf/recovery-preparation-once",
+    "candidate": {
+        "zipSha256": "7727a892adffbf2b348ed957e586ef992ca05f389c6ca3406aaaa7158df765da",
+        "sourceDirty": false,
+        "contract": "2026-10-11.1",
+        "artifact": "pixelstreaming-runtime-20261012-004",
+        "packagingManifestNpm": "11.6.0",
+        "compiledWithNpm": "10.9.8",
+        "sourceCommit": "7e753c6ea395e0ea2c97443141516e4dd59a9394"
+    },
+    "rollbackArtifact": "pixelstreaming-runtime-20261011-003",
+    "controlArtifact": "pixelstreaming-runtime-20261012-003",
+    "controlSource": "24486fb96390e40ab488983ce59e19ea1d1a4f3b",
+    "timings": {
+        "qualification": "One recovery pair; no distribution or exact UI/API Ready measurement. Ordinary whole-start variation is not attributed to reuse.",
+        "runtimeReadySavingSeconds": 6.616,
+        "recoveryCorrected": {
+            "clickUtc": "2026-10-12T11:57:45.9820000+00:00",
+            "bootUtc": "2026-10-12T11:57:57.5312360Z",
+            "runtimeReadyUtc": "2026-10-12T12:00:04.3780000+00:00",
+            "clickToRuntimeReadySeconds": 138.396,
+            "ownerBirthUtc": "2026-10-12T11:58:52.3419920Z",
+            "nodeBirthUtc": "2026-10-12T11:59:05.9390320Z",
+            "shippingBirthUtc": "2026-10-12T11:59:10.6796490Z",
+            "ownerToNodeSeconds": 13.597,
+            "ownerToShippingSeconds": 18.338,
+            "nodeCount": 1,
+            "shippingCount": 1,
+            "taskHash": "8f81c9acd83ff2aec76d24fda5905fc62df9a71874c0c930a22b2a52e4d81323",
+            "bootDelay": "PT15S",
+            "recoveryPreparationPresent": true,
+            "leasePhase": "completed",
+            "generationId": "7904ec0f-fa53-4853-b249-256816a98009",
+            "journalSelection": {
+                "fromUtc": "2026-10-12T11:57:45.9820000Z",
+                "toUtc": "2026-10-12T12:01:45.1210764Z",
+                "fileOffset": 0,
+                "maxFiles": 6,
+                "maxOutputChars": 20000,
+                "totalMatchingFiles": 6,
+                "nextFileOffset": 6,
+                "hasMore": false
+            },
+            "journalIntegrity": [
+                {
+                    "fileName": "dbed8877bedd43b39bcb0747f93e525a.instance-config.86e0bf59965644a28f91b776335cc3c1.jsonl",
+                    "status": "readable",
+                    "rejectedRecords": 0,
+                    "partialTail": false,
+                    "omittedRecords": 0
+                },
+                {
+                    "fileName": "700555de2791423382a8ce326a3b99fa.wilbur.76cb7b93d85647448c2a479d04325f54.cmd.log",
+                    "status": "readable",
+                    "rejectedRecords": 0,
+                    "partialTail": false,
+                    "omittedRecords": 0
+                },
+                {
+                    "fileName": "dbed8877bedd43b39bcb0747f93e525a.stack.7b3577634e7f4de59dbd99e91c136a0b.cmd.log",
+                    "status": "readable",
+                    "rejectedRecords": 0,
+                    "partialTail": false,
+                    "omittedRecords": 0
+                },
+                {
+                    "fileName": "8978d5de16b9485c9b1c91a35fd47881.instance-config.0e54d18c0f52419ba843dd79b246de58.jsonl",
+                    "status": "readable",
+                    "rejectedRecords": 0,
+                    "partialTail": false,
+                    "omittedRecords": 0
+                },
+                {
+                    "fileName": "c89123d2838f48bf9e1b92395bb9f840.wilbur.818e73a22d494d3883837313dccce3f9.cmd.log",
+                    "status": "readable",
+                    "rejectedRecords": 0,
+                    "partialTail": false,
+                    "omittedRecords": 0
+                },
+                {
+                    "fileName": "8978d5de16b9485c9b1c91a35fd47881.stack.8901259f2e3b481a9007771e73e42082.cmd.log",
+                    "status": "readable",
+                    "rejectedRecords": 0,
+                    "partialTail": false,
+                    "omittedRecords": 0
+                }
+            ],
+            "phases": [
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "metadata.started",
+                    "utc": "2026-10-12T11:58:33.6700000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "metadata.completed",
+                    "utc": "2026-10-12T11:58:33.6800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "parameters.started",
+                    "utc": "2026-10-12T11:58:33.7600000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "parameters.completed",
+                    "utc": "2026-10-12T11:58:34.9800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "bootstrap_secret.started",
+                    "utc": "2026-10-12T11:58:35.0100000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "bootstrap_secret.completed",
+                    "utc": "2026-10-12T11:58:36.1200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "identity.completed",
+                    "utc": "2026-10-12T11:58:38.6200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "heartbeat.started",
+                    "utc": "2026-10-12T11:58:40.9400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "node.started",
+                    "utc": "2026-10-12T11:58:43.2700000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.started",
+                    "utc": "2026-10-12T11:58:18.3200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.lane.attempt_1",
+                    "utc": "2026-10-12T11:58:22.0200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.track.attempt_1",
+                    "utc": "2026-10-12T11:58:22.0400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.delivery.attempt_1",
+                    "utc": "2026-10-12T11:58:22.0500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.completed",
+                    "utc": "2026-10-12T11:58:22.2600000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "identity.started",
+                    "utc": "2026-10-12T11:58:22.2700000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "identity.completed",
+                    "utc": "2026-10-12T11:58:24.6400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "update_control.started",
+                    "utc": "2026-10-12T11:58:24.6500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "update_control.completed",
+                    "utc": "2026-10-12T11:58:26.3800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "provisioning_control.started",
+                    "utc": "2026-10-12T11:58:26.3900000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "provisioning_control.completed",
+                    "utc": "2026-10-12T11:58:28.0300000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "maintenance_control.started",
+                    "utc": "2026-10-12T11:58:28.0400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "maintenance_control.completed",
+                    "utc": "2026-10-12T11:58:29.5600000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "service_class.started",
+                    "utc": "2026-10-12T11:58:29.5700000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "service_class.completed",
+                    "utc": "2026-10-12T11:58:31.0700000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "old_roots.started",
+                    "utc": "2026-10-12T11:58:31.0800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "old_roots.completed",
+                    "utc": "2026-10-12T11:58:31.4400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "config.started",
+                    "utc": "2026-10-12T11:58:31.4500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "config.completed",
+                    "utc": "2026-10-12T11:58:33.0200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "wilbur_process_check.completed",
+                    "utc": "2026-10-12T11:58:33.2800000Z",
+                    "exitCode": 1
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "wilbur_launch.scheduled",
+                    "utc": "2026-10-12T11:58:33.2900000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "wilbur_tcp.started",
+                    "utc": "2026-10-12T11:58:33.3000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "wilbur_tcp.completed",
+                    "utc": "2026-10-12T11:58:47.5300000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "unreal_launch.started",
+                    "utc": "2026-10-12T11:58:47.5400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "phase": "metadata.started",
+                    "utc": "2026-10-12T11:59:00.2200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "phase": "metadata.completed",
+                    "utc": "2026-10-12T11:59:00.2200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "phase": "parameters.started",
+                    "utc": "2026-10-12T11:59:00.2900000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "phase": "parameters.completed",
+                    "utc": "2026-10-12T11:59:00.3000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "phase": "bootstrap_secret.started",
+                    "utc": "2026-10-12T11:59:00.3200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "phase": "bootstrap_secret.completed",
+                    "utc": "2026-10-12T11:59:00.3300000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "phase": "identity.completed",
+                    "utc": "2026-10-12T11:59:00.3400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "phase": "heartbeat.started",
+                    "utc": "2026-10-12T11:59:02.6600000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "phase": "node.started",
+                    "utc": "2026-10-12T11:59:04.9800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "metadata.started",
+                    "utc": "2026-10-12T11:58:53.7100000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "metadata.lane.attempt_1",
+                    "utc": "2026-10-12T11:58:55.3500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "metadata.track.attempt_1",
+                    "utc": "2026-10-12T11:58:55.3600000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "metadata.completed",
+                    "utc": "2026-10-12T11:58:55.5700000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "maintenance_control.started",
+                    "utc": "2026-10-12T11:58:55.5800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "maintenance_control.completed",
+                    "utc": "2026-10-12T11:58:57.1500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "service_class.started",
+                    "utc": "2026-10-12T11:58:57.1600000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "service_class.completed",
+                    "utc": "2026-10-12T11:58:58.7200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "old_roots.started",
+                    "utc": "2026-10-12T11:58:58.7200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "old_roots.completed",
+                    "utc": "2026-10-12T11:58:59.0800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "config.started",
+                    "utc": "2026-10-12T11:58:59.0800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "config.completed",
+                    "utc": "2026-10-12T11:58:59.5500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "wilbur_process_check.completed",
+                    "utc": "2026-10-12T11:58:59.8100000Z",
+                    "exitCode": 1
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "wilbur_launch.scheduled",
+                    "utc": "2026-10-12T11:58:59.8100000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "wilbur_tcp.started",
+                    "utc": "2026-10-12T11:58:59.8200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "wilbur_tcp.completed",
+                    "utc": "2026-10-12T11:59:07.5700000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "unreal_launch.started",
+                    "utc": "2026-10-12T11:59:07.5700000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "unreal_launch.completed",
+                    "utc": "2026-10-12T11:59:12.6400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "stack.completed",
+                    "utc": "2026-10-12T11:59:13.9400000Z",
+                    "exitCode": 0
+                }
+            ]
+        },
+        "ordinaryCorrected": {
+            "clickUtc": "2026-10-12T11:48:49.4870000+00:00",
+            "bootUtc": "2026-10-12T11:49:02.5000000Z",
+            "runtimeReadyUtc": "2026-10-12T11:50:41.4780000+00:00",
+            "clickToRuntimeReadySeconds": 111.991,
+            "ownerBirthUtc": "2026-10-12T11:49:23.0107930Z",
+            "nodeBirthUtc": "2026-10-12T11:49:50.4980440Z",
+            "shippingBirthUtc": "2026-10-12T11:49:56.8538000Z",
+            "ownerToNodeSeconds": 27.487,
+            "ownerToShippingSeconds": 33.843,
+            "nodeCount": 1,
+            "shippingCount": 1,
+            "taskHash": "8f81c9acd83ff2aec76d24fda5905fc62df9a71874c0c930a22b2a52e4d81323",
+            "bootDelay": "PT15S",
+            "recoveryPreparationPresent": false,
+            "leasePhase": "completed",
+            "generationId": "d95e51aa-a753-4617-a271-cf3767f74731",
+            "journalSelection": {
+                "fromUtc": "2026-10-12T11:48:49.4870000Z",
+                "toUtc": "2026-10-12T11:50:59.0779014Z",
+                "fileOffset": 0,
+                "maxFiles": 6,
+                "maxOutputChars": 20000,
+                "totalMatchingFiles": 3,
+                "nextFileOffset": 3,
+                "hasMore": false
+            },
+            "journalIntegrity": [
+                {
+                    "fileName": "be155c87533947219b22183f8173bf2f.instance-config.98abc4490a3b455fa5a120477782384c.jsonl",
+                    "status": "readable",
+                    "rejectedRecords": 0,
+                    "partialTail": false,
+                    "omittedRecords": 0
+                },
+                {
+                    "fileName": "383c114bdf68403a999306cfeafc00e6.wilbur.003d93c10233451c8048807543c92227.cmd.log",
+                    "status": "readable",
+                    "rejectedRecords": 0,
+                    "partialTail": false,
+                    "omittedRecords": 0
+                },
+                {
+                    "fileName": "be155c87533947219b22183f8173bf2f.stack.a24aae29781042b9afa5065275e46661.cmd.log",
+                    "status": "readable",
+                    "rejectedRecords": 0,
+                    "partialTail": false,
+                    "omittedRecords": 0
+                }
+            ],
+            "phases": [
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "metadata.started",
+                    "utc": "2026-10-12T11:49:39.7400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "metadata.completed",
+                    "utc": "2026-10-12T11:49:39.7400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "parameters.started",
+                    "utc": "2026-10-12T11:49:39.8300000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "parameters.completed",
+                    "utc": "2026-10-12T11:49:41.0000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "bootstrap_secret.started",
+                    "utc": "2026-10-12T11:49:41.0400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "bootstrap_secret.completed",
+                    "utc": "2026-10-12T11:49:42.1400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "identity.completed",
+                    "utc": "2026-10-12T11:49:44.6500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "heartbeat.started",
+                    "utc": "2026-10-12T11:49:46.9800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "node.started",
+                    "utc": "2026-10-12T11:49:49.3100000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.started",
+                    "utc": "2026-10-12T11:49:24.3300000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.lane.attempt_1",
+                    "utc": "2026-10-12T11:49:28.0200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.track.attempt_1",
+                    "utc": "2026-10-12T11:49:28.0400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.delivery.attempt_1",
+                    "utc": "2026-10-12T11:49:28.0500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.completed",
+                    "utc": "2026-10-12T11:49:28.2700000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "identity.started",
+                    "utc": "2026-10-12T11:49:28.2800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "identity.completed",
+                    "utc": "2026-10-12T11:49:30.6500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "update_control.started",
+                    "utc": "2026-10-12T11:49:30.6600000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "update_control.completed",
+                    "utc": "2026-10-12T11:49:32.4100000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "provisioning_control.started",
+                    "utc": "2026-10-12T11:49:32.4200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "provisioning_control.completed",
+                    "utc": "2026-10-12T11:49:34.0700000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "maintenance_control.started",
+                    "utc": "2026-10-12T11:49:34.0800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "maintenance_control.completed",
+                    "utc": "2026-10-12T11:49:35.5800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "service_class.started",
+                    "utc": "2026-10-12T11:49:35.5900000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "service_class.completed",
+                    "utc": "2026-10-12T11:49:37.1000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "old_roots.started",
+                    "utc": "2026-10-12T11:49:37.1100000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "old_roots.completed",
+                    "utc": "2026-10-12T11:49:37.4700000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "config.started",
+                    "utc": "2026-10-12T11:49:37.4800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "config.completed",
+                    "utc": "2026-10-12T11:49:39.0800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "wilbur_process_check.completed",
+                    "utc": "2026-10-12T11:49:39.3400000Z",
+                    "exitCode": 1
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "wilbur_launch.scheduled",
+                    "utc": "2026-10-12T11:49:39.3500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "wilbur_tcp.started",
+                    "utc": "2026-10-12T11:49:39.3600000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "wilbur_tcp.completed",
+                    "utc": "2026-10-12T11:49:53.6200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "unreal_launch.started",
+                    "utc": "2026-10-12T11:49:53.6300000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "unreal_launch.completed",
+                    "utc": "2026-10-12T11:49:58.7100000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "stack.completed",
+                    "utc": "2026-10-12T11:50:00.2500000Z",
+                    "exitCode": 0
+                }
+            ]
+        },
+        "replacementNodeSavingSeconds": 5.765,
+        "recoveryDisabled": {
+            "clickUtc": "2026-10-12T11:03:43.0210000+00:00",
+            "bootUtc": "2026-10-12T11:03:54.5000000Z",
+            "runtimeReadyUtc": "2026-10-12T11:06:08.0330000+00:00",
+            "clickToRuntimeReadySeconds": 145.012,
+            "ownerBirthUtc": "2026-10-12T11:04:51.2285560Z",
+            "nodeBirthUtc": "2026-10-12T11:05:10.5902460Z",
+            "shippingBirthUtc": "2026-10-12T11:05:14.5360920Z",
+            "ownerToNodeSeconds": 19.362,
+            "ownerToShippingSeconds": 23.308,
+            "nodeCount": 1,
+            "shippingCount": 1,
+            "taskHash": "8f81c9acd83ff2aec76d24fda5905fc62df9a71874c0c930a22b2a52e4d81323",
+            "bootDelay": "PT15S",
+            "recoveryPreparationPresent": null,
+            "leasePhase": "completed",
+            "generationId": "c9687e12-8534-4fcc-85a9-59606544f9bf",
+            "journalSelection": {
+                "fromUtc": "2026-10-12T11:03:43.0210000Z",
+                "toUtc": "2026-10-12T11:06:46.2380166Z",
+                "fileOffset": 0,
+                "maxFiles": 6,
+                "maxOutputChars": 20000,
+                "totalMatchingFiles": 6,
+                "nextFileOffset": 6,
+                "hasMore": false
+            },
+            "journalIntegrity": [
+                {
+                    "fileName": "c9c45686ee36491d87b2974c8e73cc47.instance-config.1c30e0bed23e46a6b3e3686ff181baae.jsonl",
+                    "status": "readable",
+                    "rejectedRecords": 0,
+                    "partialTail": false,
+                    "omittedRecords": 0
+                },
+                {
+                    "fileName": "e034423f1b3d4ef486f13d5a7640d202.wilbur.c6f71aedf025478093a2be26c5d4bafa.cmd.log",
+                    "status": "readable",
+                    "rejectedRecords": 0,
+                    "partialTail": false,
+                    "omittedRecords": 0
+                },
+                {
+                    "fileName": "c9c45686ee36491d87b2974c8e73cc47.stack.185536032511402c961cdf703897488d.cmd.log",
+                    "status": "readable",
+                    "rejectedRecords": 0,
+                    "partialTail": false,
+                    "omittedRecords": 0
+                },
+                {
+                    "fileName": "dae08a463d7649218031eb52c44a9da2.instance-config.df10fec4b50d4ff3aef9da513372cf9a.jsonl",
+                    "status": "readable",
+                    "rejectedRecords": 0,
+                    "partialTail": false,
+                    "omittedRecords": 0
+                },
+                {
+                    "fileName": "ed6efc7d81bf45ccbb13fa1fb6d00635.wilbur.6d225ab255aa469e8b6567fe465ae954.cmd.log",
+                    "status": "readable",
+                    "rejectedRecords": 0,
+                    "partialTail": false,
+                    "omittedRecords": 0
+                },
+                {
+                    "fileName": "dae08a463d7649218031eb52c44a9da2.stack.9009403dfcad4f55ac44d53da52eeebc.cmd.log",
+                    "status": "readable",
+                    "rejectedRecords": 0,
+                    "partialTail": false,
+                    "omittedRecords": 0
+                }
+            ],
+            "phases": [
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "metadata.started",
+                    "utc": "2026-10-12T11:04:31.6000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "metadata.completed",
+                    "utc": "2026-10-12T11:04:31.6100000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "parameters.started",
+                    "utc": "2026-10-12T11:04:31.7000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "parameters.completed",
+                    "utc": "2026-10-12T11:04:32.9500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "bootstrap_secret.started",
+                    "utc": "2026-10-12T11:04:32.9900000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "bootstrap_secret.completed",
+                    "utc": "2026-10-12T11:04:34.1900000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "identity.completed",
+                    "utc": "2026-10-12T11:04:36.7100000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "heartbeat.started",
+                    "utc": "2026-10-12T11:04:39.0400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "node.started",
+                    "utc": "2026-10-12T11:04:41.3600000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.started",
+                    "utc": "2026-10-12T11:04:15.9500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.lane.attempt_1",
+                    "utc": "2026-10-12T11:04:19.6500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.track.attempt_1",
+                    "utc": "2026-10-12T11:04:19.6600000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.delivery.attempt_1",
+                    "utc": "2026-10-12T11:04:19.6800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.completed",
+                    "utc": "2026-10-12T11:04:19.8900000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "identity.started",
+                    "utc": "2026-10-12T11:04:19.9000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "identity.completed",
+                    "utc": "2026-10-12T11:04:22.2700000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "update_control.started",
+                    "utc": "2026-10-12T11:04:22.2900000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "update_control.completed",
+                    "utc": "2026-10-12T11:04:24.0200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "provisioning_control.started",
+                    "utc": "2026-10-12T11:04:24.0300000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "provisioning_control.completed",
+                    "utc": "2026-10-12T11:04:25.6900000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "maintenance_control.started",
+                    "utc": "2026-10-12T11:04:25.7000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "maintenance_control.completed",
+                    "utc": "2026-10-12T11:04:27.2300000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "service_class.started",
+                    "utc": "2026-10-12T11:04:27.3200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "service_class.completed",
+                    "utc": "2026-10-12T11:04:28.9000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "old_roots.started",
+                    "utc": "2026-10-12T11:04:28.9200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "old_roots.completed",
+                    "utc": "2026-10-12T11:04:29.2700000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "config.started",
+                    "utc": "2026-10-12T11:04:29.2800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "config.completed",
+                    "utc": "2026-10-12T11:04:30.9300000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "wilbur_process_check.completed",
+                    "utc": "2026-10-12T11:04:31.1800000Z",
+                    "exitCode": 1
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "wilbur_launch.scheduled",
+                    "utc": "2026-10-12T11:04:31.2000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "wilbur_tcp.started",
+                    "utc": "2026-10-12T11:04:31.2100000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "wilbur_tcp.completed",
+                    "utc": "2026-10-12T11:04:46.4700000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "unreal_launch.started",
+                    "utc": "2026-10-12T11:04:46.4900000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "phase": "metadata.started",
+                    "utc": "2026-10-12T11:05:01.2800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "phase": "metadata.completed",
+                    "utc": "2026-10-12T11:05:01.2800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "phase": "parameters.started",
+                    "utc": "2026-10-12T11:05:01.3500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "phase": "parameters.completed",
+                    "utc": "2026-10-12T11:05:02.4700000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "phase": "bootstrap_secret.started",
+                    "utc": "2026-10-12T11:05:02.5000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "phase": "bootstrap_secret.completed",
+                    "utc": "2026-10-12T11:05:02.5100000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "phase": "identity.completed",
+                    "utc": "2026-10-12T11:05:05.0000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "phase": "heartbeat.started",
+                    "utc": "2026-10-12T11:05:07.3200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "recovery",
+                    "phase": "node.started",
+                    "utc": "2026-10-12T11:05:09.6400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "metadata.started",
+                    "utc": "2026-10-12T11:04:52.4000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "metadata.lane.attempt_1",
+                    "utc": "2026-10-12T11:04:54.0400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "metadata.track.attempt_1",
+                    "utc": "2026-10-12T11:04:54.0500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "metadata.completed",
+                    "utc": "2026-10-12T11:04:54.2500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "identity.started",
+                    "utc": "2026-10-12T11:04:54.2600000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "identity.completed",
+                    "utc": "2026-10-12T11:04:56.6000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "maintenance_control.started",
+                    "utc": "2026-10-12T11:04:56.6100000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "maintenance_control.completed",
+                    "utc": "2026-10-12T11:04:58.2100000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "service_class.started",
+                    "utc": "2026-10-12T11:04:58.2200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "service_class.completed",
+                    "utc": "2026-10-12T11:04:59.8100000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "old_roots.started",
+                    "utc": "2026-10-12T11:04:59.8200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "old_roots.completed",
+                    "utc": "2026-10-12T11:05:00.1600000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "config.started",
+                    "utc": "2026-10-12T11:05:00.1700000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "config.completed",
+                    "utc": "2026-10-12T11:05:00.6400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "wilbur_process_check.completed",
+                    "utc": "2026-10-12T11:05:00.8900000Z",
+                    "exitCode": 1
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "wilbur_launch.scheduled",
+                    "utc": "2026-10-12T11:05:00.9000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "wilbur_tcp.started",
+                    "utc": "2026-10-12T11:05:00.9000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "wilbur_tcp.completed",
+                    "utc": "2026-10-12T11:05:11.6500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "unreal_launch.started",
+                    "utc": "2026-10-12T11:05:11.6600000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "unreal_launch.completed",
+                    "utc": "2026-10-12T11:05:16.5000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "recovery",
+                    "phase": "stack.completed",
+                    "utc": "2026-10-12T11:05:17.7100000Z",
+                    "exitCode": 0
+                }
+            ]
+        },
+        "ordinaryDisabled": {
+            "clickUtc": "2026-10-12T10:48:12.8410000+00:00",
+            "bootUtc": "2026-10-12T10:48:23.5000000Z",
+            "runtimeReadyUtc": "2026-10-12T10:49:59.9640000+00:00",
+            "clickToRuntimeReadySeconds": 107.123,
+            "ownerBirthUtc": "2026-10-12T10:48:43.6579690Z",
+            "nodeBirthUtc": "2026-10-12T10:49:11.1903370Z",
+            "shippingBirthUtc": "2026-10-12T10:49:16.9792940Z",
+            "ownerToNodeSeconds": 27.532,
+            "ownerToShippingSeconds": 33.321,
+            "nodeCount": 1,
+            "shippingCount": 1,
+            "taskHash": "8f81c9acd83ff2aec76d24fda5905fc62df9a71874c0c930a22b2a52e4d81323",
+            "bootDelay": "PT15S",
+            "recoveryPreparationPresent": null,
+            "leasePhase": "completed",
+            "generationId": "7c4c56b4-4a1d-4bb7-bab4-4558244c0f7f",
+            "journalSelection": {
+                "fromUtc": "2026-10-12T10:48:12.0000000Z",
+                "toUtc": "2026-10-12T10:51:24.3477032Z",
+                "fileOffset": 0,
+                "maxFiles": 6,
+                "maxOutputChars": 20000,
+                "totalMatchingFiles": 3,
+                "nextFileOffset": 3,
+                "hasMore": false
+            },
+            "journalIntegrity": [
+                {
+                    "fileName": "41c30f838ff6455a8d466b3bac3c3ee4.instance-config.8ef5c1afa12146569b4c28ac37dcff9a.jsonl",
+                    "status": "readable",
+                    "rejectedRecords": 0,
+                    "partialTail": false,
+                    "omittedRecords": 0
+                },
+                {
+                    "fileName": "9eb80f1d5e63439ab6ac95bc5a7ab778.wilbur.2cbc43267b474aba976d5338aaa9eaad.cmd.log",
+                    "status": "readable",
+                    "rejectedRecords": 0,
+                    "partialTail": false,
+                    "omittedRecords": 0
+                },
+                {
+                    "fileName": "41c30f838ff6455a8d466b3bac3c3ee4.stack.cef8253ed5964a55abe4c07db11d736b.cmd.log",
+                    "status": "readable",
+                    "rejectedRecords": 0,
+                    "partialTail": false,
+                    "omittedRecords": 0
+                }
+            ],
+            "phases": [
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "metadata.started",
+                    "utc": "2026-10-12T10:49:00.4000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "metadata.completed",
+                    "utc": "2026-10-12T10:49:00.4100000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "parameters.started",
+                    "utc": "2026-10-12T10:49:00.5000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "parameters.completed",
+                    "utc": "2026-10-12T10:49:01.7000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "bootstrap_secret.started",
+                    "utc": "2026-10-12T10:49:01.7300000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "bootstrap_secret.completed",
+                    "utc": "2026-10-12T10:49:02.8500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "identity.completed",
+                    "utc": "2026-10-12T10:49:05.3500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "heartbeat.started",
+                    "utc": "2026-10-12T10:49:07.6900000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "wilbur",
+                    "mode": "normal",
+                    "phase": "node.started",
+                    "utc": "2026-10-12T10:49:10.0100000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.started",
+                    "utc": "2026-10-12T10:48:45.0300000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.lane.attempt_1",
+                    "utc": "2026-10-12T10:48:48.7200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.track.attempt_1",
+                    "utc": "2026-10-12T10:48:48.7400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.delivery.attempt_1",
+                    "utc": "2026-10-12T10:48:48.7600000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "metadata.completed",
+                    "utc": "2026-10-12T10:48:48.9700000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "identity.started",
+                    "utc": "2026-10-12T10:48:48.9800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "identity.completed",
+                    "utc": "2026-10-12T10:48:51.3500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "update_control.started",
+                    "utc": "2026-10-12T10:48:51.3700000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "update_control.completed",
+                    "utc": "2026-10-12T10:48:53.0900000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "provisioning_control.started",
+                    "utc": "2026-10-12T10:48:53.1000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "provisioning_control.completed",
+                    "utc": "2026-10-12T10:48:54.7300000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "maintenance_control.started",
+                    "utc": "2026-10-12T10:48:54.7400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "maintenance_control.completed",
+                    "utc": "2026-10-12T10:48:56.2500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "service_class.started",
+                    "utc": "2026-10-12T10:48:56.2600000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "service_class.completed",
+                    "utc": "2026-10-12T10:48:57.7700000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "old_roots.started",
+                    "utc": "2026-10-12T10:48:57.7800000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "old_roots.completed",
+                    "utc": "2026-10-12T10:48:58.1400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "config.started",
+                    "utc": "2026-10-12T10:48:58.1500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "config.completed",
+                    "utc": "2026-10-12T10:48:59.7500000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "wilbur_process_check.completed",
+                    "utc": "2026-10-12T10:49:00.0100000Z",
+                    "exitCode": 1
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "wilbur_launch.scheduled",
+                    "utc": "2026-10-12T10:49:00.0200000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "wilbur_tcp.started",
+                    "utc": "2026-10-12T10:49:00.0300000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "wilbur_tcp.completed",
+                    "utc": "2026-10-12T10:49:14.3000000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "unreal_launch.started",
+                    "utc": "2026-10-12T10:49:14.3100000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "unreal_launch.completed",
+                    "utc": "2026-10-12T10:49:18.8400000Z",
+                    "exitCode": 0
+                },
+                {
+                    "role": "stack",
+                    "mode": "normal",
+                    "phase": "stack.completed",
+                    "utc": "2026-10-12T10:49:20.0400000Z",
+                    "exitCode": 0
+                }
+            ]
+        },
+        "replacementShippingSavingSeconds": 4.97
+    },
+    "ui": {
+        "recoveryControlReadyObservedMs": 149194,
+        "recoveryCorrectedFirstReadyObservedMs": 175958,
+        "qualification": "Sparse observations bound transitions. One final preparation sample lacked the labeled numeric progress value; no visual sample captured that gap.",
+        "recoveryCorrectedLastNotReadyMs": 131736
+    },
+    "ownership": {
+        "processes": [
+            {
+                "pid": 1968,
+                "parentPid": 1624,
+                "name": "powershell.exe",
+                "role": "recycler",
+                "creationUtc": "2026-10-12T11:58:47.7432490Z"
+            },
+            {
+                "pid": 6088,
+                "parentPid": 1968,
+                "name": "powershell.exe",
+                "role": "monitor",
+                "creationUtc": "2026-10-12T11:58:49.2711550Z"
+            },
+            {
+                "pid": 4200,
+                "parentPid": 1968,
+                "name": "cmd.exe",
+                "role": "stack-launcher",
+                "creationUtc": "2026-10-12T11:58:52.3419920Z"
+            }
+        ],
+        "helperLogQualification": "Log was empty by later collection; use captured processes/state and immutable startup journals.",
+        "ticketState": {
+            "rejectTicketsIssuedAtOrBeforeUtc": "2026-10-12T11:59:58.000Z",
+            "reason": "commercial_recovery_ready_margin"
+        },
+        "completedProcesses": [
+            {
+                "pid": 5620,
+                "parentPid": 5240,
+                "name": "powershell.exe",
+                "role": "wilbur-gate",
+                "creationUtc": "2026-10-12T11:59:05.4319060Z"
+            },
+            {
+                "pid": 3640,
+                "parentPid": 1084,
+                "name": "node.exe",
+                "role": "node",
+                "creationUtc": "2026-10-12T11:59:05.9390320Z"
+            },
+            {
+                "pid": 3556,
+                "parentPid": 3092,
+                "name": "ScaleWorld.exe",
+                "role": "unreal",
+                "creationUtc": "2026-10-12T11:59:10.5377130Z"
+            },
+            {
+                "pid": 904,
+                "parentPid": 3556,
+                "name": "ScaleWorld-Win64-Shipping.exe",
+                "role": "unreal",
+                "creationUtc": "2026-10-12T11:59:10.6796490Z"
+            }
+        ],
+        "recycleMarker": {
+            "phase": "replacement_started",
+            "requestedAtUtc": "2026-10-12T11:58:47.721Z",
+            "recycleId": "4f3799ef-2f4b-4491-9948-f7f128652d6b",
+            "replacementStartedAtUtc": "2026-10-12T11:58:52.3076747+00:00",
+            "sourcePid": 4288
+        },
+        "lease": {
+            "schemaVersion": 1,
+            "phase": "starting",
+            "generationId": "7904ec0f-fa53-4853-b249-256816a98009",
+            "repoRoot": "C:\\PixelStreaming\\runtime-releases\\pixelstreaming-runtime-20261012-004\\SignallingWebServer",
+            "owner": {
+                "pid": 4200,
+                "creationUtc": "2026-10-12T11:58:52.3419920Z",
+                "executablePath": "C:\\Windows\\system32\\cmd.exe",
+                "name": "cmd.exe",
+                "entryPath": "C:\\PixelStreaming\\runtime-releases\\pixelstreaming-runtime-20261012-004\\SignallingWebServer\\platform_scripts\\cmd\\start_streamer_stack.bat",
+                "invocationPath": "C:\\PixelStreaming\\runtime-releases\\pixelstreaming-runtime-20261012-004\\SignallingWebServer\\platform_scripts\\cmd\\start_streamer_stack.bat"
+            },
+            "activeNode": null,
+            "completedNode": null,
+            "preparationPresent": false,
+            "recoveryPreparationPresent": true,
+            "preparationCreatedUtc": "2026-10-12T11:58:44.7272789+00:00",
+            "preparationSourceGeneration": "cdd4b138-9fcf-45bd-8ced-72f9b423fe41",
+            "preparationSourceNode": {
+                "pid": 4288,
+                "creationUtc": "2026-10-12T11:58:44.4437570Z",
+                "executablePath": "C:\\PixelStreaming\\runtime-releases\\pixelstreaming-runtime-20261012-004\\SignallingWebServer\\platform_scripts\\cmd\\node\\node.exe",
+                "name": "node.exe"
+            },
+            "preparationReplacementGeneration": "7904ec0f-fa53-4853-b249-256816a98009"
+        },
+        "completedSampleUtc": "2026-10-12T12:01:07.0582746Z",
+        "completedLease": {
+            "schemaVersion": 1,
+            "phase": "completed",
+            "generationId": "7904ec0f-fa53-4853-b249-256816a98009",
+            "repoRoot": "C:\\PixelStreaming\\runtime-releases\\pixelstreaming-runtime-20261012-004\\SignallingWebServer",
+            "owner": {
+                "pid": 4200,
+                "creationUtc": "2026-10-12T11:58:52.3419920Z",
+                "executablePath": "C:\\Windows\\system32\\cmd.exe",
+                "name": "cmd.exe",
+                "entryPath": "C:\\PixelStreaming\\runtime-releases\\pixelstreaming-runtime-20261012-004\\SignallingWebServer\\platform_scripts\\cmd\\start_streamer_stack.bat",
+                "invocationPath": "C:\\PixelStreaming\\runtime-releases\\pixelstreaming-runtime-20261012-004\\SignallingWebServer\\platform_scripts\\cmd\\start_streamer_stack.bat"
+            },
+            "activeNode": {
+                "pid": 3640,
+                "creationUtc": "2026-10-12T11:59:05.9390320Z",
+                "executablePath": "C:\\PixelStreaming\\runtime-releases\\pixelstreaming-runtime-20261012-004\\SignallingWebServer\\platform_scripts\\cmd\\node\\node.exe",
+                "name": "node.exe"
+            },
+            "completedNode": {
+                "pid": 3640,
+                "creationUtc": "2026-10-12T11:59:05.9390320Z",
+                "executablePath": "C:\\PixelStreaming\\runtime-releases\\pixelstreaming-runtime-20261012-004\\SignallingWebServer\\platform_scripts\\cmd\\node\\node.exe",
+                "name": "node.exe",
+                "repoRoot": "C:\\PixelStreaming\\runtime-releases\\pixelstreaming-runtime-20261012-004\\SignallingWebServer"
+            },
+            "preparationPresent": false,
+            "recoveryPreparationPresent": true,
+            "preparationCreatedUtc": "2026-10-12T11:58:44.7272789+00:00",
+            "preparationSourceGeneration": "cdd4b138-9fcf-45bd-8ced-72f9b423fe41",
+            "preparationSourceNode": {
+                "pid": 4288,
+                "creationUtc": "2026-10-12T11:58:44.4437570Z",
+                "executablePath": "C:\\PixelStreaming\\runtime-releases\\pixelstreaming-runtime-20261012-004\\SignallingWebServer\\platform_scripts\\cmd\\node\\node.exe",
+                "name": "node.exe"
+            },
+            "preparationReplacementGeneration": "7904ec0f-fa53-4853-b249-256816a98009"
+        },
+        "replacementSampleUtc": "2026-10-12T11:59:01.2546401Z"
+    },
+    "media": {
+        "durationSeconds": 353,
+        "packetsLost": 0,
+        "framesDropped": 0,
+        "fps": 30,
+        "framesDecoded": 10607
+    },
+    "failedFirstEnabledCandidate": {
+        "source": "24486fb9",
+        "helperEvidence": {
+            "disabledNextBoot": true,
+            "observedUtc": "2026-10-12T11:21:18.1805167Z",
+            "recoveryLog": [
+                "[2026-10-12T11:15:57.7681080Z] [INFO] [stack-recycle] Pre-armed the exact recovery monitor; orphan deadline is 600s.",
+                "[2026-10-12T11:15:59.9139114Z] [INFO] [stack-recycle] Confirmed unreal shutdown before restart.",
+                "[2026-10-12T11:15:59.9368878Z] [INFO] [stack-recycle] Durably advanced recycle 2a2a8354-2790-4096-bff8-e2d686e287d4 from intent to replacement_started after old Wilbur and Unreal were absent.",
+                "[2026-10-12T11:18:09.2527739Z] [ERROR] [stack-recycle] Stack recycle failed: Stack recycle did not reach Wilbur readiness and Unreal runtime presence within 120 seconds."
+            ]
+        },
+        "result": "Required-field checks refused Node; recovery timed out. No Ready.",
+        "cause": "Existing CMD initialization cleared inherited TURN values before new loader shortcut.",
+        "artifact": "pixelstreaming-runtime-20261012-003",
+        "cleanup": "End Session requested, followed by Dev admin provider stop after runtime cooperation was unavailable."
+    },
+    "earlyPrerequisites": {
+        "probes": [
+            {
+                "observedUtc": "2026-10-12T10:33:25.5450189Z",
+                "bootUtc": "2026-10-12T10:33:13.5000000Z",
+                "imdsIdentityAvailable": true,
+                "instanceRoleCredentialsAvailable": true,
+                "runtimeMetadataPresent": true,
+                "gpuDeviceReportedHealthy": true,
+                "gpuEncodingReadinessProved": false,
+                "ec2LaunchV2Installed": true
+            },
+            {
+                "observedUtc": "2026-10-12T10:48:35.5828807Z",
+                "bootUtc": "2026-10-12T10:48:23.5000000Z",
+                "imdsIdentityAvailable": true,
+                "instanceRoleCredentialsAvailable": true,
+                "runtimeMetadataPresent": true,
+                "gpuDeviceReportedHealthy": true,
+                "gpuEncodingReadinessProved": false,
+                "ec2LaunchV2Installed": true
+            },
+            {
+                "observedUtc": "2026-10-12T11:04:06.5969236Z",
+                "bootUtc": "2026-10-12T11:03:54.5000000Z",
+                "imdsIdentityAvailable": true,
+                "instanceRoleCredentialsAvailable": true,
+                "runtimeMetadataPresent": true,
+                "gpuDeviceReportedHealthy": true,
+                "gpuEncodingReadinessProved": false,
+                "ec2LaunchV2Installed": true
+            },
+            {
+                "observedUtc": "2026-10-12T11:15:16.4892410Z",
+                "bootUtc": "2026-10-12T11:15:04.5000000Z",
+                "imdsIdentityAvailable": true,
+                "instanceRoleCredentialsAvailable": true,
+                "runtimeMetadataPresent": true,
+                "gpuDeviceReportedHealthy": true,
+                "gpuEncodingReadinessProved": false,
+                "ec2LaunchV2Installed": true
+            },
+            {
+                "observedUtc": "2026-10-12T11:36:25.4444658Z",
+                "bootUtc": "2026-10-12T11:36:13.5000000Z",
+                "imdsIdentityAvailable": true,
+                "instanceRoleCredentialsAvailable": true,
+                "runtimeMetadataPresent": true,
+                "gpuDeviceReportedHealthy": true,
+                "gpuEncodingReadinessProved": false,
+                "ec2LaunchV2Installed": true
+            },
+            {
+                "observedUtc": "2026-10-12T11:49:14.8751719Z",
+                "bootUtc": "2026-10-12T11:49:02.5000000Z",
+                "imdsIdentityAvailable": true,
+                "instanceRoleCredentialsAvailable": true,
+                "runtimeMetadataPresent": true,
+                "gpuDeviceReportedHealthy": true,
+                "gpuEncodingReadinessProved": false,
+                "ec2LaunchV2Installed": true
+            },
+            {
+                "observedUtc": "2026-10-12T11:58:09.6627036Z",
+                "bootUtc": "2026-10-12T11:57:57.5312360Z",
+                "imdsIdentityAvailable": true,
+                "instanceRoleCredentialsAvailable": true,
+                "runtimeMetadataPresent": true,
+                "gpuDeviceReportedHealthy": true,
+                "gpuEncodingReadinessProved": false,
+                "ec2LaunchV2Installed": true
+            }
+        ],
+        "qualifiedScope": "Local metadata, IMDS identity/role credentials, GPU enumeration only. SSM/API, volumes and encoder early readiness unproved.",
+        "imdsTagsEnabled": false
+    },
+    "localVerification": {
+        "preparationAssertions": 23,
+        "wilburTests": 124,
+        "concurrencyTimingScale": 2,
+        "concurrencyChecks": 239,
+        "fullBuildPassed": true,
+        "concurrencyCases": 39,
+        "leaseAssertions": 129,
+        "maintenanceAssertions": 51,
+        "realCmdInitializationModes": 3,
+        "maintenanceRealScenarios": 5,
+        "oldCmdBugReproduced": true,
+        "productionWaitsScaled": false
+    },
+    "cleanup": {
+        "restoredMachineEnvironment": true,
+        "probeTaskRemoved": true,
+        "diagnosticEvidenceRetained": true,
+        "cleanedUtc": "2026-10-12T12:02:43.6324124Z"
+    },
+    "lateReadOnlySsmCommandCanceled": "8311eed8-3d11-49f3-bae9-26b1b9fc7580",
+    "finalProviderStop": {
+        "status": "stopped",
+        "observedUtc": "2026-10-12T12:14:21.7635487Z",
+        "instances": [
+            {
+                "instanceId": "i-0ce5ffd16bd50eb24",
+                "state": "stopped"
+            },
+            {
+                "instanceId": "i-0226e3c475b1b76f0",
+                "state": "stopped"
+            },
+            {
+                "instanceId": "i-0209fd65e0ed93501",
+                "state": "stopped"
+            }
+        ]
+    }
+}
