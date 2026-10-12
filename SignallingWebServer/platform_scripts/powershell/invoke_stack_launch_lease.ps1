@@ -11,6 +11,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'stack_launch_lease.ps1')
+. (Join-Path $PSScriptRoot 'stack_launch_preparation.ps1')
 $handle=$null
 try{
     if($Mode -ieq 'Enter'){
@@ -28,6 +29,12 @@ try{
             [Console]::Error.WriteLine('A live unregistered runtime Node prevents stack entry; preserving the Node, lease, config and health state.')
         }
         $receipt=('set "SCALEWORLD_STACK_LAUNCH_GENERATION={0}"' -f $result.GenerationId)+"`r`n"+('set "SCALEWORLD_STACK_LAUNCH_DECISION={0}"' -f $result.Decision)+"`r`n"
+        $reused = 'false'
+        if ($LaunchMode -ceq 'recovery' -and $result.Decision -ceq 'Enter' -and
+            (Test-StackLaunchReplacementPreparation $scope (Read-StackLaunchLease $scope) $owner $handle)) {
+            $reused = 'true'
+        }
+        $receipt += ('set "SCALEWORLD_STACK_RECOVERY_PREPARATION_REUSED={0}"' -f $reused)+[Environment]::NewLine
         $bytes=[Text.Encoding]::ASCII.GetBytes($receipt);$stream=[IO.FileStream]::new($OutputFile,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
         try{$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
         if($result.Decision -ceq 'Skip'){exit 10}

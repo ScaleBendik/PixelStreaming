@@ -357,7 +357,12 @@ function Enter-StackLaunchAttempt {
         if ($null -eq $reserved -or $reserved.pid -ne $OwnerIdentity.pid -or $reserved.creationUtc -cne $OwnerIdentity.creationUtc -or -not (Test-StackLaunchProcessIdentity $reserved)) { throw 'Reserved launch grant does not match this exact CMD.' }
         if(-not(Test-StackLaunchEntryNodeOwnership -Scope $Scope)){return [pscustomobject]@{Decision='Skip';GenerationId=$lease.generationId;Reason='NodeUnclassified';Lease=$lease}}
         $next=New-StackLaunchLease $Scope $OwnerIdentity $grantId
-        if ($replacement) { $next.recycler=$lease.recycler;$next.monitor=Get-StackLaunchLeaseMonitor $lease }
+        if ($replacement) {
+            $next.recycler=$lease.recycler;$next.monitor=Get-StackLaunchLeaseMonitor $lease
+            if ($null -ne $lease.PSObject.Properties['recoveryPreparation']) {
+                $next | Add-Member -NotePropertyName recoveryPreparation -NotePropertyValue $lease.recoveryPreparation
+            }
+        }
         Write-StackLaunchLease $Scope $next $LockHandle
         return [pscustomobject]@{Decision='Enter';GenerationId=$next.generationId;Lease=$next}
     }
@@ -474,7 +479,7 @@ function Complete-StackLaunchAttempt {
 }
 
 function Begin-StackLaunchRecycle {
-    param([Parameter(Mandatory=$true)]$Scope,[Parameter(Mandatory=$true)][string]$RecycleId,[Parameter(Mandatory=$true)]$RecyclerIdentity,[string]$PlannedGenerationId='', $MonitorIdentity=$null,[string]$HelperLaunchId='',[Parameter(Mandatory=$true)]$LockHandle)
+    param([Parameter(Mandatory=$true)]$Scope,[Parameter(Mandatory=$true)][string]$RecycleId,[Parameter(Mandatory=$true)]$RecyclerIdentity,[string]$PlannedGenerationId='', $MonitorIdentity=$null,[string]$HelperLaunchId='',[Parameter(Mandatory=$true)]$LockHandle,$PreparationReceipt=$null)
     Assert-StackLaunchLeaseLock $Scope $LockHandle
     if(-not(Test-StackLaunchProcessIdentity $RecyclerIdentity)){throw 'Recycler identity is not live.'}
     $operation=ConvertTo-StackLaunchRecycleId $RecycleId; $previous=Read-StackLaunchLease $Scope
@@ -497,6 +502,11 @@ function Begin-StackLaunchRecycle {
     $next.phase='recycling';$next.recycler=$RecyclerIdentity | Select-Object *
     $next.recycler|Add-Member -NotePropertyName recycleId -NotePropertyValue $operation -Force
     if($monitored){$next.monitor=[pscustomobject]@{identity=($MonitorIdentity|Select-Object *);recyclerIdentity=($RecyclerIdentity|Select-Object *);recycleId=$operation;helperLaunchId=$dispatch;generationId=$grant}}
+    if($monitored -and $null -ne $PreparationReceipt){
+        $next | Add-Member -NotePropertyName recoveryPreparation -NotePropertyValue ([pscustomobject]@{
+            generationId=$grant;recycleId=$operation;helperLaunchId=$dispatch;receipt=$PreparationReceipt
+        })
+    }
     Write-StackLaunchLease $Scope $next $LockHandle
     return [pscustomobject]@{PreviousLease=$previous;Grant=$grant;Lease=$next}
 }

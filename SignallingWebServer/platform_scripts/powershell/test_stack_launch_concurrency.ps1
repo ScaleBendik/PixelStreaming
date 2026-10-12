@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([switch]$KeepFixtures, [switch]$MonitorOnly)
+param([switch]$KeepFixtures, [switch]$MonitorOnly, [ValidateRange(1,3)][int]$TimingScale=1)
 
 # Real local CMD/Windows PowerShell processes only. All registry/marker files,
 # native children and canonical paths are disposable fixtures. No AWS, Unreal,
@@ -14,7 +14,7 @@ foreach ($dependency in @($leaseSource, $entrySource, $processSource,$reservedSo
     if (-not (Test-Path -LiteralPath $dependency)) { throw "Concurrency dependency is missing: $dependency" }
 }
 $auditedSources=@($leaseSource,$entrySource,$processSource,$reservedSource,(Join-Path $PSScriptRoot 'scaleworld_process_helpers.ps1'),(Join-Path $PSScriptRoot 'recycle_intent_guard.ps1'),(Join-Path $PSScriptRoot 'invoke_stack_recycle.ps1'),(Join-Path $PSScriptRoot 'stack_recycle_monitor.ps1'),(Join-Path $PSScriptRoot 'invoke_stack_recycle_monitor.ps1'),(Join-Path $PSScriptRoot 'start_wilbur_leased.ps1'),(Join-Path $PSScriptRoot 'start_scaleworld.ps1'),(Join-Path $PSScriptRoot 'start_stack_watchdog.ps1'),(Join-Path $PSScriptRoot 'watchdog.ps1'),(Join-Path $PSScriptRoot 'ensure_repo_current.ps1'),(Join-Path $PSScriptRoot '..\cmd\start_wilbur_native.bat'),(Join-Path $PSScriptRoot '..\cmd\start_streamer_stack.bat'),(Join-Path $PSScriptRoot '..\cmd\common.bat'))
-$auditedSources+=@((Join-Path $PSScriptRoot 'stack_launch_maintenance.ps1'),(Join-Path $PSScriptRoot 'invoke_update_mode.ps1'),(Join-Path $PSScriptRoot 'invoke_provisioning_mode.ps1'),(Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.ps1'))
+$auditedSources+=@((Join-Path $PSScriptRoot 'stack_launch_preparation.ps1'),(Join-Path $PSScriptRoot 'stack_launch_maintenance.ps1'),(Join-Path $PSScriptRoot 'invoke_update_mode.ps1'),(Join-Path $PSScriptRoot 'invoke_provisioning_mode.ps1'),(Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.ps1'))
 $sourceProvenance=@($auditedSources|ForEach-Object{[pscustomobject]@{name=[IO.Path]::GetFileName($_);sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()}})
 $harnessHash=(Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
 . $leaseSource
@@ -25,7 +25,8 @@ $nodeExe=if(Test-Path -LiteralPath $portableNode){[IO.Path]::GetFullPath($portab
 $nodeSource=if(Test-Path -LiteralPath $portableNode){'runtime-portable'}else{'workstation-path'}
 $nodeVersion=& $nodeExe --version
 $nodeSha256=(Get-FileHash -LiteralPath $nodeExe -Algorithm SHA256).Hash.ToLowerInvariant()
-$fixtureParent = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
+# Keep Windows CMD receipt/native paths below MAX_PATH even in long worktrees.
+$fixtureParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $fixtureBase = Join-Path $fixtureParent ('scaleworld-stack-concurrency-' + [Guid]::NewGuid().ToString('N'))
 $utf8 = [Text.UTF8Encoding]::new($false)
 $owned = [Collections.Generic.List[object]]::new()
@@ -48,12 +49,15 @@ function Assert-Throws([scriptblock]$Body, [string]$Message) {
     Assert-Local $threw $Message
 }
 function Wait-File([string]$Path, [int]$Seconds = 15) {
-    $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+    $deadline = [DateTime]::UtcNow.AddSeconds($Seconds * $TimingScale)
     while (-not (Test-Path -LiteralPath $Path)) {
         if ($Path.EndsWith('.gate-held') -and (Test-Path -LiteralPath $Path.Replace('.gate-held','.denied'))) {
             throw ('Fixture native gate failed: '+[IO.File]::ReadAllText($Path.Replace('.gate-held','.denied')))
         }
-        if ([DateTime]::UtcNow -gt $deadline) { throw "Fixture file did not arrive: $(Split-Path -Leaf $Path)" }
+        if ([DateTime]::UtcNow -gt $deadline) {
+            $errors=@($owned | Where-Object { $_.Process.HasExited -and $null -ne $_.Stderr } | ForEach-Object { $_.Stderr.GetAwaiter().GetResult() } | Where-Object { $_ } | Select-Object -Last 2)
+            throw ("Fixture file did not arrive: "+(Split-Path -Leaf $Path)+'. '+($errors -join [Environment]::NewLine))
+        }
         Start-Sleep -Milliseconds 40
     }
 }
@@ -69,7 +73,7 @@ function Start-Owned([string]$FileName, [string]$Arguments, [hashtable]$Environm
     $owned.Add($item); return $item
 }
 function Wait-Owned($Child, [int]$Expected = 0, [int]$Seconds = 15) {
-    if (-not $Child.Process.WaitForExit($Seconds * 1000)) { throw "Fixture process $($Child.Process.Id) did not finish." }
+    if (-not $Child.Process.WaitForExit($Seconds * 1000 * $TimingScale)) { throw "Fixture process $($Child.Process.Id) did not finish." }
     if ($Child.Process.ExitCode -ne $Expected) {
         $errorText=if($null -eq $Child.Stderr){'stderr is inherited'}elseif($Child.Stderr.IsCompleted){$Child.Stderr.Result}else{'stderr stream is still open'}
         Assert-Local $false ("Unexpected fixture exit {0}, expected {1}: {2}" -f $Child.Process.ExitCode,$Expected,$errorText)
@@ -228,7 +232,7 @@ function New-MonitorFixture([string]$Name, [string]$Stage='after-begin', [int]$D
     $fixture=New-Fixture ('monitor-'+$Name)
     $fixturePs=Join-Path $fixture.Root 'platform_scripts\powershell'
     New-Item -ItemType Directory -Path $fixturePs -Force|Out-Null
-    foreach($name in @('stack_launch_lease.ps1','stack_launch_processes.ps1','scaleworld_process_helpers.ps1','stack_launch_reserved_entry.ps1','recycle_intent_guard.ps1','stack_recycle_monitor.ps1','invoke_stack_recycle_monitor.ps1')){
+    foreach($name in @('stack_launch_lease.ps1','stack_launch_preparation.ps1','stack_launch_processes.ps1','scaleworld_process_helpers.ps1','stack_launch_reserved_entry.ps1','recycle_intent_guard.ps1','stack_recycle_monitor.ps1','invoke_stack_recycle_monitor.ps1')){
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $fixturePs $name)
     }
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\cmd\start_wilbur_native.bat') -Destination (Join-Path $fixture.Root 'platform_scripts\cmd\start_wilbur_native.bat')
@@ -328,7 +332,7 @@ try{
     }
     if($config.stage -cin @('partial-replacement','after-node-pin','unregistered-node')){
         Exit-StackLaunchLeaseLock $lock;$lock=$null
-        $until=[DateTime]::UtcNow.AddSeconds(12)
+        $until=[DateTime]::UtcNow.AddSeconds(12 * $config.timingScale)
         while(-not(Test-Path -LiteralPath $config.replacementEntered)){if([DateTime]::UtcNow -gt $until){throw 'Replacement did not claim its exact reserved entry.'};Start-Sleep -Milliseconds 40}
         if($config.stage -ceq 'after-node-pin'){
             do{
@@ -364,7 +368,7 @@ try{
     $receipt=Join-Path $fixtureBase ('scaleworld-stack-launch-'+[Guid]::NewGuid().ToString('D')+'.env');$receipts.Add($receipt)
     $replacementAction=if($Stage -ceq 'after-node-pin'){'partial'}else{'hold'}
     $environment=@{SW_TEST_PS=$psExe;SW_TEST_ENTRY=$entrySource;SW_TEST_LEASE=$leaseSource;SW_TEST_ROOT=$fixture.Root;SW_TEST_BASE=$fixture.Base;SW_TEST_RECEIPT=$receipt;SW_TEST_PRODUCER=$producerPath;SW_TEST_SENTINEL=$sentinelPath;SW_TEST_ACTION=$replacementAction;SW_TEST_MODE='recovery';SW_TEST_ENTERED=$replacementRun+'.entered.json';SW_TEST_SKIPPED=$replacementRun+'.skipped';SW_TEST_RELEASE=$replacementRun+'.release';SW_TEST_GATE_HELD=$replacementRun+'.gate-held';SW_TEST_NATIVE_DENIED=$replacementRun+'.denied';SW_TEST_MUTATION=$replacementRun+'.mutation';SW_TEST_CHILD_BORN=$replacementRun+'.child-born';SW_TEST_NODE_RECORD=$replacementRun+'.node.json';SW_TEST_NODE_STOP=$replacementRun+'.node-stop';SW_TEST_COMPLETED=$replacementRun+'.completed';SCALEWORLD_STACK_LAUNCH_GENERATION=$generation;SCALEWORLD_STACK_LAUNCH_GRANT=$generation;TEMP=$fixtureBase;TMP=$fixtureBase}
-    $config=[pscustomobject]@{repoRoot=$fixture.Root;installBase=$fixture.Base;source=$initial.owner;sourceGeneration=$initial.generation;generation=$generation;recycleId=$operation;helperLaunchId=$dispatch;markerPath=$markerPath;fakeStop=$fakeStop;deadlineSeconds=$DeadlineSeconds;stage=$Stage;checkpoint=(Join-Path $fixture.Base 'monitor-checkpoint.json');failure=(Join-Path $fixture.Base 'monitor-failure.txt');replacementEnvironment=$environment;replacementEntered=$replacementRun+'.entered.json';unregisteredNode=(Join-Path $fixture.Base 'unregistered-node.json')}
+    $config=[pscustomobject]@{repoRoot=$fixture.Root;installBase=$fixture.Base;source=$initial.owner;sourceGeneration=$initial.generation;generation=$generation;recycleId=$operation;helperLaunchId=$dispatch;markerPath=$markerPath;fakeStop=$fakeStop;deadlineSeconds=($DeadlineSeconds*$TimingScale);timingScale=$TimingScale;stage=$Stage;checkpoint=(Join-Path $fixture.Base 'monitor-checkpoint.json');failure=(Join-Path $fixture.Base 'monitor-failure.txt');replacementEnvironment=$environment;replacementEntered=$replacementRun+'.entered.json';unregisteredNode=(Join-Path $fixture.Base 'unregistered-node.json')}
     return [pscustomobject]@{Fixture=$fixture;Old=$old;Config=$config;ConfigPath=(Join-Path $fixture.Base 'monitor-config.json');WorkerPath=$workerPath;ModulePath=$modulePath;Worker=$null;Monitor=$null;Record=$null;Descendant=[bool]$Descendant}
 }
 
@@ -382,7 +386,7 @@ function Start-MonitorFixture($Test, [switch]$ExpectArmFailure) {
         if(-not(Test-Path -LiteralPath $Test.Config.failure)){throw ('Expected arm failure did not reach its fixture catch: '+$Test.Worker.Stderr.Result)}
         return
     }
-    $until=[DateTime]::UtcNow.AddSeconds(15)
+    $until=[DateTime]::UtcNow.AddSeconds(15 * $TimingScale)
     while(-not(Test-Path -LiteralPath $Test.Config.checkpoint)){
         if(Test-Path -LiteralPath $Test.Config.failure){throw ('Monitor fixture failed: '+[IO.File]::ReadAllText($Test.Config.failure))}
         if($Test.Worker.Process.HasExited){
@@ -855,7 +859,7 @@ while($true){Start-Sleep -Milliseconds 100}
 
     $fixture=New-Fixture 'actual-wilbur-wrapper'
     $fixturePs=Join-Path $fixture.Root 'platform_scripts\powershell';New-Item -ItemType Directory -Path $fixturePs -Force|Out-Null
-    foreach($source in @('stack_launch_lease.ps1','stack_launch_processes.ps1','scaleworld_process_helpers.ps1','start_wilbur_leased.ps1')){
+    foreach($source in @('stack_launch_lease.ps1','stack_launch_preparation.ps1','stack_launch_processes.ps1','scaleworld_process_helpers.ps1','start_wilbur_leased.ps1')){
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $source) -Destination (Join-Path $fixturePs $source)
     }
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\cmd\start_wilbur_native.bat') -Destination (Join-Path $fixture.Root 'platform_scripts\cmd\start_wilbur_native.bat')
@@ -1031,7 +1035,7 @@ function Get-CimInstance {
 
     $unownedFixture=New-Fixture 'managed-unowned-wilbur'
     $unownedPs=Join-Path $unownedFixture.Root 'platform_scripts\powershell';New-Item -ItemType Directory -Path $unownedPs -Force|Out-Null
-    foreach($source in @('stack_launch_lease.ps1','stack_launch_processes.ps1','scaleworld_process_helpers.ps1','start_wilbur_leased.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $source) -Destination (Join-Path $unownedPs $source)}
+    foreach($source in @('stack_launch_lease.ps1','stack_launch_preparation.ps1','stack_launch_processes.ps1','scaleworld_process_helpers.ps1','start_wilbur_leased.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $source) -Destination (Join-Path $unownedPs $source)}
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\cmd\start_wilbur_native.bat') -Destination (Join-Path $unownedFixture.Root 'platform_scripts\cmd\start_wilbur_native.bat')
     $unownedNodeRecord=Join-Path $unownedFixture.Base 'unexpected-node.json'
     Write-FixtureText (Join-Path $unownedFixture.Root 'dist\index.js') 'require("fs").writeFileSync(process.env.SW_TEST_ARGV_RECORD,"unexpected");'

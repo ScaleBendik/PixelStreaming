@@ -5,7 +5,7 @@ $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'stack_launch_lease.ps1')
 $script:Assertions=0
 function Assert-True {param([bool]$Value,[string]$Message)$script:Assertions++;if(-not $Value){throw $Message}}
-$ownedSources=@('stack_launch_lease.ps1','invoke_stack_launch_lease.ps1','stack_launch_reserved_entry.ps1','stack_launch_maintenance.ps1','invoke_update_mode.ps1','invoke_provisioning_mode.ps1','install_pixelstreaming_runtime.ps1','test_stack_launch_maintenance_integration.ps1')
+$ownedSources=@('stack_launch_lease.ps1','stack_launch_preparation.ps1','invoke_stack_launch_lease.ps1','stack_launch_reserved_entry.ps1','stack_launch_maintenance.ps1','invoke_update_mode.ps1','invoke_provisioning_mode.ps1','install_pixelstreaming_runtime.ps1','test_stack_launch_maintenance_integration.ps1')
 $sourceHashes=@{};foreach($name in $ownedSources){$sourceHashes[$name]=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot $name)).Hash}
 $batPath=Join-Path $PSScriptRoot '..\cmd\start_streamer_stack.bat';$batHash=(Get-FileHash -LiteralPath $batPath).Hash
 $batLines=Get-Content -LiteralPath $batPath
@@ -157,7 +157,7 @@ function New-FixtureBundle {
     [IO.File]::WriteAllText((Join-Path $cmd 'start_streamer_stack.bat'),$Bat)
     [IO.File]::WriteAllText((Join-Path $cmd 'node\node.exe'),'unused fixture Node placeholder')
     [IO.File]::WriteAllText((Join-Path $ps 'fixture_claim.ps1'),$claim)
-    if(-not $Legacy){foreach($file in @('stack_launch_lease.ps1','invoke_stack_launch_lease.ps1','stack_launch_reserved_entry.ps1','stack_launch_maintenance.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination (Join-Path $ps $file)};[IO.File]::WriteAllText((Join-Path $ps 'fixture_maintenance.ps1'),$maintenance);[IO.File]::WriteAllText((Join-Path $ps 'fixture_validation_function.ps1'),$validationFunction)}
+    if(-not $Legacy){foreach($file in @('stack_launch_lease.ps1','stack_launch_preparation.ps1','invoke_stack_launch_lease.ps1','stack_launch_reserved_entry.ps1','stack_launch_maintenance.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination (Join-Path $ps $file)};[IO.File]::WriteAllText((Join-Path $ps 'fixture_maintenance.ps1'),$maintenance);[IO.File]::WriteAllText((Join-Path $ps 'fixture_validation_function.ps1'),$validationFunction)}
     return $bundle
 }
 function Start-FixtureCmd {

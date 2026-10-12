@@ -971,6 +971,7 @@ $launchHelperFiles = @(
     'powershell\stack_recycle_monitor.ps1',
     'powershell\invoke_stack_recycle_monitor.ps1',
     'powershell\stack_launch_lease.ps1',
+    'powershell\stack_launch_preparation.ps1',
     'powershell\stack_launch_processes.ps1',
     'powershell\stack_launch_reserved_entry.ps1',
     'powershell\start_stack_watchdog.ps1',

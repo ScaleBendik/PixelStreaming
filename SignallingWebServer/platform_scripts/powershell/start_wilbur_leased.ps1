@@ -4,6 +4,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'stack_launch_lease.ps1')
 . (Join-Path $PSScriptRoot 'stack_launch_processes.ps1')
+. (Join-Path $PSScriptRoot 'stack_launch_preparation.ps1')
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $installBase = if ($env:SCALEWORLD_INSTALL_BASE) { $env:SCALEWORLD_INSTALL_BASE } else { 'C:\PixelStreaming' }
 $gate = $null
@@ -69,6 +70,13 @@ try {
         if ($nodes.Count -eq 1) {
             $nodeIdentity = Get-StackLaunchProcessIdentity -ProcessId ([int]$nodes[0].ProcessId) -Process $nodes[0]
             [void](Register-StackLaunchNode -Scope $gate.Scope -GenerationId $launchGeneration -NodeIdentity $nodeIdentity -LockHandle $gate)
+            $registeredLease = Read-StackLaunchLease $gate.Scope
+            $preparation = New-StackLaunchPreparationReceipt $gate.Scope $registeredLease $nodeIdentity
+            if ($null -ne $preparation) {
+                $registeredLease | Add-Member -NotePropertyName preparation -NotePropertyValue $preparation -Force
+                try { Write-StackLaunchLease $gate.Scope $registeredLease $gate }
+                catch { [Console]::Error.WriteLine('Optional preparation receipt was not confirmed; ordinary recovery preparation remains available.') }
+            }
             $nodeBorn = $true
             break
         }

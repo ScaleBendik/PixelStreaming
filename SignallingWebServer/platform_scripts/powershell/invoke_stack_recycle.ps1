@@ -50,6 +50,7 @@ if (-not (Test-Path -LiteralPath $script:ScaleWorldProcessHelperPath)) {
 . (Join-Path (Resolve-StackRecycleScriptRoot) 'stack_launch_reserved_entry.ps1')
 . (Join-Path (Resolve-StackRecycleScriptRoot) 'recycle_intent_guard.ps1')
 . (Join-Path (Resolve-StackRecycleScriptRoot) 'stack_recycle_monitor.ps1')
+. (Join-Path (Resolve-StackRecycleScriptRoot) 'stack_launch_preparation.ps1')
 if ([string]::IsNullOrWhiteSpace($StreamerHealthPath)) {
     $resolvedStreamerHealthPath = Join-Path $RepoRoot 'state\streamer-health.json'
 } elseif ([System.IO.Path]::IsPathRooted($StreamerHealthPath)) {
@@ -655,6 +656,7 @@ try {
         if ($null -eq $sourceCim -or -not (Test-StackLaunchProcessIdentity -Identity $sourceIdentity -Process $sourceCim) -or -not (Test-StackLaunchNodeInvocation -CommandLine ([string]$sourceCim.CommandLine) -RepoRoot $launchScope.RepoRoot)) { throw 'Recycle source is not the verified Wilbur entry process.' }
     }
     $recyclerIdentity = Get-StackLaunchProcessIdentity -ProcessId $PID
+    $recoveryPreparation = Get-StackLaunchRecoveryPreparation $launchScope $sourceLease $sourceIdentity $lifecycleLock
     # Pre-arm a separately surviving observer before revoking any producer.
     # It cannot declare Ready or retry destructive cleanup. If no replacement
     # agent survives, it fences late spawn and stops this exact failed attempt.
@@ -665,7 +667,7 @@ try {
         ([Math]::Max(0, $WaitBeforeTerminateMilliseconds) / 1000.0) + 120))
     $armedMonitor = Start-StackRecycleMonitor -Scope $launchScope -Intent $recycleIntent -RecyclerIdentity $recyclerIdentity -PlannedGenerationId $plannedGenerationId -DeadlineSeconds $monitorDeadlineSeconds
     [void](Assert-ScaleWorldRecycleIntentUnchanged -Intent $recycleIntent)
-    $reservation = Begin-StackLaunchRecycle -Scope $launchScope -RecycleId $recycleIntent.ExpectedRecycleId -RecyclerIdentity $recyclerIdentity -PlannedGenerationId $plannedGenerationId -MonitorIdentity $armedMonitor.MonitorIdentity -HelperLaunchId $recycleIntent.ExpectedHelperLaunchId -LockHandle $lifecycleLock
+    $reservation = Begin-StackLaunchRecycle -Scope $launchScope -RecycleId $recycleIntent.ExpectedRecycleId -RecyclerIdentity $recyclerIdentity -PlannedGenerationId $plannedGenerationId -MonitorIdentity $armedMonitor.MonitorIdentity -HelperLaunchId $recycleIntent.ExpectedHelperLaunchId -LockHandle $lifecycleLock -PreparationReceipt $recoveryPreparation
     Write-RecycleLog "Pre-armed the exact recovery monitor; orphan deadline is ${monitorDeadlineSeconds}s."
     $oldOwner = if ($null -ne $reservation.PreviousLease) { $reservation.PreviousLease.owner } else { $null }
     # Revoke and stop producers before native absence. Snapshot while source
@@ -687,6 +689,9 @@ try {
     $stackRestartStartedAtUtc = Set-RecycleMarkerReplacementStarted `
         -MarkerPath $RecycleMarkerPath `
         -ExpectedSourcePid $sourcePidToStop
+    if ($null -ne $recoveryPreparation) {
+        Write-RecycleLog 'Prepared bootstrap inputs are eligible for this exact immediate replacement.'
+    }
     Write-RecycleLog 'Restarting streamer stack directly via start_streamer_stack.bat --recovery.'
     [void](Start-StackLaunchReservedEntry -Scope $launchScope -Grant $reservation.Grant -Kind recovery -LockHandle $lifecycleLock)
     Exit-StackLaunchLeaseLock -Handle $lifecycleLock

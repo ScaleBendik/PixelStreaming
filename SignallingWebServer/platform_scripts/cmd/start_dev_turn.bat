@@ -236,6 +236,7 @@ if /i not "%CONNECT_TICKET_AUTH_MODE%"=="off" (
 )
 
 set /a IMDS_INSTANCE_ID_ATTEMPT=0
+if /i "%SCALEWORLD_STACK_RECOVERY_PREPARATION_REUSED%"=="true" if defined INSTANCE_ID goto after_instance_id
 
 :read_instance_id_retry
 set /a IMDS_INSTANCE_ID_ATTEMPT+=1
@@ -298,6 +299,7 @@ call :set_runtime_status "waiting_for_streamer" "startup-script" "signalling_ser
 cd /d "%ROOT%\platform_scripts\cmd"
 
 call :startup_phase node.started 0
+set "SCALEWORLD_STACK_PREPARATION_COMPLETE=true"
 if /i "%ENABLE_REVERSE_PROXY%"=="true" goto start_signalling_with_reverse_proxy
 
 call start.bat -- ^
@@ -408,6 +410,7 @@ if exist "%STARTUP_TELEMETRY_CMD%" call "%STARTUP_TELEMETRY_CMD%" phase %~1 %~2
 exit /b %errorlevel%
 
 :load_runtime_parameters
+if /i "%SCALEWORLD_STACK_RECOVERY_PREPARATION_REUSED%"=="true" exit /b 0
 set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM="
 set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM_NAME="
 set "INSTANCE_AGENT_CONTROL_PLANE_ENV_LOADED_FROM_PARAM="

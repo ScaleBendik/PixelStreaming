@@ -59,6 +59,9 @@ if not defined SCALEWORLD_UNREAL_PREMIUM_INSTANCE_ARG set "SCALEWORLD_UNREAL_PRE
 if not defined SCALEWORLD_STANDARD_ENCODER_CODEC set "SCALEWORLD_STANDARD_ENCODER_CODEC=vp9"
 if not defined SCALEWORLD_PREMIUM_ENCODER_CODEC set "SCALEWORLD_PREMIUM_ENCODER_CODEC=AV1"
 if not defined SCALEWORLD_RUNTIME_ENTITLEMENT_MANIFEST_PATH set "SCALEWORLD_RUNTIME_ENTITLEMENT_MANIFEST_PATH=C:\ProgramData\ScaleWorld\runtime-entitlement-manifest.json"
+set "STACK_PREPARED_LANE=%SCALEWORLD_STREAMING_LANE%"
+set "STACK_PREPARED_TRACK=%SCALEWORLD_DEPLOYMENT_TRACK%"
+set "STACK_PREPARED_DELIVERY=%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%"
 call :read_startup_metadata_batch
 call :resolve_streaming_lane_from_instance_tag
 if errorlevel 1 exit /b 1
@@ -96,6 +99,10 @@ for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass
 )
 if not defined NORMALIZED_PIXELSTREAMING_DELIVERY_MODE exit /b 1
 set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=%NORMALIZED_PIXELSTREAMING_DELIVERY_MODE%"
+rem Routing tags stay fresh. Changed routing discards optional preparation reuse.
+if /i not "%STACK_PREPARED_LANE%"=="%SCALEWORLD_STREAMING_LANE%" set "SCALEWORLD_STACK_RECOVERY_PREPARATION_REUSED=false"
+if /i not "%STACK_PREPARED_TRACK%"=="%SCALEWORLD_DEPLOYMENT_TRACK%" set "SCALEWORLD_STACK_RECOVERY_PREPARATION_REUSED=false"
+if /i not "%STACK_PREPARED_DELIVERY%"=="%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%" set "SCALEWORLD_STACK_RECOVERY_PREPARATION_REUSED=false"
 call :startup_phase metadata.completed 0
 if not defined SCALEWORLD_GIT_SYNC_MODE (
   if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
@@ -144,12 +151,15 @@ if exist "%RUNTIME_BUNDLE_METADATA%" (
       echo Removed stale streamer health snapshot at "%WATCHDOG_STREAMER_HEALTH_PATH%".
     )
   )
-  if exist "%ACTIVE_RUNTIME_IDENTITY_PUBLISHER%" (
+  set "SCALEWORLD_STACK_RUNTIME_IDENTITY_PUBLISHED="
+  if /i "%SCALEWORLD_STACK_RECOVERY_PREPARATION_REUSED%"=="true" set "SCALEWORLD_STACK_RUNTIME_IDENTITY_PUBLISHED=true"
+  if /i not "%SCALEWORLD_STACK_RECOVERY_PREPARATION_REUSED%"=="true" if exist "%ACTIVE_RUNTIME_IDENTITY_PUBLISHER%" (
     call :startup_phase identity.started 0
     powershell -NoProfile -ExecutionPolicy Bypass -File "%ACTIVE_RUNTIME_IDENTITY_PUBLISHER%" -RuntimeRoot "%PIXELSTREAMING_ROOT%"
+    if "!errorlevel!"=="0" set "SCALEWORLD_STACK_RUNTIME_IDENTITY_PUBLISHED=true"
     call :startup_phase identity.completed !errorlevel!
   ) else (
-    echo WARNING: Active runtime identity publisher not found at "%ACTIVE_RUNTIME_IDENTITY_PUBLISHER%".
+    if /i not "%SCALEWORLD_STACK_RECOVERY_PREPARATION_REUSED%"=="true" echo WARNING: Active runtime identity publisher not found at "%ACTIVE_RUNTIME_IDENTITY_PUBLISHER%".
   )
 )
 if not defined STACK_ENABLE_BOOT_GIT_SYNC (

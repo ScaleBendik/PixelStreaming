@@ -1,5 +1,32 @@
 # Recovery launcher ownership
 
+## Bounded preparation follow-up
+
+Branch `perf/recovery-preparation-once` adds an optional receipt for an immediate
+replacement of a fresh, incomplete artifact launch. The receipt binds the
+source generation and Node birth, current OS boot, resolved environment and the
+hashes of runtime metadata, configuration snapshot and Unreal build state.
+It expires after 90 seconds and cannot be propagated by a replacement.
+
+The recycler selects it under the existing ownership lock and binds it to the
+reserved generation, recycle operation, helper dispatch and live independent
+monitor. Replacement entry rechecks the inputs. Invalid, changed or missing
+evidence uses the existing full preparation path. No receipt grants spawn,
+replacement proof, Ready, reset completion or admission.
+
+Routing, maintenance and service-class lookups remain fresh. Reuse avoids
+repeating active-runtime identity publication, the immutable instance-ID lookup,
+current-build tag publication and secret retrieval for the immediate replacement.
+Later recycles and maintenance/validation launches retain full preparation.
+`SCALEWORLD_STACK_PREPARATION_REUSE_ENABLED=false` disables this optimization.
+
+Hosted acceptance is pending. Compare disabled and enabled runs of the same
+candidate at the captured Dev task delay; keep runtime `20261011-003` as rollback.
+The temporary early-boot probe only records local/IMDS prerequisite availability.
+It does not launch stack components or prove GPU encoder readiness. Neither the
+20-second fleet default nor the previous isolated Dev 15-second setting changes.
+Legacy migration safety remains a separate promotion gate.
+
 ## Scope and baseline
 
 This iteration prioritizes exclusive, verifiable recovery ownership over startup
