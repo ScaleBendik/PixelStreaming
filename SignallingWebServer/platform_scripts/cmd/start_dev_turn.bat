@@ -173,7 +173,7 @@ if not defined INSTANCE_AGENT_SCREENSHOT_ARTIFACT_MAX_BYTES set "INSTANCE_AGENT_
 if not defined INSTANCE_AGENT_SCREENSHOT_ARTIFACT_RETENTION_DAYS set "INSTANCE_AGENT_SCREENSHOT_ARTIFACT_RETENTION_DAYS=3"
 if not defined INSTANCE_AGENT_SCREENSHOT_ARTIFACT_SETTLE_DELAY_MS set "INSTANCE_AGENT_SCREENSHOT_ARTIFACT_SETTLE_DELAY_MS=1000"
 
-set "INSTANCE_ID="
+if /i not "%SCALEWORLD_STACK_RECOVERY_PREPARATION_REUSED%"=="true" set "INSTANCE_ID="
 set "STARTUP_HEARTBEAT_STATE_FILE="
 set "STARTUP_HEARTBEAT_STOP_FILE="
 if not defined CURRENT_RELEASE_STATE_PATH set "CURRENT_RELEASE_STATE_PATH=C:\PixelStreaming\state\current-release.json"
@@ -199,8 +199,10 @@ if /i not "%AWS_EXE%"=="aws" (
   set "AWS_CALL="%AWS_EXE%""
 )
 
-set "TURN_USERNAME="
-set "TURN_CREDENTIAL="
+if /i not "%SCALEWORLD_STACK_RECOVERY_PREPARATION_REUSED%"=="true" (
+  set "TURN_USERNAME="
+  set "TURN_CREDENTIAL="
+)
 call :startup_phase parameters.started 0
 call :load_runtime_parameters
 call :startup_phase parameters.completed %errorlevel%
