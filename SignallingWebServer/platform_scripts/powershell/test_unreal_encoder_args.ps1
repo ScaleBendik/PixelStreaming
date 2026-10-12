@@ -8,8 +8,31 @@ try {
  Copy-Item (Join-Path $PSScriptRoot 'instance_config.psm1') (Join-Path $fixture 'instance_config.psm1')
  Set-Content (Join-Path $fixture 'ScaleWorld.exe') ''
  Set-Content (Join-Path $fixture 'scaleworld_process_helpers.ps1') @'
-function Get-ScaleWorldRuntimeProcessMatcher { param($InstallRoot,$ExecutableName,$RuntimeProcessPattern,$IncludeLauncherExecutable) [pscustomobject]@{InstallRoot=$InstallRoot;NamePatterns=@('ScaleWorld')} }
-function Get-ScaleWorldRuntimeProcesses { param($ExcludeProcessIds,$Matcher) [pscustomobject]@{Name='ScaleWorld';ProcessId=999} }
+function Get-ScaleWorldRuntimeProcessMatcher { param($InstallRoot,$ExecutableName,$RuntimeProcessPattern,$IncludeLauncherExecutable) [pscustomobject]@{InstallRoot=$InstallRoot;NamePatterns=@('ScaleWorld');IncludeLauncherExecutable=[bool]$IncludeLauncherExecutable} }
+function Get-ScaleWorldRuntimeProcesses {
+ param($ExcludeProcessIds,$Matcher)
+ if($Matcher.IncludeLauncherExecutable) {
+  if(-not $global:EncoderTestGateHeld){throw 'Native presence check escaped the launch gate'}
+  return @() # Reach the actual argv-checked launch, rather than duplicate skip.
+ }
+ [pscustomobject]@{Name='ScaleWorld';ProcessId=999}
+}
+'@
+ # This harness owns argument construction. Real lease/concurrency behavior is
+ # exercised separately; this fixture still proves presence and spawn use a gate.
+ Set-Content (Join-Path $fixture 'stack_launch_lease.ps1') @'
+$global:EncoderTestGateHeld=$false
+function Enter-StackLaunchGate {
+ param($RepoRoot,$InstallBase,$GenerationId)
+ if($global:EncoderTestGateHeld){throw 'Unexpected nested launcher gate'}
+ $global:EncoderTestGateHeld=$true
+ [pscustomobject]@{Fixture=$true}
+}
+function Exit-StackLaunchGate {
+ param($Handle)
+ if(-not $global:EncoderTestGateHeld -or -not $Handle.Fixture){throw 'Launcher gate cleanup changed'}
+ $global:EncoderTestGateHeld=$false
+}
 '@
  Set-Content (Join-Path $fixture 'unreal_prerequisite.psm1') @'
 function Assert-ScaleWorldUnrealPrerequisite { param($UnrealRoot,$LauncherExecutableName) [pscustomobject]@{RequiredVersion='test';InstalledVersion='test'} }
@@ -17,6 +40,7 @@ function Assert-ScaleWorldUnrealPrerequisite { param($UnrealRoot,$LauncherExecut
  Set-Content (Join-Path $fixture 'invoke.ps1') @'
 param($SelectedCodec,$TierDefault,$ExpectedCodec,$ConfiguredClass='unset')
 $env:SCALEWORLD_INSTANCE_CONFIG_SNAPSHOT=''
+$env:SCALEWORLD_INSTALL_BASE=$PSScriptRoot
 if($ConfiguredClass -ne 'unset') {
  $env:SCALEWORLD_INSTANCE_CONFIG_SNAPSHOT=Join-Path $PSScriptRoot 'snapshot.json'
  $profile='{"values":{"resX":1920,"resY":1080,"fps":60,"maxBitrateKbps":40000,"forceResolution":1,"sg.ShadowQuality":3},"arguments":[{"name":"Custom","value":"two words,comma","enabled":true}]}' | ConvertFrom-Json
@@ -37,6 +61,7 @@ public static class CodecLaunchArgv {
 "@
 function Start-Process {
  param($FilePath,$ArgumentList,$WorkingDirectory,[switch]$PassThru)
+ if(-not $global:EncoderTestGateHeld){throw 'Native argv launch escaped the launch gate'}
  if($ArgumentList -notcontains "-PixelStreamingEncoderCodec=$ExpectedCodec"){throw 'Codec selection changed'}
  $cuda=@($ArgumentList|Where-Object {$_ -eq '-AVCodecs.NvEnc.D3D12UsesCUDA=true'})
  if($cuda.Count -ne 1){throw 'Negotiated H264 must enable CUDA once for every initial codec'}

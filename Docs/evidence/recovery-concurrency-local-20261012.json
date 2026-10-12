@@ -1,0 +1,344 @@
+{
+    "schemaVersion": 1,
+    "status": "passed",
+    "suite": "complete-local-concurrency",
+    "checks": 238,
+    "powerShellVersion": "5.1.26100.9444",
+    "nodeVersion": "v22.23.2",
+    "nodeSource": "runtime-portable",
+    "nodeSha256": "0d0f5e39f9f3d9587bc19f73eab3c2c9c4903fd02d6dbf9c853dd81b3d95fad4",
+    "sources": [
+        {
+            "name": "stack_launch_lease.ps1",
+            "sha256": "7681462c3c99ea03c2aa34abecb8aa2218eec4831c438faa2ec48789351de4df",
+            "postRunSha256": "7681462c3c99ea03c2aa34abecb8aa2218eec4831c438faa2ec48789351de4df"
+        },
+        {
+            "name": "invoke_stack_launch_lease.ps1",
+            "sha256": "901873340c24865b753ca15fadafcfba96688e973fc851d2e975fdc2745e972c",
+            "postRunSha256": "901873340c24865b753ca15fadafcfba96688e973fc851d2e975fdc2745e972c"
+        },
+        {
+            "name": "stack_launch_processes.ps1",
+            "sha256": "0bd971b4490f81a9d40d794ff60ae4b664aaf840040192c183837a8cd98cf10e",
+            "postRunSha256": "0bd971b4490f81a9d40d794ff60ae4b664aaf840040192c183837a8cd98cf10e"
+        },
+        {
+            "name": "stack_launch_reserved_entry.ps1",
+            "sha256": "cb943bca3fd05a1b0d2ee42962b533ce633bf60267de9532e008c0d0afcce9b7",
+            "postRunSha256": "cb943bca3fd05a1b0d2ee42962b533ce633bf60267de9532e008c0d0afcce9b7"
+        },
+        {
+            "name": "scaleworld_process_helpers.ps1",
+            "sha256": "4e8454ee77565e4d1170c4f6a3ee5492d39b8986f490c67bc96bbf43c1ef6259",
+            "postRunSha256": "4e8454ee77565e4d1170c4f6a3ee5492d39b8986f490c67bc96bbf43c1ef6259"
+        },
+        {
+            "name": "recycle_intent_guard.ps1",
+            "sha256": "02365cbcc9b54173cdf9a6ae5296c8e86907b15be9a8c8c8565b104a279cc986",
+            "postRunSha256": "02365cbcc9b54173cdf9a6ae5296c8e86907b15be9a8c8c8565b104a279cc986"
+        },
+        {
+            "name": "invoke_stack_recycle.ps1",
+            "sha256": "c39a3f904908f25780e02046a2a865fb3e99652f2b0cfba5debd1b5c01a98801",
+            "postRunSha256": "c39a3f904908f25780e02046a2a865fb3e99652f2b0cfba5debd1b5c01a98801"
+        },
+        {
+            "name": "stack_recycle_monitor.ps1",
+            "sha256": "48a25b1b6e5170a4cbed42f2b48f92d5c9ec144651dce3cab68f23dc2b53eece",
+            "postRunSha256": "48a25b1b6e5170a4cbed42f2b48f92d5c9ec144651dce3cab68f23dc2b53eece"
+        },
+        {
+            "name": "invoke_stack_recycle_monitor.ps1",
+            "sha256": "135b309cfd8acae3d8d0c6f7061ad1ec30d3f751576f5846b55c144793f7998d",
+            "postRunSha256": "135b309cfd8acae3d8d0c6f7061ad1ec30d3f751576f5846b55c144793f7998d"
+        },
+        {
+            "name": "start_wilbur_leased.ps1",
+            "sha256": "e62f2930b0604ea8fc2ec2b101f5b0ca2055deba4355e9c6046680f9d930b56d",
+            "postRunSha256": "e62f2930b0604ea8fc2ec2b101f5b0ca2055deba4355e9c6046680f9d930b56d"
+        },
+        {
+            "name": "start_scaleworld.ps1",
+            "sha256": "641d45306c329a289837dc7508d0872930d6b038af7035ba328edb02a362d266",
+            "postRunSha256": "641d45306c329a289837dc7508d0872930d6b038af7035ba328edb02a362d266"
+        },
+        {
+            "name": "start_stack_watchdog.ps1",
+            "sha256": "3fa4187b5cbeab7f11396a832de64a730bbe000b5205ed3a50261c69931917ca",
+            "postRunSha256": "3fa4187b5cbeab7f11396a832de64a730bbe000b5205ed3a50261c69931917ca"
+        },
+        {
+            "name": "watchdog.ps1",
+            "sha256": "798703fadd8a7b015fe7aca8f848388778b043212717735b8952fb5dedfb63d4",
+            "postRunSha256": "798703fadd8a7b015fe7aca8f848388778b043212717735b8952fb5dedfb63d4"
+        },
+        {
+            "name": "ensure_repo_current.ps1",
+            "sha256": "7ecabaec370b3bb91386c6b141c2f110047ec62ab3a6a2b323ccc82b18699f35",
+            "postRunSha256": "7ecabaec370b3bb91386c6b141c2f110047ec62ab3a6a2b323ccc82b18699f35"
+        },
+        {
+            "name": "start_wilbur_native.bat",
+            "sha256": "0e44c60092bec1f12791d7c7926954ecdd65941608b30c7c56affd11ab52c7d7",
+            "postRunSha256": "0e44c60092bec1f12791d7c7926954ecdd65941608b30c7c56affd11ab52c7d7"
+        },
+        {
+            "name": "start_streamer_stack.bat",
+            "sha256": "094de46300251c05609fee8454dcae1dca5323d0fe340077df6ec983826b9fc4",
+            "postRunSha256": "094de46300251c05609fee8454dcae1dca5323d0fe340077df6ec983826b9fc4"
+        },
+        {
+            "name": "common.bat",
+            "sha256": "f631e04a5af27666c572bf2e7ed12aaaeca280c63699634f02f9706b7dcfe8af",
+            "postRunSha256": "f631e04a5af27666c572bf2e7ed12aaaeca280c63699634f02f9706b7dcfe8af"
+        },
+        {
+            "name": "stack_launch_maintenance.ps1",
+            "sha256": "58b7ea7be22ada310f8b9fa6732a31b6fcf3527cf62b0de9934f1492a70eedaa",
+            "postRunSha256": "58b7ea7be22ada310f8b9fa6732a31b6fcf3527cf62b0de9934f1492a70eedaa"
+        },
+        {
+            "name": "invoke_update_mode.ps1",
+            "sha256": "e87096b9e03e0a98ee78d92b47928932b05c4c537ba2f08abbb3071f6ad83369",
+            "postRunSha256": "e87096b9e03e0a98ee78d92b47928932b05c4c537ba2f08abbb3071f6ad83369"
+        },
+        {
+            "name": "invoke_provisioning_mode.ps1",
+            "sha256": "8c6d5975b621317ede44ac54c11da60da9b76266709691d138bb3f6a4eb9e5a1",
+            "postRunSha256": "8c6d5975b621317ede44ac54c11da60da9b76266709691d138bb3f6a4eb9e5a1"
+        },
+        {
+            "name": "install_pixelstreaming_runtime.ps1",
+            "sha256": "0c14fcb5ed477692ee4dc7087f4dce8a58d992ad7bcace504e6a647c4a818fd0",
+            "postRunSha256": "0c14fcb5ed477692ee4dc7087f4dce8a58d992ad7bcace504e6a647c4a818fd0"
+        }
+    ],
+    "sourceConsistency": {
+        "prePostMatched": true,
+        "owningSourceCount": 21,
+        "harnessSha256": "73c40fb9033221127eb96f190253cc8d81dfb7783dcbbe99d8d011dc41e8aef3",
+        "assertions": 22
+    },
+    "commands": [
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File SignallingWebServer/platform_scripts/powershell/test_stack_launch_concurrency.ps1"
+    ],
+    "fakeShutdownBoundary": {
+        "function": "Invoke-StackRecycleMonitorLocalShutdown",
+        "mode": "unconditional override in every disposable monitor-module copy",
+        "workstationGuestShutdownExecuted": false
+    },
+    "cases": [
+        {
+            "case": "concurrent-starting-owner",
+            "status": "passed",
+            "assertions": 4
+        },
+        {
+            "case": "native-spawn-and-recycle-serialization",
+            "status": "passed",
+            "assertions": 5
+        },
+        {
+            "case": "recycler-reservation-and-revoked-native-gate",
+            "status": "passed",
+            "assertions": 12
+        },
+        {
+            "case": "completed-lease-markerless-scheduler-retry",
+            "status": "passed",
+            "assertions": 8
+        },
+        {
+            "case": "dead-partial-owner-repair",
+            "status": "passed",
+            "assertions": 4
+        },
+        {
+            "case": "durable-active-node-exact-identity-and-zero-mutation",
+            "status": "passed",
+            "assertions": 7
+        },
+        {
+            "case": "git-sync-explicit-child-handoff",
+            "status": "passed",
+            "assertions": 3
+        },
+        {
+            "case": "exact-pid-birth-and-dead-lease-marker-retention",
+            "status": "passed",
+            "assertions": 4
+        },
+        {
+            "case": "nonauthoritative-helper-zero-mutation",
+            "status": "passed",
+            "assertions": 7
+        },
+        {
+            "case": "producer-cancellation-recycler-survival-and-root-isolation",
+            "status": "passed",
+            "assertions": 9
+        },
+        {
+            "case": "abandoned-cross-process-mutex-recovery",
+            "status": "passed",
+            "assertions": 2
+        },
+        {
+            "case": "actual-wilbur-wrapper-call-argv-and-exit-propagation",
+            "status": "passed",
+            "assertions": 20
+        },
+        {
+            "case": "actual-wilbur-wrapper-durable-observed-node-pin",
+            "status": "passed",
+            "assertions": 3
+        },
+        {
+            "case": "actual-wilbur-wrapper-markerless-completed-dead-node-repair",
+            "status": "passed",
+            "assertions": 5
+        },
+        {
+            "case": "actual-wilbur-wrapper-born-node-observation-error-cleanup",
+            "status": "passed",
+            "assertions": 3
+        },
+        {
+            "case": "actual-wilbur-wrapper-exited-shell-uncertified-node-cleanup",
+            "status": "passed",
+            "assertions": 2
+        },
+        {
+            "case": "actual-wilbur-wrapper-birth-timeout-no-late-node",
+            "status": "passed",
+            "assertions": 2
+        },
+        {
+            "case": "actual-wilbur-wrapper-managed-unowned-pre-spawn-rejection",
+            "status": "passed",
+            "assertions": 5
+        },
+        {
+            "case": "recycle-monitor-prearm-failure-zero-revocation",
+            "status": "passed",
+            "assertions": 3
+        },
+        {
+            "case": "recycle-monitor-orphan-fault-after-begin",
+            "status": "passed",
+            "assertions": 7
+        },
+        {
+            "case": "recycle-monitor-orphan-fault-after-producers",
+            "status": "passed",
+            "assertions": 4
+        },
+        {
+            "case": "recycle-monitor-orphan-fault-after-absence",
+            "status": "passed",
+            "assertions": 4
+        },
+        {
+            "case": "recycle-monitor-orphan-fault-marker-before-cmd",
+            "status": "passed",
+            "assertions": 5
+        },
+        {
+            "case": "recycle-monitor-orphan-fault-before-pin",
+            "status": "passed",
+            "assertions": 5
+        },
+        {
+            "case": "recycle-monitor-orphan-fault-after-pin",
+            "status": "passed",
+            "assertions": 5
+        },
+        {
+            "case": "recycle-monitor-orphan-fault-partial-replacement",
+            "status": "passed",
+            "assertions": 6
+        },
+        {
+            "case": "recycle-monitor-orphan-fault-hung-lock",
+            "status": "passed",
+            "assertions": 5
+        },
+        {
+            "case": "recycle-monitor-orphan-fault-producer-descendant",
+            "status": "passed",
+            "assertions": 6
+        },
+        {
+            "case": "recycle-monitor-registered-live-deadline",
+            "status": "passed",
+            "assertions": 5
+        },
+        {
+            "case": "recycle-monitor-registered-then-dead-deadline",
+            "status": "passed",
+            "assertions": 3
+        },
+        {
+            "case": "recycle-monitor-unregistered-live-deadline",
+            "status": "passed",
+            "assertions": 5
+        },
+        {
+            "case": "recycle-monitor-retired-dead-owner-unregistered-node-entry-skip",
+            "status": "passed",
+            "assertions": 8
+        },
+        {
+            "case": "recycle-monitor-completed-live-deadline",
+            "status": "passed",
+            "assertions": 5
+        },
+        {
+            "case": "recycle-monitor-latent-native-kill-before-node-birth",
+            "status": "passed",
+            "assertions": 4
+        },
+        {
+            "case": "recycle-monitor-latent-native-node-born-during-cancellation",
+            "status": "passed",
+            "assertions": 5
+        },
+        {
+            "case": "recycle-monitor-stale-operation-dispatch-generation-birth-zero-mutation",
+            "status": "passed",
+            "assertions": 16
+        },
+        {
+            "case": "recycle-monitor-retire-marker-removed",
+            "status": "passed",
+            "assertions": 3
+        },
+        {
+            "case": "recycle-monitor-retire-reset-completed",
+            "status": "passed",
+            "assertions": 3
+        },
+        {
+            "case": "recycle-monitor-retire-superseded-dispatch",
+            "status": "passed",
+            "assertions": 3
+        }
+    ],
+    "limitations": [
+        "Scheduler restart timing and result codes are simulated entry calls; no real ScheduledTasks API is exercised.",
+        "Dead-owner reclaim retains a marker but does not simulate an OS reboot or boot-clock correction.",
+        "Harmless child creation tests the generation gate; hosted Unreal/Wilbur readiness, reset ACK, admission and media remain separate gates.",
+        "Node is copied from the recorded local executable into disposable canonical fixtures; hosted artifact installation remains a separate acceptance gate.",
+        "Wrapper error, exited-shell and timeout cases use fixture-only observation/delay injection while running the actual wrapper source.",
+        "Monitor tests copy the actual monitor/entry, unconditionally fake guest shutdown, add nonauthoritative result/exception/receipt tracing, and use short standard deadlines; real guest shutdown/provider stop requires hosted acceptance.",
+        "Recycler crash checkpoints simulate the guarded lease, marker, producer cancellation and real replacement entry sequence; the complete destructive helper is not executed.",
+        "The unregistered live Node models abrupt wrapper death before pinning; its absence of a durable pin must not authorize shutdown."
+    ],
+    "cleanup": {
+        "verified": true,
+        "remainingFixtureProcesses": 0,
+        "fixtureDirectoryRemoved": true,
+        "assertions": 1
+    }
+}

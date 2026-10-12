@@ -3,6 +3,11 @@ param(
     [string]$RepoRoot = '',
     [string]$RecycleMarkerPath = '',
     [int]$SourcePid = 0,
+    [string]$ExpectedRecycleId = '',
+    [string]$ExpectedRecycleIdBase64 = '',
+    [string]$ExpectedHelperLaunchId = '',
+    [string]$ExpectedLaunchGenerationId = '',
+    [string]$ExpectedSourceCreationUtc = '',
     [int]$WaitBeforeTerminateMilliseconds = 250,
     [int]$WaitForWilburTimeoutSeconds = 120,
     [int]$WaitForStreamerHealthTimeoutSeconds = 120,
@@ -40,6 +45,11 @@ if (-not (Test-Path -LiteralPath $script:ScaleWorldProcessHelperPath)) {
     throw "ScaleWorld process helper '$script:ScaleWorldProcessHelperPath' was not found."
 }
 . $script:ScaleWorldProcessHelperPath
+. (Join-Path (Resolve-StackRecycleScriptRoot) 'stack_launch_lease.ps1')
+. (Join-Path (Resolve-StackRecycleScriptRoot) 'stack_launch_processes.ps1')
+. (Join-Path (Resolve-StackRecycleScriptRoot) 'stack_launch_reserved_entry.ps1')
+. (Join-Path (Resolve-StackRecycleScriptRoot) 'recycle_intent_guard.ps1')
+. (Join-Path (Resolve-StackRecycleScriptRoot) 'stack_recycle_monitor.ps1')
 if ([string]::IsNullOrWhiteSpace($StreamerHealthPath)) {
     $resolvedStreamerHealthPath = Join-Path $RepoRoot 'state\streamer-health.json'
 } elseif ([System.IO.Path]::IsPathRooted($StreamerHealthPath)) {
@@ -143,10 +153,10 @@ function Stop-RecycleProcessObjects {
     foreach ($match in @($Matches)) {
         Write-RecycleLog "Stopping $Label process $(Format-RecycleProcessSummary -Process $match)."
         try {
-            Stop-Process -Id $match.ProcessId -Force -ErrorAction Stop
+            Stop-StackLaunchProcessIdentity (Get-StackLaunchCancellationIdentity $match)
             $StoppedProcesses.Add(($Label + ':' + $match.ProcessId + ':' + $match.Name)) | Out-Null
         } catch {
-            $remaining = Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $match.ProcessId) -ErrorAction SilentlyContinue | Select-Object -First 1
+            $remaining = Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $match.ProcessId) -ErrorAction Stop | Select-Object -First 1
             if ($remaining) {
                 throw
             }
@@ -514,17 +524,6 @@ $unrealRuntimeProcessPattern = if (-not [string]::IsNullOrWhiteSpace($env:SCALEW
 $scaleWorldRuntimeMatcher = Get-ScaleWorldRuntimeProcessMatcher -InstallRoot $unrealInstallRoot -ExecutableName $unrealExecutableName -RuntimeProcessPattern $unrealRuntimeProcessPattern -IncludeLauncherExecutable $true
 $scaleWorldStartupMatcher = Get-ScaleWorldRuntimeProcessMatcher -InstallRoot $unrealInstallRoot -ExecutableName $unrealExecutableName -RuntimeProcessPattern $unrealRuntimeProcessPattern -IncludeLauncherExecutable $false
 
-try {
-    $recycleLogDirectory = Split-Path -Parent $script:RecycleLogPath
-    if (-not (Test-Path -LiteralPath $recycleLogDirectory)) {
-        New-Item -ItemType Directory -Path $recycleLogDirectory -Force | Out-Null
-    }
-
-    Set-Content -LiteralPath $script:RecycleLogPath -Value '' -NoNewline -Encoding UTF8
-} catch {
-    # best effort only; Write-RecycleLog will still append if reset fails
-}
-
 function Set-RecycleMarkerReplacementStarted {
     param(
         [string]$MarkerPath,
@@ -602,6 +601,8 @@ function Set-RecycleMarkerReplacementStarted {
     Write-RecycleLog "Durably advanced recycle $($marker.recycleId) from intent to replacement_started after old Wilbur and Unreal were absent."
     return $replacementStartedAtUtc
 }
+$lifecycleLock = $null
+$armedMonitor = $null
 try {
     Write-RecycleLog "Resolved recycle repo root to '$RepoRoot'."
     Write-RecycleLog "Recycle log path is '$script:RecycleLogPath'."
@@ -623,18 +624,58 @@ try {
         Start-Sleep -Milliseconds $WaitBeforeTerminateMilliseconds
     }
 
-    $sourcePidToStop = Resolve-RecycleSourcePid -ExplicitSourcePid $SourcePid -MarkerPath $RecycleMarkerPath
+    if ($ExpectedRecycleIdBase64) {
+        if ($ExpectedRecycleId) { throw 'Specify one recycle ID transport.' }
+        $strictUtf8 = [Text.UTF8Encoding]::new($false, $true)
+        $ExpectedRecycleId = $strictUtf8.GetString([Convert]::FromBase64String($ExpectedRecycleIdBase64))
+    }
+    $installBase = if ($env:SCALEWORLD_INSTALL_BASE) { $env:SCALEWORLD_INSTALL_BASE } else { 'C:\PixelStreaming' }
+    $launchScope = Get-StackLaunchLeaseScope -RepoRoot $RepoRoot -InstallBase $installBase
+    $lifecycleLock = Enter-StackLaunchLeaseLock -Scope $launchScope
+    # A duplicate/stale helper must fail here, before cancelling or stopping
+    # anything. Recheck the entire original intent again before durable proof.
+    $recycleIntent = Read-ScaleWorldRecycleIntent -MarkerPath $RecycleMarkerPath -ExpectedRecycleId $ExpectedRecycleId -ExpectedSourcePid $SourcePid -ExpectedHelperLaunchId $ExpectedHelperLaunchId -ExpectedLaunchGenerationId $ExpectedLaunchGenerationId -ExpectedSourceCreationUtc $ExpectedSourceCreationUtc
+    $sourceLease = Read-StackLaunchLease -Scope $launchScope
+    if ($null -eq $sourceLease -or $sourceLease.repoRoot -ine $launchScope.RepoRoot -or
+        $sourceLease.phase -cnotin @('starting','completed') -or
+        $sourceLease.generationId -cne $recycleIntent.ExpectedLaunchGenerationId) {
+        throw 'Recycle source launch generation is not the current owned attempt.'
+    }
+    $sourcePin = @($sourceLease.activeNode, $sourceLease.completedNode) | Where-Object {
+        $null -ne $_ -and $_.pid -eq $SourcePid -and
+        $_.creationUtc -ceq $recycleIntent.ExpectedSourceCreationUtc -and
+        $_.executablePath -ieq $launchScope.NodePath
+    } | Select-Object -First 1
+    if ($null -eq $sourcePin) { throw 'Recycle source does not match its dispatch-time Node birth pin.' }
+    $sourcePidToStop = $SourcePid
+    $sourceIdentity = Get-StackLaunchProcessIdentity -ProcessId $sourcePidToStop
+    if ($null -ne $sourceIdentity) {
+        if ($sourceIdentity.name -ine 'node.exe' -or $sourceIdentity.executablePath -ine $launchScope.NodePath -or $sourceIdentity.creationUtc -cne $sourcePin.creationUtc) { throw 'Recycle source is not the exact dispatch-time runtime Node identity.' }
+        $sourceCim = Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $sourcePidToStop) -ErrorAction Stop | Select-Object -First 1
+        if ($null -eq $sourceCim -or -not (Test-StackLaunchProcessIdentity -Identity $sourceIdentity -Process $sourceCim) -or -not (Test-StackLaunchNodeInvocation -CommandLine ([string]$sourceCim.CommandLine) -RepoRoot $launchScope.RepoRoot)) { throw 'Recycle source is not the verified Wilbur entry process.' }
+    }
+    $recyclerIdentity = Get-StackLaunchProcessIdentity -ProcessId $PID
+    # Pre-arm a separately surviving observer before revoking any producer.
+    # It cannot declare Ready or retry destructive cleanup. If no replacement
+    # agent survives, it fences late spawn and stops this exact failed attempt.
+    $plannedGenerationId = [Guid]::NewGuid().ToString('D')
+    $monitorDeadlineSeconds = [int][Math]::Ceiling([Math]::Max(600,
+        (3 * [Math]::Max(0, $WaitForWilburTimeoutSeconds)) +
+        [Math]::Max(0, $WaitForStreamerHealthTimeoutSeconds) +
+        ([Math]::Max(0, $WaitBeforeTerminateMilliseconds) / 1000.0) + 120))
+    $armedMonitor = Start-StackRecycleMonitor -Scope $launchScope -Intent $recycleIntent -RecyclerIdentity $recyclerIdentity -PlannedGenerationId $plannedGenerationId -DeadlineSeconds $monitorDeadlineSeconds
+    [void](Assert-ScaleWorldRecycleIntentUnchanged -Intent $recycleIntent)
+    $reservation = Begin-StackLaunchRecycle -Scope $launchScope -RecycleId $recycleIntent.ExpectedRecycleId -RecyclerIdentity $recyclerIdentity -PlannedGenerationId $plannedGenerationId -MonitorIdentity $armedMonitor.MonitorIdentity -HelperLaunchId $recycleIntent.ExpectedHelperLaunchId -LockHandle $lifecycleLock
+    Write-RecycleLog "Pre-armed the exact recovery monitor; orphan deadline is ${monitorDeadlineSeconds}s."
+    $oldOwner = if ($null -ne $reservation.PreviousLease) { $reservation.PreviousLease.owner } else { $null }
+    # Revoke and stop producers before native absence. Snapshot while source
+    # ancestry is still available; do not kill the detached recycler subtree.
+    Stop-StackLaunchProducers -RepoRoot $launchScope.RepoRoot -OwnerIdentity $oldOwner -RecyclerPid $PID
     $stoppedProcesses = [System.Collections.Generic.List[string]]::new()
-    Stop-RecycleProcessMatches -Label 'watchdog' -NamePattern 'powershell.exe' -CommandLinePatterns @('*watchdog.ps1*') -StoppedProcesses $stoppedProcesses
-    Stop-RecycleProcessMatches -Label 'watchdog-launcher' -NamePattern 'cmd.exe' -CommandLinePatterns @('*start_watchdog.bat*') -StoppedProcesses $stoppedProcesses
-    Stop-RecycleSourceProcess -ProcessId $sourcePidToStop -StoppedProcesses $stoppedProcesses
-    Stop-RecycleProcessMatches -Label 'wilbur' -NamePattern 'node.exe' -CommandLinePatterns @('*index.js*') -StoppedProcesses $stoppedProcesses
-    Stop-RecycleProcessMatches -Label 'wilbur-launcher' -NamePattern 'cmd.exe' -CommandLinePatterns @('*start_dev_turn.bat*') -StoppedProcesses $stoppedProcesses
+    if ($null -ne $sourceIdentity) { Stop-StackLaunchProcessIdentity $sourceIdentity; $stoppedProcesses.Add(('source:' + $sourcePidToStop)) }
     Stop-RecycleUnrealProcesses -Matcher $scaleWorldRuntimeMatcher -StoppedProcesses $stoppedProcesses
-    Stop-RecycleProcessMatches -Label 'unreal-wrapper' -NamePattern 'powershell.exe' -CommandLinePatterns @('*start_scaleworld.ps1*') -StoppedProcesses $stoppedProcesses
-    Stop-RecycleProcessMatches -Label 'unreal-launcher' -NamePattern 'cmd.exe' -CommandLinePatterns @('*start_unreal.bat*') -StoppedProcesses $stoppedProcesses
-
-    if (-not (Wait-ForProcessAbsence -Label 'wilbur' -NamePattern 'node.exe' -CommandLinePatterns @('*index.js*') -TimeoutSeconds 15)) {
+    $remainingNode = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction Stop | Where-Object { $_.ExecutablePath -and (Get-StackLaunchCanonicalPath ([string]$_.ExecutablePath)) -ieq $launchScope.NodePath })
+    if ($remainingNode.Count -gt 0) {
         throw 'Wilbur did not fully stop before stack recycle restart.'
     }
 
@@ -642,11 +683,14 @@ try {
         throw 'Unreal did not fully stop before stack recycle restart.'
     }
 
+    [void](Assert-ScaleWorldRecycleIntentUnchanged -Intent $recycleIntent)
     $stackRestartStartedAtUtc = Set-RecycleMarkerReplacementStarted `
         -MarkerPath $RecycleMarkerPath `
         -ExpectedSourcePid $sourcePidToStop
     Write-RecycleLog 'Restarting streamer stack directly via start_streamer_stack.bat --recovery.'
-    Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', ('"{0}" --recovery' -f $stackLauncher) -WorkingDirectory (Split-Path -Parent $stackLauncher) -WindowStyle Hidden | Out-Null
+    [void](Start-StackLaunchReservedEntry -Scope $launchScope -Grant $reservation.Grant -Kind recovery -LockHandle $lifecycleLock)
+    Exit-StackLaunchLeaseLock -Handle $lifecycleLock
+    $lifecycleLock = $null
 
     $stackDetected =
         (Wait-ForWilbur -TimeoutSeconds $WaitForWilburTimeoutSeconds) -and
@@ -667,4 +711,9 @@ try {
     $message = $_.Exception.Message
     Write-RecycleLog "Stack recycle failed: $message" 'ERROR'
     throw
+} finally {
+    if ($null -ne $lifecycleLock) { Exit-StackLaunchLeaseLock -Handle $lifecycleLock }
+    # Disposing our retained handle does not terminate the independent monitor.
+    # Even a failed lease read-back may have committed G2, so never kill it here.
+    if ($null -ne $armedMonitor -and $null -ne $armedMonitor.RetainedProcess) { $armedMonitor.RetainedProcess.Dispose() }
 }

@@ -26,6 +26,7 @@ import {
     isInstanceAgentRecycleReplacementProof,
     normalizeInstanceAgentRecycleToken,
     readInstanceAgentRecycleMarkerSnapshot,
+    readInstanceAgentRecycleSourceLaunchIdentity,
     resolveInstanceAgentRecycleMarkerPath,
     type InstanceAgentRecycleMarkerSnapshot,
     writeInstanceAgentRecycleMarkerSnapshot
@@ -2112,6 +2113,16 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             }
         }
 
+        const sourceLaunchIdentity = readInstanceAgentRecycleSourceLaunchIdentity();
+        if (!sourceLaunchIdentity) {
+            resetInFlight = true;
+            log(
+                '[idle-stop] Exact source launch pin is unavailable; retaining the recycle intent until a fresh retry.'
+            );
+            scheduleStackRecycleRetry('recycle_source_pin_unavailable');
+            return;
+        }
+
         let recycleMarker: InstanceAgentRecycleMarkerSnapshot | null = null;
         recycleLaunchInFlight = true;
         try {
@@ -2162,6 +2173,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     requestedAtUtc: recoveredIntent?.requestedAtUtc ?? new Date().toISOString(),
                     reason: recoveredIntent?.reason ?? 'post_session_cleanup',
                     recycleId: recoveredIntent?.recycleId ?? randomUUID(),
+                    // Dispatch identity changes on every retry while operation,
+                    // token, request and original timestamp remain immutable.
+                    helperLaunchId: randomUUID(),
+                    ...sourceLaunchIdentity,
                     recycleRequestedToken,
                     sessionRequestId: recoveredIntent
                         ? recoveredIntent.sessionRequestId
@@ -2183,6 +2198,14 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                     recycleRepoRoot,
                     '-RecycleMarkerPath',
                     recycleMarkerPath,
+                    '-ExpectedRecycleIdBase64',
+                    Buffer.from(recycleMarker.recycleId, 'utf8').toString('base64'),
+                    '-ExpectedHelperLaunchId',
+                    recycleMarker.helperLaunchId!,
+                    '-ExpectedLaunchGenerationId',
+                    recycleMarker.sourceLaunchGenerationId!,
+                    '-ExpectedSourceCreationUtc',
+                    recycleMarker.sourceCreationUtc!,
                     '-SourcePid',
                     String(process.pid),
                     '-WaitBeforeTerminateMilliseconds',
@@ -2199,7 +2222,12 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             recycleProcess.on('error', (error) => {
                 recycleLaunchRequested = false;
                 clearRecycleExitFallbackTimer();
-                clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log, recycleMarker?.recycleId);
+                clearInstanceAgentRecycleMarkerSnapshot(
+                    recycleMarkerPath,
+                    log,
+                    recycleMarker?.recycleId,
+                    recycleMarker?.helperLaunchId
+                );
                 handleStackRecycleLaunchFailure(`Recycle helper process failed to start: ${error.message}`);
             });
             recycleProcess.unref();
@@ -2228,7 +2256,12 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             recycleLaunchRequested = false;
             clearRecycleExitFallbackTimer();
             if (recycleMarker) {
-                clearInstanceAgentRecycleMarkerSnapshot(recycleMarkerPath, log, recycleMarker.recycleId);
+                clearInstanceAgentRecycleMarkerSnapshot(
+                    recycleMarkerPath,
+                    log,
+                    recycleMarker.recycleId,
+                    recycleMarker.helperLaunchId
+                );
             }
             const message = error instanceof Error ? error.message : String(error);
             const commandToFail = commandToStart;

@@ -4,6 +4,27 @@ setlocal EnableExtensions EnableDelayedExpansion
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%\..\..\..") do set "PIXELSTREAMING_ROOT=%%~fI"
 if not defined SCALEWORLD_INSTALL_BASE set "SCALEWORLD_INSTALL_BASE=C:\PixelStreaming"
+for %%I in ("%SCRIPT_DIR%\..\..") do set "STACK_SIGNALLING_ROOT=%%~fI"
+set "STACK_LEASE_SCRIPT=%SCRIPT_DIR%..\powershell\invoke_stack_launch_lease.ps1"
+set "STACK_LEASE_MODE=normal"
+if /i "%~1"=="--recovery" set "STACK_LEASE_MODE=recovery"
+if /i "%~1"=="--validation" set "STACK_LEASE_MODE=validation"
+set "STACK_LEASE_RECEIPT=%TEMP%\scaleworld-stack-launch-%RANDOM%-%RANDOM%-%RANDOM%.env"
+rem Register before deleting health or changing metadata/config. A Task
+rem Scheduler retry of a cancelled producer must not disturb its replacement.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%STACK_LEASE_SCRIPT%" -Mode Enter -RepoRoot "%STACK_SIGNALLING_ROOT%" -InstallBase "%SCALEWORLD_INSTALL_BASE%" -LaunchMode "%STACK_LEASE_MODE%" -OutputFile "%STACK_LEASE_RECEIPT%"
+set "STACK_LEASE_EXIT=%errorlevel%"
+if "%STACK_LEASE_EXIT%"=="10" (
+  if exist "%STACK_LEASE_RECEIPT%" del /f /q "%STACK_LEASE_RECEIPT%" >nul 2>nul
+  echo Stack launch is already owned by a live or completed attempt. Skipping duplicate entry.
+  exit /b 0
+)
+if not "%STACK_LEASE_EXIT%"=="0" exit /b 1
+if not exist "%STACK_LEASE_RECEIPT%" exit /b 1
+for /f "usebackq delims=" %%L in ("%STACK_LEASE_RECEIPT%") do %%L
+del /f /q "%STACK_LEASE_RECEIPT%" >nul 2>nul
+set "SCALEWORLD_STACK_LAUNCH_GRANT="
+if not defined SCALEWORLD_STACK_LAUNCH_GENERATION exit /b 1
 set "RUNTIME_BUNDLE_METADATA=%PIXELSTREAMING_ROOT%\runtime-bundle-metadata.json"
 set "UPDATE_SCRIPT=%PIXELSTREAMING_ROOT%\SWupdate.ps1"
 set "DATA_DRIVE_SCRIPT=%SCRIPT_DIR%..\powershell\ensure_data_drive.ps1"
@@ -186,7 +207,6 @@ if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_UPDATE_MODE%"=="true" 
     echo Checking instance update mode...
     call :startup_phase update_control.started 0
     powershell -NoProfile -ExecutionPolicy Bypass -File "%UPDATE_MODE_SCRIPT%"
-    call :startup_phase update_control.completed !errorlevel!
     set "UPDATE_MODE_EXIT=!errorlevel!"
     if "!UPDATE_MODE_EXIT!"=="10" (
       echo Update mode completed successfully. Skipping normal startup.
@@ -200,6 +220,9 @@ if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_UPDATE_MODE%"=="true" 
       echo ERROR: Update mode check failed with exit code !UPDATE_MODE_EXIT!.
       exit /b !UPDATE_MODE_EXIT!
     )
+    rem A terminal handoff can retarget this BAT's junction. Never CALL a
+    rem label through that changed path before leaving the parsed source block.
+    call :startup_phase update_control.completed !UPDATE_MODE_EXIT!
   ) else (
     echo WARNING: Update mode script not found at "%UPDATE_MODE_SCRIPT%". Continuing with normal startup.
   )
@@ -210,12 +233,16 @@ if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_PROVISIONING_MODE%"=="
     echo Checking instance provisioning mode...
     call :startup_phase provisioning_control.started 0
     powershell -NoProfile -ExecutionPolicy Bypass -File "%PROVISIONING_MODE_SCRIPT%"
-    call :startup_phase provisioning_control.completed !errorlevel!
     set "PROVISIONING_MODE_EXIT=!errorlevel!"
+    if "!PROVISIONING_MODE_EXIT!"=="42" (
+      echo Provisioning transferred to the installed runtime. Leaving the source launcher.
+      exit /b 0
+    )
     if not "!PROVISIONING_MODE_EXIT!"=="0" (
       echo ERROR: Provisioning mode bootstrap failed with exit code !PROVISIONING_MODE_EXIT!.
       exit /b !PROVISIONING_MODE_EXIT!
     )
+    call :startup_phase provisioning_control.completed !PROVISIONING_MODE_EXIT!
   ) else (
     echo WARNING: Provisioning mode script not found at "%PROVISIONING_MODE_SCRIPT%". Continuing with normal startup.
   )
@@ -325,7 +352,7 @@ if /i "%STACK_START_WATCHDOG%"=="true" (
     powershell -NoProfile -ExecutionPolicy Bypass -Command "$currentPid = $PID; $scriptDir = [System.IO.Path]::GetFullPath('%SCRIPT_DIR%'); $watchdogScript = [System.IO.Path]::GetFullPath((Join-Path $scriptDir '..\powershell\watchdog.ps1')); $watchdogLauncher = [System.IO.Path]::GetFullPath((Join-Path $scriptDir 'start_watchdog.bat')); $watchdog = Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $currentPid -and (($_.Name -ieq 'powershell.exe' -and $_.CommandLine -like ('*' + $watchdogScript + '*')) -or ($_.Name -ieq 'cmd.exe' -and $_.CommandLine -like ('*' + $watchdogLauncher + '*'))) } | Select-Object -First 1; if ($watchdog) { exit 0 } else { exit 1 }"
     if errorlevel 1 (
       echo Scheduling watchdog start in %STACK_WATCHDOG_START_DELAY_SECONDS% seconds...
-      start "ScaleWorld Watchdog" powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds %STACK_WATCHDOG_START_DELAY_SECONDS%; & '%SCRIPT_DIR%start_watchdog.bat'"
+      start "ScaleWorld Watchdog" powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%..\powershell\start_stack_watchdog.ps1" -DelaySeconds %STACK_WATCHDOG_START_DELAY_SECONDS%
     ) else (
       echo Watchdog is already running or launch is already in progress. Skipping launch.
     )
@@ -340,6 +367,8 @@ if not "%STACK_LAUNCH_EXIT%"=="0" (
 )
 
 echo Stack launch completed.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%STACK_LEASE_SCRIPT%" -Mode Complete -RepoRoot "%STACK_SIGNALLING_ROOT%" -InstallBase "%SCALEWORLD_INSTALL_BASE%"
+if errorlevel 1 exit /b 1
 call :startup_phase stack.completed 0
 if exist "%STARTUP_TELEMETRY_CMD%" call "%STARTUP_TELEMETRY_CMD%" end 0
 exit /b 0

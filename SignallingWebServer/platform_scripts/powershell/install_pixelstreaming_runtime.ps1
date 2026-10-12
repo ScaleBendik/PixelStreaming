@@ -568,6 +568,39 @@ function Clear-DirectoryChildrenBestEffort {
     }
 }
 
+function Get-InstalledLeasePruneProtection {
+    param([string]$InstallRoot,[string]$ReleasesRoot)
+    # Retention only: this never grants launch/cleanup authority. Capture before
+    # changing the active junction, even if the recorded owner is stale/dead.
+    $leasePath=Join-Path $InstallRoot 'state\stack-launch-lease.json'
+    if(-not(Test-Path -LiteralPath $leasePath)){return [pscustomobject]@{SkipPrune=$false;ProtectedRoot=$null}}
+    try{
+        $stream=$null
+        try{
+            $stream=[IO.FileStream]::new($leasePath,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+            $bytes=New-Object byte[] 32769;$count=0
+            while($count -lt $bytes.Length){$read=$stream.Read($bytes,$count,$bytes.Length-$count);if($read -eq 0){break};$count+=$read}
+            if($count -gt 32768){throw 'Installed launch lease is oversized.'}
+            $text=[Text.UTF8Encoding]::new($false,$true).GetString($bytes,0,$count)
+        }finally{if($null -ne $stream){$stream.Dispose()}}
+        $lease=ConvertFrom-Json -InputObject $text -ErrorAction Stop
+        if($null -eq $lease -or $lease -is [array] -or $null -eq $lease.PSObject.Properties['schemaVersion'] -or [int]$lease.schemaVersion -ne 1 -or $null -eq $lease.PSObject.Properties['repoRoot']){throw 'Installed launch lease is malformed.'}
+        $repoRoot=[string]$lease.repoRoot
+        if($repoRoot.Length -gt 4096 -or $repoRoot -notmatch '^[A-Za-z]:\\' -or $repoRoot.IndexOfAny([char[]]"`r`n") -ge 0 -or (Get-NormalizedFullPath $repoRoot) -ine $repoRoot.TrimEnd('\')){throw 'Installed launch lease root is not an exact physical path.'}
+        $releases=Get-NormalizedFullPath $ReleasesRoot
+        Assert-ChildPath -Parent $InstallRoot -Child $releases
+        $matches=@(Get-ChildItem -LiteralPath $releases -Directory -ErrorAction Stop | Where-Object {(Join-Path $_.FullName 'SignallingWebServer') -ieq $repoRoot})
+        if($matches.Count -ne 1 -or -not(Test-Path -LiteralPath $repoRoot -PathType Container)){throw 'Installed launch lease root does not identify one runtime release.'}
+        foreach($path in @($InstallRoot,$releases,$matches[0].FullName,$repoRoot)){
+            if(((Get-Item -LiteralPath $path -Force -ErrorAction Stop).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Installed launch lease release is not a physical path.'}
+        }
+        return [pscustomobject]@{SkipPrune=$false;ProtectedRoot=$matches[0].FullName}
+    }catch{
+        Write-Warning ("Skipping runtime pruning because installed launch ownership cannot be classified: {0}" -f $_.Exception.Message)
+        return [pscustomobject]@{SkipPrune=$true;ProtectedRoot=$null}
+    }
+}
+
 function Prune-InactiveRuntimeArtifacts {
     param(
         [string]$InstallRoot,
@@ -575,15 +608,19 @@ function Prune-InactiveRuntimeArtifacts {
         [string]$ActiveRoot,
         [string]$KeepBundleRoot,
         [string]$ScratchRoot,
-        [string]$StagingParentRoot
+        [string]$StagingParentRoot,
+        $LeasePruneProtection
     )
 
     Assert-ChildPath -Parent $InstallRoot -Child $ReleasesRoot
     Assert-ChildPath -Parent $InstallRoot -Child $ScratchRoot
+    if($null -eq $LeasePruneProtection){$LeasePruneProtection=Get-InstalledLeasePruneProtection $InstallRoot $ReleasesRoot}
+    if($LeasePruneProtection.SkipPrune){return}
 
     $protectedRoots = @{}
     Add-ProtectedRuntimeRoot -Map $protectedRoots -Path $KeepBundleRoot
     Add-ProtectedRuntimeRoot -Map $protectedRoots -Path (Get-ActiveRuntimeTarget -ActiveRoot $ActiveRoot)
+    Add-ProtectedRuntimeRoot -Map $protectedRoots -Path $LeasePruneProtection.ProtectedRoot
 
     $liveRuntimeRoots = Get-LiveRuntimeReleaseRoots -ReleasesRoot $ReleasesRoot
     foreach ($key in $liveRuntimeRoots.Keys) {
@@ -705,6 +742,7 @@ if (-not (Test-InstalledRuntimeBundle -BundleRoot $bundleRoot -ExpectedManifest 
 }
 
 if ($Activate) {
+    $leasePruneProtection=Get-InstalledLeasePruneProtection -InstallRoot $installRootFull -ReleasesRoot $releasesRoot
     Set-ActiveRuntimePointer -ActiveRoot $activeRoot -TargetRoot $bundleRoot -InstallRoot $installRootFull -ArchiveExistingLaunchRoot
     Set-CompatibilityRuntimePointer -CompatibilityRoot $compatibilityRoot -TargetRoot $bundleRoot
     Prune-InactiveRuntimeArtifacts `
@@ -713,7 +751,8 @@ if ($Activate) {
         -ActiveRoot $activeRoot `
         -KeepBundleRoot $bundleRoot `
         -ScratchRoot $scratchRoot `
-        -StagingParentRoot $stagingParentRoot
+        -StagingParentRoot $stagingParentRoot `
+        -LeasePruneProtection $leasePruneProtection
 }
 
 $result = [pscustomobject]@{

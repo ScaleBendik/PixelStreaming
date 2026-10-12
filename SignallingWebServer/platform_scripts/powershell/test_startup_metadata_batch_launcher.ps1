@@ -21,7 +21,8 @@ $labelsStart = $source.IndexOf("`n:read_startup_metadata_batch")
 $labelsEnd = $source.IndexOf("`n:apply_unreal_provisioning_startup_args", $labelsStart + 1)
 if ($preludeEnd -lt 0 -or $labelsStart -lt 0 -or $labelsEnd -le $labelsStart) { throw 'Startup metadata launcher boundaries missing.' }
 # Execute the actual prelude and resolver labels, ending before any git,
-# maintenance, provisioning, config, process cleanup or runtime work.
+# maintenance, provisioning, config, process cleanup or runtime work. The entry
+# lease uses a fixed local receipt; concurrency is tested with the real module.
 $prelude = $source.Substring(0, $preludeEnd)
 $labels = $source.Substring($labelsStart, $labelsEnd - $labelsStart)
 $testParent = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..\.review-tmp'))
@@ -51,6 +52,8 @@ function Invoke-LauncherCase {
     # and fake responses live in JSON and never become generated CMD source.
     $prefix = @"
 @echo off
+set "SCALEWORLD_INSTALL_BASE=$testRoot"
+set "TEMP=$testRoot"
 set "STREAMING_LANE_TAG_RETRY_COUNT=3"
 set "DEPLOYMENT_TRACK_TAG_RETRY_COUNT=3"
 set "DELIVERY_MODE_TAG_RETRY_COUNT=$DeliveryAttempts"
@@ -100,6 +103,17 @@ exit /b %~2
 }
 
 try {
+    $fakeEntry = @'
+[CmdletBinding()]
+param([ValidateSet('Enter')][string]$Mode, [string]$RepoRoot, [string]$InstallBase, [string]$LaunchMode, [string]$OutputFile)
+$ErrorActionPreference = 'Stop'
+$expectedParent = [IO.Path]::GetFullPath($InstallBase).TrimEnd('\')
+if ([IO.Path]::GetFullPath((Split-Path -Parent $OutputFile)).TrimEnd('\') -ine $expectedParent) { throw 'Metadata fixture entry escaped its generated directory.' }
+$receipt = 'set "SCALEWORLD_STACK_LAUNCH_GENERATION=11111111-1111-4111-8111-111111111111"' + "`r`n" + 'set "SCALEWORLD_STACK_LAUNCH_DECISION=Proceed"' + "`r`n"
+[IO.File]::WriteAllText($OutputFile, $receipt, [Text.Encoding]::ASCII)
+exit 0
+'@
+    [IO.File]::WriteAllText((Join-Path $psRoot 'invoke_stack_launch_lease.ps1'), $fakeEntry, [Text.Encoding]::ASCII)
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'normalize_pixelstreaming_delivery_mode.ps1') -Destination (Join-Path $psRoot 'normalize_pixelstreaming_delivery_mode.ps1')
     foreach ($file in @('resolve_streaming_lane_from_instance_tag.ps1', 'resolve_deployment_track_from_instance_tag.ps1', 'resolve_pixelstreaming_delivery_mode_from_instance_tag.ps1')) {
         [IO.File]::WriteAllText((Join-Path $psRoot $file), "throw 'Unexpected standalone lookup in batch launcher fixture.'", [Text.Encoding]::ASCII)

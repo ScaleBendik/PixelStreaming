@@ -45,6 +45,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# A delayed old-generation supervisor must not begin work after recycle has
+# revoked its producer. Existing supervisors are stopped before absence proof.
+. (Join-Path $PSScriptRoot 'stack_launch_lease.ps1')
+$entryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+$entryBase = if ($env:SCALEWORLD_INSTALL_BASE) { $env:SCALEWORLD_INSTALL_BASE } else { 'C:\PixelStreaming' }
+$entryGate = Enter-StackLaunchGate -RepoRoot $entryRoot -InstallBase $entryBase -GenerationId $env:SCALEWORLD_STACK_LAUNCH_GENERATION
+Exit-StackLaunchGate -Handle $entryGate
+
 . (Join-Path $PSScriptRoot 'scaleworld_process_helpers.ps1')
 
 $script:IdentityCache = $null

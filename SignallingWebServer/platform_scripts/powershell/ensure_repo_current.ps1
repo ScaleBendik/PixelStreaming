@@ -434,9 +434,34 @@ function Start-PostRepoSyncStackRelaunch {
         return $false
     }
 
-    $command = 'set "STACK_ENABLE_BOOT_GIT_SYNC=false" && set "STACK_RELAUNCHED_AFTER_BOOT_SYNC=true" && set "WATCHDOG_RESTART_COMMAND=" && set "WATCHDOG_WILBUR_RESTART_COMMAND=" && set "WATCHDOG_UNREAL_RESTART_COMMAND=" && call "{0}"' -f $stackLauncherPath
     Write-RepoSyncLog "Repo HEAD changed from $InitialHead to $CurrentHead. Launching fresh stack from updated checkout."
-    Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $command) -WindowStyle Minimized | Out-Null
+    $launchHelpers = Join-Path $RepoRootPath 'SignallingWebServer\platform_scripts\powershell'
+    . (Join-Path $launchHelpers 'stack_launch_lease.ps1')
+    . (Join-Path $launchHelpers 'stack_launch_reserved_entry.ps1')
+    $installBase = if ($env:SCALEWORLD_INSTALL_BASE) { $env:SCALEWORLD_INSTALL_BASE } else { 'C:\PixelStreaming' }
+    $scope = Get-StackLaunchLeaseScope -RepoRoot (Join-Path $RepoRootPath 'SignallingWebServer') -InstallBase $installBase
+    $overrides = @{ STACK_ENABLE_BOOT_GIT_SYNC='false'; STACK_RELAUNCHED_AFTER_BOOT_SYNC='true'; WATCHDOG_RESTART_COMMAND=''; WATCHDOG_WILBUR_RESTART_COMMAND=''; WATCHDOG_UNREAL_RESTART_COMMAND='' }
+    $launchLock = $null
+    try {
+        $launchLock = Enter-StackLaunchLeaseLock -Scope $scope
+        if ($env:SCALEWORLD_STACK_LAUNCH_GENERATION) {
+            $lease = Read-StackLaunchLease -Scope $scope
+            if ($null -eq $lease) { throw 'Git handoff has no launch owner.' }
+            $handoff = Begin-StackLaunchHandoff -Scope $scope -GenerationId $env:SCALEWORLD_STACK_LAUNCH_GENERATION -OwnerIdentity $lease.owner -TargetRepoRoot $scope.RepoRoot -LockHandle $launchLock
+            [void](Start-StackLaunchReservedEntry -Scope $scope -Grant $handoff.Grant -Kind handoff -LockHandle $launchLock -EnvironmentOverrides $overrides)
+        } else {
+            # Standalone legacy Git callers have no lease to transfer. The
+            # fresh full-stack entry still performs ordinary ownership checks.
+            $info = [Diagnostics.ProcessStartInfo]::new()
+            $info.FileName = $env:ComSpec
+            $info.Arguments = '/d /s /c ""{0}""' -f $stackLauncherPath
+            $info.UseShellExecute = $false; $info.CreateNoWindow = $true
+            foreach ($key in $overrides.Keys) { $info.EnvironmentVariables[$key] = $overrides[$key] }
+            $info.EnvironmentVariables['SCALEWORLD_STACK_LAUNCH_GRANT'] = ''
+            $process = [Diagnostics.Process]::Start($info)
+            $process.Dispose()
+        }
+    } finally { if ($null -ne $launchLock) { Exit-StackLaunchLeaseLock -Handle $launchLock } }
     return $true
 }
 function Stop-StartupRuntimeStatusHeartbeat {

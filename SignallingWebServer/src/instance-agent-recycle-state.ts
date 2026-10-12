@@ -2,6 +2,7 @@
 import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { TextDecoder } from 'util';
 import { Logger } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
 
 const LEGACY_RECYCLE_MARKER_SCHEMA_VERSION = 1;
@@ -16,6 +17,9 @@ export interface InstanceAgentRecycleMarkerSnapshot {
     reason: string;
     recycleId: string;
     sourcePid: number;
+    helperLaunchId?: string;
+    sourceLaunchGenerationId?: string;
+    sourceCreationUtc?: string;
     replacementStartedAtUtc?: string;
     resetCompletedAtUtc?: string;
     recycleRequestedToken?: string;
@@ -63,6 +67,130 @@ function normalizeRequiredPositiveInteger(value: unknown): number | null {
     return value;
 }
 
+function normalizeHelperLaunchId(value: unknown): string | undefined {
+    const normalized = normalizeOptionalText(value);
+    return normalized &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized)
+        ? normalized.toLowerCase()
+        : undefined;
+}
+
+function normalizeLaunchGenerationId(value: unknown): string | undefined {
+    const text = normalizeOptionalText(value);
+    if (
+        !text ||
+        !/^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(text)
+    ) {
+        return undefined;
+    }
+    const normalized = text.replace(/-/g, '').toLowerCase();
+    if (!normalized || !/^[0-9a-f]{32}$/.test(normalized) || /^0{32}$/.test(normalized)) {
+        return undefined;
+    }
+    return `${normalized.slice(0, 8)}-${normalized.slice(8, 12)}-${normalized.slice(12, 16)}-${normalized.slice(16, 20)}-${normalized.slice(20)}`;
+}
+
+function normalizeExactSourceCreationUtc(value: unknown): string | undefined {
+    const normalized = normalizeOptionalText(value);
+    return normalized &&
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$/.test(normalized) &&
+        Number.isFinite(Date.parse(normalized))
+        ? normalized
+        : undefined;
+}
+
+export interface InstanceAgentRecycleSourceLaunchIdentity {
+    sourceLaunchGenerationId: string;
+    sourceCreationUtc: string;
+}
+
+function canonicalLocalPath(value: string): string {
+    const canonical = fs.realpathSync.native(value);
+    return process.platform === 'win32' ? canonical.toLowerCase() : canonical;
+}
+
+// Read one atomic lease snapshot without creating state or running a subprocess.
+// The recycler independently revalidates this exact identity under its lock.
+export function readInstanceAgentRecycleSourceLaunchIdentity(): InstanceAgentRecycleSourceLaunchIdentity | null {
+    let descriptor: number | null = null;
+    try {
+        const generationId = normalizeLaunchGenerationId(process.env.SCALEWORLD_STACK_LAUNCH_GENERATION);
+        if (!generationId) {
+            return null;
+        }
+        const installBase = process.env.SCALEWORLD_INSTALL_BASE?.trim() || 'C:\\PixelStreaming';
+        const leasePath = path.join(installBase, 'state', 'stack-launch-lease.json');
+        descriptor = fs.openSync(leasePath, 'r');
+        const stat = fs.fstatSync(descriptor);
+        if (!stat.isFile() || stat.size > 32768) {
+            return null;
+        }
+        const bytes = Buffer.alloc(32769);
+        let length = 0;
+        while (length < bytes.length) {
+            const read = fs.readSync(descriptor, bytes, length, bytes.length - length, null);
+            if (read === 0) {
+                break;
+            }
+            length += read;
+        }
+        if (length > 32768) {
+            return null;
+        }
+        const decodedLease: unknown = JSON.parse(
+            new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, length))
+        );
+        if (!decodedLease || typeof decodedLease !== 'object' || Array.isArray(decodedLease)) {
+            return null;
+        }
+        const lease = decodedLease as Record<string, unknown>;
+        if (
+            lease.schemaVersion !== 1 ||
+            (lease.phase !== 'starting' && lease.phase !== 'completed') ||
+            normalizeLaunchGenerationId(lease.generationId) !== generationId ||
+            typeof lease.repoRoot !== 'string' ||
+            canonicalLocalPath(lease.repoRoot) !== canonicalLocalPath(process.cwd())
+        ) {
+            return null;
+        }
+        const executablePath = canonicalLocalPath(process.execPath);
+        const births = new Set<string>();
+        for (const value of [lease.activeNode, lease.completedNode]) {
+            if (!value || typeof value !== 'object' || Array.isArray(value)) {
+                continue;
+            }
+            const pin = value as Record<string, unknown>;
+            if (
+                !pin ||
+                pin.pid !== process.pid ||
+                typeof pin.name !== 'string' ||
+                pin.name.toLowerCase() !== 'node.exe' ||
+                typeof pin.executablePath !== 'string' ||
+                canonicalLocalPath(pin.executablePath) !== executablePath
+            ) {
+                continue;
+            }
+            const creationUtc = normalizeExactSourceCreationUtc(pin.creationUtc);
+            if (creationUtc) {
+                births.add(creationUtc);
+            }
+        }
+        return births.size === 1
+            ? { sourceLaunchGenerationId: generationId, sourceCreationUtc: [...births][0] }
+            : null;
+    } catch {
+        return null;
+    } finally {
+        if (descriptor !== null) {
+            try {
+                fs.closeSync(descriptor);
+            } catch {
+                // Closing the read-only snapshot cannot grant recycle authority.
+            }
+        }
+    }
+}
+
 export function resolveInstanceAgentRecycleMarkerPath(desiredStatePath?: string | null): string {
     const normalizedDesiredStatePath = typeof desiredStatePath === 'string' ? desiredStatePath.trim() : '';
     if (normalizedDesiredStatePath.length > 0) {
@@ -85,6 +213,9 @@ export function normalizeInstanceAgentRecycleMarkerSnapshot(
     const reason = normalizeOptionalText(value?.reason);
     const recycleId = normalizeOptionalText(value?.recycleId);
     const sourcePid = normalizeRequiredPositiveInteger(value?.sourcePid);
+    const helperLaunchId = normalizeHelperLaunchId(value?.helperLaunchId);
+    const sourceLaunchGenerationId = normalizeLaunchGenerationId(value?.sourceLaunchGenerationId);
+    const sourceCreationUtc = normalizeExactSourceCreationUtc(value?.sourceCreationUtc);
     if (
         (value?.schemaVersion !== LEGACY_RECYCLE_MARKER_SCHEMA_VERSION &&
             value?.schemaVersion !== RECYCLE_MARKER_SCHEMA_VERSION) ||
@@ -93,6 +224,9 @@ export function normalizeInstanceAgentRecycleMarkerSnapshot(
         !reason ||
         !recycleId ||
         sourcePid === null ||
+        (value?.helperLaunchId !== undefined && !helperLaunchId) ||
+        ((value?.sourceLaunchGenerationId !== undefined || value?.sourceCreationUtc !== undefined) &&
+            (!sourceLaunchGenerationId || !sourceCreationUtc)) ||
         (phase === 'intent' &&
             (value?.replacementStartedAtUtc !== undefined || value?.resetCompletedAtUtc !== undefined)) ||
         (phase === 'replacement_started' &&
@@ -112,6 +246,9 @@ export function normalizeInstanceAgentRecycleMarkerSnapshot(
         reason,
         recycleId,
         sourcePid,
+        helperLaunchId,
+        sourceLaunchGenerationId,
+        sourceCreationUtc,
         replacementStartedAtUtc: phase === 'replacement_started' ? replacementStartedAtUtc! : undefined,
         resetCompletedAtUtc: phase === 'replacement_started' ? (resetCompletedAtUtc ?? undefined) : undefined,
         recycleRequestedToken: normalizeOptionalText(value?.recycleRequestedToken),
@@ -267,19 +404,31 @@ export function writeInstanceAgentRecycleMarkerSnapshot(
 export function clearInstanceAgentRecycleMarkerSnapshot(
     filePath: string,
     logger: (message: string) => void = (message) => Logger.info(message),
-    expectedRecycleId?: string
+    expectedRecycleId?: string,
+    expectedHelperLaunchId?: string
 ): boolean {
     const normalizedPath = path.resolve(filePath);
     try {
         const normalizedExpectedRecycleId = normalizeOptionalText(expectedRecycleId);
-        if (normalizedExpectedRecycleId) {
+        const normalizedExpectedHelperLaunchId = normalizeHelperLaunchId(expectedHelperLaunchId);
+        if (expectedHelperLaunchId !== undefined && !normalizedExpectedHelperLaunchId) {
+            logger(
+                '[instance-agent-recycle-state] Refusing to clear recycle marker with an invalid expected helper dispatch.'
+            );
+            return false;
+        }
+        if (normalizedExpectedRecycleId || normalizedExpectedHelperLaunchId) {
             const currentMarker = readInstanceAgentRecycleMarkerSnapshot(normalizedPath, logger);
             if (!currentMarker) {
                 return true;
             }
-            if (currentMarker.recycleId !== normalizedExpectedRecycleId) {
+            if (
+                (normalizedExpectedRecycleId && currentMarker.recycleId !== normalizedExpectedRecycleId) ||
+                (normalizedExpectedHelperLaunchId &&
+                    currentMarker.helperLaunchId !== normalizedExpectedHelperLaunchId)
+            ) {
                 logger(
-                    `[instance-agent-recycle-state] Refusing to clear recycle marker '${normalizedPath}' because recycle ${currentMarker.recycleId} replaced expected recycle ${normalizedExpectedRecycleId}.`
+                    `[instance-agent-recycle-state] Refusing to clear recycle marker '${normalizedPath}' because its operation or helper dispatch no longer matches the caller.`
                 );
                 return false;
             }

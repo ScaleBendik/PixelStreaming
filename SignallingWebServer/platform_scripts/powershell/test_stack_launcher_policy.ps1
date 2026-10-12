@@ -137,6 +137,12 @@ $startDevTurn = [System.IO.File]::ReadAllText($startDevTurnPath)
 $startWatchdog = [System.IO.File]::ReadAllText($startWatchdogPath)
 $commonCmd = [System.IO.File]::ReadAllText($commonCmdPath)
 $stackRecycleScript = [System.IO.File]::ReadAllText($stackRecycleScriptPath)
+$launchLease = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'stack_launch_lease.ps1'))
+$launchProducers = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'stack_launch_processes.ps1'))
+$reservedEntry = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'stack_launch_reserved_entry.ps1'))
+$leasedWilbur = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'start_wilbur_leased.ps1'))
+$nativeWilbur = [System.IO.File]::ReadAllText((Join-Path $cmdRoot 'start_wilbur_native.bat'))
+$delayedWatchdog = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'start_stack_watchdog.ps1'))
 $unrealLauncher = [System.IO.File]::ReadAllText($unrealLauncherPath)
 $watchdog = [System.IO.File]::ReadAllText($watchdogPath)
 $viewerIdleStop = [System.IO.File]::ReadAllText($viewerIdleStopPath)
@@ -195,6 +201,80 @@ Assert-ContainsText `
     -Content $stackLauncher `
     -Expected 'set "STACK_LAUNCH_EXIT=0"' `
     -Message 'Stack launcher must track component startup failures instead of exiting before watchdog scheduling.'
+
+$launchEntryIndex = $stackLauncher.IndexOf('-Mode Enter -RepoRoot "%STACK_SIGNALLING_ROOT%"')
+$launchMetadataIndex = $stackLauncher.IndexOf('call :read_startup_metadata_batch')
+$launchHealthClearIndex = $stackLauncher.IndexOf('del /f /q "%WATCHDOG_STREAMER_HEALTH_PATH%"')
+Assert-True `
+    -Condition ($launchEntryIndex -ge 0 -and $launchMetadataIndex -gt $launchEntryIndex -and $launchHealthClearIndex -gt $launchEntryIndex) `
+    -Message 'Full-stack entry must register or skip its generation before metadata work and shared health mutation.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected 'if "%STACK_LEASE_EXIT%"=="10" (' `
+    -Message 'Duplicate full-stack entry must treat the lease skip result as a harmless successful exit.'
+
+Assert-ContainsText `
+    -Content $launchLease `
+    -Expected "MutexName=('Global\ScaleWorldStackLaunch-' + `$key)" `
+    -Message 'Launch and recycle coordination must share a stable install-base global mutex across runtime roots.'
+
+Assert-DoesNotContainText `
+    -Content $launchLease `
+    -Unexpected 'Local\ScaleWorldStackLaunch-' `
+    -Message 'A failed global lock must not silently fall back to a different coordination namespace.'
+
+Assert-ContainsText `
+    -Content $launchLease `
+    -Expected '$completed=$Mode -ceq ''normal'' -and $lease.phase -ceq ''completed'' -and (Test-StackLaunchProcessIdentity $lease.completedNode)' `
+    -Message 'Task Scheduler normal retries must remain harmless after replacement completion and transient recycle marker removal.'
+
+Assert-ContainsText `
+    -Content $launchLease `
+    -Expected 'Reserved launch grant does not match this exact CMD.' `
+    -Message 'A replacement grant must require the exact registered CMD identity rather than inherited environment alone.'
+
+Assert-MatchesText `
+    -Content $unrealLauncher `
+    -Pattern 'Enter-StackLaunchGate.+Get-ScaleWorldRuntimeProcessMatcher.+Get-ScaleWorldRuntimeProcesses.+Start-Process.+finally.+Exit-StackLaunchGate' `
+    -Message 'Unreal presence check and native spawn must remain in the same generation gate.'
+
+Assert-ContainsText `
+    -Content $commonCmd `
+    -Expected '-File "%SCRIPT_DIR%..\powershell\start_wilbur_leased.ps1"' `
+    -Message 'Managed Wilbur startup must use the generation-gated launcher.'
+
+Assert-ContainsText `
+    -Content $nativeWilbur `
+    -Expected 'call "%NODE_EXE%" .\dist\index.js %SERVER_ARGS%' `
+    -Message 'Gated Wilbur startup must preserve the existing native CMD CALL argument semantics.'
+
+Assert-MatchesText `
+    -Content $leasedWilbur `
+    -Pattern 'Enter-StackLaunchGate.+\[Diagnostics.Process\]::Start\(\$info\).+ParentProcessId = \{0\}.+Register-StackLaunchNode.+\$nodeBorn = \$true.+finally.+Exit-StackLaunchGate' `
+    -Message 'Wilbur must retain its generation gate until the exact child Node birth is observed and durably registered.'
+
+# test_stack_launch_concurrency.ps1 executes the real leased wrapper with native
+# fixture children and verifies uncertified Node absence before gate release.
+Assert-MatchesText `
+    -Content $leasedWilbur `
+    -Pattern 'if \(-not \$nodeBorn\) \{.+Stop-UncertifiedWilburChild.+throw.+finally.+Exit-StackLaunchGate' `
+    -Message 'Every unobserved Wilbur birth must verify producer and direct-child absence before gate release, including an already-exited native shell.'
+
+Assert-ContainsText `
+    -Content $stackLauncher `
+    -Expected '-File "%SCRIPT_DIR%..\powershell\start_stack_watchdog.ps1" -DelaySeconds' `
+    -Message 'Delayed watchdog work must execute a file helper that can validate its inherited generation after the delay.'
+
+Assert-MatchesText `
+    -Content $delayedWatchdog `
+    -Pattern 'Start-Sleep -Seconds \$DelaySeconds.+Enter-StackLaunchGate.+Start-Process.+finally.+Exit-StackLaunchGate' `
+    -Message 'Delayed watchdog creation must check and hold the current generation gate after sleeping.'
+
+Assert-MatchesText `
+    -Content $watchdog `
+    -Pattern 'Enter-StackLaunchGate.+Exit-StackLaunchGate.+\. \(Join-Path \$PSScriptRoot ''scaleworld_process_helpers.ps1''\)' `
+    -Message 'A delayed watchdog child must recheck its inherited generation before supervision or process mutations begin.'
 
 Assert-ContainsText `
     -Content $stackLauncher `
@@ -882,6 +962,70 @@ Assert-ContainsText `
     -Content $prepareForBake `
     -Expected "if (`$capabilities -contains 'unreal-prerequisite-preflight-v1') {" `
     -Message 'AMI bake validation must require the helper for new prerequisite-aware artifacts while accepting legacy rollback artifacts.'
+
+# Execute the real publisher copy selector with a small isolated source tree.
+# This checks helper inclusion without packaging dependencies or mutable state.
+$launchHelperFiles = @(
+    'powershell\invoke_stack_launch_lease.ps1',
+    'powershell\recycle_intent_guard.ps1',
+    'powershell\stack_recycle_monitor.ps1',
+    'powershell\invoke_stack_recycle_monitor.ps1',
+    'powershell\stack_launch_lease.ps1',
+    'powershell\stack_launch_processes.ps1',
+    'powershell\stack_launch_reserved_entry.ps1',
+    'powershell\start_stack_watchdog.ps1',
+    'powershell\start_wilbur_leased.ps1',
+    'cmd\start_wilbur_native.bat'
+)
+$platformCopyModule = New-SelectedFunctionModule `
+    -Content $packageRuntimeArtifact `
+    -FunctionNames @('Invoke-Robocopy', 'Copy-RequiredDirectory', 'Copy-RuntimePlatformScripts')
+$platformCopyTestRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("scaleworld-platform-copy-{0}" -f [guid]::NewGuid().ToString('N'))
+try {
+    $fixtureRepoRoot = Join-Path $platformCopyTestRoot 'source'
+    $fixtureStageRoot = Join-Path $platformCopyTestRoot 'stage'
+    $fixturePlatformRoot = Join-Path $fixtureRepoRoot 'SignallingWebServer\platform_scripts'
+    foreach ($relativePath in $launchHelperFiles) {
+        $fixturePath = Join-Path $fixturePlatformRoot $relativePath
+        New-Item -ItemType Directory -Path (Split-Path -Parent $fixturePath) -Force | Out-Null
+        $sourcePath = Join-Path ([System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))) $relativePath
+        Copy-Item -LiteralPath $sourcePath -Destination $fixturePath
+    }
+    $mutablePaths = @('cmd\.env', 'powershell\state\stack-launch-lease.json', 'powershell\logs\old.log', 'cmd\node\node.exe')
+    foreach ($relativePath in $mutablePaths) {
+        $fixturePath = Join-Path $fixturePlatformRoot $relativePath
+        New-Item -ItemType Directory -Path (Split-Path -Parent $fixturePath) -Force | Out-Null
+        Set-Content -LiteralPath $fixturePath -Value 'fixture mutable data' -Encoding ASCII
+    }
+    & $platformCopyModule {
+        param($SourceRoot, $DestinationRoot)
+        $script:repoRootPath = $SourceRoot
+        Copy-RuntimePlatformScripts -DestinationRoot $DestinationRoot
+    } $fixtureRepoRoot $fixtureStageRoot
+    $stagedPlatformRoot = Join-Path $fixtureStageRoot 'SignallingWebServer\platform_scripts'
+    foreach ($relativePath in $launchHelperFiles) {
+        $sourceHash = (Get-FileHash -LiteralPath (Join-Path $fixturePlatformRoot $relativePath) -Algorithm SHA256).Hash
+        $stagedPath = Join-Path $stagedPlatformRoot $relativePath
+        Assert-True -Condition (Test-Path -LiteralPath $stagedPath -PathType Leaf) `
+            -Message "Runtime artifact copy selector must include launch helper '$relativePath'."
+        Assert-True -Condition ((Get-FileHash -LiteralPath $stagedPath -Algorithm SHA256).Hash -ceq $sourceHash) `
+            -Message "Runtime artifact copy selector must preserve launch helper '$relativePath' exactly."
+    }
+    foreach ($relativePath in $mutablePaths) {
+        Assert-True -Condition (-not (Test-Path -LiteralPath (Join-Path $stagedPlatformRoot $relativePath))) `
+            -Message "Runtime artifact platform copy must continue excluding mutable or separately bundled file '$relativePath'."
+    }
+} finally {
+    Remove-Module $platformCopyModule.Name -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $platformCopyTestRoot -PathType Container) {
+        $resolvedCopyTestRoot = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $platformCopyTestRoot).ProviderPath)
+        $expectedCopyTestPrefix = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\') + '\scaleworld-platform-copy-'
+        if (-not $resolvedCopyTestRoot.StartsWith($expectedCopyTestPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Refusing cleanup outside the generated platform-copy fixture.'
+        }
+        Remove-Item -LiteralPath $resolvedCopyTestRoot -Recurse -Force
+    }
+}
 
 $runtimeInstallerPolicyModule = New-SelectedFunctionModule `
     -Content $runtimeInstaller `
@@ -1639,22 +1783,83 @@ Assert-ContainsText `
     -Expected 'Suppressing reset_completed because commercial recovery is still durable-blocked' `
     -Message 'Instance agent must not emit reset completion from a Ready edge while only pre-launch intent or otherwise unproven commercial recovery remains.'
 
-$wilburAbsenceProofIndex = $stackRecycleScript.IndexOf("if (-not (Wait-ForProcessAbsence -Label 'wilbur'")
+$lifecycleLockIndex = $stackRecycleScript.IndexOf('$lifecycleLock = Enter-StackLaunchLeaseLock -Scope $launchScope')
+$intentCaptureIndex = $stackRecycleScript.IndexOf('$recycleIntent = Read-ScaleWorldRecycleIntent -MarkerPath $RecycleMarkerPath -ExpectedRecycleId $ExpectedRecycleId -ExpectedSourcePid $SourcePid -ExpectedHelperLaunchId $ExpectedHelperLaunchId -ExpectedLaunchGenerationId $ExpectedLaunchGenerationId -ExpectedSourceCreationUtc $ExpectedSourceCreationUtc')
+$sourceLeaseProofIndex = $stackRecycleScript.IndexOf('$sourceLease = Read-StackLaunchLease -Scope $launchScope')
+$sourceBirthProofIndex = $stackRecycleScript.IndexOf("if (`$null -eq `$sourcePin) { throw 'Recycle source does not match its dispatch-time Node birth pin.' }")
+$revokeGenerationIndex = $stackRecycleScript.IndexOf('$reservation = Begin-StackLaunchRecycle')
+$stopProducersIndex = $stackRecycleScript.IndexOf('Stop-StackLaunchProducers -RepoRoot $launchScope.RepoRoot')
+$stopSourceIndex = $stackRecycleScript.IndexOf('Stop-StackLaunchProcessIdentity $sourceIdentity')
+$stopUnrealIndex = $stackRecycleScript.IndexOf('Stop-RecycleUnrealProcesses -Matcher $scaleWorldRuntimeMatcher')
+$wilburAbsenceProofIndex = $stackRecycleScript.IndexOf('if ($remainingNode.Count -gt 0)')
 $unrealAbsenceProofIndex = $stackRecycleScript.IndexOf('if (-not (Wait-ForUnrealAbsence')
+$preCancellationIntentRecheckIndex = $stackRecycleScript.IndexOf('Assert-ScaleWorldRecycleIntentUnchanged -Intent $recycleIntent')
+$intentRecheckIndex = if ($unrealAbsenceProofIndex -ge 0) {
+    $stackRecycleScript.IndexOf('Assert-ScaleWorldRecycleIntentUnchanged -Intent $recycleIntent', $unrealAbsenceProofIndex)
+} else { -1 }
 $replacementProofIndex = $stackRecycleScript.IndexOf(
     '$stackRestartStartedAtUtc = Set-RecycleMarkerReplacementStarted'
 )
 $replacementLaunchIndex = $stackRecycleScript.IndexOf(
-    "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', ('`"{0}`" --recovery'"
+    'Start-StackLaunchReservedEntry -Scope $launchScope -Grant $reservation.Grant -Kind recovery -LockHandle $lifecycleLock'
 )
+$releaseLaunchLockIndex = if ($replacementLaunchIndex -ge 0) {
+    $stackRecycleScript.IndexOf('Exit-StackLaunchLeaseLock -Handle $lifecycleLock', $replacementLaunchIndex)
+} else { -1 }
 Assert-True `
     -Condition (
-        $wilburAbsenceProofIndex -ge 0 -and
+        $lifecycleLockIndex -ge 0 -and
+        $intentCaptureIndex -gt $lifecycleLockIndex -and
+        $sourceLeaseProofIndex -gt $intentCaptureIndex -and
+        $sourceBirthProofIndex -gt $sourceLeaseProofIndex -and
+        $preCancellationIntentRecheckIndex -gt $sourceBirthProofIndex -and
+        $revokeGenerationIndex -gt $preCancellationIntentRecheckIndex -and
+        $stopProducersIndex -gt $revokeGenerationIndex -and
+        $stopSourceIndex -gt $stopProducersIndex -and
+        $stopUnrealIndex -gt $stopSourceIndex -and
+        $wilburAbsenceProofIndex -gt $stopUnrealIndex -and
         $unrealAbsenceProofIndex -gt $wilburAbsenceProofIndex -and
-        $replacementProofIndex -gt $unrealAbsenceProofIndex -and
-        $replacementLaunchIndex -gt $replacementProofIndex
+        $intentRecheckIndex -gt $unrealAbsenceProofIndex -and
+        $replacementProofIndex -gt $intentRecheckIndex -and
+        $replacementLaunchIndex -gt $replacementProofIndex -and
+        $releaseLaunchLockIndex -gt $replacementLaunchIndex
     ) `
-    -Message 'Replacement-started proof must be persisted only after old Wilbur and Unreal are absent and before the replacement stack launches.'
+    -Message 'Under the lifecycle lock, exact intent and source-generation/birth proof must precede revocation and producer-first cancellation; native absence and unchanged intent must precede replacement proof, reserved launch, and unlock.'
+
+Assert-ContainsText `
+    -Content $viewerIdleStop `
+    -Expected "Buffer.from(recycleMarker.recycleId, 'utf8').toString('base64')" `
+    -Message 'Opaque recycle identity must cross CMD as UTF8 Base64, preserving exact marker ownership without shell interpolation.'
+
+Assert-ContainsText `
+    -Content $stackRecycleScript `
+    -Expected '[Text.UTF8Encoding]::new($false, $true)' `
+    -Message 'Recycle identity transport must reject invalid UTF8 before intent validation and destructive work.'
+
+Assert-ContainsText `
+    -Content $reservedEntry `
+    -Expected '$info.EnvironmentVariables[''SCALEWORLD_STACK_LAUNCH_GRANT''] = $grantId' `
+    -Message 'Replacement grant must pass through child environment rather than a CMD SET chain.'
+
+Assert-MatchesText `
+    -Content $reservedEntry `
+    -Pattern '\$child = \[Diagnostics.Process\]::Start\(\$info\).+\$null = \$child.Handle.+Get-StackLaunchProcessIdentity.+Set-StackLaunchReplacementEntry' `
+    -Message 'The reserved replacement CMD must have its process handle and exact identity pinned under the lifecycle lock before the grant is consumable.'
+
+Assert-ContainsText `
+    -Content $launchProducers `
+    -Expected '$process.Kill()' `
+    -Message 'Producer cancellation must use a retained native process handle after verifying its creation time and executable.'
+
+Assert-DoesNotContainText `
+    -Content $launchProducers `
+    -Unexpected 'taskkill' `
+    -Message 'Producer cancellation must not kill an entire tree that includes the detached recycler.'
+
+Assert-MatchesText `
+    -Content $launchProducers `
+    -Pattern '\$protected = @\{ \$RecyclerPid = \$recycler \}.+Protected recycler ancestry has no verifiable creation time.+if \(\$childBirth -lt \$parentBirth\).+\-not \$protected.ContainsKey' `
+    -Message 'Producer snapshots must protect the live recycler branch with verified parent/child birth ordering while retiring old launch-producing shells.'
 
 Assert-ContainsText `
     -Content $stackRecycleScript `
@@ -1982,13 +2187,18 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $repoSync `
-    -Expected "STACK_ENABLE_BOOT_GIT_SYNC=false" `
+    -Expected "STACK_ENABLE_BOOT_GIT_SYNC='false'" `
     -Message 'Post-sync stack relaunch must disable boot git sync to avoid relaunch loops.'
 
 Assert-ContainsText `
     -Content $repoSync `
-    -Expected 'set "WATCHDOG_RESTART_COMMAND=" && set "WATCHDOG_WILBUR_RESTART_COMMAND=" && set "WATCHDOG_UNREAL_RESTART_COMMAND="' `
+    -Expected "WATCHDOG_RESTART_COMMAND=''; WATCHDOG_WILBUR_RESTART_COMMAND=''; WATCHDOG_UNREAL_RESTART_COMMAND=''" `
     -Message 'Post-sync stack relaunch must clear root-bound watchdog restart commands before handing off to the updated checkout.'
+
+Assert-MatchesText `
+    -Content $repoSync `
+    -Pattern 'Enter-StackLaunchLeaseLock.+Begin-StackLaunchHandoff.+Start-StackLaunchReservedEntry.+-Kind handoff.+finally.+Exit-StackLaunchLeaseLock' `
+    -Message 'Managed git relaunch must transfer exact generation ownership and reserve its replacement CMD under the shared lock.'
 
 Assert-ContainsText `
     -Content $repoSync `

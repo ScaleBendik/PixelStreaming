@@ -414,6 +414,12 @@ set "NODE_EXE=%SCRIPT_DIR%node\node.exe"
 if not exist "%NODE_EXE%" (
     set "NODE_EXE=node.exe"
 )
+if not defined SCALEWORLD_STACK_LAUNCH_GENERATION if not defined SCALEWORLD_INSTALL_BASE goto StartWilburUnmanaged
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%..\powershell\start_wilbur_leased.ps1"
+exit /b
+
+:StartWilburUnmanaged
+rem Preserve the upstream standalone launcher when no ScaleWorld lifecycle is configured.
 call "%NODE_EXE%" .\dist\index.js %SERVER_ARGS%
 exit /b
 

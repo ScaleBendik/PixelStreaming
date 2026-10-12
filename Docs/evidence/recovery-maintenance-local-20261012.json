@@ -1,0 +1,75 @@
+{
+    "sourceInventory": [
+        {
+            "path": "SignallingWebServer/platform_scripts/powershell/stack_launch_lease.ps1",
+            "sha256": "7681462c3c99ea03c2aa34abecb8aa2218eec4831c438faa2ec48789351de4df"
+        },
+        {
+            "path": "SignallingWebServer/platform_scripts/powershell/invoke_stack_launch_lease.ps1",
+            "sha256": "901873340c24865b753ca15fadafcfba96688e973fc851d2e975fdc2745e972c"
+        },
+        {
+            "path": "SignallingWebServer/platform_scripts/powershell/stack_launch_reserved_entry.ps1",
+            "sha256": "cb943bca3fd05a1b0d2ee42962b533ce633bf60267de9532e008c0d0afcce9b7"
+        },
+        {
+            "path": "SignallingWebServer/platform_scripts/powershell/stack_launch_maintenance.ps1",
+            "sha256": "58b7ea7be22ada310f8b9fa6732a31b6fcf3527cf62b0de9934f1492a70eedaa"
+        },
+        {
+            "path": "SignallingWebServer/platform_scripts/powershell/invoke_update_mode.ps1",
+            "sha256": "e87096b9e03e0a98ee78d92b47928932b05c4c537ba2f08abbb3071f6ad83369"
+        },
+        {
+            "path": "SignallingWebServer/platform_scripts/powershell/invoke_provisioning_mode.ps1",
+            "sha256": "8c6d5975b621317ede44ac54c11da60da9b76266709691d138bb3f6a4eb9e5a1"
+        },
+        {
+            "path": "SignallingWebServer/platform_scripts/powershell/install_pixelstreaming_runtime.ps1",
+            "sha256": "0c14fcb5ed477692ee4dc7087f4dce8a58d992ad7bcace504e6a647c4a818fd0"
+        },
+        {
+            "path": "SignallingWebServer/platform_scripts/powershell/test_stack_launch_maintenance_integration.ps1",
+            "sha256": "1be4e0bd29feb1268b6e8a31ac3dc5731a25c9b7355720d5e4427a9be0f52b44"
+        },
+        {
+            "path": "SignallingWebServer/platform_scripts/cmd/start_streamer_stack.bat",
+            "sha256": "094de46300251c05609fee8454dcae1dca5323d0fe340077df6ec983826b9fc4"
+        }
+    ],
+    "logSha256": "d8e900b45ee3dcc72c97674db73c1863ff92daef84907d6ed5b1a33a8a6d267c",
+    "powershellVersion": "5.1.26100.9444",
+    "cleanup": {
+        "earlierFixture1e214Absent": true,
+        "matchingLiveFixtureProcessCount": 0,
+        "scratchDirectoryCount": 0,
+        "earlierFixture790caAbsent": true
+    },
+    "sourceInventoryCount": 9,
+    "limitations": [
+        "No hosted/cloud operations, AWS calls, native Node, Unreal, media, or shutdown execution.",
+        "The matrix exercises the actual validation function and source BAT maintenance blocks, with disposable target claim fixtures.",
+        "Installer retention parsing is exercised by the separate unit suite; real artifact installation and hosted maintenance validation remain required.",
+        "Legacy rollback is intentionally unclaimed; leased source relocation into a junction remains fail-closed and requires a separate migration gate."
+    ],
+    "logPath": "C:\\Users\\bendik.slyngstad\\Documents\\Codex\\2026-09-26\\our\\outputs\\recovery-maintenance-integration-final.log",
+    "scenarios": [
+        "same-root-validation",
+        "retarget-validation",
+        "retarget-provision42",
+        "pin-failure-held",
+        "legacy-rollback-roundtrip"
+    ],
+    "completedAtUtc": "2026-10-12T02:08:13.4617998Z",
+    "otherLocalChecks": {
+        "maintenanceUnitAssertions": 30,
+        "syntaxPassed": true,
+        "leaseUnitAssertions": 129,
+        "gitDiffCheckPassed": true
+    },
+    "scope": "local Windows CMD and PowerShell maintenance ownership fixtures",
+    "assertions": 50,
+    "sourceHashesUnchangedDuringRun": true,
+    "schemaVersion": 1,
+    "exitCode": 0
+}

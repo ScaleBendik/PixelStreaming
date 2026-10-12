@@ -1,0 +1,54 @@
+{
+    "schemaVersion": 1,
+    "scope": "local disposable Windows process fixtures only",
+    "firstIntegratedAttempt": {
+        "status": "failed",
+        "case": "recycle-monitor-orphan-fault-after-producers",
+        "reason": "Expected fake shutdown not observed within 25 seconds after checkpoint",
+        "armedDeadlineSeconds": 18,
+        "waitSeconds": 25,
+        "classification": "unresolved",
+        "rawPrecleanupStateRetained": false,
+        "newPassReceiptWritten": false
+    },
+    "diagnosticRepeat": {
+        "status": "all monitor behavioral cases passed; not a final unchanged-harness gate",
+        "behavioralCases": 21,
+        "owningSourceHashesMatched": 21,
+        "harnessChangedForRequestedDiagnostics": true,
+        "case": "recycle-monitor-orphan-fault-after-producers",
+        "armedDeadlineSeconds": 18,
+        "checkpointUtc": "2026-10-12T02:07:28.9589385Z",
+        "fakeStopUtc": "2026-10-12T02:07:42.7356661Z",
+        "checkpointToFakeStopSeconds": 13.7767276,
+        "markerHashMatchesCapturedIntent": true,
+        "terminalReason": "recycle_replacement_node_absent_at_deadline",
+        "terminalAction": "local_os_shutdown_requested",
+        "guestShutdownFaked": true,
+        "fixtureProcessesAfterCleanup": 0
+    },
+    "finalIntegratedAttempt": {
+        "status": "passed",
+        "diagnosticOnlyAdapters": "Actual disposition/deadline delegates return or rethrow unchanged; ready receipt retained; failure snapshots saved before cleanup",
+        "waitsOrAssertionsRelaxed": false,
+        "afterProducers": {
+            "status": "passed",
+            "armedDeadlineSeconds": 18,
+            "checkpointToFakeStopSeconds": 12.370487,
+            "markerHashMatchesCapturedIntent": true,
+            "traceExceptions": 0,
+            "deadlineResult": "ShutdownRequested",
+            "deadlineObservedUtc": "2026-10-12T02:18:30.6483187+00:00",
+            "readyReceiptRetained": true,
+            "guestShutdownFaked": true
+        },
+        "fixtureDirectoryRemoved": true,
+        "harnessSha256": "73c40fb9033221127eb96f190253cc8d81dfb7783dcbbe99d8d011dc41e8aef3",
+        "owningSourceHashesMatched": 21,
+        "assertions": 238,
+        "reportSha256": "440b296e9dc2930439684ddce7d3fc2e2025363ca211949ec23677912ec3e02f",
+        "reportFile": "stack-launch-concurrency-maintenance-local.json",
+        "cases": 39,
+        "fixtureProcessesAfterCleanup": 0
+    }
+}

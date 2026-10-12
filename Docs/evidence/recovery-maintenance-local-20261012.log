@@ -1,0 +1,6 @@
+PASS same-root-validation
+PASS retarget-validation
+PASS retarget-provision42
+PASS pin-failure-held
+PASS legacy-rollback-roundtrip
+Stack launch maintenance integration: 50 assertions passed, five real CMD/PS5.1 junction/maintenance scenarios; no AWS/network/native UE.

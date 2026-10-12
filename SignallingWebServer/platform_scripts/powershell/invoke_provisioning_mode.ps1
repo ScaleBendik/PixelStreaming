@@ -7,6 +7,12 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$script:StackMaintenanceContext = $null
+$script:MaintenanceSourceScriptRoot = $PSScriptRoot
+if($env:SCALEWORLD_STACK_LAUNCH_GENERATION){
+    . (Join-Path $PSScriptRoot 'stack_launch_maintenance.ps1')
+    $script:MaintenanceSourceScriptRoot = Get-StackLaunchCanonicalPath $PSScriptRoot
+}
 
 function Write-ProvisioningLog {
     param(
@@ -271,7 +277,7 @@ function New-ProvisioningHeartbeatContext {
         [string]$InstanceId
     )
 
-    $heartbeatScript = Join-Path $PSScriptRoot 'runtime-status-heartbeat.ps1'
+    $heartbeatScript = Join-Path $script:MaintenanceSourceScriptRoot 'runtime-status-heartbeat.ps1'
     if (-not (Test-Path -LiteralPath $heartbeatScript)) {
         Write-ProvisioningLog "Runtime status heartbeat helper was not found at '$heartbeatScript'. Continuing without provisioning heartbeat refresh." 'WARN'
         return $null
@@ -380,9 +386,9 @@ function Stop-ProvisioningHeartbeat {
     Remove-Item -LiteralPath $Context.StopFilePath -Force -ErrorAction SilentlyContinue
 }
 
-$pixelStreamingRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
-$repoSyncScript = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
-$runtimeInstallerScript = Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.ps1'
+$pixelStreamingRoot = (Resolve-Path (Join-Path $script:MaintenanceSourceScriptRoot '..\..\..')).Path
+$repoSyncScript = Join-Path $script:MaintenanceSourceScriptRoot 'ensure_repo_current.ps1'
+$runtimeInstallerScript = Join-Path $script:MaintenanceSourceScriptRoot 'install_pixelstreaming_runtime.ps1'
 $installBasePath = if ($env:SCALEWORLD_INSTALL_BASE) { $env:SCALEWORLD_INSTALL_BASE } else { 'C:\PixelStreaming' }
 $runtimeArtifactBucket = if ($env:SCALEWORLD_RUNTIME_ARTIFACT_BUCKET) { $env:SCALEWORLD_RUNTIME_ARTIFACT_BUCKET } else { 'scaleworlddepot' }
 $bootstrapDeadline = (Get-Date).AddSeconds([Math]::Max($BootstrapTimeoutSeconds, 1))
@@ -406,6 +412,10 @@ while ($true) {
         }
 
         $provisioningConfirmed = $true
+        if($env:SCALEWORLD_STACK_LAUNCH_GENERATION){
+            $script:StackMaintenanceContext=Get-StackLaunchMaintenanceContext -SourceRepoRoot (Join-Path $pixelStreamingRoot 'SignallingWebServer') -InstallBase $installBasePath -GenerationId $env:SCALEWORLD_STACK_LAUNCH_GENERATION -CallerScriptPath $PSCommandPath
+        }
+        $installResult=$null
         $hasRuntimeArtifactTarget = -not [string]::IsNullOrWhiteSpace($targetRuntimeManifestKey)
         $runtimeBundleMetadataPath = Join-Path $pixelStreamingRoot 'runtime-bundle-metadata.json'
         $currentRootIsRuntimeArtifact = Test-Path -LiteralPath $runtimeBundleMetadataPath -PathType Leaf
@@ -481,6 +491,13 @@ while ($true) {
         }
 
         Clear-ProvisioningUpdatePhaseTag -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.InstanceId
+        if($null -ne $script:StackMaintenanceContext -and $null -ne $installResult){
+            $provisionHandoff=Start-StackLaunchProvisioningHandoffIfChanged -Context $script:StackMaintenanceContext -InstalledRoot ([string]$installResult.InstalledRoot)
+            if($null -ne $provisionHandoff){
+                Write-ProvisioningLog 'Provisioning bootstrap transferred to the installed runtime. The source launcher will exit.'
+                exit 42
+            }
+        }
         Write-ProvisioningLog 'Provisioning bootstrap completed. Continuing with normal startup.'
         exit 0
     } catch {

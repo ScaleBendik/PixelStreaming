@@ -116,7 +116,21 @@ if ($AdditionalArgs) {
 }
 if ($instanceProfile) { $arguments += @(Get-InstanceConfigArguments $instanceProfile) }
 
-$process = Start-Process -FilePath $processPath -ArgumentList $arguments -WorkingDirectory $installRootPath -PassThru
+. (Join-Path $PSScriptRoot 'stack_launch_lease.ps1')
+$launchRepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+$launchInstallBase = if ($env:SCALEWORLD_INSTALL_BASE) { $env:SCALEWORLD_INSTALL_BASE } else { 'C:\PixelStreaming' }
+$launchGate = $null
+try {
+    $launchGate = Enter-StackLaunchGate -RepoRoot $launchRepoRoot -InstallBase $launchInstallBase -GenerationId $env:SCALEWORLD_STACK_LAUNCH_GENERATION
+    # Presence and spawn share the generation lock. A bootstrap launcher also
+    # counts here so competing starts cannot race while Shipping is being born.
+    $spawnMatcher = Get-ScaleWorldRuntimeProcessMatcher -InstallRoot $installRootPath -ExecutableName $ExecutableName -RuntimeProcessPattern $RuntimeProcessPattern -IncludeLauncherExecutable $true
+    if (@(Get-ScaleWorldRuntimeProcesses -Matcher $spawnMatcher).Count -gt 0) {
+        Write-Output 'ScaleWorld is already running or launching; duplicate native spawn skipped.'
+        exit 0
+    }
+    $process = Start-Process -FilePath $processPath -ArgumentList $arguments -WorkingDirectory $installRootPath -PassThru
+} finally { if ($null -ne $launchGate) { Exit-StackLaunchGate -Handle $launchGate } }
 Write-Output ("Running: {0} {1}" -f $processPath, ($arguments -join ' '))
 Write-Output ("Started ScaleWorld launcher process with PID {0}" -f $process.Id)
 Write-Output ("Monitoring ScaleWorld runtime matcher installRoot='{0}' namePatterns='{1}'" -f $runtimeMatcher.InstallRoot, ($runtimeMatcher.NamePatterns -join ';'))

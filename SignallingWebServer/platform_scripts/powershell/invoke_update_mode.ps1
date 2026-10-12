@@ -11,6 +11,12 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$script:StackMaintenanceContext = $null
+$script:MaintenanceSourceScriptRoot = $PSScriptRoot
+if($env:SCALEWORLD_STACK_LAUNCH_GENERATION){
+    . (Join-Path $PSScriptRoot 'stack_launch_maintenance.ps1')
+    $script:MaintenanceSourceScriptRoot = Get-StackLaunchCanonicalPath $PSScriptRoot
+}
 
 function Write-UpdateModeLog {
     param(
@@ -237,7 +243,7 @@ function Schedule-DelayedStop {
         [int]$DelaySeconds
     )
 
-    $scriptPath = Join-Path $PSScriptRoot 'stop_instance_after_delay.ps1'
+    $scriptPath = Join-Path $script:MaintenanceSourceScriptRoot 'stop_instance_after_delay.ps1'
     if (-not (Test-Path -LiteralPath $scriptPath)) {
         Write-UpdateModeLog "Delayed stop script not found at '$scriptPath'. Manual cleanup may be required." 'WARN'
         return
@@ -1052,7 +1058,12 @@ function Start-ValidationStack {
     }
 
     try {
-        Start-Process -FilePath $LauncherPath -ArgumentList '--validation' -WindowStyle Hidden | Out-Null
+        if($env:SCALEWORLD_STACK_LAUNCH_GENERATION){
+            if($null -eq $script:StackMaintenanceContext){throw 'Managed validation has no preactivation maintenance context.'}
+            [void](Start-StackLaunchMaintenanceHandoff -Context $script:StackMaintenanceContext -LauncherPath $LauncherPath -LaunchMode validation -EnvironmentOverrides @{SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=[string]$env:SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE})
+        }else{
+            Start-Process -FilePath $LauncherPath -ArgumentList '--validation' -WindowStyle Hidden | Out-Null
+        }
     } finally {
         if ($RuntimeArtifact) {
             if ($null -eq $previousDeliveryMode) {
@@ -1118,14 +1129,14 @@ $targetRuntimeBundleId = Get-UpdateTagValue -Tags $instanceTags -Key 'ScaleWorld
 $targetRuntimeSourceCommit = Get-UpdateTagValue -Tags $instanceTags -Key 'ScaleWorldTargetRuntimeSourceCommit'
 $targetRuntimeContractVersion = Get-UpdateTagValue -Tags $instanceTags -Key 'ScaleWorldTargetRuntimeContractVersion'
 $updateTargetType = Get-UpdateTargetType -Tags $instanceTags -TargetZipKey $targetZipKey -TargetRuntimeManifestKey $targetRuntimeManifestKey
-$pixelStreamingRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+$pixelStreamingRoot = (Resolve-Path (Join-Path $script:MaintenanceSourceScriptRoot '..\..\..')).Path
 $updateScript = Join-Path $pixelStreamingRoot 'SWupdate.ps1'
-$stackLauncher = Join-Path $PSScriptRoot '..\cmd\start_streamer_stack.bat'
+$stackLauncher = Join-Path $script:MaintenanceSourceScriptRoot '..\cmd\start_streamer_stack.bat'
 $streamerHealthPath = Join-Path $pixelStreamingRoot 'SignallingWebServer\state\streamer-health.json'
-$repoSyncScript = Join-Path $PSScriptRoot 'ensure_repo_current.ps1'
-$publishCurrentBuildScript = Join-Path $PSScriptRoot 'publish_current_build_tags.ps1'
-$runtimeInstallerScript = Join-Path $PSScriptRoot 'install_pixelstreaming_runtime.ps1'
-$unrealPrerequisiteModule = Join-Path $PSScriptRoot 'unreal_prerequisite.psm1'
+$repoSyncScript = Join-Path $script:MaintenanceSourceScriptRoot 'ensure_repo_current.ps1'
+$publishCurrentBuildScript = Join-Path $script:MaintenanceSourceScriptRoot 'publish_current_build_tags.ps1'
+$runtimeInstallerScript = Join-Path $script:MaintenanceSourceScriptRoot 'install_pixelstreaming_runtime.ps1'
+$unrealPrerequisiteModule = Join-Path $script:MaintenanceSourceScriptRoot 'unreal_prerequisite.psm1'
 $installBasePath = if ($env:SCALEWORLD_INSTALL_BASE) { $env:SCALEWORLD_INSTALL_BASE } else { 'C:\PixelStreaming' }
 $runtimeArtifactBucket = if ($env:SCALEWORLD_RUNTIME_ARTIFACT_BUCKET) { $env:SCALEWORLD_RUNTIME_ARTIFACT_BUCKET } else { 'scaleworlddepot' }
 $activeInstallPath = Join-Path $installBasePath 'WindowsNoEditor'
@@ -1210,6 +1221,9 @@ Set-InstanceTags -AwsCli $awsCli -Region $identity.Region -InstanceId $identity.
 }
 
 try {
+    if($env:SCALEWORLD_STACK_LAUNCH_GENERATION){
+        $script:StackMaintenanceContext=Get-StackLaunchMaintenanceContext -SourceRepoRoot (Join-Path $pixelStreamingRoot 'SignallingWebServer') -InstallBase $installBasePath -GenerationId $env:SCALEWORLD_STACK_LAUNCH_GENERATION -CallerScriptPath $PSCommandPath
+    }
     Write-UpdateModeTrace -Step 'update_mode_started' -Data @{
         TargetType = $updateTargetType
         TargetZipKey = $targetZipKey
@@ -1222,7 +1236,7 @@ try {
     }
 
     if ($prepareDataDrive) {
-        $dataDriveScript = Join-Path $PSScriptRoot 'ensure_data_drive.ps1'
+        $dataDriveScript = Join-Path $script:MaintenanceSourceScriptRoot 'ensure_data_drive.ps1'
         if (Test-Path -LiteralPath $dataDriveScript) {
             Write-UpdateModeLog 'Preparing data drive for update mode.'
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $dataDriveScript -DataDiskNumber $dataDiskNumber -SkipIfUnavailable
