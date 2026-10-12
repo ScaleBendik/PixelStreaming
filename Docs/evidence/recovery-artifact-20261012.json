@@ -1,0 +1,35 @@
+{
+    "observedUtc": "2026-10-12T02:46:32.274166Z",
+    "bundleId": "pixelstreaming-runtime-20261012-001",
+    "sourceCommit": "75768d8f199d28fca2bbb6a0336e53a548268ee0",
+    "sourceRef": "fix/recovery-launcher-overlap",
+    "sourceDirtyAtBuildInput": false,
+    "postBuildChange": "generated Common/src/Messages/signalling_messages.ts EOL only; normalized diff empty",
+    "runtimeZipSha256": "ec305a90308cc6d4e9e89316eddbfd1f9bcc8827a65fbc51ec65a7ccc5beb2a9",
+    "runtimeZipSizeBytes": 146890542,
+    "portableNodeVersion": "v22.23.2",
+    "npmVersion": "11.6.0",
+    "contract": "2026-10-11.1",
+    "capabilities": [
+        "instance-agent-bootstrap-v1",
+        "instance-config-v1",
+        "recycle-token-correlation-v1",
+        "runtime-status-v1",
+        "unreal-prerequisite-preflight-v1"
+    ],
+    "nodeModulesIncluded": true,
+    "all21AcceptedRuntimeBytesMatch": true,
+    "remoteManifestByteMatch": true,
+    "remoteFullZipHashMatch": true,
+    "noMutableStateOrRecoveryMarkers": true,
+    "hostedAcceptanceComplete": false,
+    "devJob": "5107bb53-1c86-48fc-b6cb-cc15296b59e5",
+    "target": "i-0ce5ffd16bd50eb24",
+    "scopedDevBehaviorTestsCompleted": true,
+    "promotionBlocker": "Legacy003 installer pruned physical source while original CMD/updater were sampled live; general legacy migration/return compatibility remains unproved. Stage/Prod promotion not performed.",
+    "finalDevState": {
+        "BundleId": "pixelstreaming-runtime-20261012-001",
+        "Report": "Docs/recovery-launcher-ownership.md",
+        "AllThreeStoppedUtc": "2026-10-12T06:17:50.3510596Z"
+    }
+}

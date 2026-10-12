@@ -1,0 +1,922 @@
+{
+    "schemaVersion": 1,
+    "sample": 91,
+    "cohort": "Isolated Dev runtime-artifact maintenance rollback from leased candidate001 to unleased legacy003.",
+    "analysisScope": "Read-only analysis of recovered local evidence; no host, task, ticket, marker or lease mutation by this analyzer.",
+    "serving": {
+        "instanceId": "i-0ce5ffd16bd50eb24",
+        "region": "eu-north-1",
+        "sourceRuntimeBundle": "pixelstreaming-runtime-20261012-001",
+        "sourceRuntimeCommit": "75768d8f199d28fca2bbb6a0336e53a548268ee0",
+        "targetRuntimeBundle": "pixelstreaming-runtime-20261011-003",
+        "targetRuntimeCommit": "26ee94ea453d5d6f01f1a5268d9bf08dd3d26046",
+        "sourceDeclaredZipSha256": "ec305a90308cc6d4e9e89316eddbfd1f9bcc8827a65fbc51ec65a7ccc5beb2a9",
+        "targetDeclaredZipSha256": "33e4e61f0ceda8c49a67661db0cc8382dda0038b17043532a2f0d189153989d0",
+        "targetUsesStackLaunchLease": false,
+        "qualification": "Installed metadata, manifests, marker declarations and selected script hashes were observed; ZIP declarations do not attest every loaded file."
+    },
+    "collection": {
+        "evidenceIdUtf8Sha256": "b8bf4334045bb87d1faddb7966997ca092177e85b38a7927e8ee3b1980c18a1a",
+        "recordCount": 41,
+        "totalBytes": 53140,
+        "sha256": "a1b72dbb50128b3b71d4fe9b928a817c6e54d8e0e282dd4375ff1fa73f1e1336",
+        "chunks": 5,
+        "allRetainedBytesCollected": true,
+        "plannedObserverFinished": false,
+        "maintenanceStopInterruptedObserver": true,
+        "pollSeconds": 2,
+        "changeOnlySnapshots": true,
+        "firstObservedUtc": "2026-10-12T05:35:57.6734597+00:00",
+        "lastRecordUtc": "2026-10-12T05:41:12.9803440+00:00",
+        "qualification": "All retained bytes were recollected on the subsequent boot and digest verified. No finished record exists; two-second polling writes only changed fingerprints."
+    },
+    "canonicalTimes": {
+        "clickUtc": "2026-10-12T05:35:32.6430000+00:00",
+        "bootUtc": "2026-10-12T05:35:45.5000000+00:00",
+        "freshSourceOwnerBirthUtc": "2026-10-12T05:36:05.5669260+00:00",
+        "updaterBirthUtc": "2026-10-12T05:36:13.8926840+00:00",
+        "installerBirthUtc": "2026-10-12T05:36:27.7371520+00:00",
+        "targetIdentityPreparedFirstObservedUtc": "2026-10-12T05:38:17.2844719+00:00",
+        "targetActivationFirstObservedUtc": "2026-10-12T05:39:37.4654987+00:00",
+        "targetReservedValidationEntryBirthUtc": "2026-10-12T05:39:40.7358570+00:00",
+        "targetConfigLoadedUtc": "2026-10-12T05:39:50.1926029+00:00",
+        "firstTargetNodeBirthUtc": "2026-10-12T05:40:01.5561000+00:00",
+        "targetShippingBirthUtc": "2026-10-12T05:40:05.1532860+00:00",
+        "laterLegacyNodeBirthUtc": "2026-10-12T05:40:28.3678660+00:00",
+        "runtimeReadyTagUtc": "2026-10-12T05:41:00.0300000+00:00",
+        "runtimeReadyFirstProviderSnapshotUtc": "2026-10-12T05:41:06.3397828+00:00",
+        "updateCompletedTagUtc": "2026-10-12T05:41:08.5249609+00:00",
+        "updateSucceededFirstProviderSnapshotUtc": "2026-10-12T05:41:12.7748633+00:00",
+        "providerStoppingFirstSnapshotUtc": "2026-10-12T05:41:12.7748633+00:00",
+        "providerStoppedFirstSnapshotUtc": "2026-10-12T05:46:26.4205898+00:00",
+        "providerStoppedWatcherReceiptUtc": "2026-10-12T05:46:28.0184294+00:00",
+        "allThreeDevInstancesStoppedObservedUtc": "2026-10-12T05:46:33.3896156+00:00"
+    },
+    "durationsSeconds": {
+        "clickToRuntimeReady": 327.387,
+        "clickToUpdateCompleted": 335.8819609,
+        "targetActivationObservationToReady": 82.5645013,
+        "targetShippingToReady": 54.876714,
+        "completedTagToFirstProviderStoppedSnapshot": 317.8956289
+    },
+    "ownership": {
+        "initialLeaseFromPriorBoot": true,
+        "initialScopedProcessSnapshotEmpty": true,
+        "freshSourceOwner": {
+            "pid": 5364,
+            "creationUtc": "2026-10-12T05:36:05.5669260+00:00",
+            "name": "cmd.exe",
+            "executablePathSha256": "aff50af76ffba4b4b7b54b3f259c25ca785085d1e9e339463924d5913d1171d4",
+            "entryPathSha256": "ed9ced080862430702f6a2d52c68df13142e52ff1ba02aec7a30ac662f1ed4b1",
+            "invocationPathSha256": "35e30b7204684441985d8458d5348c1d593a1f006c61c541ebc7513284e009bc"
+        },
+        "freshSourceGenerationUtf8Sha256": "4defeb85acf5ca5af748681066c44eb8f4361beb753aec2638025c3f7d694abf",
+        "freshSourceOwnerFirstCapturedUtc": "2026-10-12T05:36:06.1713874+00:00",
+        "updater": {
+            "pid": 488,
+            "parentPid": 5364,
+            "creationUtc": "2026-10-12T05:36:13.8926840+00:00",
+            "name": "powershell.exe",
+            "role": "update-mode",
+            "executablePathSha256": "c515e8e7d219f83538d2b67a22458dcf00e518f53376ac1706c83df3948be2ed",
+            "invokedScriptPathSha256": "2588bd810f0f7e7aef21ee52d292bda34dc689cb2d514af927b3d79e46c09404",
+            "exactInvocationParsed": true
+        },
+        "updaterDirectParentExactSourceOwnerCoCaptured": true,
+        "updaterFirstCapturedUtc": "2026-10-12T05:36:14.3820109+00:00",
+        "installer": {
+            "pid": 2348,
+            "parentPid": 488,
+            "creationUtc": "2026-10-12T05:36:27.7371520+00:00",
+            "name": "powershell.exe",
+            "role": "runtime-installer",
+            "executablePathSha256": "c515e8e7d219f83538d2b67a22458dcf00e518f53376ac1706c83df3948be2ed",
+            "invokedScriptPathSha256": "69e90fc4851d7ccf13889cb308f4cac946d7f66ac76e0baa2528faf0dc221bd6",
+            "exactInvocationParsed": true
+        },
+        "installerDirectParentExactUpdaterCoCaptured": true,
+        "installerFirstCapturedUtc": "2026-10-12T05:36:28.7283033+00:00",
+        "handoffGenerationUtf8Sha256": "57de4a6764ab9ca1c52a5a325607649d9330830a11abe683340a587b5fad42f5",
+        "sourceGenerationChangedAtHandoff": true,
+        "handoffPhase": "handoff",
+        "handoffMode": "validation",
+        "handoffFirstObservedUtc": "2026-10-12T05:39:41.5903332+00:00",
+        "immutableSourceOwnerRetained": true,
+        "immutablePhysicalSourceRootRetained": true,
+        "lexicalAliasInvocationRetainedAcrossActivation": true,
+        "reservedTargetEntry": {
+            "pid": 3268,
+            "creationUtc": "2026-10-12T05:39:40.7358570+00:00",
+            "name": "cmd.exe",
+            "executablePathSha256": "aff50af76ffba4b4b7b54b3f259c25ca785085d1e9e339463924d5913d1171d4",
+            "entryPathSha256": "80f16f0e851361782545b0939c70d2a55fb033046a1fb85d8d563d127a09c211",
+            "invocationPathSha256": "80f16f0e851361782545b0939c70d2a55fb033046a1fb85d8d563d127a09c211"
+        },
+        "reservedTargetEntryDirectParentExactUpdaterCoCaptured": true,
+        "targetEntryFirstCapturedUtc": "2026-10-12T05:39:41.6173523+00:00",
+        "legacyReservationRemainedUnclaimedInCapturedLease": true,
+        "newTargetCompletedLeaseApplicable": false,
+        "qualification": "The target003 launcher has no lease helper. Its intentionally unclaimed validation reservation retains the source owner and physical root; this is not a completed target lease or a readiness claim."
+    },
+    "sourceRetention": {
+        "pointerSnapshots": 4,
+        "sourcePresentAndIdentityMatchedInAllPointerSnapshots": true,
+        "targetPreparedBeforeObservedActivation": true,
+        "targetInstallResultFirstObservedUtc": "2026-10-12T05:39:39.5269274+00:00",
+        "targetInstallResultSha256": "a417addf63ac6c51d4b8ef1c74926bd29d5929bfd981d63eb8f46c4d8d8d8cee",
+        "sourceOwnerLastCapturedUtc": "2026-10-12T05:40:31.2322554+00:00",
+        "sourceOwnerFirstCapturedAbsentUtc": "2026-10-12T05:41:12.9803440+00:00",
+        "sourceUpdaterLastCapturedUtc": "2026-10-12T05:40:31.2322554+00:00",
+        "sourceUpdaterFirstCapturedAbsentUtc": "2026-10-12T05:41:12.9803440+00:00",
+        "sourceActorsLiveAfterRetarget": true,
+        "sourceActorsAbsentInLiveSnapshotBeforeProviderStopped": true,
+        "sourceActorsExitBeforeProviderStoppingProved": false,
+        "targetConfigLoadedUtc": "2026-10-12T05:39:50.1926029+00:00",
+        "targetConfigFirstObservedUtc": "2026-10-12T05:39:51.8843999+00:00",
+        "targetConfigSha256": "bb6194ede75d9db6ee0a07007521c451c6c66f79fde77a372d10e9790dd52aa3",
+        "laterConfigChangeCaptured": false,
+        "qualification": "Source folder retention is observed in changed-pointer snapshots. Exact source termination falls between the last-presence and first-absence samples; first absence is after provider stopping began. The change-only observer does not prove continuous absence or every possible write."
+    },
+    "legacyTarget": {
+        "usesLeasedLauncher": false,
+        "targetValidationArgumentObserverValue": false,
+        "targetValidationModeSource": "Persisted source handoff reservation",
+        "validationArgumentQualification": "The observer raw-line mode regex recorded false for the target CMD; this does not independently establish the actual quoted flag. Validation mode is established by the handoff reservation and successful maintenance validation outcome.",
+        "capturedNodes": [
+            {
+                "pid": 5024,
+                "parentPid": 5820,
+                "creationUtc": "2026-10-12T05:40:01.5561000+00:00",
+                "name": "node.exe",
+                "role": "node-runtime",
+                "executablePathSha256": "ff6cc5d4dd9d5bafa6e3d2e53534ee778aa53b20d6891a7428f8eaa346a81f51",
+                "invokedScriptPathSha256": null,
+                "exactInvocationParsed": false
+            },
+            {
+                "pid": 1292,
+                "parentPid": 4776,
+                "creationUtc": "2026-10-12T05:40:28.3678660+00:00",
+                "name": "node.exe",
+                "role": "node-runtime",
+                "executablePathSha256": "ff6cc5d4dd9d5bafa6e3d2e53534ee778aa53b20d6891a7428f8eaa346a81f51",
+                "invokedScriptPathSha256": null,
+                "exactInvocationParsed": false
+            }
+        ],
+        "distinctCapturedNodeIdentities": 2,
+        "maximumNodeInCapturedSnapshot": 1,
+        "distinctCapturedShippingIdentities": 1,
+        "maximumShippingInCapturedSnapshot": 1,
+        "firstShipping": {
+            "pid": 5900,
+            "parentPid": 2044,
+            "creationUtc": "2026-10-12T05:40:05.1532860+00:00",
+            "name": "ScaleWorld-Win64-Shipping.exe",
+            "role": "unreal-runtime",
+            "executablePathSha256": "1addda790a9889812b2f81fc0dac9e79426c22ef7e15e553af027ebf75927179",
+            "invokedScriptPathSha256": null,
+            "exactInvocationParsed": false
+        },
+        "recoveryLauncher": {
+            "pid": 5992,
+            "parentPid": 2136,
+            "creationUtc": "2026-10-12T05:40:04.1358770+00:00",
+            "name": "cmd.exe",
+            "role": "full-stack-launcher",
+            "executablePathSha256": "aff50af76ffba4b4b7b54b3f259c25ca785085d1e9e339463924d5913d1171d4",
+            "invokedScriptPathSha256": "80f16f0e851361782545b0939c70d2a55fb033046a1fb85d8d563d127a09c211",
+            "exactInvocationParsed": true
+        },
+        "recoveryLauncherFirstCapturedUtc": "2026-10-12T05:40:04.2918968+00:00",
+        "sameShippingSurvivesLaterLegacyNode": true,
+        "shippingAncestry": [
+            {
+                "pid": 5900,
+                "parentPid": 2044,
+                "creationUtc": "2026-10-12T05:40:05.1532860+00:00",
+                "name": "ScaleWorld-Win64-Shipping.exe",
+                "role": "unreal-runtime",
+                "executablePathSha256": "1addda790a9889812b2f81fc0dac9e79426c22ef7e15e553af027ebf75927179",
+                "invokedScriptPathSha256": null,
+                "exactInvocationParsed": false
+            },
+            {
+                "pid": 2044,
+                "parentPid": 1276,
+                "creationUtc": "2026-10-12T05:40:05.0064630+00:00",
+                "name": "ScaleWorld.exe",
+                "role": "unreal-runtime",
+                "executablePathSha256": "a1dab2611b8469d41832b8df33dd9cc71e4606067210766fa86de49d3acd32be",
+                "invokedScriptPathSha256": null,
+                "exactInvocationParsed": false
+            },
+            {
+                "pid": 1276,
+                "parentPid": 3268,
+                "creationUtc": "2026-10-12T05:40:04.1870060+00:00",
+                "name": "powershell.exe",
+                "role": "unreal-birth-gate",
+                "executablePathSha256": "c515e8e7d219f83538d2b67a22458dcf00e518f53376ac1706c83df3948be2ed",
+                "invokedScriptPathSha256": "55e389c3df023f463afc83c128acc6bd1b1967f16719f192e611aa983fbbdcb0",
+                "exactInvocationParsed": true
+            },
+            {
+                "pid": 3268,
+                "parentPid": 488,
+                "creationUtc": "2026-10-12T05:39:40.7358570+00:00",
+                "name": "cmd.exe",
+                "role": "full-stack-launcher",
+                "executablePathSha256": "aff50af76ffba4b4b7b54b3f259c25ca785085d1e9e339463924d5913d1171d4",
+                "invokedScriptPathSha256": "80f16f0e851361782545b0939c70d2a55fb033046a1fb85d8d563d127a09c211",
+                "exactInvocationParsed": true
+            },
+            {
+                "pid": 488,
+                "parentPid": 5364,
+                "creationUtc": "2026-10-12T05:36:13.8926840+00:00",
+                "name": "powershell.exe",
+                "role": "update-mode",
+                "executablePathSha256": "c515e8e7d219f83538d2b67a22458dcf00e518f53376ac1706c83df3948be2ed",
+                "invokedScriptPathSha256": "2588bd810f0f7e7aef21ee52d292bda34dc689cb2d514af927b3d79e46c09404",
+                "exactInvocationParsed": true
+            },
+            {
+                "pid": 5364,
+                "parentPid": 1684,
+                "creationUtc": "2026-10-12T05:36:05.5669260+00:00",
+                "name": "cmd.exe",
+                "role": "full-stack-launcher",
+                "executablePathSha256": "aff50af76ffba4b4b7b54b3f259c25ca785085d1e9e339463924d5913d1171d4",
+                "invokedScriptPathSha256": "35e30b7204684441985d8458d5348c1d593a1f006c61c541ebc7513284e009bc",
+                "exactInvocationParsed": true
+            }
+        ],
+        "ancestryProof": {
+            "snapshotUtc": "2026-10-12T05:40:06.3611018+00:00",
+            "verifiedParentLinks": 5,
+            "verifiedPidBirthIdentities": 6,
+            "allLinksCoCaptured": true,
+            "continuousExclusivityProved": false,
+            "qualification": "Shipping ancestry belongs to the target validation CMD through its native gate and outer executable, with source updater and source owner co-captured. Parent PID and birth ordering are observational ancestry; not retained-handle continuous identity proof."
+        },
+        "fullNativeHeapReplacementProved": false,
+        "exclusiveFullStackReplacementProved": false,
+        "qualification": "Legacy003 started a cleanup recovery launcher and a second Node while the validation-owned Shipping process persisted. This route differs from the leased candidate replacement contract."
+    },
+    "legacyRecoveryState": {
+        "initialCommercialRecoveryRequired": true,
+        "initialReason": "stack_shutdown_command_launch",
+        "cleanupReplacementMarkerFirstObservedUtc": "2026-10-12T05:40:04.2548772+00:00",
+        "cleanupReason": "post_session_cleanup",
+        "cleanupMarkerSchemasAreLegacy": true,
+        "readyMarginFirstObservedUtc": "2026-10-12T05:40:50.0942714+00:00",
+        "readyNotBeforeUtc": "2026-10-12T05:40:59.0000000+00:00",
+        "commercialRecoveryRequiredAbsentFirstObservedUtc": "2026-10-12T05:41:00.4816325+00:00",
+        "markerMissingFirstObservedUtc": "2026-10-12T05:41:02.5556272+00:00",
+        "independentAgentAckOrApiEventStoreCaptured": false,
+        "qualification": "Legacy marker and commercial latch observations show cleanup/recovery progression. They do not attest candidate helper/source birth binding, an API ACK or stale-ticket rejection."
+    },
+    "validation": {
+        "freshTargetReadyPublished": true,
+        "runtimeStatus": "ready",
+        "runtimeReason": "stream_stable",
+        "runtimeSource": "signalling-server",
+        "updateState": "succeeded",
+        "updateResultReason": "validated_runtime_artifact",
+        "targetBundleAndCommitMatchProviderTags": true,
+        "savedJobUtf8Sha256": "a0f96176f1cc39a0bd5c67d00ba974eb09db07eeb7c97e18f6529d7760b51630",
+        "selectedJobViewFixedOutcomeMatched": true,
+        "selectedJobViewObservedUtc": "2026-10-12T05:47:11.4660000+00:00",
+        "selectedJobViewSha256": "1a2b72f857092754ec1ee8223894ac4f120b4d8018266b6a8390a979594ff9f4",
+        "selectedJobViewSaysRuntimeFreshnessStale": true,
+        "actualNativeProcessObserved": true,
+        "usableInteractiveMediaExercised": false,
+        "fullNativeHeapOrAllCompatibilityProved": false,
+        "qualification": "Fresh runtime Ready followed by validated_runtime_artifact success matches the requested target and exact saved job across provider snapshots. The later UI marks retained runtime tags stale. No interactive media or full native-heap compatibility check was performed in this maintenance leg."
+    },
+    "providerStop": {
+        "freshRunningThenActualStopped": true,
+        "providerStoppingFirstSnapshotUtc": "2026-10-12T05:41:12.7748633+00:00",
+        "providerStoppedFirstSnapshotUtc": "2026-10-12T05:46:26.4205898+00:00",
+        "stoppedWatcherReceiptUtc": "2026-10-12T05:46:28.0184294+00:00",
+        "allThreeDevInstancesStoppedObservedUtc": "2026-10-12T05:46:33.3896156+00:00",
+        "allThreeStopped": true,
+        "staleReadyTagsPersistAfterStop": true,
+        "qualification": "Provider state is independently observed as stopped after this fresh maintenance boot. Persisted Ready tags on a stopped instance are historical validation evidence, not current liveness."
+    },
+    "startupJournals": {
+        "files": 7,
+        "pages": 2,
+        "completeAllowlistedSelection": true,
+        "rejectedRecords": 0,
+        "omittedRecords": 0,
+        "partialTails": 0,
+        "fromUtc": "2026-10-12T05:35:31.0000000+00:00",
+        "untilUtc": "2026-10-12T05:46:34.0000000+00:00",
+        "receiptSha256": "6df01f3d00824d65926b9aa843dc19109c6b66e739fa1e30e0324c69e585bea1",
+        "journals": [
+            {
+                "role": "stack",
+                "mode": "normal",
+                "utcBase": "2026-10-12T05:36:06.6868118+00:00",
+                "fileNameUtf8Sha256": "c996f58e47bada7ef16d8b5b3246d8887e0f75c9301b6d51eb38aea1db81e03d",
+                "launchIdUtf8Sha256": "7365c6cb5d70acf6956833197d24fbd5d0224b847be6c1834cfdba35d1d2f239",
+                "contextIdUtf8Sha256": "1f4b3eddf6aacdaa8b2ce089527e4bb497c869146325b49cfecd96517bf490b8",
+                "sourceSnapshotBytes": 771,
+                "sourceLastWriteUtc": "2026-10-12T05:36:13.8898192+00:00",
+                "commercialRecoveryRequiredAtBegin": true,
+                "phases": [
+                    {
+                        "phase": "metadata.started",
+                        "utc": "2026-10-12T05:36:06.8000000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "metadata.lane.attempt_1",
+                        "utc": "2026-10-12T05:36:11.1900000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "metadata.track.attempt_1",
+                        "utc": "2026-10-12T05:36:11.2100000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "metadata.delivery.attempt_1",
+                        "utc": "2026-10-12T05:36:11.2300000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "metadata.completed",
+                        "utc": "2026-10-12T05:36:11.4400000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "identity.started",
+                        "utc": "2026-10-12T05:36:11.4500000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "identity.completed",
+                        "utc": "2026-10-12T05:36:13.8600000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "update_control.started",
+                        "utc": "2026-10-12T05:36:13.8700000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    }
+                ],
+                "end": null,
+                "launcherPidRecorded": false,
+                "qualification": "Header writer PID is a transient telemetry writer; launcher PID is zero. Correlation to observed CMD uses role, mode, launch cohort and timing, not a recorded launcher birth pin."
+            },
+            {
+                "role": "instance-config",
+                "mode": "validation",
+                "utcBase": "2026-10-12T05:39:48.9367174+00:00",
+                "fileNameUtf8Sha256": "377da71620afc01fe6ffc29e239d56916a6623744f53cd287312517301203aab",
+                "launchIdUtf8Sha256": "c62360559f1b4281fca650f01bd8ec56f66aeb6d1f95e75e2221685d8243cf54",
+                "contextIdUtf8Sha256": "f1a5c60a0cf931782a29147f16e890b133cce30d192889f4dd1863c049572fe7",
+                "sourceSnapshotBytes": 1479,
+                "sourceLastWriteUtc": "2026-10-12T05:39:50.2356309+00:00",
+                "commercialRecoveryRequiredAtBegin": true,
+                "phases": [
+                    {
+                        "phase": "service_class",
+                        "utc": "2026-10-12T05:39:49.0307759+00:00",
+                        "result": "ok",
+                        "exitCode": null,
+                        "timestampBasis": "recorded UTC stopwatch"
+                    },
+                    {
+                        "phase": "pointer_fetch",
+                        "utc": "2026-10-12T05:39:50.1865987+00:00",
+                        "result": "failed",
+                        "exitCode": 1,
+                        "timestampBasis": "recorded UTC stopwatch"
+                    },
+                    {
+                        "phase": "config.completed",
+                        "utc": "2026-10-12T05:39:50.2346327+00:00",
+                        "result": "ok",
+                        "exitCode": null,
+                        "timestampBasis": "recorded UTC stopwatch"
+                    }
+                ],
+                "end": null,
+                "launcherPidRecorded": false,
+                "qualification": "Header writer PID is a transient telemetry writer; launcher PID is zero. Correlation to observed CMD uses role, mode, launch cohort and timing, not a recorded launcher birth pin."
+            },
+            {
+                "role": "wilbur",
+                "mode": "validation",
+                "utcBase": "2026-10-12T05:39:50.7649694+00:00",
+                "fileNameUtf8Sha256": "9ca0a7583f620da03c3b92e56de09c84dece3f7163cb00d6d5d9c563430b7df4",
+                "launchIdUtf8Sha256": "0d601bbf2f847036850d2d490cea0f014d3720f84ce868552449d663d1738f4a",
+                "contextIdUtf8Sha256": "0f3237182771c397b198f399ccb5fe80d6c83be2088082c46fc8806fc77d5a0a",
+                "sourceSnapshotBytes": 832,
+                "sourceLastWriteUtc": "2026-10-12T05:40:00.5054005+00:00",
+                "commercialRecoveryRequiredAtBegin": true,
+                "phases": [
+                    {
+                        "phase": "metadata.started",
+                        "utc": "2026-10-12T05:39:50.8800000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "metadata.completed",
+                        "utc": "2026-10-12T05:39:50.8900000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "parameters.started",
+                        "utc": "2026-10-12T05:39:50.9700000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "parameters.completed",
+                        "utc": "2026-10-12T05:39:52.1700000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "bootstrap_secret.started",
+                        "utc": "2026-10-12T05:39:52.2000000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "bootstrap_secret.completed",
+                        "utc": "2026-10-12T05:39:53.3600000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "identity.completed",
+                        "utc": "2026-10-12T05:39:55.8500000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "heartbeat.started",
+                        "utc": "2026-10-12T05:39:58.1800000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "node.started",
+                        "utc": "2026-10-12T05:40:00.5000000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    }
+                ],
+                "end": null,
+                "launcherPidRecorded": false,
+                "qualification": "Header writer PID is a transient telemetry writer; launcher PID is zero. Correlation to observed CMD uses role, mode, launch cohort and timing, not a recorded launcher birth pin."
+            },
+            {
+                "role": "stack",
+                "mode": "validation",
+                "utcBase": "2026-10-12T05:39:40.9959295+00:00",
+                "fileNameUtf8Sha256": "2f2eaa155ba74d1bc18e2f009e866038c6cbb510fdb5cdcf8d85d6d77e9ebc1b",
+                "launchIdUtf8Sha256": "c62360559f1b4281fca650f01bd8ec56f66aeb6d1f95e75e2221685d8243cf54",
+                "contextIdUtf8Sha256": "32ba8447e88bb74c63efa63e3339c6836ec2744c951130904865ee58e7ed655e",
+                "sourceSnapshotBytes": 1482,
+                "sourceLastWriteUtc": "2026-10-12T05:40:07.8039273+00:00",
+                "commercialRecoveryRequiredAtBegin": true,
+                "phases": [
+                    {
+                        "phase": "metadata.started",
+                        "utc": "2026-10-12T05:39:41.1100000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "metadata.lane.attempt_1",
+                        "utc": "2026-10-12T05:39:42.6900000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "metadata.track.attempt_1",
+                        "utc": "2026-10-12T05:39:42.7000000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "metadata.completed",
+                        "utc": "2026-10-12T05:39:42.9000000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "identity.started",
+                        "utc": "2026-10-12T05:39:42.9000000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "identity.completed",
+                        "utc": "2026-10-12T05:39:45.2400000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "maintenance_control.started",
+                        "utc": "2026-10-12T05:39:45.2500000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "maintenance_control.completed",
+                        "utc": "2026-10-12T05:39:46.7800000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "service_class.started",
+                        "utc": "2026-10-12T05:39:46.7900000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "service_class.completed",
+                        "utc": "2026-10-12T05:39:48.3200000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "old_roots.started",
+                        "utc": "2026-10-12T05:39:48.3200000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "old_roots.completed",
+                        "utc": "2026-10-12T05:39:48.6800000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "config.started",
+                        "utc": "2026-10-12T05:39:48.6800000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "config.completed",
+                        "utc": "2026-10-12T05:39:50.2500000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "wilbur_process_check.completed",
+                        "utc": "2026-10-12T05:39:50.5000000+00:00",
+                        "exitCode": 1,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "wilbur_launch.scheduled",
+                        "utc": "2026-10-12T05:39:50.5100000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "wilbur_tcp.started",
+                        "utc": "2026-10-12T05:39:50.5100000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "wilbur_tcp.completed",
+                        "utc": "2026-10-12T05:40:02.7700000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "unreal_launch.started",
+                        "utc": "2026-10-12T05:40:02.7800000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "unreal_launch.completed",
+                        "utc": "2026-10-12T05:40:07.2100000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "stack.completed",
+                        "utc": "2026-10-12T05:40:07.5100000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    }
+                ],
+                "end": {
+                    "utc": "2026-10-12T05:40:07.7789153+00:00",
+                    "exitCode": 0
+                },
+                "launcherPidRecorded": false,
+                "qualification": "Header writer PID is a transient telemetry writer; launcher PID is zero. Correlation to observed CMD uses role, mode, launch cohort and timing, not a recorded launcher birth pin."
+            },
+            {
+                "role": "instance-config",
+                "mode": "recovery",
+                "utcBase": "2026-10-12T05:40:12.7947339+00:00",
+                "fileNameUtf8Sha256": "a269d2fb52583c0c017db574fe0dfed4078ba66ec2c86ef0ab1224a9959b978e",
+                "launchIdUtf8Sha256": "9cc190d0fe0e15613b93a3d09b059e9942c9dde2f89f07bc6babd481cf22836f",
+                "contextIdUtf8Sha256": "df1a8e5d4cf044926d7661d4ef81fd9e4e1f760986d66f3c06595cdca66151d5",
+                "sourceSnapshotBytes": 1143,
+                "sourceLastWriteUtc": "2026-10-12T05:40:13.0068510+00:00",
+                "commercialRecoveryRequiredAtBegin": true,
+                "phases": [
+                    {
+                        "phase": "service_class",
+                        "utc": "2026-10-12T05:40:12.8927888+00:00",
+                        "result": "ok",
+                        "exitCode": null,
+                        "timestampBasis": "recorded UTC stopwatch"
+                    },
+                    {
+                        "phase": "config.completed",
+                        "utc": "2026-10-12T05:40:13.0058490+00:00",
+                        "result": "ok",
+                        "exitCode": null,
+                        "timestampBasis": "recorded UTC stopwatch"
+                    }
+                ],
+                "end": null,
+                "launcherPidRecorded": false,
+                "qualification": "Header writer PID is a transient telemetry writer; launcher PID is zero. Correlation to observed CMD uses role, mode, launch cohort and timing, not a recorded launcher birth pin."
+            },
+            {
+                "role": "wilbur",
+                "mode": "recovery",
+                "utcBase": "2026-10-12T05:40:13.6081840+00:00",
+                "fileNameUtf8Sha256": "7f05d45eaa00c8c2fd9c7f34f78fc397047153152414f490f124f5e4718c70e2",
+                "launchIdUtf8Sha256": "04d997e4a5270b53154ef559f29e4f0adfe38fe53008e870b52ba3e04209d0b2",
+                "contextIdUtf8Sha256": "8881a34393c29c6fd649c6694fbe090a306a53685e87ae92fed81169d49660c7",
+                "sourceSnapshotBytes": 829,
+                "sourceLastWriteUtc": "2026-10-12T05:40:27.7959765+00:00",
+                "commercialRecoveryRequiredAtBegin": true,
+                "phases": [
+                    {
+                        "phase": "metadata.started",
+                        "utc": "2026-10-12T05:40:13.8900000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "metadata.completed",
+                        "utc": "2026-10-12T05:40:13.9000000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "parameters.started",
+                        "utc": "2026-10-12T05:40:13.9900000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "parameters.completed",
+                        "utc": "2026-10-12T05:40:15.2800000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "bootstrap_secret.started",
+                        "utc": "2026-10-12T05:40:15.3100000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "bootstrap_secret.completed",
+                        "utc": "2026-10-12T05:40:15.3200000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "identity.completed",
+                        "utc": "2026-10-12T05:40:19.4700000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "heartbeat.started",
+                        "utc": "2026-10-12T05:40:22.6100000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "node.started",
+                        "utc": "2026-10-12T05:40:27.7900000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    }
+                ],
+                "end": null,
+                "launcherPidRecorded": false,
+                "qualification": "Header writer PID is a transient telemetry writer; launcher PID is zero. Correlation to observed CMD uses role, mode, launch cohort and timing, not a recorded launcher birth pin."
+            },
+            {
+                "role": "stack",
+                "mode": "recovery",
+                "utcBase": "2026-10-12T05:40:04.4239747+00:00",
+                "fileNameUtf8Sha256": "e2a9e3a1a8462da378a4834143ff277fdcc82ff602e7c69f2cb7e4077eedf646",
+                "launchIdUtf8Sha256": "9cc190d0fe0e15613b93a3d09b059e9942c9dde2f89f07bc6babd481cf22836f",
+                "contextIdUtf8Sha256": "4da3f73a840728e23cf2471468b4be6544a0f00756ea9af9c5cf6878e74fd5d8",
+                "sourceSnapshotBytes": 1480,
+                "sourceLastWriteUtc": "2026-10-12T05:40:30.4888889+00:00",
+                "commercialRecoveryRequiredAtBegin": true,
+                "phases": [
+                    {
+                        "phase": "metadata.started",
+                        "utc": "2026-10-12T05:40:04.5400000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "metadata.lane.attempt_1",
+                        "utc": "2026-10-12T05:40:06.2500000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "metadata.track.attempt_1",
+                        "utc": "2026-10-12T05:40:06.2600000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "metadata.completed",
+                        "utc": "2026-10-12T05:40:06.4800000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "identity.started",
+                        "utc": "2026-10-12T05:40:06.4800000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "identity.completed",
+                        "utc": "2026-10-12T05:40:08.8400000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "maintenance_control.started",
+                        "utc": "2026-10-12T05:40:08.8500000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "maintenance_control.completed",
+                        "utc": "2026-10-12T05:40:10.4500000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "service_class.started",
+                        "utc": "2026-10-12T05:40:10.4600000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "service_class.completed",
+                        "utc": "2026-10-12T05:40:12.1200000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "old_roots.started",
+                        "utc": "2026-10-12T05:40:12.1200000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "old_roots.completed",
+                        "utc": "2026-10-12T05:40:12.5100000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "config.started",
+                        "utc": "2026-10-12T05:40:12.5200000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "config.completed",
+                        "utc": "2026-10-12T05:40:13.0200000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "wilbur_process_check.completed",
+                        "utc": "2026-10-12T05:40:13.3200000+00:00",
+                        "exitCode": 1,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "wilbur_launch.scheduled",
+                        "utc": "2026-10-12T05:40:13.3200000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "wilbur_tcp.started",
+                        "utc": "2026-10-12T05:40:13.3300000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "wilbur_tcp.completed",
+                        "utc": "2026-10-12T05:40:29.3600000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "unreal_launch.started",
+                        "utc": "2026-10-12T05:40:29.3600000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "unreal_launch.completed",
+                        "utc": "2026-10-12T05:40:29.8800000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    },
+                    {
+                        "phase": "stack.completed",
+                        "utc": "2026-10-12T05:40:30.2000000+00:00",
+                        "exitCode": 0,
+                        "timestampBasis": "CMD centiseconds normalized using UTC header date and zero guest offset"
+                    }
+                ],
+                "end": {
+                    "utc": "2026-10-12T05:40:30.4638757+00:00",
+                    "exitCode": 0
+                },
+                "launcherPidRecorded": false,
+                "qualification": "Header writer PID is a transient telemetry writer; launcher PID is zero. Correlation to observed CMD uses role, mode, launch cohort and timing, not a recorded launcher birth pin."
+            }
+        ],
+        "sourceCaller": {
+            "role": "stack",
+            "mode": "normal",
+            "lastRecordedPhase": "update_control.started",
+            "lastRecordedUtc": "2026-10-12T05:36:13.8700000+00:00",
+            "updateCompletedPhaseRecorded": false,
+            "laterNormalStartupPhaseRecorded": false,
+            "endRecorded": false,
+            "exactCallerExitCodeRecorded": false,
+            "qualification": "Candidate001 intentionally handles maintenance terminal codes before a retargeted CALL. This source journal ends at update_control.started; absence of a terminal End is not proof of a particular CMD exit code or continuous no-continuation."
+        },
+        "targetStackEnds": {
+            "validationUtc": "2026-10-12T05:40:07.7789153+00:00",
+            "validationExitCode": 0,
+            "recoveryUtc": "2026-10-12T05:40:30.4638757+00:00",
+            "recoveryExitCode": 0,
+            "validationHeaderModeCorroboratesHandoff": true,
+            "legacyNativeHeapReplacementProved": false
+        }
+    },
+    "disposition": "Scoped Dev001-to-legacy003 rollback passed fresh runtime maintenance validation and actual provider stop, with observed source retention, exact reserved-entry/source-owner pins and qualified native ancestry. Full return compatibility is pending the separate legacy003-to-candidate001 leg.",
+    "limitations": [
+        "Two-second change-only process and pointer snapshots cannot prove continuous actor exclusion or rule out every transient duplicate, PID reuse or source-folder gap.",
+        "Source owner/updater were first observed absent after provider stopping began; their exact termination cause/time and exit-before-stop are not proved.",
+        "The target CMD mode parser recorded false; the persisted validation reservation and successful validation outcome establish intent/result, without independent raw argv attestation.",
+        "Legacy003 produced two Node births while one validation-owned Shipping identity persisted. No fresh full-native replacement or native heap cleanliness is claimed.",
+        "Source retention and final actor absence are sampled observations, not retained-handle cancellation proof.",
+        "Full retained journal bytes are verified, but the planned observer was interrupted and has no finished record.",
+        "Fresh Ready and successful maintenance tags establish runtime validation outcome; they do not prove usable interactive media, every source continuation/write path, token admission semantics or all compatibility.",
+        "The legacy003-to-candidate001 return and subsequent ordinary cold start remain separate acceptance gates.",
+        "No Stage, Prod, fleet-wide or all failure-window safety claim follows from this isolated Dev rollback."
+    ],
+    "rawSourceFileSha256": {
+        "outputs/iteration-candidate91-maintenance-ownership.jsonl": "a1b72dbb50128b3b71d4fe9b928a817c6e54d8e0e282dd4375ff1fa73f1e1336",
+        "outputs/iteration-candidate91-maintenance-ownership-receipt.json": "1ce380488862d9006b0a34e2243d181de0f6f3da89438719fd48cbd3f37ca602",
+        "outputs/iteration-candidate91-maintenance-provider.jsonl": "e16162f88e217bd348474d95c1be58b0beb030cb2a89382f6e587405285d86af",
+        "outputs/iteration-candidate91-maintenance-stopped.json": "a4c942c4195fb63607ab85e94cc2f2ee527d57e55f5386fff1f2a79364a57550",
+        "outputs/iteration-candidate91-stopped.json": "dc7078bbff3af46e8049819f9cd353c844876851629e729ace07124f1545853f",
+        "outputs/iteration-candidate91-ui.json": "3ab652930d9ae905171b62586a32f5096219a0119d64a6440ddb55633af29743",
+        "outputs/iteration-candidate91-maintenance-journals.json": "6df01f3d00824d65926b9aa843dc19109c6b66e739fa1e30e0324c69e585bea1"
+    }
+}

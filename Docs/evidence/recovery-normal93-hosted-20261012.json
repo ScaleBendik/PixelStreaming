@@ -1,0 +1,246 @@
+{
+    "schemaVersion": 1,
+    "sample": 93,
+    "analysis": "Sanitized read-only analysis of local hosted observations; no host/product mutation by analysis.",
+    "cohort": "Ordinary restored-candidate cold request after maintenance roundtrip92; fresh OS boot, one normal startup and no sampled recovery cycle. This sample is separate from recovered cold-start and fault cohorts.",
+    "serving": {
+        "instanceId": "i-0ce5ffd16bd50eb24",
+        "runtimeBundle": "pixelstreaming-runtime-20261012-001",
+        "runtimeCommit": "75768d8f199d28fca2bbb6a0336e53a548268ee0",
+        "runtimeContractVersion": "2026-10-11.1",
+        "runtimeManifestKey": "PixelStreamingRuntime/pixelstreaming-runtime-20261012-001/manifest.json",
+        "apiCommit": "e9756bf7838e9bbd899aaa35118fbbb81ef48d33",
+        "unrealArtifact": "ScaleWorld_20261008b.zip",
+        "manifestBytesOrLoadedFileDigestAttestedIn93": false,
+        "qualification": "Provider installed-artifact/version tags correlate the restored bundle and prior validated update. This observation does not independently read or digest manifest/loaded executable bytes, or attest every API/Web replica."
+    },
+    "collection": {
+        "evidenceId": "a650006d58de466fa7c2aa83646cc202",
+        "recordCount": 19,
+        "totalBytes": 12801,
+        "sha256": "10def16ba481c112fad7bdcd961efd8d8ef41cbe51bd06594dc3c6283b44f790",
+        "allRetainedBytesCollected": true,
+        "plannedObserverFinished": true,
+        "finishedUtc": "2026-10-12T06:10:53.4967423Z",
+        "pollSeconds": 3,
+        "firstObservedUtc": "2026-10-12T06:07:41.8013826Z",
+        "qualification": "A finished record and full retained-byte digest are present. Ownership observation ends before the later sustained-media and normal-End captures."
+    },
+    "canonicalTimes": {
+        "clickUtc": "2026-10-12T06:07:11.273Z",
+        "requestUtc": "2026-10-12T06:07:12.7307478+00:00",
+        "bootUtc": "2026-10-12T06:07:23.5000000Z",
+        "runtimeReadyUtc": "2026-10-12T06:08:59.9920000+00:00",
+        "readyUtc": "2026-10-12T06:09:02.3743128+00:00",
+        "connectedUtc": "2026-10-12T06:09:35.6530678+00:00",
+        "endUtc": "2026-10-12T06:12:27.0185271+00:00",
+        "apiRowState": "Teardown Completed"
+    },
+    "durationsSeconds": {
+        "clickToBoot": 12.227,
+        "bootToOwnerBirth": 19.93531,
+        "bootToStackJournalBegin": 21.0541372,
+        "bootToNodeBirth": 47.568504,
+        "clickToRuntimeReady": 108.719,
+        "clickToApiReady": 111.1013128,
+        "requestToApiReady": 109.643565,
+        "shippingToRuntimeReady": 43.093158,
+        "runtimeReadyToApiReady": 2.3823128
+    },
+    "ordinaryStartup": {
+        "priorCompletedLeasePredatesBoot": true,
+        "initialScopedProcessSnapshotEmpty": true,
+        "freshOwner": {
+            "pid": 5200,
+            "creationUtc": "2026-10-12T06:07:43.4353100Z",
+            "name": "cmd.exe"
+        },
+        "freshGenerationSha256": "22c9d8a02710966751b26abbf2bdbdbf81e1226b08d52bbd279ef7c4e40e9d51",
+        "freshGenerationDistinctFromPriorBoot": true,
+        "startingFirstObservedUtc": "2026-10-12T06:07:45.0461998Z",
+        "completedFirstObservedUtc": "2026-10-12T06:08:21.5145611Z",
+        "completedNode": {
+            "pid": 5180,
+            "creationUtc": "2026-10-12T06:08:11.0685040Z",
+            "name": "node.exe"
+        },
+        "activeAndCompletedNodePinsMatch": true,
+        "capturedFreshGenerations": 1,
+        "capturedFullStackIdentities": 1,
+        "capturedNodeIdentities": 1,
+        "capturedShippingIdentities": 1,
+        "readableMarkerCaptured": false,
+        "recyclerOrMonitorCapturedInFreshLease": false,
+        "recoveryInvocationCaptured": false,
+        "currentCommercialRecoveryLatchOrNotBeforeCaptured": false,
+        "historicalTicketCutoffUtc": "2026-10-12T05:40:54.000Z",
+        "historicalCutoffUnchanged": true,
+        "historicalCutoffReason": "commercial_recovery_ready_margin",
+        "historicalCutoffIsNot93RecoveryHold": true,
+        "currentRequestAdmissionMatchesAfterGuidNormalization": true,
+        "admissionRecordedUtc": "2026-10-12T06:09:35.000Z",
+        "noResetCompletionAckRequiredForObservedOrdinaryStartup": true
+    },
+    "ownership": {
+        "shippingAncestry": [
+            {
+                "pid": 5536,
+                "parentPid": 5900,
+                "creationUtc": "2026-10-12T06:08:16.8988420Z",
+                "name": "ScaleWorld-Win64-Shipping.exe"
+            },
+            {
+                "pid": 5900,
+                "parentPid": 5576,
+                "creationUtc": "2026-10-12T06:08:16.7567820Z",
+                "name": "ScaleWorld.exe"
+            },
+            {
+                "pid": 5576,
+                "parentPid": 5200,
+                "creationUtc": "2026-10-12T06:08:15.1254850Z",
+                "name": "powershell.exe"
+            },
+            {
+                "pid": 5200,
+                "parentPid": 1700,
+                "creationUtc": "2026-10-12T06:07:43.4353100Z",
+                "name": "cmd.exe"
+            }
+        ],
+        "shippingAncestrySnapshotUtc": "2026-10-12T06:08:18.5043446Z",
+        "shippingParentLinksCoCaptured": 3,
+        "shippingPidBirthIdentitiesCoCaptured": 4,
+        "nodeAncestry": [
+            {
+                "pid": 5180,
+                "parentPid": 5316,
+                "creationUtc": "2026-10-12T06:08:11.0685040Z",
+                "name": "node.exe"
+            },
+            {
+                "pid": 5316,
+                "parentPid": 3572,
+                "creationUtc": "2026-10-12T06:08:11.0460840Z",
+                "name": "cmd.exe"
+            },
+            {
+                "pid": 3572,
+                "parentPid": 5824,
+                "creationUtc": "2026-10-12T06:08:10.5784940Z",
+                "name": "powershell.exe"
+            },
+            {
+                "pid": 5824,
+                "parentPid": 5200,
+                "creationUtc": "2026-10-12T06:07:59.7143980Z",
+                "name": "cmd.exe"
+            },
+            {
+                "pid": 5200,
+                "parentPid": 1700,
+                "creationUtc": "2026-10-12T06:07:43.4353100Z",
+                "name": "cmd.exe"
+            }
+        ],
+        "nodeAncestrySnapshotUtc": "2026-10-12T06:08:12.4309341Z",
+        "nodeParentLinksCoCaptured": 4,
+        "nodePidBirthIdentitiesCoCaptured": 5,
+        "nativeBirthBelongsToSameNormalOwner": true,
+        "noExtraEntryCapturedInFinishedWindow": true,
+        "continuousExclusivityProved": false,
+        "qualification": "Every listed link is checked against actual same-snapshot parent PID and strictly earlier parent birth. Three-second change-only sampling does not exclude transient actors, or later entry after the finished observer."
+    },
+    "startupJournals": {
+        "files": 3,
+        "totalMatchingFiles": 3,
+        "hasMore": false,
+        "omittedRecords": 0,
+        "rejectedRecords": 0,
+        "allModesNormal": true,
+        "commercialRecoveryRequiredFalseInAllHeaders": true,
+        "stackEndExitCode": 0,
+        "configCompleted": "ok",
+        "configPointerFetchResult": "failed",
+        "configPointerFetchExitCode": 1,
+        "configPointerFetchDurationMs": 1049.746,
+        "configDurationMs": 1412.481,
+        "relatedLaunchAndParentLaunchIdsMatch": true,
+        "additionalEntryJournalsCaptured": false,
+        "collectedUtc": "2026-10-12T06:11:42.3835920Z",
+        "qualification": "Existing optional pointer-fetch path reports exit1 followed by config.completed ok; the failed record is retained without claiming a transient service failure. One stack/config/Wilbur set was matched at collection time. Running Wilbur has no End yet."
+    },
+    "media": [
+        {
+            "observedUtc": "2026-10-12T06:10:24.592Z",
+            "displayedFps": 30,
+            "packetsLost": 0,
+            "framesDropped": 0,
+            "decodedFrames": 1425,
+            "videoCurrentTimeSeconds": 47.86966,
+            "width": 2240,
+            "height": 1260,
+            "readyState": 4,
+            "paused": false,
+            "controlsStreamInput": true
+        },
+        {
+            "observedUtc": "2026-10-12T06:12:03.993Z",
+            "displayedFps": 30,
+            "packetsLost": 0,
+            "framesDropped": 0,
+            "decodedFrames": 4395,
+            "videoCurrentTimeSeconds": 147.262118,
+            "width": 2240,
+            "height": 1260,
+            "readyState": 4,
+            "paused": false,
+            "controlsStreamInput": true
+        }
+    ],
+    "normalEnd": {
+        "endClickUtc": "2026-10-12T06:12:25.845Z",
+        "endUtc": "2026-10-12T06:12:27.0185271+00:00",
+        "apiTeardownCompleted": true,
+        "providerFirstStoppedSnapshotUtc": "2026-10-12T06:17:49.9060269+00:00",
+        "providerStoppedWatcherReceiptUtc": "2026-10-12T06:17:49.9075574+00:00",
+        "allThreeDevInstancesStoppedObservedUtc": "2026-10-12T06:17:50.3510596Z",
+        "finalEndAndStopAcceptanceComplete": true,
+        "qualification": "Canonical End/Teardown Completed and actual provider/fleet stop are captured independently of the earlier finished ownership observer."
+    },
+    "userFacing": {
+        "preparingCapturedSeconds": 91.625,
+        "preparingPhase": "Loading ScaleWorld assets",
+        "preparingProgressPercent": 75,
+        "estimateText": "Ready in about 1 minute.",
+        "apiRemainingSecondsAtEstimateCapture": 19.4763128,
+        "firstReadyCapturedSeconds": 129.609,
+        "firstReadyCaptureAfterApiReadySeconds": 18.5076872,
+        "qualification": "At the sampled about-one-minute message, canonical API Ready was about 19.5 seconds away. The sparse first Ready UI capture is an upper bound; no intervening sample establishes stale UI after API Ready. One ordinary-start sample does not calibrate recovered cold-start estimates."
+    },
+    "faultAndSchedulerScope": {
+        "faultInjected": false,
+        "directSchedulerDemandExercised": false,
+        "maintenanceExecutedDuring93": false,
+        "roundtrip91Or92SafetyProvedByThisReceipt": false
+    },
+    "disposition": "Observed ordinary restored-candidate cold startup, same-owner Node/native birth, usable sustained media, canonical normal End and actual provider/fleet stop passed for exact Dev d1.",
+    "limitations": [
+        "Three-second change-only sampling does not prove continuous actor absence or exclude every transient duplicate.",
+        "The ownership observer finished before final media and End; later lifecycle behavior requires separate receipts.",
+        "Unchanged prior-boot cutoff state must not be interpreted as a current93 recovery hold or ACK/token test.",
+        "Provider identity/manifest tags do not independently attest manifest or loaded executable byte digests, every API replica or Web serving commit.",
+        "Displayed zero loss/drop media samples do not prove every frame over the entire session.",
+        "An ordinary no-recovery cycle is a different cohort from recovery23-28; no startup saving is attributed to the reliability fix from this single sample.",
+        "Shipping-to-Ready includes runtime initialization and stream stabilization; this interval is not declared removable."
+    ],
+    "rawSourceFileSha256": {
+        "outputs/iteration-candidate93-ownership.jsonl": "10def16ba481c112fad7bdcd961efd8d8ef41cbe51bd06594dc3c6283b44f790",
+        "outputs/iteration-candidate93-ownership-receipt.json": "e28d9c58f938bce09f034a4320ac795f1e53d6e3fe5a94e4b9ea26f098cb2588",
+        "outputs/iteration-candidate93-ui.json": "b5523a47d6c352e1d4515ff6aa051c77047b50dc3f512254f3bf3a90f842f2cb",
+        "outputs/iteration-candidate93-journals.json": "81fb21852f2b1edefd8fcaca6b2398e90ffc57aef8d4ccd0942a290f06453709",
+        "outputs/iteration-candidate93-failure-provider.jsonl": "740f06e9231477ce453db22130619da23199d9a44de586fd1d494ba9d5941e38",
+        "outputs/iteration-candidate93-stopped.json": "4f95d53e9845c4e66e7c265cb0df41231edb77de91a62d0744d52f234723c3ca",
+        "outputs/iteration-candidate93-failure-stopped.json": "4059d00530f5ed63f33fec5fb22dd4b38cb0e6ad923053b849f4700e7f0a0add"
+    }
+}

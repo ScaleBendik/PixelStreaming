@@ -1,0 +1,82 @@
+{
+    "sample": 22,
+    "classification": "normal cold startup; no recovery transition",
+    "instanceId": "i-0ce5ffd16bd50eb24",
+    "runtimeBundleId": "pixelstreaming-runtime-20261012-001",
+    "runtimeCommit": "75768d8f199d28fca2bbb6a0336e53a548268ee0",
+    "apiCommit": "e9756bf7838e9bbd899aaa35118fbbb81ef48d33",
+    "webCommit": "5bc95c6c06cb2bb7e635b505a0598b22cd8a56a8",
+    "unrealArtifact": "ScaleWorld_20261008b.zip",
+    "bootTriggerDelaySeconds": 15,
+    "clickUtc": "2026-10-12T02:58:32.649Z",
+    "bootUtc": "2026-10-12T02:58:43.6496320Z",
+    "originalCmdCreationUtc": "2026-10-12T02:59:02.5650900Z",
+    "node": { "pid": 3636, "creationUtc": "2026-10-12T02:59:29.9913030Z" },
+    "shipping": { "pid": 6096, "creationUtc": "2026-10-12T02:59:35.8884920Z" },
+    "completedLeaseFirstObservedUtc": "2026-10-12T02:59:38.9898560Z",
+    "runtimeReadyUtc": "2026-10-12T03:00:18.577Z",
+    "apiRequestedUtc": "2026-10-12T02:58:33.0404701Z",
+    "apiReadyUtc": "2026-10-12T03:00:21.5210176Z",
+    "apiConnectedUtc": "2026-10-12T03:02:30.0704011Z",
+    "apiEndedUtc": "2026-10-12T03:12:17.0478738Z",
+    "canonicalEndReason": "End session button",
+    "canonicalLifecycle": "Teardown Completed",
+    "allDevStoppedObservedUtc": "2026-10-12T03:17:43.5640683Z",
+    "clickToApiReadySeconds": 108.8720176,
+    "uiReadyObservation": {
+        "lastNotReadyElapsedSeconds": 105.644,
+        "firstReadyObservedElapsedSeconds": 178.907,
+        "interpretation": "Sparse observations only bound first UI readiness; they do not measure an exact refresh delay."
+    },
+    "healthyTaskRetry": {
+        "taskStartsIssued": 1,
+        "requestedUtc": "2026-10-12T03:03:19.3186887Z",
+        "comLastRunUtc": "2026-10-12T03:03:19Z",
+        "cmdletLastRunUtc": "2026-10-12T03:03:03Z",
+        "timeEvidence": "COM corroborates demand within whole-second rounding; cmdlet seconds conflict and are not used for chronology.",
+        "nodeAndShippingBirthsUnchanged": true,
+        "leaseAndConfigBytesUnchanged": true,
+        "taskDefinitionUnchanged": true,
+        "newStackJournals": 0
+    },
+    "sustainedMedia": {
+        "width": 2240,
+        "height": 1260,
+        "framesPerSecond": 30,
+        "lastCurrentTimeSeconds": 559.491962,
+        "framesDecoded": 16758,
+        "framesDropped": 0,
+        "lastPacketLossDisplay": -37,
+        "packetLossInterpretation": "The negative display counter cannot establish sustained zero loss.",
+        "paused": false,
+        "readyState": 4,
+        "controlsStreamInput": true
+    },
+    "observer": {
+        "commandId": "79ca2b31-51a1-4b79-847e-9a4c2a26a64a",
+        "evidenceSha256": "74c39a181c5b9306a8d06f26559c0bf71c9a13fa82c98928fe96de52f3c7f921",
+        "totalBytes": 13640,
+        "recordCount": 20,
+        "finished": true,
+        "samplingIntervalSeconds": 3,
+        "parentChainsMatchFreshNormalOwner": true,
+        "retainedPreBootActorsDead": true,
+        "markerRemainedMissing": true,
+        "currentRecoveryTransitionObserved": false,
+        "retainedCutoffAndCompletedTokenCountUnchanged": true
+    },
+    "journals": {
+        "commandId": "c5c44b5a-6bc5-4c79-ba7c-10ce94b8b9f8",
+        "selected": 3,
+        "matchingFiles": 3,
+        "hasMore": false,
+        "rejectedRecords": 0,
+        "omittedRecords": 0,
+        "commercialRecoveryRequired": false
+    },
+    "limits": [
+        "Does not exercise original-producer cancellation, exclusive replacement ownership, recovery Ready/reset acknowledgement or independent monitor failure disposition.",
+        "Prior samples 19-21 exercised an overlapping-producer recovery path; their 123.950981-second mean is a historical reference, not a comparable recovery optimization estimate for this normal-only cycle.",
+        "Existing isolated Dev image only; no fresh image, automatic scheduled retry, Stage or Prod validation."
+    ]
+}

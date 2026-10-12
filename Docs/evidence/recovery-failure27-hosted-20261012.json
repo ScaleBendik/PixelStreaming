@@ -1,0 +1,232 @@
+{
+    "schemaVersion": 1,
+    "sample": 27,
+    "analysis": "Sanitized read-only correlation of digest-verified hosted Dev evidence; no product/host mutation by analysis.",
+    "cohort": "Actual helper-only recycler loss before replacement entry, followed by the unchanged production orphan monitor deadline and independent provider stop.",
+    "serving": {
+        "instanceId": "i-0ce5ffd16bd50eb24",
+        "runtimeBundle": "pixelstreaming-runtime-20261012-001",
+        "runtimeCommit": "75768d8f199d28fca2bbb6a0336e53a548268ee0",
+        "apiCommit": "e9756bf7838e9bbd899aaa35118fbbb81ef48d33",
+        "webCommit": "5bc95c6c06cb2bb7e635b505a0598b22cd8a56a8",
+        "bootDelaySeconds": 15,
+        "identityScope": "Installed bundle/source metadata, provider tags and prior hosted Build Info; not attestation of every replica or loaded file."
+    },
+    "collection": {
+        "evidenceId": "249330dc67ea42b29f0ab98b4010928d",
+        "recordCount": 21,
+        "totalBytes": 13872,
+        "sha256": "8156bf55cacf051d355151665fbde1f200da6298214a1e91973e68bf1c34cb38",
+        "allRetainedBytesCollected": true,
+        "plannedObserverFinished": false,
+        "interruptedByGuestShutdown": true,
+        "pollSeconds": 3,
+        "firstObservedUtc": "2026-10-12T05:01:42.9882787Z",
+        "lastRecordUtc": "2026-10-12T05:12:25.1046195Z",
+        "qualification": "Full retained bytes were collected and digest verified after the next boot. Guest shutdown interrupted the planned observer; complete collection is separate from a finished observer run."
+    },
+    "canonicalRequest": {
+        "clickUtc": "2026-10-12T05:01:16.750Z",
+        "requestUtc": "2026-10-12T05:01:18.1500353+00:00",
+        "state": "Failed",
+        "endReason": "Failed",
+        "failedEndUtc": "2026-10-12T05:17:19.8180797+00:00",
+        "readyUtc": null,
+        "connectAcknowledgedUtc": null,
+        "mediaSamples": 0,
+        "failedEndMeaning": "Canonical Failed request end, not a manual End session action."
+    },
+    "injection": {
+        "sourceSha256": "a498160607489e6e6b08e6931cfe36dbdd967787e8d05b96f05f16dbd9389107",
+        "acceptedCoverage": true,
+        "helperKillAttempted": true,
+        "helperKillIssued": true,
+        "helperExitObserved": true,
+        "helper": {
+            "pid": 2476,
+            "creationUtc": "2026-10-12T05:02:21.5794520Z",
+            "name": "powershell.exe"
+        },
+        "monitor": {
+            "pid": 5732,
+            "creationUtc": "2026-10-12T05:02:23.0445600Z",
+            "name": "powershell.exe"
+        },
+        "sourceGenerationSha256": "ef520843c9c24655c1ee3d9535b063a234fdc8477fb83503436a7e2b54258e7e",
+        "replacementGenerationSha256": "ce967f48ed321736af039f9ec57daf749d1da80ef999718cba9a95688c00f90c",
+        "immutableIntentSha256": "9a50680fd8f493c59886e00a231bff7e88001041e985ccaf77823370ebb57969",
+        "operationUtf8Sha256": "317bb09a6e9e7ef131c0fa0b458ffc3ebb58dc1c05f0f439a05bda5e987c80fe",
+        "dispatchNonceSha256": "69547e319857acb2b7c905e3125d940f4707353cd7c7de1e6f02401a4b125545",
+        "acceptedObservationUtc": "2026-10-12T05:02:27.5288404+00:00",
+        "scopedNodeCount": 0,
+        "knownProducerCount": 1,
+        "unknownInvocationCount": 0,
+        "fullSourceQuiescenceObserved": false,
+        "sourceKillsIssued": 0,
+        "runtimeSourceWritten": false,
+        "leaseWritten": false,
+        "markerWritten": false,
+        "taskWritten": false,
+        "externalShutdownIssued": false,
+        "noReplacementEntryAfter": true,
+        "exactMonitorLiveAfter": true,
+        "classification": "One retained exact recycler kill, then unchanged pre-entry intent/lease and actual scoped portable Node absence observed under the shared lifecycle gate.",
+        "readinessWitness": "The durable exact G2 monitor tuple is written only after production Start-StackRecycleMonitor validates the child readiness receipt and retained parent/child identities."
+    },
+    "ownership": {
+        "bootUtc": "2026-10-12T05:01:29.5000000Z",
+        "originalOwner": {
+            "pid": 4216,
+            "creationUtc": "2026-10-12T05:01:49.7052440Z",
+            "name": "cmd.exe"
+        },
+        "sourceNode": {
+            "pid": 6064,
+            "creationUtc": "2026-10-12T05:02:18.2060870Z",
+            "name": "node.exe"
+        },
+        "recyclingFirstObservedUtc": "2026-10-12T05:02:25.7027260Z",
+        "firstPostInjectionNodeAbsentSnapshotUtc": "2026-10-12T05:02:28.7623965Z",
+        "survivingOriginalOuterWilburCmd": {
+            "pid": 5348,
+            "creationUtc": "2026-10-12T05:02:06.9533230Z",
+            "name": "cmd.exe"
+        },
+        "sourceNativeWrapperAndNodeAbsentInThatSnapshot": true,
+        "noUnrealCaptured": true,
+        "noReplacementEntryOrCurrentG2NodeCaptured": true,
+        "stoppingFirstObservedUtc": "2026-10-12T05:12:25.0884367Z",
+        "stoppingTupleMatchesInjection": true,
+        "continuousSourceQuiescenceProved": false,
+        "qualification": "KnownProducer1 is the original outer Wilbur CMD5348. It is not a scoped Node; its survival remains explicit and does not establish full producer quiescence. Change-only snapshots do not prove continuous absence."
+    },
+    "recoveryFence": {
+        "reason": "post_session_cleanup",
+        "intentRequestedUtc": "2026-10-12T05:02:21.552Z",
+        "sourcePinAndGenerationBound": true,
+        "tokenAndRequestFieldsAbsent": true,
+        "recoveryRequiredRetained": true,
+        "replacementReadyHoldReached": false,
+        "resetCompletionExpectedForThisFailedAttempt": false,
+        "resetCompletedOrSuccessfulAckClaimed": false,
+        "currentRequestAdmissionClaimed": false,
+        "independentApiAckOrEventStoreCaptured": false
+    },
+    "terminalMonitor": {
+        "defaultBudgetSeconds": 601,
+        "budgetFormula": "Ceiling(max(600,3*120+120+0.250+120))=601",
+        "deadlineUtcPersisted": false,
+        "codeDerivedDeadlineLowerBoundUtc": "2026-10-12T05:12:22.5794520+00:00",
+        "codeDerivedDeadlineUpperBoundUtc": "2026-10-12T05:12:24.0445600+00:00",
+        "deadlineBoundBasis": "Private deadline is computed after helper birth and before monitor process creation. Bounds assume stable guest UTC and unchanged default timeout arguments; the exact private deadline was not collected.",
+        "faultOccurredUtc": "2026-10-12T05:12:23.6297864+00:00",
+        "reason": "recycle_replacement_node_absent_at_deadline",
+        "action": "local_os_shutdown_requested",
+        "diagnosticBytes": 256,
+        "diagnosticSha256": "e8f614fadd9f52adae15c16fab39dfe052c683fd534120c6d7b3db5a887b311b",
+        "matchedExactGenerationHelperMonitorIndependently": true,
+        "readerExpectedTupleFlag": false,
+        "readerExpectedTupleQualification": "Saved wrapper supplied ExpectedBundleId/SinceUtc only. Optional expected generation/monitor/recycler inputs were omitted, so reader false is not a tuple mismatch. This analysis independently matches the complete fault/lease/injection tuple.",
+        "remainingMarkerDigestMatchesInjection": true,
+        "stoppingPersistedObserved": true,
+        "stoppingIsSeparateFromReadyAndAdmission": true,
+        "noUnconditionalStopSlaClaimed": true
+    },
+    "guestShutdown": {
+        "readerSourceSha256": "9924217ed34f1233c89c3fe6d930c64809056bb6363dbfe7521a844fe4564321",
+        "queryStatus": "ok",
+        "queryLimitReached": false,
+        "events": [
+            {
+                "eventId": 6006,
+                "recordId": 301121,
+                "occurredUtc": "2026-10-12T05:12:32.7960715+00:00",
+                "provider": "EventLog",
+                "canonicalShutdownDeclaration": false,
+                "rawXmlSha256": "66a9de8c64bfc362c8951dc287183cc9ba9fae6fb7fd4c113fecac9bdaf7b813",
+                "messageSha256": "506d6f451cbd0543c5e5f2f046a0d804cef70363f49828504caf3d47b629f8d9",
+                "declaredProcessDataSha256": null
+            },
+            {
+                "eventId": 1074,
+                "recordId": 301115,
+                "occurredUtc": "2026-10-12T05:12:23.6787908+00:00",
+                "provider": "User32",
+                "canonicalShutdownDeclaration": true,
+                "rawXmlSha256": "6c5dd213eac038c4735ce32ceb04757908bb6b55a795d08083f125f7d8488a77",
+                "messageSha256": "6de09a5d540438b375fc784c0cf107d9a0d90e5982f0821294f11c2fc594463d",
+                "declaredProcessDataSha256": "e404c0d8519ff3ce3b7e14f054fd0e7915f6bcdcbd8c059f644ea0effa57cff8"
+            }
+        ],
+        "faultTo1074Seconds": 0.0490044,
+        "faultTo6006Seconds": 9.1662851,
+        "causalInterpretation": "Exact-operation monitor shutdown diagnostic is followed49.0044ms later by Windows1074 declaring canonical system32 shutdown.exe, then EventLog6006 and independent provider stop. This supports the expected monitor-triggered shutdown sequence;1074 does not uniquely identify its parent caller.",
+        "uniqueMonitorCallerIndependentlyProved": false,
+        "eventLogAloneProvesProviderStop": false
+    },
+    "providerStop": {
+        "lastRunningObservedUtc": "2026-10-12T05:12:34.1042039+00:00",
+        "firstStoppingObservedUtc": "2026-10-12T05:12:40.8819055+00:00",
+        "firstStoppedObservedUtc": "2026-10-12T05:17:20.1895597+00:00",
+        "stoppedWatcherReceiptUtc": "2026-10-12T05:17:20.1910343+00:00",
+        "allThreeDevStoppedObservedUtc": "2026-10-12T05:21:44.4045356Z",
+        "faultToFirstStoppingSeconds": 17.2521191,
+        "faultToFirstStoppedSeconds": 296.5597733,
+        "firstStoppingToFirstStoppedSeconds": 279.3076542,
+        "actualProviderStopProved": true,
+        "providerPollTimesAreObservationBounds": true
+    },
+    "nextBootRetainedEvidence": {
+        "sample": 28,
+        "collectedUtc": "2026-10-12T05:24:20.6280472+00:00",
+        "bootUtc": "2026-10-12T05:23:53.5000000Z",
+        "retainedIntentDigestMatchesPreKill": true,
+        "retainedFaultDiagnosticMatches": true,
+        "freshStartingOwner": {
+            "pid": 5508,
+            "creationUtc": "2026-10-12T05:24:13.5834050Z",
+            "name": "cmd.exe"
+        },
+        "freshGenerationDistinctFromFailedAttempt": true,
+        "currentRepoRootMatchesCandidate": true,
+        "scope": "This early next-boot snapshot shows fresh starting ownership plus unchanged retained intent/fault. Cycle28 readiness, media and final teardown require its separate evidence."
+    },
+    "userFacing": {
+        "preparingStillObservedAtSeconds": 590.213,
+        "failurePageFirstCapturedUtc": "2026-10-12T05:23:41.255Z",
+        "progressWasIndeterminate": true,
+        "qualification": "Preparing Session was still displayed in the sampled view at590.213s. Later view explains the failed request and offers a new request. Sparse sampling does not measure the exact failure-message transition or establish a user-facing timeout guarantee."
+    },
+    "operatorProtocol": {
+        "reportedNoManualEndCancelAdminFleetOrReleaseActionBeforeActualStop": true,
+        "authority": "Parent task execution record; independent audit of all possible control-plane callers was not collected."
+    },
+    "disposition": "Hosted helper-only orphan fail-stop route passed for this exact Dev attempt: actual helper loss, no admitted replacement Node at accepted observation, retained monitor stopping/fault evidence, correlated Windows shutdown and independent actual provider stop. Fresh-boot recovery28 and maintenance/rollback routes remain separate gates.",
+    "limitations": [
+        "One helper-only fault on one Dev host; no source processes were killed and full source quiescence was false.",
+        "Three-second change-only snapshots do not prove continuous absence, every transient native birth or every producer exit.",
+        "The exact private monitor deadline was not persisted;601-second arm-time bounds are code-derived, not an unconditional stop SLA.",
+        "Live/ambiguous Node, tuple supersession, marker change or I/O ambiguity still preclude terminal-stop authority in other attempts.",
+        "Windows1074 declares the shutdown executable but does not uniquely prove its parent was this monitor; diagnostic/time/tuple correlation supports the expected causal sequence.",
+        "Provider stop is independently observed; polling timestamps bound observations rather than exact provider transitions.",
+        "Complete retained bytes are verified, while the planned observer is unfinished because guest shutdown interrupted it.",
+        "No Ready, media, reset-completion ACK or current-request admission is claimed for27.",
+        "Next-boot reader expected-tuple false reflects omitted optional inputs; complete correlation is performed separately in this analysis.",
+        "Parent reports no manual/control intervention before actual stop; an independent audit of every possible control-plane caller was not collected.",
+        "This receipt does not validate compound source-loss, automatic retry-loop behavior, all reboot faults, legacy rollback or maintenance roundtrip."
+    ],
+    "rawSourceFileSha256": {
+        "outputs/iteration-candidate27-ownership.jsonl": "8156bf55cacf051d355151665fbde1f200da6298214a1e91973e68bf1c34cb38",
+        "outputs/iteration-candidate27-ownership-receipt.json": "ca69f2d49140f9814872e6fbd4b2aac6974328ab14f7975b8f74674c46a837a7",
+        "outputs/iteration-candidate27-recycler-only-loss.json": "d233d2edcd01e004c7a5d6e4ca2d3ae617b4f9f56fd63a8b2d7522ab63d4cda1",
+        "outputs/iteration-candidate27-failure-provider.jsonl": "b1cd21ecb4c69e3fea84e116510cc48283056b0e88365e63711a8880a1842faa",
+        "outputs/iteration-candidate27-failure-stopped.json": "4f1ecbed4454a6ae5811368e5c89655a1bb2bdf133b5db1b5d7180135da50a8c",
+        "outputs/iteration-candidate27-stopped.json": "460066f00a588a1d9e0a5478c78c215898bceae1219482c3a6e421c5ed3abf9f",
+        "outputs/iteration-candidate27-ui.json": "2d47b2d328ac7a20e547c0673d230029e3f3e50bb48d8ee31dc1c330f6ccb211",
+        "outputs/iteration-candidate28-monitor-state.json": "1f4c17ae204db4776805a41c58ca64d81e2dc6d92443d8895d6f0b94fbfb5a7c",
+        "outputs/iteration-candidate28-monitor-state-receipt.json": "10b00334bc783c60e95778521c041e4e76f6179bb7285485ed17fe712f256b32",
+        "outputs/iteration-candidate28-shutdown-events.json": "5a807ff8fed1214e27c32e7c4bf615b7a388a40165d34d3bc3d99c27839c4c85",
+        "outputs/iteration-candidate28-shutdown-events-receipt.json": "e0094f08ab8338b5a67026907d9900f4ecad71b7545f9f4109944d88e67a4124",
+        "work/ssm-readonly-recovery-monitor-state-28.json": "c19c12b76882362467b11c76a5e269ed917d378cb5a2e6298af4d9fbed66dd33"
+    }
+}

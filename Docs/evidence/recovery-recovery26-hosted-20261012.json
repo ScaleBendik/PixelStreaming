@@ -1,0 +1,336 @@
+{
+    "schemaVersion": 1,
+    "sample": 26,
+    "analysis": "Sanitized read-only analysis of digest-verified hosted Dev observations; no product/host mutation by analysis.",
+    "cohort": "Natural cold recovery after normal End25. The external compound injector rejected changed pre-entry intent before any kill; no hosted process-loss coverage in26.",
+    "serving": {
+        "instanceId": "i-0ce5ffd16bd50eb24",
+        "runtimeBundle": "pixelstreaming-runtime-20261012-001",
+        "runtimeCommit": "75768d8f199d28fca2bbb6a0336e53a548268ee0",
+        "apiCommit": "e9756bf7838e9bbd899aaa35118fbbb81ef48d33",
+        "webCommit": "5bc95c6c06cb2bb7e635b505a0598b22cd8a56a8",
+        "bootDelaySeconds": 15,
+        "unrealArtifact": "ScaleWorld_20261008b.zip",
+        "identityScope": "Observed API boot-version tags and installed artifact tags plus prior hosted Build Info; not attestation of every replica/loaded file."
+    },
+    "collection": {
+        "evidenceId": "bd80ce3f3cf54fbfb96c265f11ca07a7",
+        "recordCount": 39,
+        "totalBytes": 31000,
+        "sha256": "7b40875494a81ad3f1a9b15951df8bfdfc976e7cebc846a05cf7421b7c63b60b",
+        "allRetainedBytesCollected": true,
+        "plannedObserverFinished": false,
+        "interruptedByNormalEnd": true,
+        "pollSeconds": 3,
+        "firstObservedUtc": "2026-10-12T04:37:11.1860181Z",
+        "lastRecordUtc": "2026-10-12T04:43:40.1295192Z",
+        "historicalObserverDriverQualification": "The full retained file was recollected after normal End. No finished record exists because guest stop interrupted the planned900-second observer; an old external driver deadline/pending state is not a demonstrated product failure."
+    },
+    "canonicalTimes": {
+        "clickUtc": "2026-10-12T04:36:47.032Z",
+        "requestUtc": "2026-10-12T04:36:48.2991735+00:00",
+        "bootUtc": "2026-10-12T04:36:59.5000000Z",
+        "runtimeReadyUtc": "2026-10-12T04:39:12.0470000+00:00",
+        "readyUtc": "2026-10-12T04:39:14.9423246+00:00",
+        "connectedUtc": "2026-10-12T04:40:31.3414941+00:00",
+        "endUtc": "2026-10-12T04:43:23.4733296+00:00",
+        "apiRowState": "Teardown Completed",
+        "reference": "14D3D435-679A"
+    },
+    "durationsSeconds": {
+        "clickToRuntimeReady": 145.015,
+        "clickToApiReady": 147.9103246,
+        "requestToApiReady": 146.6431511,
+        "shippingToRuntimeReady": 53.508792,
+        "runtimeReadyToApiReady": 2.8953246
+    },
+    "ownership": {
+        "priorBootLeaseCaptured": true,
+        "originalOwner": {
+            "pid": 4492,
+            "creationUtc": "2026-10-12T04:37:19.4151930Z",
+            "name": "cmd.exe"
+        },
+        "sourceNode": {
+            "pid": 2584,
+            "creationUtc": "2026-10-12T04:37:46.9380290Z",
+            "name": "node.exe"
+        },
+        "sourceMarkerMatchesExactPriorPin": true,
+        "oldGenerationRevoked": true,
+        "recyclingFirstObservedUtc": "2026-10-12T04:37:53.8734158Z",
+        "recycler": {
+            "pid": 2312,
+            "creationUtc": "2026-10-12T04:37:50.4354180Z",
+            "name": "powershell.exe"
+        },
+        "monitor": {
+            "pid": 2932,
+            "creationUtc": "2026-10-12T04:37:51.8891030Z",
+            "name": "powershell.exe"
+        },
+        "oldOwnerLastCapturedUtc": "2026-10-12T04:37:53.9029706Z",
+        "oldOwnerFirstCapturedAbsentUtc": "2026-10-12T04:37:56.9346360Z",
+        "oldSourceNodeLastCapturedUtc": "2026-10-12T04:37:53.9029706Z",
+        "oldSourceNodeFirstCapturedAbsentUtc": "2026-10-12T04:37:56.9346360Z",
+        "capturedAllOldActorAbsenceBeforeReplacementClaim": false,
+        "replacementOwner": {
+            "pid": 5364,
+            "creationUtc": "2026-10-12T04:37:55.2506460Z",
+            "name": "cmd.exe"
+        },
+        "replacementNode": {
+            "pid": 1424,
+            "creationUtc": "2026-10-12T04:38:14.5964960Z",
+            "name": "node.exe"
+        },
+        "completedNodePinMatchesActivePin": true,
+        "completedLeaseFirstObservedUtc": "2026-10-12T04:38:24.1653124Z",
+        "shippingAncestry": [
+            {
+                "pid": 3156,
+                "parentPid": 1352,
+                "name": "ScaleWorld-Win64-Shipping.exe",
+                "creationUtc": "2026-10-12T04:38:18.5382080Z"
+            },
+            {
+                "pid": 1352,
+                "parentPid": 5460,
+                "name": "ScaleWorld.exe",
+                "creationUtc": "2026-10-12T04:38:18.3934190Z"
+            },
+            {
+                "pid": 5460,
+                "parentPid": 5364,
+                "name": "powershell.exe",
+                "creationUtc": "2026-10-12T04:38:17.1308460Z"
+            },
+            {
+                "pid": 5364,
+                "parentPid": 2312,
+                "name": "cmd.exe",
+                "creationUtc": "2026-10-12T04:37:55.2506460Z"
+            },
+            {
+                "pid": 2312,
+                "parentPid": 3980,
+                "name": "powershell.exe",
+                "creationUtc": "2026-10-12T04:37:50.4354180Z"
+            }
+        ],
+        "capturedShippingAncestryConsistentWithReplacement": true,
+        "capturedShippingIdentities": 1,
+        "maxShippingInSnapshot": 1,
+        "ancestryProof": {
+            "nativeSnapshotUtc": "2026-10-12T04:38:21.1612140Z",
+            "priorGateSnapshotUtc": "2026-10-12T04:38:18.1309184Z",
+            "observedParentLinks": 4,
+            "coCapturedParentBirthLinks": 3,
+            "parentBirthLinkSpanningSnapshots": "ScaleWorld.exe1352 -\u003e native gate5460; gate exists in prior snapshot and is absent in first native snapshot.",
+            "verifiedPidBirthIdentitiesAcrossSnapshots": 5,
+            "allFourParentBirthLinksCoCaptured": false,
+            "interveningPidReuseExcluded": false,
+            "continuousExclusivityProved": false
+        },
+        "oldSourceAbsenceQualification": "Old CMD and source Node remain in the last pre-claim snapshot; both are first observed absent after the replacement claim. Exact stop/absence-before-marker time is not measured by this3-second trace."
+    },
+    "recoveryFence": {
+        "reason": "post_session_cleanup",
+        "intentRequestedUtc": "2026-10-12T04:37:50.411Z",
+        "intentFirstObservedUtc": "2026-10-12T04:37:50.8371264Z",
+        "replacementClaimUtc": "2026-10-12T04:37:55.2181348+00:00",
+        "replacementClaimMeaning": "Pre-spawn reserved replacement timestamp; actual owner birth is separate. Later marker serialization rounds this timestamp to milliseconds.",
+        "operationDispatchAndSourceBindingUnchanged": true,
+        "cutoffFirstObservedUtc": "2026-10-12T04:39:03.7077005Z",
+        "cutoffUtc": "2026-10-12T04:39:06.0000000+00:00",
+        "readyNotBeforeUtc": "2026-10-12T04:39:11.0000000+00:00",
+        "cutoffToNotBeforeSeconds": 5,
+        "publishedReadyAfterNotBeforeSeconds": 1.047,
+        "resetCompletedMarkerUtc": "2026-10-12T04:39:12.013Z",
+        "commercialRecoveryRequiredAbsentFirstObservedUtc": "2026-10-12T04:39:12.8284719Z",
+        "markerMissingFirstObservedUtc": "2026-10-12T04:39:15.8659913Z",
+        "admissionRecordedUtc": "2026-10-12T04:40:31.000Z",
+        "admissionFirstObservedUtc": "2026-10-12T04:40:31.7508001Z",
+        "admissionMatchesCurrentRequestAfterGuidNormalization": true,
+        "resetTokenCompletionApplicable": false,
+        "markerTokenAndRequestFieldsAbsent": true,
+        "completedRecycleTokenCountObserved": 42,
+        "agentSuccessfulAckAndMarkerClearLogCaptured": true,
+        "independentApiEventStoreOrAckCaptured": false,
+        "hostedTokenCarryContractProved": false
+    },
+    "persistedAgentLogEvidence": {
+        "collectedUtc": "2026-10-12T05:02:31.7265160Z",
+        "guestTimeZoneId": "UTC",
+        "timestampBasis": "Winston file JSON local wall-clock milliseconds, normalized with current guest timezone rules; unchanged historical guest timezone/clock is not independently proved.",
+        "markerOperationUtf8Sha256": "27710e833217275c436f4b8c4f3b0923847e0cc5e36ef9c82f89eaa613c2d235",
+        "queuedAndClearedOperationHashMatchesRawMarker": true,
+        "resetCompletionBranchLogUtc": "2026-10-12T04:39:12.0180000Z",
+        "successfulAckAndMarkerClearLogUtc": "2026-10-12T04:39:13.1240000Z",
+        "completionBranchToAckClearSeconds": 1.1059999999999999,
+        "sourceLogSnapshotBytes": 519772,
+        "sourceLogSnapshotSha256": "c6ced02f50bfe335a706a1ad3facabce0ebeeb4f68ef21aca53f49893bd6be8f",
+        "completeSourceFileSnapshot": true,
+        "matchedRecordsOmitted": 0,
+        "events": [
+            {
+                "eventKind": "reset_started",
+                "loggedLocalTimestamp": "2026-10-12 04:37:50.395",
+                "normalizedUtc": "2026-10-12T04:37:50.3950000Z",
+                "operationSha256": null,
+                "lineSha256": "4d057c5bd7172b2d02a2a49c095fa6a68931ebb981a1921584f7d990b676e210",
+                "fileIndex": 0
+            },
+            {
+                "eventKind": "runtime_status_resetting_published",
+                "loggedLocalTimestamp": "2026-10-12 04:37:53.523",
+                "normalizedUtc": "2026-10-12T04:37:53.5230000Z",
+                "operationSha256": null,
+                "lineSha256": "5fd1d17fc43463356a100946c18737f2e8077088a789b37da367397dabb22a76",
+                "fileIndex": 0
+            },
+            {
+                "eventKind": "runtime_status_resetting_published",
+                "loggedLocalTimestamp": "2026-10-12 04:39:03.408",
+                "normalizedUtc": "2026-10-12T04:39:03.4080000Z",
+                "operationSha256": null,
+                "lineSha256": "250c85d9550fbf89abf0333fcb95ab2ef630c15a5ca8d34a741022227e28107b",
+                "fileIndex": 0
+            },
+            {
+                "eventKind": "commercial_recovery_durable_after_ready",
+                "loggedLocalTimestamp": "2026-10-12 04:39:12.012",
+                "normalizedUtc": "2026-10-12T04:39:12.0120000Z",
+                "operationSha256": null,
+                "lineSha256": "6cedef3b19026428500f51a47862941b1c1b8dbb9d728e8ed3eaf8be706df29d",
+                "fileIndex": 0
+            },
+            {
+                "eventKind": "replacement_ready_reset_completion_queued",
+                "loggedLocalTimestamp": "2026-10-12 04:39:12.018",
+                "normalizedUtc": "2026-10-12T04:39:12.0180000Z",
+                "operationSha256": "27710e833217275c436f4b8c4f3b0923847e0cc5e36ef9c82f89eaa613c2d235",
+                "lineSha256": "1cf6d7966a7d10af95343566385b9c7f40c5fbfe92f58d9584bbb2728a9bbd3b",
+                "fileIndex": 0
+            },
+            {
+                "eventKind": "reset_completion_acknowledged_marker_cleared",
+                "loggedLocalTimestamp": "2026-10-12 04:39:13.124",
+                "normalizedUtc": "2026-10-12T04:39:13.1240000Z",
+                "operationSha256": "27710e833217275c436f4b8c4f3b0923847e0cc5e36ef9c82f89eaa613c2d235",
+                "lineSha256": "b803e590a077f0b5d60c4ca1f329d709276f2dd3ee7a716d9358e662a047fc96",
+                "fileIndex": 0
+            },
+            {
+                "eventKind": "runtime_status_ready_published",
+                "loggedLocalTimestamp": "2026-10-12 04:39:14.108",
+                "normalizedUtc": "2026-10-12T04:39:14.1080000Z",
+                "operationSha256": null,
+                "lineSha256": "dfb68431f86cbf708298426d260084012cb0c2a9c6114bb2370e6e270af1372f",
+                "fileIndex": 0
+            }
+        ],
+        "evidenceLevel": "Exact-operation-hash-correlated agent successful ACK/marker-clear branch. Preceding completion log is immediately before queueEvent in source; no independent API event-store/ACK or token-contract receipt."
+    },
+    "scheduler": {
+        "demandStartExercised": false,
+        "taskDefinitionChanged": false,
+        "automaticRetryLoopProved": false
+    },
+    "helperFault": {
+        "attempted": true,
+        "acceptedCoverage": false,
+        "helperKillsIssued": 0,
+        "sourceKillsIssued": 0,
+        "boundedTerminalMonitorExercised": false,
+        "stage": "final_pre_helper_kill_gate",
+        "errorType": "RuntimeException",
+        "errorFunction": "Read-ScaleWorldRecycleIntent",
+        "classification": "Final pre-helper-kill intent guard rejected changed pre-entry shape; normal recovery continued. No helper-only or compound process-loss coverage."
+    },
+    "startupJournals": {
+        "files": 6,
+        "omittedRecords": 0,
+        "rejectedRecords": 0,
+        "bothConfigCompletionsSucceeded": true,
+        "replacementStackEndExitCode": 0,
+        "normalFullStackEndAbsentExpectedCancellation": true,
+        "qualification": "Original normal full-stack journal stops at unreal_launch.started because its producer is cancelled; recovery stack End is successful. Running Wilbur journals have no End until process exit."
+    },
+    "media": [
+        {
+            "observedUtc": "2026-10-12T04:41:26.573Z",
+            "displayedFps": 29,
+            "packetsLost": 0,
+            "framesDropped": 0,
+            "decodedFrames": 1603,
+            "videoCurrentTimeSeconds": 54.057917,
+            "width": 2240,
+            "height": 1260,
+            "readyState": 4,
+            "paused": false,
+            "controlsStreamInput": true
+        },
+        {
+            "observedUtc": "2026-10-12T04:43:15.758Z",
+            "displayedFps": 29,
+            "packetsLost": 0,
+            "framesDropped": 0,
+            "decodedFrames": 4873,
+            "videoCurrentTimeSeconds": 163.229861,
+            "width": 2240,
+            "height": 1260,
+            "readyState": 4,
+            "paused": false,
+            "controlsStreamInput": true
+        }
+    ],
+    "normalEnd": {
+        "endClickUtc": "2026-10-12T04:43:22.324Z",
+        "endUtc": "2026-10-12T04:43:23.4733296+00:00",
+        "apiTeardownCompleted": true,
+        "shutdownRequestedUtc": "2026-10-12T04:43:24.0830757+00:00",
+        "ackedUtc": "2026-10-12T04:43:33.088+00:00",
+        "startedUtc": "2026-10-12T04:43:33.206+00:00",
+        "activeCommandMissingFirstObservedUtc": "2026-10-12T04:43:40.1295192Z",
+        "retainedShutdownAndCommercialRecoveryLatchAfterEnd": true,
+        "allThreeDevInstancesStoppedObservedUtc": "2026-10-12T04:48:54.7584105Z",
+        "providerD1StoppedObservedUtc": "2026-10-12T04:48:42.5015521+00:00",
+        "normalEndNotMonitorTerminalStop": true
+    },
+    "comparison": {
+        "baselineSamples": [19, 20, 21],
+        "baselineApiReadyMeanSeconds": 123.95098066666667,
+        "recovery26DifferenceFromBaselineMeanSeconds": 23.959343933333329,
+        "matchedSavingsEstablished": false,
+        "interpretation": "Runtime003 baseline19-21 captured original-stack Shipping after replacement markers; runtime001 recovery26 has a chain consistent with replacement-owned Shipping, with one parent birth spanning snapshots. These ownership cohorts differ, so the observed timing difference is not a matched causal speed conclusion. Normal22 remains separate."
+    },
+    "disposition": "Successful natural cold recovery with replacement-consistent native ancestry, retained hold/admission, operation-correlated agent ACK/marker clear, sustained media and normal End/actual provider stop. No process loss was injected; terminal-monitor coverage is separate.",
+    "limitations": [
+        "3-second change-only observations do not prove continuous actor/native absence or exclude every transient duplicate.",
+        "Four actual parent links and five births were checked; native gate5460 is absent in the first Shipping snapshot, so one parent birth spans observations and intervening PID reuse is not independently excluded.",
+        "Exact old-source stop/absence-before-marker time is not captured.",
+        "Ownership remains separate from readiness and admission authority.",
+        "Full retained bytes were recollected and digest verified; normal End interrupted the planned observer, with no finished record.",
+        "No helper/source death was injected in26; the final guard denied before any kill.",
+        "Agent ACK/clear log does not independently attest API event-store ACK, token-carry contract or stale-ticket rejection. This tokenless cleanup has no token-completion requirement.",
+        "UTC file-log normalization uses current guest UTC timezone; historical clock/timezone invariance was not independently attested.",
+        "Media is displayed29fps, with zero packets lost/frames dropped at two sampled observations; it is not a continuous30fps guarantee.",
+        "Shipping-to-Ready includes runtime initialization, stream stabilization and recovery hold; the full interval is not declared removable."
+    ],
+    "rawSourceFileSha256": {
+        "outputs/iteration-candidate26-ownership.jsonl": "7b40875494a81ad3f1a9b15951df8bfdfc976e7cebc846a05cf7421b7c63b60b",
+        "outputs/iteration-candidate26-ownership-receipt.json": "85ef2850a0119631ae9d7e5683133d814173a29d469cd7e9fba62e76c819ecb8",
+        "outputs/iteration-candidate26-api-times.json": "da2aa9be3061beb7fb77548a3e70d69e6b6d54020c504a2fb2c235adc4a06372",
+        "outputs/iteration-candidate26-ui.json": "b795c83bb5298b77969ad9abc3ba31b8c7140774ac04a6ed8dd96fb8b37d0f0c",
+        "outputs/iteration-candidate26-failure-provider.jsonl": "f930fd0f8fbfccbeb4d6e1f77ede3d0459f8f993f12c04effa9a023699c6d17d",
+        "outputs/iteration-candidate26-failure-stopped.json": "319d9cdeff253d88faba6bb328d491732ae19bc71717e90909f1414577aac413",
+        "outputs/iteration-candidate26-stopped.json": "d1698db4a244995050ecd2d78fb6917198501986e5a2d7429f27b8d9bc415d1b",
+        "outputs/iteration-candidate26-recycler-and-source-death.json": "e5cc5d37bc3d1fd287cc0326c49f44535f5c474becc58911e05ec8da9937a692",
+        "outputs/iteration-candidate26-journals.json": "af4907785a1c7166b5573da17b97e3cbf9412f57148a73d95057e846f784fe99",
+        "outputs/iteration-candidate26-monitor-state.json": "21d85371119396a0190c96c57372e8da5b95e5e6a9fc1f01886b72f9257bd841",
+        "outputs/iteration-candidate26-monitor-state-receipt.json": "c126416df83556a91bf6292502cb90542ba4e9fa60e697f8ddb5b7b03db1bef6",
+        "outputs/iteration-candidate27-wilbur-events.json": "3a13aefd4f11c5fe1ad343543d97e9f5b600a3e718abbf15cd13bdab0ea0653e",
+        "outputs/iteration-candidate27-wilbur-events-receipt.json": "38d148755495b40432cf4bb0701315cdfed98d06250f3b9020d01625259840f2"
+    }
+}

@@ -11,6 +11,13 @@ scaleworld-server-manager-web/MASTER_BACKLOG.md
 MASTER_BACKLOG.md
   767fec4cf176109c9f9785f9ab661038e6180e1af8241efbba2afb0989730c08
 
+Line endings are part of the exact bases: this patch keeps the context file's
+mixed endings and the backlog CRLF hunks. Preserve these bytes when staging:
+  git -c core.autocrlf=false add Docs/ai-context-recovery-integration.patch
+At the canonical target, use git -c core.autocrlf=false apply --check before apply
+and --reverse --check after apply. Do not normalize this patch or unrelated
+canonical lines; regenerate against current exact bytes if a checkout normalized it.
+
 Integration note: the shared root docs are outside a usable Git worktree and
 the canonical Web backlog contains newer work than the isolated Web checkout.
 This scoped patch keeps the requested work reviewable on its new branch without
@@ -20,17 +27,53 @@ required source/hosted gates and target authorization are resolved, and fresh
 hash/status checks prove no concurrent collision. If any base changed, reconcile
 these hunks against current canonical content; do not replace whole files. Apply
 the canonical backlog update and root mirror together and verify byte equality.
-This patch records current remaining gates, not hosted acceptance or test history.
+This patch states the runtime contract, scoped Dev evidence boundary and remaining
+gates. Detailed test and cycle history belongs to the owning runtime document.
 
+diff --git a/MASTER_BACKLOG.md b/MASTER_BACKLOG.md
+index edf0629..4356f2d 100644
+--- a/MASTER_BACKLOG.md
++++ b/MASTER_BACKLOG.md
+@@ -896,6 +896,31 @@ Status: In progress
+ and [watchdog runbook](../PixelStreaming/Docs/watchdog-runbook.md) own implemented
+ launchers/status/validation.
+ 
++- Finish environment acceptance of [exclusive recovery launcher ownership](../PixelStreaming/Docs/recovery-launcher-ownership.md).
++  Scoped Dev covers cold replacement ancestry, unchanged recovery/acknowledgement,
++  usable media, healthy scheduler retry and one exact post-revocation recycler
++  loss with observed Node absence, the default monitor deadline and actual EC2 stop.
++  Retained-state fresh boot preserved the operation/cutoff and acknowledgement;
++  normal End/actual stop, exact rollback/reapply validation and a fresh ordinary
++  post-reapply session with usable media and normal End/actual stop were observed.
++  Legacy rollback remains explicitly unclaimed; partial helper pairs stay rejected.
++  Reapply nevertheless pruned the legacy source while its CMD/updater were alive.
++  Recorded helper code 10 and no later source phases do not prove all old layouts
++  or exact caller exit. Candidate code cannot retrofit that running old installer.
++  Keep the candidate confined to Dev. Wider promotion requires an explicit legacy
++  migration step protecting source retention and preventing retargeted BAT
++  continuation, validated against each environment's actual installed version,
++  exact births, retained journals, native media and actual provider stop.
++  Stage/Prod need compatible-artifact/environment acceptance and rollout/rollback
++  authorization; do not trust-migrate a live unleased Node. Local fake-shutdown
++  fixtures and scoped Dev evidence do not close every failure window or identify
++  a unique OS-event caller. Preserve exact source/dispatch/birth, child fencing,
++  no entry writes over unregistered Node, no shutdown with live/unclassified Node,
++  marker provenance, update hold/stop and provisioning retry failure behavior.
++  Live hung agents, unknown manual actions/concurrent runtimes, ambiguity and loss
++  of both helpers remain limits. Leased Git-to-artifact relocation stays fail-closed
++  pending a separate pre-activation design. Recovery-fault messages and time
++  estimates remain separate API/Web follow-up work.
+ - Correct stale-ping health: a retained `streaming` registration currently produces
+   `healthy=true`/Ready before checking ping freshness (locally reproduced). Cover
+   idle warm and active/stabilizing states, fresh recovery and registration reuse;
 diff --git a/docs/ai-context/pixelstreaming.md b/docs/ai-context/pixelstreaming.md
+index e93d721..48be879 100644
 --- a/docs/ai-context/pixelstreaming.md
 +++ b/docs/ai-context/pixelstreaming.md
-@@ -619,6 +619,57 @@
- An intent recovered after a crash is relaunched and is never accepted as proof of
- replacement. The new instance agent requires matching replacement-started proof,
+@@ -621,6 +621,99 @@ replacement. The new instance agent requires matching replacement-started proof,
  replacement Ready, and the admission margin before clearing commercial recovery
  or emitting reset completion.
-
+ 
 +[Recovery launcher ownership](../../PixelStreaming/Docs/recovery-launcher-ownership.md)
 +owns the implemented launch-attempt lease and remaining acceptance gates.
 +The install-base lifecycle mutex serializes entry, cancellation, replacement
@@ -50,6 +93,8 @@ diff --git a/docs/ai-context/pixelstreaming.md b/docs/ai-context/pixelstreaming.
 +reopen that fence; normal entry needs positive fresh-boot proof and dead actors.
 +The exact tiny native CMD producer is cancelled before final Node/whole-marker
 +rechecks; ambiguous invocation or discovery never authorizes arbitrary CMD kills.
++An exact native launcher in another runtime root also denies host-wide shutdown;
++it does not authorize cleanup outside the captured root.
 +Normal marker completion/removal or supersession ends monitoring without action.
 +A completed lease with a live pinned Node can hand off early; a starting pin
 +alone cannot. At the deadline a live Node retains existing agent authority.
@@ -76,14 +121,56 @@ diff --git a/docs/ai-context/pixelstreaming.md b/docs/ai-context/pixelstreaming.
 +its captured physical root no longer identifies the archived source. A separate
 +pre-activation migration protocol remains required before accepting that route.
 +
-+Deploy only a coherent immutable canary from stopped Dev; do not trust-migrate a
-+live unleased Node. Hosted proof still requires exclusive replacement ancestry,
-+unchanged recovery/admission and acknowledgement, sustained usable media, harmless
-+scheduler retry, normal End and actual EC2 stopped state, plus injected recycler
-+death. Stage/Prod promotion remains separate from these local implementation gates.
++Local Windows process fixtures exercise the exclusion/failure protocol with
++fake shutdown. Scoped Dev evidence additionally covers exclusive cold recovery,
++unchanged admission/reset acknowledgement, usable media and a harmless retry of
++the healthy completed stack. One exact recycler loss after revocation was followed
++by observed Node absence, a still-live bound monitor and unchanged intent/lease.
++At the default deadline, its matching fault record and Windows shutdown request
++correlated with independently observed EC2 stopped state. An OS event alone does
++not identify a unique caller, and Node absence is not full producer quiescence.
++The retained-state fresh boot preserved the original operation and cutoff,
++reclaimed ownership, traversed the existing replacement acknowledgement branch
++and delivered usable media without manufacturing state or Ready. Normal End
++and actual provider stop were subsequently observed.
++
++The exact Dev candidate-to-legacy rollback and reapply both passed maintenance
++validation and actual provider stop, with complete retained ownership bytes and
++allowlisted startup journals. Rollback retained the candidate source in sampled
++pointer snapshots; its legacy target stayed intentionally unclaimed and reused
++one Shipping process across two Node births. Reapply completed the candidate
++owner/Node lease and captured candidate-owned native ancestry. The old legacy
++installer nevertheless pruned its source while its exact CMD/updater were alive.
++Its source journal recorded helper terminal code 10 and no later startup phases;
++sampled disappearance does not prove exact caller exit or every old BAT layout.
++Candidate retention/terminal handling cannot retrofit an already running legacy
++installer. This observed pair does not establish general migration compatibility.
++
++A fresh ordinary request after reapply reached API Ready in 111.1013 seconds,
++delivered a sampled 30 fps stream with over 147 seconds of playback, and completed
++normal End with independent actual provider stop. These observations validate
++this scoped Dev behavior, not every failure window or broader hosted acceptance.
++Keep the candidate confined to Dev. Wider promotion remains blocked pending an
++explicit legacy migration step protecting the physical source until its launcher
++and updater exit and preventing old BAT continuation through a retargeted file.
++Validate that path against each environment's actual installed legacy version,
++exact actor births, retained source/target journals, native media and provider stop.
++Leased Git-to-artifact relocation needs its separate pre-activation design.
++
++Deploy only coherent immutable artifacts from stopped, explicitly scoped targets;
++do not trust-migrate a live unleased Node. Stage/Prod additionally require their
++compatible API/artifact, authorized rollout, environment acceptance and rollback
++gates. Neither local fixtures nor scoped Dev evidence close all failure timings,
++prove shutdown with ambiguous actors, or supervise a live but hung agent. Manual
++operator actions, unknown concurrent runtimes and loss of both helpers remain
++outside the proven boundary; ambiguity must preserve admission/shutdown fences.
++API/Web recovery-fault messaging and time estimates remain separate follow-up
++work; this reliability iteration does not change their lifecycle authority.
 +
  The Windows PowerShell 5.1 recycle helper must give `System.IO.File.Replace` a
-@@ -656,9 +707,10 @@
+ real same-directory backup path when advancing the marker. Passing `$null` for
+ the backup was proven on hosted Dev to bind as an invalid empty path after the
+@@ -656,9 +749,10 @@ attempts share an in-process mutex. The proposed history is bounded to the newes
  128 canonical tokens. That is sufficient only while Wilbur is the single writer,
  old runtimes cannot rewrite the snapshot and drop unknown fields, and a stale
  token cannot survive more than 128 later completions; add a cross-process lock if
@@ -94,54 +181,42 @@ diff --git a/docs/ai-context/pixelstreaming.md b/docs/ai-context/pixelstreaming.
 +source-PID inequality. The launcher UUID/birth fence described above additionally
 +constrains producer cancellation and actual spawn; it does not replace that
 +commercial recovery/Ready proof.
-
+ 
  The scheduled pair and timer remain process-local. A full SignallingWebServer
  restart *before* the timer callback loses the pending window, so that recovery
 diff --git a/scaleworld-server-manager-web/MASTER_BACKLOG.md b/scaleworld-server-manager-web/MASTER_BACKLOG.md
+index edf0629..4356f2d 100644
 --- a/scaleworld-server-manager-web/MASTER_BACKLOG.md
 +++ b/scaleworld-server-manager-web/MASTER_BACKLOG.md
-@@ -896,6 +896,20 @@
+@@ -896,6 +896,31 @@ Status: In progress
  and [watchdog runbook](../PixelStreaming/Docs/watchdog-runbook.md) own implemented
  launchers/status/validation.
-
-+- Host-accept [exclusive recovery launcher ownership](../PixelStreaming/Docs/recovery-launcher-ownership.md)
-+  in a coherent immutable Dev canary: old producers absent before replacement
-+  proof, exact source/dispatch/birth and reserved-child fencing, harmless scheduler
-+  retry and refusal to enter over an unregistered runtime Node before config/health
-+  mutation; incomplete/markerless repair, Git handoff and unchanged recovery/ack gates.
-+  Inject recycler death before and after revocation and prove bounded orphan
-+  disposition, no shutdown with a live/unclassified runtime Node, sustained media,
-+  normal End and actual EC2 stopped state. The monitor does not supervise a live
-+  but hung agent; ambiguity and loss of both helpers remain separate limits.
-+  Do not trust-migrate a live unleased process or promote Stage/Prod from local tests.
-+  Host-accept maintenance validation/transfer and source-release retention;
-+  legacy rollback is explicitly unclaimed. Leased Git-to-artifact relocation
-+  remains fail-closed and needs a separate pre-activation migration design.
-+  Update hold/stop and provisioning retry failure paths must remain unchanged.
- - Correct stale-ping health: a retained `streaming` registration currently produces
-   `healthy=true`/Ready before checking ping freshness (locally reproduced). Cover
-   idle warm and active/stabilizing states, fresh recovery and registration reuse;
-diff --git a/MASTER_BACKLOG.md b/MASTER_BACKLOG.md
---- a/MASTER_BACKLOG.md
-+++ b/MASTER_BACKLOG.md
-@@ -896,6 +896,20 @@
- and [watchdog runbook](../PixelStreaming/Docs/watchdog-runbook.md) own implemented
- launchers/status/validation.
-
-+- Host-accept [exclusive recovery launcher ownership](../PixelStreaming/Docs/recovery-launcher-ownership.md)
-+  in a coherent immutable Dev canary: old producers absent before replacement
-+  proof, exact source/dispatch/birth and reserved-child fencing, harmless scheduler
-+  retry and refusal to enter over an unregistered runtime Node before config/health
-+  mutation; incomplete/markerless repair, Git handoff and unchanged recovery/ack gates.
-+  Inject recycler death before and after revocation and prove bounded orphan
-+  disposition, no shutdown with a live/unclassified runtime Node, sustained media,
-+  normal End and actual EC2 stopped state. The monitor does not supervise a live
-+  but hung agent; ambiguity and loss of both helpers remain separate limits.
-+  Do not trust-migrate a live unleased process or promote Stage/Prod from local tests.
-+  Host-accept maintenance validation/transfer and source-release retention;
-+  legacy rollback is explicitly unclaimed. Leased Git-to-artifact relocation
-+  remains fail-closed and needs a separate pre-activation migration design.
-+  Update hold/stop and provisioning retry failure paths must remain unchanged.
+ 
++- Finish environment acceptance of [exclusive recovery launcher ownership](../PixelStreaming/Docs/recovery-launcher-ownership.md).
++  Scoped Dev covers cold replacement ancestry, unchanged recovery/acknowledgement,
++  usable media, healthy scheduler retry and one exact post-revocation recycler
++  loss with observed Node absence, the default monitor deadline and actual EC2 stop.
++  Retained-state fresh boot preserved the operation/cutoff and acknowledgement;
++  normal End/actual stop, exact rollback/reapply validation and a fresh ordinary
++  post-reapply session with usable media and normal End/actual stop were observed.
++  Legacy rollback remains explicitly unclaimed; partial helper pairs stay rejected.
++  Reapply nevertheless pruned the legacy source while its CMD/updater were alive.
++  Recorded helper code 10 and no later source phases do not prove all old layouts
++  or exact caller exit. Candidate code cannot retrofit that running old installer.
++  Keep the candidate confined to Dev. Wider promotion requires an explicit legacy
++  migration step protecting source retention and preventing retargeted BAT
++  continuation, validated against each environment's actual installed version,
++  exact births, retained journals, native media and actual provider stop.
++  Stage/Prod need compatible-artifact/environment acceptance and rollout/rollback
++  authorization; do not trust-migrate a live unleased Node. Local fake-shutdown
++  fixtures and scoped Dev evidence do not close every failure window or identify
++  a unique OS-event caller. Preserve exact source/dispatch/birth, child fencing,
++  no entry writes over unregistered Node, no shutdown with live/unclassified Node,
++  marker provenance, update hold/stop and provisioning retry failure behavior.
++  Live hung agents, unknown manual actions/concurrent runtimes, ambiguity and loss
++  of both helpers remain limits. Leased Git-to-artifact relocation stays fail-closed
++  pending a separate pre-activation design. Recovery-fault messages and time
++  estimates remain separate API/Web follow-up work.
  - Correct stale-ping health: a retained `streaming` registration currently produces
    `healthy=true`/Ready before checking ping freshness (locally reproduced). Cover
    idle warm and active/stabilizing states, fresh recovery and registration reuse;
