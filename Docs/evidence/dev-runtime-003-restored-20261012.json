@@ -1,0 +1,65 @@
+{
+    "operation": "User-authorized restoration of all Dev instances through the hosted Update Jobs page",
+    "environment": "Dev",
+    "region": "eu-north-1",
+    "jobId": "398690f0-8642-4e7a-92f7-8ddf8cff59e2",
+    "createdUtc": "2026-10-12T14:49:47Z",
+    "rolloutMode": "canary",
+    "stopOnFirstFailure": true,
+    "terminalOutcome": "succeeded",
+    "succeededTargets": 3,
+    "target": {
+        "bundleId": "pixelstreaming-runtime-20261011-003",
+        "sourceCommit": "26ee94ea453d5d6f01f1a5268d9bf08dd3d26046",
+        "manifestKey": "PixelStreamingRuntime/pixelstreaming-runtime-20261011-003/manifest.json",
+        "zipSha256": "33e4e61f0ceda8c49a67661db0cc8382dda0038b17043532a2f0d189153989d0",
+        "zipBytes": 146797197,
+        "contractVersion": "2026-10-11.1",
+        "portableNodeVersion": "v22.23.2"
+    },
+    "instances": [
+        {
+            "name": "ScaleWorld_d1",
+            "instanceId": "i-0ce5ffd16bd50eb24",
+            "previousBundleId": "pixelstreaming-runtime-20261012-004",
+            "updateValidationCompletedUtc": "2026-10-12T14:56:46Z",
+            "jobOutcome": "succeeded",
+            "providerState": "stopped",
+            "manualDrain": false
+        },
+        {
+            "name": "ScaleWorld_d2",
+            "instanceId": "i-0226e3c475b1b76f0",
+            "previousBundleId": "pixelstreaming-runtime-20261009-003",
+            "updateValidationCompletedUtc": "2026-10-12T15:04:28Z",
+            "jobOutcome": "succeeded",
+            "providerState": "stopped",
+            "manualDrain": true
+        },
+        {
+            "name": "ScaleWorld_d4",
+            "instanceId": "i-0209fd65e0ed93501",
+            "previousBundleId": "pixelstreaming-runtime-20261009-003",
+            "updateValidationCompletedUtc": "2026-10-12T15:02:30Z",
+            "jobOutcome": "succeeded",
+            "providerState": "stopped",
+            "manualDrain": true
+        }
+    ],
+    "providerStoppedVerifiedUtc": "2026-10-12T15:10:58.5920749Z",
+    "verification": [
+        "Hosted Update Jobs page reported the selected job succeeded with three succeeded targets.",
+        "Server Ops reported all three instances stopped with the target bundle and source prefix 26ee94ea453d.",
+        "Independent AWS DescribeInstances reported all three instances stopped.",
+        "The updater cleared prior d2/d4 manual drains; both were restored through Server Ops and their checked states verified. d1 remained undrained."
+    ],
+    "scope": {
+        "apiOrWebDeploymentPerformed": false,
+        "stageOrProdChanged": false,
+        "schedulerDelayChanged": false,
+        "newColdStartBenchmarkPerformed": false
+    },
+    "uiReceipt": "../../../outputs/dev-runtime-003-restored-20261012-ui.json",
+    "screenshot": "../../../outputs/dev-runtime-003-restored-20261012.jpg",
+    "qualification": "Uses the updater's configured validation and terminal job results; this rollout did not add a new browser media test or change the historical startup measurements."
+}

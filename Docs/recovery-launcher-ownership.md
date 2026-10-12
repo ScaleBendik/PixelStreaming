@@ -20,11 +20,26 @@ current-build tag publication and secret retrieval for the immediate replacement
 Later recycles and maintenance/validation launches retain full preparation.
 `SCALEWORLD_STACK_PREPARATION_REUSE_ENABLED=false` disables this optimization.
 
-The corrected implementation is `7e753c6e`, deployed only to Dev d1 as
-`pixelstreaming-runtime-20261012-004`. Both `75768d8f` and `d17821a` remain
+The corrected implementation is `7e753c6e`, tested only on Dev d1 as
+`pixelstreaming-runtime-20261012-004`. It remains experimental; rollout is
+deferred. Both `75768d8f` and `d17821a` remain
 ancestors. Keep **`pixelstreaming-runtime-20261011-003`** as the rollback baseline.
 The 20-second fleet default and the previous isolated Dev 15-second setting are
 unchanged. Legacy migration safety remains a separate promotion gate.
+
+### Current Dev deployment after rollback
+
+On 2026-10-12, runtime-artifact update job
+`398690f0-8642-4e7a-92f7-8ddf8cff59e2`, created at 14:49:47 UTC, restored
+**`pixelstreaming-runtime-20261011-003`** (source
+`26ee94ea453d5d6f01f1a5268d9bf08dd3d26046`) to all three Dev instances: d1, d2
+and d4. The job reported three successful targets. Validation completed at
+14:56:46 UTC on d1, 15:04:28 UTC on d2 and 15:02:30 UTC on d4. An independent
+AWS read confirmed all three instances stopped at 15:10:58.5920749 UTC.
+API and Web were not changed by this rollout. The candidate is no longer
+installed on Dev; the timings and receipts below describe its historical tests.
+The original drain settings were restored: d1 eligible, d2 and d4 drained.
+See the [restoration receipt](evidence/dev-runtime-003-restored-20261012.json).
 
 ### Dev result and qualification
 
