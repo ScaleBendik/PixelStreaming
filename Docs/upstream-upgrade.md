@@ -18,6 +18,33 @@ by our startup logs, including the custom authentication fields.
 
 ## Preserved integration contracts
 
+### Fork validation and dependency disposition
+
+`scaleworld-validation.yml` is the fork's read-only validation workflow. It runs
+on branch pushes, pull requests and manual dispatch with pinned `NODE_VERSION`,
+locked installation, deployed-library/Wilbur/player builds and tests, scoped lint,
+Windows launcher/prerequisite harnesses and a production high/critical audit gate.
+Upstream publication guards remain unchanged; this workflow publishes or activates
+no runtime or npm package. Common's generated protocol sources are compiled in
+both formats; this workflow does not regenerate protobuf files.
+
+The reconciled lockfile patches `proxy-addr` to 2.0.8, brace expansion to 5.0.12,
+`fast-uri` to 3.1.8, `ip-address` to 10.7.4 and `moment` to 2.31.0. Production audit
+has no high/critical entries. The remaining five moderate entries are the single
+unpatched `sprintf-js` advisory and its `argparse`/`js-yaml`/OpenAPI ancestors.
+Do not accept npm's proposed major downgrade of `express-openapi` as remediation.
+The affected formatting comes from YAML's CLI argument parser; Wilbur loads its
+server-owned OpenAPI document only with `--rest_api` and uses a numeric proxy-hop
+setting rather than a mapped-IPv6 trust subnet. Reassess this disposition if
+untrusted format strings/specifications or a different proxy trust policy become
+reachable. Development-tool audit findings are separate from this production gate.
+
+These source/lockfile changes do not patch an already installed runtime artifact.
+Customers & Billing rollout retains approved `20261011-003` / `26ee94ea453d` in
+Dev and Prod. A replacement runtime needs its own published artifact identity and
+hosted lifecycle/media acceptance; never package the older local checkout by
+accident.
+
 ### Unreal startup codec arguments
 
 Pixel Streaming 2 command-line names omit CVar dots and replace `PixelStreaming2`

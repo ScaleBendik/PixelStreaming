@@ -1,0 +1,67 @@
+name: ScaleWorld runtime validation
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - '.github/workflows/scaleworld-validation.yml'
+      - 'package*.json'
+      - 'NODE_VERSION'
+      - 'Common/**'
+      - 'Signalling/**'
+      - 'SignallingWebServer/**'
+      - 'Frontend/**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.repository == 'ScaleBendik/PixelStreaming'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+      - name: Read pinned Node version
+        run: '"NODE_VERSION=$((Get-Content NODE_VERSION).Trim())" >> $env:GITHUB_ENV'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Build and lint deployed libraries
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($workspace in @('Common', 'Signalling', 'Frontend/library', 'Frontend/ui-library')) {
+            npm run build:cjs --workspace $workspace
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            npm run build:esm --workspace $workspace
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            npm run lint --workspace $workspace
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+      - name: Validate Wilbur and player regressions
+        run: |
+          npm run lint --workspace SignallingWebServer
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          foreach ($workspace in @('Signalling', 'SignallingWebServer', 'Frontend/library', 'Frontend/ui-library')) {
+            npm test --workspace $workspace
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          npm run build --workspace Frontend/implementations/typescript
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run build:esm --workspace Frontend/implementations/typescript
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Validate launcher and prerequisites
+        run: |
+          & ./SignallingWebServer/platform_scripts/powershell/test_stack_launcher_policy.ps1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & ./SignallingWebServer/platform_scripts/powershell/test_unreal_prerequisite.ps1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Audit deployed dependencies
+        run: npm audit --omit=dev --audit-level=high
