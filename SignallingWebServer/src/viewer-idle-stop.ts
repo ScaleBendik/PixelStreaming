@@ -1966,12 +1966,14 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
         recycleLaunchRetryTimer = null;
     };
 
-    const scheduleStackRecycleRetry = (reason: string): void => {
+    const scheduleStackRecycleRetry = (reason: string, publishRetryStatus: boolean = true): void => {
         if (recycleLaunchRetryTimer) {
             return;
         }
 
-        publishStatus('resetting', 'recycle_launch_retry_pending');
+        if (publishRetryStatus) {
+            publishStatus('resetting', 'recycle_launch_retry_pending');
+        }
         log(
             `[idle-stop] Full stack recycle remains pending after '${reason}'; retrying in ${STACK_RECYCLE_RETRY_MS} ms without restoring Ready.`
         );
@@ -2034,8 +2036,9 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 `[idle-stop] Replacement recycle ${existingRecycleMarker.recycleId} is still in progress. Refusing to overwrite its durable marker with another launch.`
             );
             resetInFlight = true;
-            publishStatus('resetting', 'replacement_recycle_in_progress');
-            scheduleStackRecycleRetry('replacement_recycle_in_progress');
+            // Waiting for durable replacement completion is not a runtime regression.
+            // Keep its real Ready edge and clock-skew release timer intact.
+            scheduleStackRecycleRetry('replacement_recycle_in_progress', false);
             return;
         }
 
@@ -2064,12 +2067,19 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             return;
         }
 
-        const commandToStart = getActiveRecycleCommand();
-        const recycleRequestedToken =
-            commandToStart?.instanceCommandId ??
-            (hasPendingImmediateRecycle()
-                ? (currentDesiredState.recycleRequestedToken ?? undefined)
-                : undefined);
+        const recoveredIntent = existingRecycleMarker?.phase === 'intent' ? existingRecycleMarker : null;
+        const activeRecycleCommand = getActiveRecycleCommand();
+        const commandToStart =
+            !recoveredIntent ||
+            recycleTokensMatch(activeRecycleCommand?.instanceCommandId, recoveredIntent.recycleRequestedToken)
+                ? activeRecycleCommand
+                : null;
+        const recycleRequestedToken = recoveredIntent
+            ? recoveredIntent.recycleRequestedToken
+            : (commandToStart?.instanceCommandId ??
+              (hasPendingImmediateRecycle()
+                  ? (currentDesiredState.recycleRequestedToken ?? undefined)
+                  : undefined));
         const recycleRequestedTokenStatus = recycleRequestedToken
             ? completedRecycleTokenStatus(recycleRequestedToken)
             : 'open';
@@ -2132,9 +2142,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             if (isInstanceAgentRecycleReplacementProof(markerAfterCommandTransition)) {
                 recycleLaunchInFlight = false;
                 resetInFlight = true;
-                publishStatus('resetting', 'replacement_recycle_in_progress');
-                scheduleStackRecycleRetry('replacement_recycle_in_progress');
+                scheduleStackRecycleRetry('replacement_recycle_in_progress', false);
                 return;
+            }
+            if (markerAfterCommandTransition?.recycleId !== existingRecycleMarker?.recycleId) {
+                throw new Error('The durable recycle operation changed before its helper launch.');
             }
 
             if (!fs.existsSync(recycleHelperScriptPath)) {
@@ -2147,11 +2159,15 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
                 recycleMarkerPath,
                 {
                     phase: 'intent',
-                    requestedAtUtc: new Date().toISOString(),
-                    reason: 'post_session_cleanup',
-                    recycleId: randomUUID(),
+                    requestedAtUtc: recoveredIntent?.requestedAtUtc ?? new Date().toISOString(),
+                    reason: recoveredIntent?.reason ?? 'post_session_cleanup',
+                    recycleId: recoveredIntent?.recycleId ?? randomUUID(),
                     recycleRequestedToken,
-                    sessionRequestId: resolveRecycleMarkerSessionRequestId(commandToStart) ?? undefined,
+                    sessionRequestId: recoveredIntent
+                        ? recoveredIntent.sessionRequestId
+                        : (resolveRecycleMarkerSessionRequestId(commandToStart) ?? undefined),
+                    userSessionId: recoveredIntent?.userSessionId,
+                    sessionId: recoveredIntent?.sessionId,
                     sourcePid: process.pid
                 },
                 log
@@ -2240,6 +2256,11 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
 
     const startResetWindow = (skipGrace: boolean = false): void => {
         if (reconnectGraceWindowPhase === 'persisting_elapsed') {
+            return;
+        }
+
+        if (hasRecycleLaunchMarker()) {
+            void requestStackRecycle();
             return;
         }
         if (
@@ -2676,6 +2697,10 @@ export function wireViewerIdleStop(server: SignallingServer, options: ViewerIdle
             commercialReconnectGraceTeardownCommitted = true;
             commercialReconnectGraceCutoffDurable = false;
             passiveReconnectRecycleRequested = true;
+            if (hasRecycleLaunchMarker()) {
+                void requestStackRecycle();
+                return;
+            }
             publishStatus('resetting', 'recovered_commercial_teardown_cleanup');
             log(
                 '[idle-stop] Recovered commercial teardown state requires cleanup after authoritative control-state reconciliation. Keeping managed admission closed and forcing stack cleanup before Ready can return.'

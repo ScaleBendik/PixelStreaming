@@ -17,6 +17,13 @@ set "NORMALIZE_DELIVERY_MODE_SCRIPT=%SCRIPT_DIR%..\powershell\normalize_pixelstr
 set "STACK_MODE=normal"
 set "STACK_START_WATCHDOG=true"
 set "STACK_START_UNREAL=true"
+set "STACK_CONFIG_SERVICE_CLASS_ARG="
+set "STARTUP_TELEMETRY_CMD=%SCRIPT_DIR%startup_telemetry.bat"
+set "STARTUP_TELEMETRY_MODE=normal"
+if /i "%~1"=="--recovery" set "STARTUP_TELEMETRY_MODE=recovery"
+if /i "%~1"=="--validation" set "STARTUP_TELEMETRY_MODE=validation"
+if exist "%STARTUP_TELEMETRY_CMD%" call "%STARTUP_TELEMETRY_CMD%" begin stack %STARTUP_TELEMETRY_MODE%
+call :startup_phase metadata.started 0
 if not defined STREAMING_LANE_TAG_RETRY_COUNT set "STREAMING_LANE_TAG_RETRY_COUNT=12"
 if not defined STREAMING_LANE_TAG_RETRY_DELAY_SECONDS set "STREAMING_LANE_TAG_RETRY_DELAY_SECONDS=5"
 if not defined DEPLOYMENT_TRACK_TAG_RETRY_COUNT set "DEPLOYMENT_TRACK_TAG_RETRY_COUNT=%STREAMING_LANE_TAG_RETRY_COUNT%"
@@ -31,6 +38,7 @@ if not defined SCALEWORLD_UNREAL_PREMIUM_INSTANCE_ARG set "SCALEWORLD_UNREAL_PRE
 if not defined SCALEWORLD_STANDARD_ENCODER_CODEC set "SCALEWORLD_STANDARD_ENCODER_CODEC=vp9"
 if not defined SCALEWORLD_PREMIUM_ENCODER_CODEC set "SCALEWORLD_PREMIUM_ENCODER_CODEC=AV1"
 if not defined SCALEWORLD_RUNTIME_ENTITLEMENT_MANIFEST_PATH set "SCALEWORLD_RUNTIME_ENTITLEMENT_MANIFEST_PATH=C:\ProgramData\ScaleWorld\runtime-entitlement-manifest.json"
+call :read_startup_metadata_batch
 call :resolve_streaming_lane_from_instance_tag
 if errorlevel 1 exit /b 1
 if defined RESOLVED_STREAMING_LANE set "SCALEWORLD_STREAMING_LANE=%RESOLVED_STREAMING_LANE%"
@@ -45,11 +53,11 @@ if not defined SCALEWORLD_DEPLOYMENT_TRACK (
     set "SCALEWORLD_DEPLOYMENT_TRACK=stage"
   )
 )
-if not defined SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE (
-  call :resolve_pixelstreaming_delivery_mode_from_instance_tag
-  if errorlevel 1 exit /b 1
-  if defined RESOLVED_PIXELSTREAMING_DELIVERY_MODE set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=%RESOLVED_PIXELSTREAMING_DELIVERY_MODE%"
-)
+if defined SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE goto startup_delivery_mode_resolved
+call :resolve_pixelstreaming_delivery_mode_from_instance_tag
+if errorlevel 1 exit /b 1
+if defined RESOLVED_PIXELSTREAMING_DELIVERY_MODE set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=%RESOLVED_PIXELSTREAMING_DELIVERY_MODE%"
+:startup_delivery_mode_resolved
 if not defined SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE (
   if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="dev" (
     set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=git_ref"
@@ -67,6 +75,7 @@ for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass
 )
 if not defined NORMALIZED_PIXELSTREAMING_DELIVERY_MODE exit /b 1
 set "SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE=%NORMALIZED_PIXELSTREAMING_DELIVERY_MODE%"
+call :startup_phase metadata.completed 0
 if not defined SCALEWORLD_GIT_SYNC_MODE (
   if /i "%SCALEWORLD_DEPLOYMENT_TRACK%"=="prod" (
     set "SCALEWORLD_GIT_SYNC_MODE=pinned"
@@ -115,7 +124,9 @@ if exist "%RUNTIME_BUNDLE_METADATA%" (
     )
   )
   if exist "%ACTIVE_RUNTIME_IDENTITY_PUBLISHER%" (
+    call :startup_phase identity.started 0
     powershell -NoProfile -ExecutionPolicy Bypass -File "%ACTIVE_RUNTIME_IDENTITY_PUBLISHER%" -RuntimeRoot "%PIXELSTREAMING_ROOT%"
+    call :startup_phase identity.completed !errorlevel!
   ) else (
     echo WARNING: Active runtime identity publisher not found at "%ACTIVE_RUNTIME_IDENTITY_PUBLISHER%".
   )
@@ -173,7 +184,9 @@ set "STACK_LAUNCH_EXIT=0"
 if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_UPDATE_MODE%"=="true" (
   if exist "%UPDATE_MODE_SCRIPT%" (
     echo Checking instance update mode...
+    call :startup_phase update_control.started 0
     powershell -NoProfile -ExecutionPolicy Bypass -File "%UPDATE_MODE_SCRIPT%"
+    call :startup_phase update_control.completed !errorlevel!
     set "UPDATE_MODE_EXIT=!errorlevel!"
     if "!UPDATE_MODE_EXIT!"=="10" (
       echo Update mode completed successfully. Skipping normal startup.
@@ -195,7 +208,9 @@ if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_UPDATE_MODE%"=="true" 
 if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_PROVISIONING_MODE%"=="true" (
   if exist "%PROVISIONING_MODE_SCRIPT%" (
     echo Checking instance provisioning mode...
+    call :startup_phase provisioning_control.started 0
     powershell -NoProfile -ExecutionPolicy Bypass -File "%PROVISIONING_MODE_SCRIPT%"
+    call :startup_phase provisioning_control.completed !errorlevel!
     set "PROVISIONING_MODE_EXIT=!errorlevel!"
     if not "!PROVISIONING_MODE_EXIT!"=="0" (
       echo ERROR: Provisioning mode bootstrap failed with exit code !PROVISIONING_MODE_EXIT!.
@@ -208,9 +223,13 @@ if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_PROVISIONING_MODE%"=="
 
 if not defined WATCHDOG_RESTART_COMMAND set "WATCHDOG_RESTART_COMMAND=""%SCRIPT_DIR%start_streamer_stack.bat"" --recovery"
 
+call :startup_phase maintenance_control.started 0
 call :apply_unreal_provisioning_startup_args
+call :startup_phase maintenance_control.completed %errorlevel%
 if errorlevel 1 exit /b 1
+call :startup_phase service_class.started 0
 call :apply_unreal_service_class_startup_args
+call :startup_phase service_class.completed %errorlevel%
 if errorlevel 1 exit /b 1
 
 echo PixelStreaming delivery mode "%SCALEWORLD_PIXELSTREAMING_DELIVERY_MODE%" for %SCALEWORLD_STREAMING_LANE%/%SCALEWORLD_DEPLOYMENT_TRACK% startup.
@@ -231,7 +250,9 @@ if /i not "%STACK_MODE%"=="recovery" if /i "%STACK_ENABLE_BOOT_GIT_SYNC%"=="true
   if not "!STACK_SYNC_EXIT!"=="0" exit /b !STACK_SYNC_EXIT!
 )
 
+call :startup_phase old_roots.started 0
 call :stop_superseded_runtime_roots_before_stack_launch
+call :startup_phase old_roots.completed %errorlevel%
 
 if /i "%STACK_RUN_UNREAL_UPDATE_CHECK%"=="true" (
   if exist "%UPDATE_SCRIPT%" (
@@ -246,7 +267,9 @@ if /i "%STACK_RUN_UNREAL_UPDATE_CHECK%"=="true" (
   )
 )
 set "SCALEWORLD_INSTANCE_CONFIG_SNAPSHOT=%ProgramData%\ScaleWorld\instance-config-snapshot.json"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%..\powershell\initialize_instance_config.ps1" -RuntimeRoot "%PIXELSTREAMING_ROOT%" -InstallBase "%SCALEWORLD_INSTALL_BASE%" -Environment "%SCALEWORLD_DEPLOYMENT_TRACK%" -Mode "%STACK_MODE%"
+call :startup_phase config.started 0
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%..\powershell\initialize_instance_config.ps1" -RuntimeRoot "%PIXELSTREAMING_ROOT%" -InstallBase "%SCALEWORLD_INSTALL_BASE%" -Environment "%SCALEWORLD_DEPLOYMENT_TRACK%" -Mode "%STACK_MODE%" %STACK_CONFIG_SERVICE_CLASS_ARG%
+call :startup_phase config.completed %errorlevel%
 if errorlevel 1 (
   echo ERROR: Instance config initialization failed. See the instance-config snapshot error file in ProgramData\ScaleWorld.
   exit /b 1
@@ -262,9 +285,16 @@ set "UNREAL_LAUNCHER_PATTERN=start_unreal.bat"
 set "TEST_UNREAL_RUNTIME_SCRIPT=%SCRIPT_DIR%..\powershell\test_scaleworld_runtime_present.ps1"
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$wilbur = Get-CimInstance Win32_Process | Where-Object { ($_.Name -ieq '%WILBUR_PROCESS_NAME%' -and $_.CommandLine -like '*%WILBUR_COMMANDLINE_PATTERN%*') -or ($_.Name -ieq 'cmd.exe' -and $_.CommandLine -like '*%WILBUR_LAUNCHER_PATTERN%*') } | Select-Object -First 1; if ($wilbur) { exit 0 } else { exit 1 }"
+call :startup_phase wilbur_process_check.completed %errorlevel%
 if errorlevel 1 (
   echo Starting Wilbur in %STACK_MODE% mode...
+  rem Pass only this launch's successful tag resolutions to the child. Watchdog
+  rem and later standalone launches must still resolve their own metadata.
+  set "SCALEWORLD_PARENT_RESOLVED_STARTUP_METADATA="
+  if defined RESOLVED_STREAMING_LANE if defined RESOLVED_DEPLOYMENT_TRACK set "SCALEWORLD_PARENT_RESOLVED_STARTUP_METADATA=true"
   start "ScaleWorld Wilbur" "%SCRIPT_DIR%start_dev_turn.bat" %*
+  set "SCALEWORLD_PARENT_RESOLVED_STARTUP_METADATA="
+  call :startup_phase wilbur_launch.scheduled 0
 ) else (
   echo Wilbur is already running or launch is already in progress. Skipping launch.
 )
@@ -275,14 +305,18 @@ if /i "%STACK_START_UNREAL%"=="true" if /i "%STACK_LAUNCH_UNREAL_BEFORE_WILBUR%"
 )
 
 if /i "%STACK_START_UNREAL%"=="true" if /i not "%STACK_LAUNCH_UNREAL_BEFORE_WILBUR%"=="true" if "!STACK_LAUNCH_EXIT!"=="0" (
+  call :startup_phase wilbur_tcp.started 0
   call :wait_for_wilbur_ready
+  call :startup_phase wilbur_tcp.completed !errorlevel!
   if errorlevel 1 (
     echo ERROR: Wilbur did not become ready on %STACK_WILBUR_READY_HOST%:%STACK_WILBUR_READY_PORT% within %STACK_WILBUR_READY_TIMEOUT_SECONDS% seconds.
     set "STACK_LAUNCH_EXIT=1"
   )
 
   if "!STACK_LAUNCH_EXIT!"=="0" (
+    call :startup_phase unreal_launch.started 0
     call :launch_unreal_if_needed
+    call :startup_phase unreal_launch.completed !errorlevel!
     if errorlevel 1 set "STACK_LAUNCH_EXIT=1"
   )
 )
@@ -306,7 +340,13 @@ if not "%STACK_LAUNCH_EXIT%"=="0" (
 )
 
 echo Stack launch completed.
+call :startup_phase stack.completed 0
+if exist "%STARTUP_TELEMETRY_CMD%" call "%STARTUP_TELEMETRY_CMD%" end 0
 exit /b 0
+
+:startup_phase
+if exist "%STARTUP_TELEMETRY_CMD%" call "%STARTUP_TELEMETRY_CMD%" phase %~1 %~2
+exit /b %errorlevel%
 
 :stop_superseded_runtime_roots_before_stack_launch
 if not exist "%RUNTIME_BUNDLE_METADATA%" exit /b 0
@@ -337,6 +377,33 @@ if not "%REPO_SYNC_EXIT%"=="0" (
 
 exit /b 0
 
+:read_startup_metadata_batch
+rem One launch-local first attempt; only fixed enum tokens cross into CMD.
+rem Each field retains its own subsequent attempts/delay and failure policy.
+set "STARTUP_BATCH_SCRIPT=%SCRIPT_DIR%..\powershell\resolve_startup_metadata_from_instance_tags.ps1"
+set "STARTUP_BATCH_ENABLED="
+set "STARTUP_BATCH_LANE=LOOKUP_FAILED"
+set "STARTUP_BATCH_TRACK=LOOKUP_FAILED"
+set "STARTUP_BATCH_DELIVERY=LOOKUP_FAILED"
+if not exist "%STARTUP_BATCH_SCRIPT%" exit /b 0
+set "STARTUP_BATCH_ENABLED=true"
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%STARTUP_BATCH_SCRIPT%"`) do (
+  if "%%I"=="LANE_NONPROD" set "STARTUP_BATCH_LANE=LANE_NONPROD"
+  if "%%I"=="LANE_PROD" set "STARTUP_BATCH_LANE=LANE_PROD"
+  if "%%I"=="LANE_MISSING" set "STARTUP_BATCH_LANE=LANE_MISSING"
+  if "%%I"=="LANE_INVALID" set "STARTUP_BATCH_LANE=LANE_INVALID"
+  if "%%I"=="TRACK_DEV" set "STARTUP_BATCH_TRACK=TRACK_DEV"
+  if "%%I"=="TRACK_STAGE" set "STARTUP_BATCH_TRACK=TRACK_STAGE"
+  if "%%I"=="TRACK_PROD" set "STARTUP_BATCH_TRACK=TRACK_PROD"
+  if "%%I"=="TRACK_MISSING" set "STARTUP_BATCH_TRACK=TRACK_MISSING"
+  if "%%I"=="DELIVERY_GIT_REF" set "STARTUP_BATCH_DELIVERY=DELIVERY_GIT_REF"
+  if "%%I"=="DELIVERY_RUNTIME_ARTIFACT" set "STARTUP_BATCH_DELIVERY=DELIVERY_RUNTIME_ARTIFACT"
+  if "%%I"=="DELIVERY_AUTO" set "STARTUP_BATCH_DELIVERY=DELIVERY_AUTO"
+  if "%%I"=="DELIVERY_MISSING" set "STARTUP_BATCH_DELIVERY=DELIVERY_MISSING"
+  if "%%I"=="DELIVERY_INVALID" set "STARTUP_BATCH_DELIVERY=DELIVERY_INVALID"
+)
+exit /b 0
+
 :resolve_streaming_lane_from_instance_tag
 set "RESOLVED_STREAMING_LANE="
 set "RESOLVE_STREAMING_LANE_EXIT=0"
@@ -346,11 +413,35 @@ set "RESOLVE_STREAMING_LANE_SCRIPT=%SCRIPT_DIR%..\powershell\resolve_streaming_l
 :resolve_streaming_lane_retry
 set /a STREAMING_LANE_TAG_ATTEMPT+=1
 set "RESOLVED_STREAMING_LANE="
+if /i "%STARTUP_BATCH_ENABLED%"=="true" (
+  if not "!STREAMING_LANE_TAG_ATTEMPT!"=="1" (
+    set "STARTUP_BATCH_LANE=LOOKUP_FAILED"
+    for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%STARTUP_BATCH_SCRIPT%" -Field lane`) do (
+      if "%%I"=="LANE_NONPROD" set "STARTUP_BATCH_LANE=LANE_NONPROD"
+      if "%%I"=="LANE_PROD" set "STARTUP_BATCH_LANE=LANE_PROD"
+      if "%%I"=="LANE_MISSING" set "STARTUP_BATCH_LANE=LANE_MISSING"
+      if "%%I"=="LANE_INVALID" set "STARTUP_BATCH_LANE=LANE_INVALID"
+    )
+  )
+  set "RESOLVE_STREAMING_LANE_EXIT=2"
+  if "!STARTUP_BATCH_LANE!"=="LANE_NONPROD" set "RESOLVED_STREAMING_LANE=nonprod"
+  if "!STARTUP_BATCH_LANE!"=="LANE_PROD" set "RESOLVED_STREAMING_LANE=prod"
+  if "!STARTUP_BATCH_LANE!"=="LANE_MISSING" set "RESOLVE_STREAMING_LANE_EXIT=0"
+  if "!STARTUP_BATCH_LANE!"=="LANE_INVALID" (
+    call :startup_phase metadata.lane.attempt_!STREAMING_LANE_TAG_ATTEMPT! 1
+    echo ERROR: Unsupported ScaleWorldLane. Refusing startup.
+    exit /b 1
+  )
+  goto resolve_streaming_lane_result
+)
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%RESOLVE_STREAMING_LANE_SCRIPT%"`) do (
   set "RESOLVED_STREAMING_LANE=%%I"
 )
 set "RESOLVE_STREAMING_LANE_EXIT=%errorlevel%"
 
+:resolve_streaming_lane_result
+if defined RESOLVED_STREAMING_LANE set "RESOLVE_STREAMING_LANE_EXIT=0"
+call :startup_phase metadata.lane.attempt_%STREAMING_LANE_TAG_ATTEMPT% %RESOLVE_STREAMING_LANE_EXIT%
 if defined RESOLVED_STREAMING_LANE exit /b 0
 if "%RESOLVE_STREAMING_LANE_EXIT%"=="0" (
   if %STREAMING_LANE_TAG_ATTEMPT% geq %STREAMING_LANE_TAG_RETRY_COUNT% exit /b 0
@@ -383,11 +474,31 @@ if not exist "%RESOLVE_DEPLOYMENT_TRACK_SCRIPT%" exit /b 0
 :resolve_deployment_track_retry
 set /a DEPLOYMENT_TRACK_TAG_ATTEMPT+=1
 set "RESOLVED_DEPLOYMENT_TRACK="
+if /i "%STARTUP_BATCH_ENABLED%"=="true" (
+  if not "!DEPLOYMENT_TRACK_TAG_ATTEMPT!"=="1" (
+    set "STARTUP_BATCH_TRACK=LOOKUP_FAILED"
+    for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%STARTUP_BATCH_SCRIPT%" -Field track`) do (
+      if "%%I"=="TRACK_DEV" set "STARTUP_BATCH_TRACK=TRACK_DEV"
+      if "%%I"=="TRACK_STAGE" set "STARTUP_BATCH_TRACK=TRACK_STAGE"
+      if "%%I"=="TRACK_PROD" set "STARTUP_BATCH_TRACK=TRACK_PROD"
+      if "%%I"=="TRACK_MISSING" set "STARTUP_BATCH_TRACK=TRACK_MISSING"
+    )
+  )
+  set "RESOLVE_DEPLOYMENT_TRACK_EXIT=2"
+  if "!STARTUP_BATCH_TRACK!"=="TRACK_DEV" set "RESOLVED_DEPLOYMENT_TRACK=dev"
+  if "!STARTUP_BATCH_TRACK!"=="TRACK_STAGE" set "RESOLVED_DEPLOYMENT_TRACK=stage"
+  if "!STARTUP_BATCH_TRACK!"=="TRACK_PROD" set "RESOLVED_DEPLOYMENT_TRACK=prod"
+  if "!STARTUP_BATCH_TRACK!"=="TRACK_MISSING" set "RESOLVE_DEPLOYMENT_TRACK_EXIT=0"
+  goto resolve_deployment_track_result
+)
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%RESOLVE_DEPLOYMENT_TRACK_SCRIPT%"`) do (
   set "RESOLVED_DEPLOYMENT_TRACK=%%I"
 )
 set "RESOLVE_DEPLOYMENT_TRACK_EXIT=%errorlevel%"
 
+:resolve_deployment_track_result
+if defined RESOLVED_DEPLOYMENT_TRACK set "RESOLVE_DEPLOYMENT_TRACK_EXIT=0"
+call :startup_phase metadata.track.attempt_%DEPLOYMENT_TRACK_TAG_ATTEMPT% %RESOLVE_DEPLOYMENT_TRACK_EXIT%
 if defined RESOLVED_DEPLOYMENT_TRACK exit /b 0
 if "%RESOLVE_DEPLOYMENT_TRACK_EXIT%"=="0" (
   if %DEPLOYMENT_TRACK_TAG_ATTEMPT% geq %DEPLOYMENT_TRACK_TAG_RETRY_COUNT% exit /b 0
@@ -418,11 +529,32 @@ if not exist "%RESOLVE_DELIVERY_MODE_SCRIPT%" exit /b 0
 :resolve_delivery_mode_retry
 set /a DELIVERY_MODE_TAG_ATTEMPT+=1
 set "RESOLVED_PIXELSTREAMING_DELIVERY_MODE="
+if /i "%STARTUP_BATCH_ENABLED%"=="true" (
+  if not "!DELIVERY_MODE_TAG_ATTEMPT!"=="1" (
+    set "STARTUP_BATCH_DELIVERY=LOOKUP_FAILED"
+    for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%STARTUP_BATCH_SCRIPT%" -Field delivery`) do (
+      if "%%I"=="DELIVERY_GIT_REF" set "STARTUP_BATCH_DELIVERY=DELIVERY_GIT_REF"
+      if "%%I"=="DELIVERY_RUNTIME_ARTIFACT" set "STARTUP_BATCH_DELIVERY=DELIVERY_RUNTIME_ARTIFACT"
+      if "%%I"=="DELIVERY_AUTO" set "STARTUP_BATCH_DELIVERY=DELIVERY_AUTO"
+      if "%%I"=="DELIVERY_MISSING" set "STARTUP_BATCH_DELIVERY=DELIVERY_MISSING"
+      if "%%I"=="DELIVERY_INVALID" set "STARTUP_BATCH_DELIVERY=DELIVERY_INVALID"
+    )
+  )
+  set "RESOLVE_DELIVERY_MODE_EXIT=2"
+  if "!STARTUP_BATCH_DELIVERY!"=="DELIVERY_GIT_REF" set "RESOLVED_PIXELSTREAMING_DELIVERY_MODE=git_ref"
+  if "!STARTUP_BATCH_DELIVERY!"=="DELIVERY_RUNTIME_ARTIFACT" set "RESOLVED_PIXELSTREAMING_DELIVERY_MODE=runtime_artifact"
+  if "!STARTUP_BATCH_DELIVERY!"=="DELIVERY_AUTO" set "RESOLVED_PIXELSTREAMING_DELIVERY_MODE=auto"
+  if "!STARTUP_BATCH_DELIVERY!"=="DELIVERY_MISSING" set "RESOLVE_DELIVERY_MODE_EXIT=0"
+  goto resolve_delivery_mode_result
+)
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%RESOLVE_DELIVERY_MODE_SCRIPT%"`) do (
   set "RESOLVED_PIXELSTREAMING_DELIVERY_MODE=%%I"
 )
 set "RESOLVE_DELIVERY_MODE_EXIT=%errorlevel%"
 
+:resolve_delivery_mode_result
+if defined RESOLVED_PIXELSTREAMING_DELIVERY_MODE set "RESOLVE_DELIVERY_MODE_EXIT=0"
+call :startup_phase metadata.delivery.attempt_%DELIVERY_MODE_TAG_ATTEMPT% %RESOLVE_DELIVERY_MODE_EXIT%
 if defined RESOLVED_PIXELSTREAMING_DELIVERY_MODE exit /b 0
 if "%RESOLVE_DELIVERY_MODE_EXIT%"=="0" (
   echo ScaleWorldPixelStreamingDeliveryMode instance tag is not set. Using deployment-track default delivery mode.
@@ -461,6 +593,7 @@ if /i "!RESOLVED_MAINTENANCE_MODE!"=="provisioning" (
 exit /b 0
 
 :apply_unreal_service_class_startup_args
+set "STACK_CONFIG_SERVICE_CLASS_ARG="
 set "RESOLVED_SERVICE_CLASS=standard"
 if defined SCALEWORLD_UNREAL_STARTUP_ARGS (
   set "NORMALIZED_SERVICE_ARGS_FILE=%TEMP%\sw-startup-args-!RANDOM!-!RANDOM!.txt"
@@ -478,6 +611,10 @@ if exist "%RESOLVE_SERVICE_CLASS_SCRIPT%" (
   for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%RESOLVE_SERVICE_CLASS_SCRIPT%"`) do (
     set "RESOLVED_SERVICE_CLASS=%%I"
   )
+  rem Do not hand off a fallback after a failed lookup. Config resolution must
+  rem retain its stricter failure behavior. Only enum values enter CMD arguments.
+  if /i "!RESOLVED_SERVICE_CLASS!"=="standard" set "STACK_CONFIG_SERVICE_CLASS_ARG=-ResolvedServiceClass standard"
+  if /i "!RESOLVED_SERVICE_CLASS!"=="premium" set "STACK_CONFIG_SERVICE_CLASS_ARG=-ResolvedServiceClass premium"
   if not defined RESOLVED_SERVICE_CLASS (
     echo WARNING: ScaleWorldServiceClass could not be resolved. Using standard Unreal scalability settings.
     set "RESOLVED_SERVICE_CLASS=standard"

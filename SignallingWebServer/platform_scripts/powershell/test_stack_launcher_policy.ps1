@@ -303,7 +303,7 @@ Assert-ContainsText `
 
 Assert-MatchesText `
     -Content $stackLauncher `
-    -Pattern 'if not defined WATCHDOG_RESTART_COMMAND set "WATCHDOG_RESTART_COMMAND=.*?\r?\n\r?\ncall :stop_superseded_runtime_roots_before_stack_launch' `
+    -Pattern 'if not defined WATCHDOG_RESTART_COMMAND set "WATCHDOG_RESTART_COMMAND=.*?\r?\n\r?\n(?:call :startup_phase old_roots\.started 0\r?\n)?call :stop_superseded_runtime_roots_before_stack_launch' `
     -Message 'Active-runtime cleanup must not be gated on exact runtime_artifact mode because stage auto mode also delegates to the active runtime.'
 
 Assert-ContainsText `
@@ -1836,7 +1836,7 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $viewerIdleStop `
-    -Expected "scheduleStackRecycleRetry('replacement_recycle_in_progress')" `
+    -Expected "scheduleStackRecycleRetry('replacement_recycle_in_progress', false)" `
     -Message 'A new recycle token must remain pending while an earlier replacement marker is active.'
 
 Assert-ContainsText `

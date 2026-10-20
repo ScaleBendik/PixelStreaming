@@ -6,11 +6,21 @@ for %%I in ("%SCRIPT_DIR%\..\..") do set "ROOT=%%~fI"
 if defined SCALEWORLD_WILBUR_ROOT set "ROOT=%SCALEWORLD_WILBUR_ROOT%"
 if not defined SCALEWORLD_INSTALL_BASE set "SCALEWORLD_INSTALL_BASE=C:\PixelStreaming"
 set "RUNTIME_BUNDLE_METADATA=%ROOT%\..\runtime-bundle-metadata.json"
+set "STARTUP_TELEMETRY_CMD=%SCRIPT_DIR%startup_telemetry.bat"
+set "WILBUR_TELEMETRY_MODE=normal"
+if /i "%STACK_MODE%"=="recovery" set "WILBUR_TELEMETRY_MODE=recovery"
+if /i "%STACK_MODE%"=="validation" set "WILBUR_TELEMETRY_MODE=validation"
+if /i "%~1"=="--recovery" set "WILBUR_TELEMETRY_MODE=recovery"
+if /i "%~1"=="--validation" set "WILBUR_TELEMETRY_MODE=validation"
+if exist "%STARTUP_TELEMETRY_CMD%" call "%STARTUP_TELEMETRY_CMD%" begin wilbur %WILBUR_TELEMETRY_MODE%
+call :startup_phase metadata.started 0
 set "REGION=eu-north-1"
 if not defined STREAMING_LANE_TAG_RETRY_COUNT set "STREAMING_LANE_TAG_RETRY_COUNT=12"
 if not defined STREAMING_LANE_TAG_RETRY_DELAY_SECONDS set "STREAMING_LANE_TAG_RETRY_DELAY_SECONDS=5"
 if not defined DEPLOYMENT_TRACK_TAG_RETRY_COUNT set "DEPLOYMENT_TRACK_TAG_RETRY_COUNT=%STREAMING_LANE_TAG_RETRY_COUNT%"
 if not defined DEPLOYMENT_TRACK_TAG_RETRY_DELAY_SECONDS set "DEPLOYMENT_TRACK_TAG_RETRY_DELAY_SECONDS=%STREAMING_LANE_TAG_RETRY_DELAY_SECONDS%"
+if /i "%SCALEWORLD_PARENT_RESOLVED_STARTUP_METADATA%"=="true" if defined SCALEWORLD_STREAMING_LANE if defined SCALEWORLD_DEPLOYMENT_TRACK goto startup_metadata_resolved
+set "SCALEWORLD_PARENT_RESOLVED_STARTUP_METADATA="
 call :resolve_streaming_lane_from_instance_tag
 if errorlevel 1 exit /b 1
 if defined RESOLVED_STREAMING_LANE set "SCALEWORLD_STREAMING_LANE=%RESOLVED_STREAMING_LANE%"
@@ -25,6 +35,9 @@ if not defined SCALEWORLD_DEPLOYMENT_TRACK (
     set "SCALEWORLD_DEPLOYMENT_TRACK=stage"
   )
 )
+:startup_metadata_resolved
+set "SCALEWORLD_PARENT_RESOLVED_STARTUP_METADATA="
+call :startup_phase metadata.completed 0
 if /i "%SCALEWORLD_STREAMING_LANE%"=="prod" goto apply_streaming_lane_prod
 if /i "%SCALEWORLD_STREAMING_LANE%"=="nonprod" goto apply_streaming_lane_nonprod
 echo ERROR: Unsupported SCALEWORLD_STREAMING_LANE "%SCALEWORLD_STREAMING_LANE%". Expected nonprod or prod.
@@ -188,13 +201,17 @@ if /i not "%AWS_EXE%"=="aws" (
 
 set "TURN_USERNAME="
 set "TURN_CREDENTIAL="
+call :startup_phase parameters.started 0
 call :load_runtime_parameters
+call :startup_phase parameters.completed %errorlevel%
 if errorlevel 1 exit /b 1
 call :resolve_instance_agent_control_plane_env
 if errorlevel 1 exit /b 1
 call :apply_instance_agent_control_plane_defaults
 if errorlevel 1 exit /b 1
+call :startup_phase bootstrap_secret.started 0
 call :load_instance_agent_bootstrap_shared_secret
+call :startup_phase bootstrap_secret.completed %errorlevel%
 if errorlevel 1 exit /b 1
 
 if not defined TURN_USERNAME (
@@ -257,10 +274,12 @@ if /i "%CONNECT_TICKET_AUTH_MODE%"=="off" (
 )
 
 :after_instance_id
+call :startup_phase identity.completed 0
 call :apply_instance_agent_defaults
 call :reset_startup_heartbeat
 call :set_runtime_status "booting" "startup-script" "startup_sequence"
 call :start_startup_heartbeat
+call :startup_phase heartbeat.started 0
 
 if /i "%ENABLE_GIT_SYNC_BEFORE_START%"=="true" (
   if /i "%REQUIRE_EC2_INSTANCE_FOR_GIT_SYNC%"=="true" if not defined INSTANCE_ID (
@@ -278,6 +297,7 @@ call :stop_startup_heartbeat
 call :set_runtime_status "waiting_for_streamer" "startup-script" "signalling_server_starting"
 cd /d "%ROOT%\platform_scripts\cmd"
 
+call :startup_phase node.started 0
 if /i "%ENABLE_REVERSE_PROXY%"=="true" goto start_signalling_with_reverse_proxy
 
 call start.bat -- ^
@@ -381,6 +401,10 @@ call start.bat -- ^
   --reverse-proxy ^
   --reverse-proxy-num-proxies="%REVERSE_PROXY_NUM_PROXIES%"
 
+exit /b %errorlevel%
+
+:startup_phase
+if exist "%STARTUP_TELEMETRY_CMD%" call "%STARTUP_TELEMETRY_CMD%" phase %~1 %~2
 exit /b %errorlevel%
 
 :load_runtime_parameters
@@ -845,17 +869,19 @@ set "STATUS_REASON=%~3"
 set "STATUS_VERSION=%~4"
 if not defined STATUS_SOURCE set "STATUS_SOURCE=startup-script"
 
+rem The publisher owns UTC generation and the pre-publish state write in one
+rem process. Preserve the legacy state-only path when its helper is absent.
+if exist "%ROOT%\platform_scripts\powershell\publish_runtime_status_tags.ps1" goto publish_runtime_status
 set "UTC_TIMESTAMP="
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "[DateTime]::UtcNow.ToString('o')"`) do set "UTC_TIMESTAMP=%%I"
 if not defined UTC_TIMESTAMP exit /b 0
 
 call :write_startup_status_state
 
-if not exist "%ROOT%\platform_scripts\powershell\publish_runtime_status_tags.ps1" (
-  echo WARNING: Runtime status publish helper not found. Skipping EC2 tag publish for "%STATUS_VALUE%".
-  exit /b 0
-)
+echo WARNING: Runtime status publish helper not found. Skipping EC2 tag publish for "%STATUS_VALUE%".
+exit /b 0
 
+:publish_runtime_status
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\platform_scripts\powershell\publish_runtime_status_tags.ps1" ^
   -InstanceId "%INSTANCE_ID%" ^
   -Region "%REGION%" ^
@@ -864,7 +890,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\platform_scripts\pow
   -Source "%STATUS_SOURCE%" ^
   -Reason "%STATUS_REASON%" ^
   -Version "%STATUS_VERSION%" ^
-  -StatusAtUtc "%UTC_TIMESTAMP%" >nul 2>nul
+  -StartupStateFilePath "%STARTUP_HEARTBEAT_STATE_FILE%" >nul
 
 if errorlevel 1 (
   echo WARNING: Failed to publish runtime status "%STATUS_VALUE%" ^(reason=%STATUS_REASON%^).
