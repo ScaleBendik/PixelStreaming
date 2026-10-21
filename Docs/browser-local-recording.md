@@ -13,6 +13,12 @@ Startup failures keep Settings open to show the error. Settings can be reopened 
 recording to check progress or Stop. Pointer actions also return focus to the stream;
 keyboard users can still tab through the controls when choosing a location or stopping.
 
+The optional **Smooth camera movement** checkbox in this category synchronizes
+with the existing Unreal camera setting. Its [Blueprint integration guide](camera-smoothing.md)
+defines Get/Set/State messages, initialization and failure behavior. Missing or
+failed Unreal support disables only that checkbox. The setting affects camera
+movement throughout the session; Record and Stop do not change it automatically.
+
 ## Scope and formats
 
 Recording is available across Standard and Premium sessions. It follows the

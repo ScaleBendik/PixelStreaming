@@ -22,6 +22,7 @@ const compile = async file => ts.transpileModule(await readFile(path.join(root, 
 }).outputText;
 const files = {
     control: 'Frontend/implementations/typescript/src/recordingControl.ts',
+    smoothing: 'Frontend/implementations/typescript/src/cameraSmoothing.ts',
     settings: 'Frontend/ui-library/src/UI/SettingsPanel.ts',
     sections: 'Frontend/ui-library/src/Config/ConfigUI.ts',
     uiConfiguration: 'Frontend/ui-library/src/UI/UIConfigurationTypes.ts',
@@ -125,6 +126,31 @@ for (const [name, executablePath] of Object.entries(browsers)) {
                     setModalInput: open => { if (open) keyboard.unregister(); else keyboard.register(); }
                 });
                 window.settings = settings;
+                const cameraEvents = new Map();
+                let cameraResponse;
+                window.cameraConnected = true;
+                window.cameraMessages = [];
+                window.cameraSendMode = 'normal';
+                window.cameraRespond = (enabled, requestId = window.cameraMessages.at(-1)?.requestId) =>
+                    cameraResponse(JSON.stringify({ type: 'CameraSmoothing.State', enabled, requestId }));
+                window.cameraBroadcast = enabled => cameraResponse(JSON.stringify({ type: 'CameraSmoothing.State', enabled }));
+                window.cameraEvent = name => cameraEvents.get(name)?.();
+                window.cameraControl = load(sources.smoothing).installCameraSmoothingControl({
+                    parent: settingsSection,
+                    focusStream: () => document.getElementById('videoElementParent').focus({ preventScroll: true }),
+                    stream: {
+                        webRtcController: { isDataChannelOpen: () => window.cameraConnected },
+                        emitUIInteraction(message) {
+                            window.cameraMessages.push(message);
+                            if (window.cameraSendMode === 'throw') throw new Error('Simulated transport failure');
+                            return true;
+                        },
+                        addResponseEventListener(_name, listener) { cameraResponse = listener; },
+                        removeResponseEventListener() {},
+                        addEventListener(name, listener) { cameraEvents.set(name, listener); },
+                        removeEventListener(name) { cameraEvents.delete(name); }
+                    }
+                });
             }, { sources, palette: light ? style.defaultLightModePalette : style.defaultDarkModePalette });
 
             const shot = async state => page.screenshot({ path: path.join(output, `${name}-${layout}-${state}.png`) });
@@ -152,6 +178,42 @@ for (const [name, executablePath] of Object.entries(browsers)) {
             assert.equal(await page.getByRole('button', { name: 'UI', exact: true }).getAttribute('aria-expanded'), 'true');
             await page.getByRole('button', { name: 'UI', exact: true }).click();
             await page.getByRole('button', { name: 'Recording', exact: true }).click();
+            const smoothing = page.getByRole('checkbox', { name: 'Smooth camera movement' });
+            assert.equal(await smoothing.isDisabled(), true, 'unknown state cannot send a default');
+            assert.equal(await smoothing.evaluate(node => node.indeterminate), true);
+            await page.evaluate(() => window.cameraRespond(true));
+            assert.equal(await smoothing.isChecked(), true, 'initial state comes from Unreal');
+            await shot('camera-ready');
+            await smoothing.click();
+            assert.equal(await page.evaluate(() => document.activeElement.id), 'videoElementParent', 'pointer changes return focus to the stream');
+            await page.evaluate(() => { window.keysSent = []; });
+            await page.keyboard.press('w');
+            assert.deepEqual(await page.evaluate(() => window.keysSent), [87], 'Unreal keyboard input remains usable while awaiting acknowledgement');
+            assert.equal(await smoothing.isDisabled(), true);
+            assert.equal(await smoothing.isChecked(), true, 'pending Set retains the confirmed value');
+            assert.equal(await page.evaluate(() => window.cameraMessages.at(-1).enabled), false);
+            await page.evaluate(() => window.cameraRespond(false));
+            assert.equal(await smoothing.isChecked(), false);
+            await page.evaluate(() => window.cameraBroadcast(true));
+            assert.equal(await smoothing.isChecked(), true, 'Unreal widget updates the checkbox');
+            await smoothing.focus();
+            await page.evaluate(() => { window.keysSent = []; });
+            await page.keyboard.press('Space');
+            assert.deepEqual(await page.evaluate(() => window.keysSent), [], 'checkbox activation must not move the Unreal camera');
+            await page.evaluate(() => window.cameraRespond(false));
+            assert.equal(await smoothing.isChecked(), false, 'checkbox supports keyboard activation');
+            await page.evaluate(() => { window.cameraConnected = false; window.cameraEvent('webRtcDisconnected'); });
+            assert.equal(await smoothing.isDisabled(), true);
+            assert.equal(await smoothing.evaluate(node => node.indeterminate), true);
+            await page.evaluate(() => { window.cameraConnected = true; window.cameraEvent('dataChannelOpen'); window.cameraRespond(true); });
+            assert.equal(await smoothing.isChecked(), true);
+            await page.evaluate(() => { window.cameraSendMode = 'throw'; });
+            await smoothing.click();
+            assert.equal(await smoothing.isDisabled(), true);
+            if (layout === 'desktop') {
+                await page.waitForFunction(() => document.getElementById('cameraSmoothingRetry').hidden === false, undefined, { timeout: 10000 });
+                assert.match(await page.locator('#cameraSmoothingStatus').textContent(), /Recording still works/);
+            }
             await page.locator('#recordingChoose').scrollIntoViewIfNeeded();
             assert.equal(await page.locator('#recordingBtn').count(), 0);
             assert.equal(await page.locator('dialog[open]').count(), 0);
@@ -178,6 +240,12 @@ for (const [name, executablePath] of Object.entries(browsers)) {
             await shot('saving');
             await page.evaluate(() => window.recorder.finish(true));
             assert.equal(await page.locator('#recordingBadge').textContent(), 'Saved');
+            if (layout === 'desktop') {
+                await page.evaluate(() => { window.cameraSendMode = 'normal'; });
+                await page.locator('#cameraSmoothingRetry').click();
+                await page.evaluate(() => window.cameraRespond(false));
+                assert.equal(await smoothing.isDisabled(), false, 'Retry recovers without reconnecting the stream');
+            }
 
             // Native keyboard activation must remain accessible and must not
             // send the control's Enter key to Unreal or leave focus on Record.
@@ -206,9 +274,9 @@ for (const [name, executablePath] of Object.entries(browsers)) {
             assert.equal(await page.locator('#recordingLeaveDialog').evaluate(node => node.open), false);
             assert.ok(await page.evaluate(() => document.activeElement.closest('dialog') !== null), 'Underlying session dialog regains focus');
             assert.deepEqual(errors, []);
-            await page.evaluate(() => window.ui.dispose());
+            await page.evaluate(() => { window.cameraControl.dispose(); window.ui.dispose(); });
             await page.close();
-            console.log(JSON.stringify({ browser: name, version: browser.version(), layout, settingsCategories: 'passed', keyboardRouting: 'passed', inlineControls: 'passed', failedSave: 'passed' }));
+            console.log(JSON.stringify({ browser: name, version: browser.version(), layout, cameraSmoothing: 'passed', settingsCategories: 'passed', keyboardRouting: 'passed', inlineControls: 'passed', failedSave: 'passed' }));
         }
     } finally { await browser.close(); }
 }

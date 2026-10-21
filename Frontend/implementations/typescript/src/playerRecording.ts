@@ -1,6 +1,7 @@
 import type { PixelStreaming } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.8';
 import type { RecordingSource } from './localRecording';
 import { installRecordingControl, RecordingControlOptions } from './recordingControl';
+import { installCameraSmoothingControl } from './cameraSmoothing';
 
 /** Record media already admitted by Wilbur; local recording has no commercial tier gate. */
 export function installPlayerRecording(options: Omit<RecordingControlOptions, 'getSource' | 'beforeRecord'> & {
@@ -43,6 +44,10 @@ export function installPlayerRecording(options: Omit<RecordingControlOptions, 'g
         }
     };
     const control = installRecordingControl({ ...options, getSource, beforeRecord });
+    let cameraSmoothing: ReturnType<typeof installCameraSmoothingControl> | undefined;
+    try {
+        cameraSmoothing = installCameraSmoothingControl({ stream, parent: options.settingsSection, focusStream: options.focusStream });
+    } catch { /* Optional Unreal integration must never prevent recording or streaming. */ }
     const refresh = () => { if (!disposed) control.refresh(); };
     const watchConnection = () => {
         const peer = connection();
@@ -88,6 +93,7 @@ export function installPlayerRecording(options: Omit<RecordingControlOptions, 'g
         beforeLeave: () => control.beforeLeave(),
         dispose: () => {
             disposed = true;
+            try { cameraSmoothing?.dispose(); } catch { /* Keep recorder cleanup independent. */ }
             stream.removeEventListener('statsReceived', onStats);
             stream.removeEventListener('webRtcConnecting', reset);
             stream.removeEventListener('webRtcConnected', connected);

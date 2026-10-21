@@ -7,11 +7,18 @@ const source = ts.transpileModule(fs.readFileSync(require.resolve('../src/player
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
 }).outputText;
 
-function fixture() {
+function fixture({ cameraFails = false, cameraDisposeFails = false } = {}) {
     const events = new Map(), transport = new Map();
-    let uiOptions, refreshes = 0, disposed = 0;
+    let uiOptions, refreshes = 0, disposed = 0, cameraInstalled = 0, cameraDisposed = 0;
     const exports = {};
-    vm.runInNewContext(source, { exports, require() { return { installRecordingControl(options) {
+    vm.runInNewContext(source, { exports, require(name) {
+        if (name === './cameraSmoothing') return { installCameraSmoothingControl(options) {
+            assert.equal(options.parent, uiOptions.settingsSection);
+            if (cameraFails) throw new Error('Optional camera UI unavailable');
+            cameraInstalled++;
+            return { dispose() { cameraDisposed++; if (cameraDisposeFails) throw new Error('Optional cleanup failed'); } };
+        } };
+        return { installRecordingControl(options) {
         uiOptions = options;
         return { refresh() { refreshes++; }, dispose() { disposed++; }, beforeLeave: async () => false };
     } }; } });
@@ -35,8 +42,22 @@ function fixture() {
     } } });
     return { stream, config, events, transport, controller, stats, peer, tracks, audio, video,
         beforeRecord: () => uiOptions.beforeRecord(),
-        source: () => uiOptions.getSource(), get refreshes() { return refreshes; }, get disposed() { return disposed; } };
+        source: () => uiOptions.getSource(), get refreshes() { return refreshes; }, get disposed() { return disposed; },
+        get cameraInstalled() { return cameraInstalled; }, get cameraDisposed() { return cameraDisposed; } };
 }
+
+test('camera integration failures cannot prevent recording initialization or cleanup', async () => {
+    for (const options of [{}, { cameraFails: true }, { cameraDisposeFails: true }]) {
+        const f = fixture(options); f.stats();
+        assert.ok(f.source());
+        assert.equal(f.cameraInstalled, options.cameraFails ? 0 : 1);
+        assert.equal(await f.controller.beforeLeave(), false);
+        assert.doesNotThrow(() => f.controller.dispose());
+        assert.equal(f.disposed, 1);
+        assert.equal(f.cameraDisposed, options.cameraFails ? 0 : 1);
+        assert.equal(f.events.size, 0);
+    }
+});
 
 test('recording requires observed media for the current connection and uses original tracks across tiers', async () => {
     const f = fixture();
