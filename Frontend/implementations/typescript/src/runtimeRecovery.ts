@@ -11,7 +11,8 @@ export function recoveryMessage(kind: unknown, phase: unknown): string {
 }
 
 /** Informational only: browser silence never authorizes a server restart or declares a crash. */
-export function installRuntimeRecovery(stream: PixelStreaming, managerUrl: string | null) {
+export function installRuntimeRecovery(stream: PixelStreaming, managerUrl: string | null,
+    beforeNavigate?: () => Promise<boolean>) {
     let disposed = false;
     let enabled = true;
     let lastFrame = Date.now();
@@ -71,6 +72,18 @@ export function installRuntimeRecovery(stream: PixelStreaming, managerUrl: strin
         if (managerUrl) {
             const link = document.createElement('a');
             link.href = managerUrl; link.textContent = 'Open session manager'; link.style.color = '#65cfff';
+            if (beforeNavigate) {
+                let navigating = false;
+                link.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    if (navigating) return;
+                    navigating = true;
+                    void beforeNavigate().then((allowed) => {
+                        if (allowed && !disposed) window.location.assign(managerUrl);
+                    }).catch(() => { /* Keep the player open if the recording cannot be saved. */ })
+                        .finally(() => { navigating = false; });
+                });
+            }
             overlay.appendChild(link);
         }
         stream.videoElementParent.appendChild(overlay);

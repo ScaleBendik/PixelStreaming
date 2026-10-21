@@ -7,8 +7,9 @@ const source = ts.transpileModule(fs.readFileSync(require.resolve('../src/player
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
 }).outputText;
 
-function boot({ missingControls = false, installationFails = false, navigationFails = false, autoConnect = true, capability, storedCapability, freshTicket = true } = {}) {
-    const state = { connections: 0, installed: 0, warnings: [] };
+function boot({ missingControls = false, installationFails = false, navigationFails = false, recordingFails = false, autoConnect = true, capability, storedCapability, freshTicket = true, beforeLeave = async () => true } = {}) {
+    const state = { connections: 0, installed: 0, warnings: [], navigations: [], closes: 0, endedMarks: 0, events: new Map() };
+    state.emit = (name, data) => { for (const listener of state.events.get(name) || []) listener({ data }); };
     const ids = new Proxy({}, { get: (_, key) => key });
     const toolbar = {};
     const modules = {
@@ -18,7 +19,7 @@ function boot({ missingControls = false, installationFails = false, navigationFa
             Config: class {
                 constructor() { this.flags = { AutoConnect: autoConnect }; }
                 isFlagEnabled(key) { return this.flags[key] ?? true; }
-                setFlagEnabled(key, value) { this.flags[key] = value; }
+                setFlagEnabled(key, value) { this.flags[key] = value; state.inputFlags = { ...this.flags }; }
                 setNumericSetting() {}
             },
             PixelStreaming: class {
@@ -28,10 +29,14 @@ function boot({ missingControls = false, installationFails = false, navigationFa
                     this.signallingProtocol = { transport: { addListener() {} } };
                 }
                 setSignallingUrlBuilder() {}
-                addEventListener() {}
+                addEventListener(name, listener) {
+                    const listeners = state.events.get(name) || [];
+                    listeners.push(listener);
+                    state.events.set(name, listeners);
+                }
                 connect() { state.connections++; }
             },
-            SessionQuality: class {}
+            SessionQuality: class { report() { return null; } setConnected() {} }
         },
         '@epicgames-ps/lib-pixelstreamingfrontend-ui-ue5.8': {
             Application: class {
@@ -44,7 +49,15 @@ function boot({ missingControls = false, installationFails = false, navigationFa
             return { dispose() {} };
         } },
         './resolutionRecovery': { installResolutionRecovery: () => ({ cancel() {}, dispose() {} }) },
-        './runtimeRecovery': { installRuntimeRecovery: () => ({ cancel() {}, dispose() {} }) },
+        './runtimeRecovery': { installRuntimeRecovery: (_stream, _url, beforeNavigate) => {
+            state.beforeRecoveryNavigate = beforeNavigate;
+            return { cancel() {}, dispose() {} };
+        } },
+        './playerRecording': { installPlayerRecording(options) {
+            if (recordingFails) throw new Error('Simulated recording initialization failure');
+            state.recordingOptions = options;
+            return { beforeLeave, dispose() {} };
+        } },
         './sessionEndRequest': { requestSessionEnd: async (token, requestId) => { state.directRequest = { token, requestId }; return true; } },
         './endSession': {
             isManagedEndContext: () => true,
@@ -53,7 +66,7 @@ function boot({ missingControls = false, installationFails = false, navigationFa
                 assert.equal(options.controls, toolbar);
                 state.installed++;
                 state.endOptions = options;
-                return { dispose() {} };
+                return { markEnded() { state.endedMarks++; options.onEnded(); }, dispose() {} };
             }
         }
     };
@@ -64,11 +77,14 @@ function boot({ missingControls = false, installationFails = false, navigationFa
     const window = {
         location: new URL('https://stream.test/' + (freshTicket ? '?ct=test' : '') + '#sm_region=eu-north-1&sm_instance_id=i-test&sm_session_request_id=request-test&sm_session_manager_env=dev' + (capability ? '&sw_end=' + capability : '')),
         history: { replaceState(_a, _b, url) { state.scrubbedUrl = url; } }, addEventListener() {},
+        setTimeout() { return 1; }, clearTimeout() {}, close() { state.closes++; },
         sessionStorage: { getItem: k => storage.get(k), setItem: (k,v) => storage.set(k,v), removeItem: k => storage.delete(k) }
     };
+    window.location.replace = url => state.navigations.push(['replace', url]);
+    window.location.assign = url => state.navigations.push(['assign', url]);
     const exports = {};
     vm.runInNewContext(source, { exports, module: { exports }, document, window, URL, URLSearchParams,
-        atob, console, require(name) { assert.ok(modules[name], name); return modules[name]; } });
+        atob, console, performance, require(name) { assert.ok(modules[name], name); return modules[name]; } });
     document.body.onload();
     assert.ok(window.pixelStreaming, 'bootstrap must finish');
     return state;
@@ -89,6 +105,25 @@ for (const options of [{ missingControls: true }, { installationFails: true }]) 
 }
 test('manual-connect configuration remains manual after an optional control failure', () => {
     assert.equal(boot({ autoConnect: false, installationFails: true }).connections, 0);
+});
+
+test('recording failure cannot prevent streaming or session controls', () => {
+    const state = boot({ recordingFails: true });
+    assert.equal(state.connections, 1);
+    assert.equal(state.installed, 1);
+    assert.equal(state.warnings.length, 1);
+    assert.equal(boot({ recordingFails: true, autoConnect: false }).connections, 0);
+});
+
+test('overlapping recording and end-session dialogs restore inputs after the last dialog closes', () => {
+    const state = boot();
+    state.recordingOptions.setModalInput(true);
+    state.endOptions.setModalInput(true);
+    state.recordingOptions.setModalInput(false);
+    assert.equal(state.inputFlags.KeyboardInput, false);
+    state.endOptions.setModalInput(false);
+    assert.equal(state.inputFlags.KeyboardInput, true);
+    assert.equal(state.inputFlags.MouseInput, true);
 });
 
 test('navigation initialization failure cannot block player connection or optional session controls', () => {
@@ -117,4 +152,75 @@ test('reload retains capability but a new connect ticket cannot inherit an old s
     assert.equal(state.endOptions.endDirect, undefined);
     assert.equal(state.storage.has('sw-session-end:stream.test/'), false);
     assert.equal(state.connections, 1);
+});
+
+const tick = () => new Promise(resolve => setImmediate(resolve));
+function deferred() {
+    let resolve;
+    const promise = new Promise(yes => { resolve = yes; });
+    return { promise, resolve };
+}
+
+test('session-end event supersedes a reconnect redirect waiting for the recording save', async () => {
+    const save = deferred();
+    const state = boot({ beforeLeave: () => save.promise });
+    state.emit('webRtcDisconnected', { eventString: 'Connect ticket expired' });
+    assert.deepEqual(state.navigations, []);
+    state.emit('webRtcDisconnected', { eventString: 'ScaleWorld session ended' });
+    assert.equal(state.endedMarks, 1);
+    save.resolve(true);
+    await tick();
+    assert.deepEqual(state.navigations, [], 'stale ticket-refresh destination cannot replace the ended-session destination');
+    state.emit('webRtcDisconnected', { eventString: 'Connect ticket expired' });
+    await tick();
+    assert.deepEqual(state.navigations, []);
+});
+
+test('accepted End session also fences reconnect navigation before a disconnect notification arrives', async () => {
+    const save = deferred();
+    const state = boot({ beforeLeave: () => save.promise });
+    state.emit('webRtcDisconnected', { eventString: 'Connect ticket expired' });
+    state.endOptions.onEnded();
+    save.resolve(true);
+    await tick();
+    assert.deepEqual(state.navigations, []);
+});
+
+test('fallback tab close supersedes a pending reconnect and can retry when the browser refuses close', async () => {
+    const save = deferred();
+    const state = boot({ installationFails: true, beforeLeave: () => save.promise });
+    state.emit('webRtcDisconnected', { eventString: 'Connect ticket expired' });
+    state.emit('webRtcDisconnected', { eventString: 'ScaleWorld session ended' });
+    assert.equal(state.closes, 0);
+    save.resolve(true);
+    await tick();
+    assert.deepEqual(state.navigations, []);
+    assert.equal(state.closes, 1);
+    state.emit('webRtcDisconnected', { eventString: 'ScaleWorld session ended' });
+    await tick();
+    assert.equal(state.closes, 2, 'a refused close does not leave navigation latched');
+});
+
+test('cancelled recording save permits a later reconnect navigation attempt', async () => {
+    let allowed = false;
+    const state = boot({ beforeLeave: async () => allowed });
+    state.emit('webRtcDisconnected', { eventString: 'Connect ticket expired' });
+    await tick();
+    assert.deepEqual(state.navigations, []);
+    allowed = true;
+    state.emit('webRtcDisconnected', { eventString: 'Connect ticket expired' });
+    await tick();
+    assert.equal(state.navigations.length, 1);
+    assert.equal(state.navigations[0][0], 'replace');
+    assert.match(state.navigations[0][1], /reconnectInstanceId=i-test/);
+});
+
+test('a pending recovery-link navigation cannot reconnect after the session ends', async () => {
+    const save = deferred();
+    const state = boot({ beforeLeave: () => save.promise });
+    const recovery = state.beforeRecoveryNavigate();
+    state.endOptions.onEnded();
+    save.resolve(true);
+    assert.equal(await recovery, false);
+    assert.equal(await state.endOptions.beforeNavigate(), true, 'terminal navigation can still finish');
 });

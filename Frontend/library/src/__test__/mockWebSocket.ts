@@ -38,11 +38,33 @@ const triggerFunctions: MockWebSocketTriggerFunctions = {
     triggerRemoteClose: null
 };
 
-export class MockWebSocketImpl extends WebSocket {
+// Do not extend the native WebSocket: its constructor opens a real connection,
+// allowing local services and network events to interfere with unit tests.
+export class MockWebSocketImpl extends EventTarget implements WebSocket {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSING = 2;
+    static readonly CLOSED = 3;
+    readonly CONNECTING = 0;
+    readonly OPEN = 1;
+    readonly CLOSING = 2;
+    readonly CLOSED = 3;
+    readonly url: string;
+    readonly protocol: string;
+    readonly extensions = '';
+    readonly bufferedAmount = 0;
+    binaryType: BinaryType = 'blob';
+    onopen: WebSocket['onopen'] = null;
+    onclose: WebSocket['onclose'] = null;
+    onerror: WebSocket['onerror'] = null;
+    onmessage: WebSocket['onmessage'] = null;
+    onmessagebinary?: WebSocket['onmessagebinary'];
     _readyState: number;
 
     constructor(url: string | URL, protocols?: string | string[]) {
-        super(url, protocols);
+        super();
+        this.url = new URL(url).toString();
+        this.protocol = typeof protocols === 'string' ? protocols : protocols?.[0] ?? '';
         this._readyState = this.OPEN;
         spyFunctions.constructorSpy?.(this.url);
         triggerFunctions.triggerOnOpen = this.triggerOnOpen.bind(this);
@@ -53,17 +75,16 @@ export class MockWebSocketImpl extends WebSocket {
         triggerFunctions.triggerRemoteClose = this.triggerRemoteClose.bind(this);
     }
 
-    override get readyState() {
+    get readyState() {
         return this._readyState;
     }
 
-    override close(code?: number | undefined, reason?: string | undefined): void {
-        super.close(code, reason);
+    close(code?: number | undefined, reason?: string | undefined): void {
         this._readyState = this.CLOSED;
         this.triggerOnClose({ code, reason });
     }
 
-    override send(data: string | Blob | ArrayBufferView | ArrayBufferLike): void {
+    send(data: string | Blob | ArrayBufferView | ArrayBufferLike): void {
         spyFunctions.sendSpy?.(data);
     }
 

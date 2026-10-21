@@ -12,6 +12,8 @@ loaded._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
 }).outputText, filename);
 const { installEndSession, isManagedEndContext, buildEndSessionUrl } = loaded.exports;
 
+const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+
 test('owner presentation excludes shadows, malformed tickets and previous request context', () => {
     const ticket = claims => 'header.' + Buffer.from(JSON.stringify(claims)).toString('base64url') + '.signature';
     assert.equal(isManagedEndContext(ticket({ sessionRequestId: 'one' }), 'one'), true);
@@ -22,6 +24,101 @@ test('owner presentation excludes shadows, malformed tickets and previous reques
     assert.equal(url.pathname, '/servers/');
     assert.equal(url.searchParams.get('endSessionRequestId'), 's');
     assert.equal(url.searchParams.has('reconnectInstanceId'), false);
+});
+
+test('accepted session end waits for the recording save before navigating', async t => {
+    let finish;
+    const saved = new Promise(resolve => { finish = resolve; });
+    let requests = 0;
+    const f = fixture(t, { beforeNavigate: () => { requests++; return saved; } });
+    f.controller.markEnded(); f.controller.markEnded();
+    assert.equal(f.ended, 1);
+    assert.equal(requests, 1);
+    assert.deepEqual(f.navigations, []);
+    finish(true); await flush();
+    assert.deepEqual(f.navigations, ['https://manager.test/servers/']);
+});
+
+test('failed or cancelled recording save keeps ended session on the page with a guarded return action', async t => {
+    let allow = false;
+    const f = fixture(t, { beforeNavigate: async () => allow });
+    f.controller.markEnded(); await flush();
+    assert.deepEqual(f.navigations, []);
+    const link = f.nodes.find(n => n.tag === 'a');
+    assert.equal(link.style.display, 'block');
+    let prevented = false;
+    allow = true;
+    link.listeners.click({ preventDefault() { prevented = true; } }); await flush();
+    assert.equal(prevented, true);
+    assert.deepEqual(f.navigations, ['https://manager.test/servers/']);
+});
+
+test('manager confirmation fallback is also guarded by recording finalization', async t => {
+    let finish;
+    const f = fixture(t, { beforeNavigate: () => new Promise(resolve => { finish = resolve; }) });
+    f.button.click(); f.confirm.click();
+    assert.deepEqual(f.navigations, []);
+    finish(false); await flush();
+    assert.deepEqual(f.navigations, []);
+});
+
+test('authoritative end supersedes pending manager confirmation after the recording saves', async t => {
+    let finish, requests = 0;
+    const f = fixture(t, { beforeNavigate: () => { requests++; return new Promise(resolve => { finish = resolve; }); } });
+    f.button.click(); f.confirm.click();
+    f.controller.markEnded();
+    assert.equal(requests, 1, 'reuse the in-flight save rather than starting another');
+    assert.deepEqual(f.navigations, []);
+    finish(true); await flush();
+    assert.deepEqual(f.navigations, ['https://manager.test/servers/']);
+    assert.equal(f.ended, 1);
+});
+
+test('authoritative end removes old confirmation intent from retry links after cancelled or rejected saves', async t => {
+    for (const rejected of [false, true]) {
+        await t.test(rejected ? 'rejected save' : 'cancelled save', async t => {
+            let finish, reject;
+            const f = fixture(t, { beforeNavigate: () => new Promise((resolve, fail) => { finish = resolve; reject = fail; }) });
+            f.button.click(); f.confirm.click();
+            f.controller.markEnded();
+            if (rejected) reject(new Error('Save failed')); else finish(false);
+            await flush();
+            assert.deepEqual(f.navigations, []);
+            const link = f.nodes.find(n => n.tag === 'a');
+            assert.equal(link.href, 'https://manager.test/servers/');
+            assert.equal(link.textContent, 'Return to session manager');
+            assert.equal(link.style.display, 'block');
+            link.listeners.click({ preventDefault() {} });
+            finish(true); await flush();
+            assert.deepEqual(f.navigations, ['https://manager.test/servers/']);
+        });
+    }
+});
+
+test('disposing the control prevents a pending save from navigating or changing removed UI', async t => {
+    let finish;
+    const f = fixture(t, { beforeNavigate: () => new Promise(resolve => { finish = resolve; }) });
+    f.controller.markEnded();
+    const status = f.nodes.find(n => n.attributes.role === 'status');
+    const previousStatus = status.textContent;
+    f.controller.dispose();
+    finish(true); await flush();
+    assert.deepEqual(f.navigations, []);
+    assert.equal(status.textContent, previousStatus);
+    assert.equal(f.input.at(-1), false);
+});
+
+test('disposing during a direct end fences its late completion and subsequent markEnded calls', async t => {
+    let finish;
+    const f = fixture(t, { endDirect: () => new Promise(resolve => { finish = resolve; }) });
+    f.button.click();
+    const completion = f.confirm.click();
+    f.controller.dispose();
+    finish(true); await completion;
+    f.controller.markEnded();
+    assert.equal(f.ended, 0);
+    assert.deepEqual(f.navigations, []);
+    assert.equal(f.input.at(-1), false);
 });
 
 function fixture(t, extra = {}) {

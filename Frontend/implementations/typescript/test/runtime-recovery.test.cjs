@@ -22,7 +22,7 @@ test('copy separates unconfirmed interruptions, detected exits and attempted rec
 
 test('frozen/opening streams get guidance, replacement frames clear it, and old frames cannot hide it', async t => {
     t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: 0 });
-    const oldDocument = global.document, oldFetch = global.fetch;
+    const oldDocument = global.document, oldFetch = global.fetch, oldWindow = global.window;
     const nodes = [], frames = new Map(), events = new Map(), transportEvents = new Map();
     let id = 0, reply = null;
     const element = () => ({ style: {}, dataset: {}, children: [], listeners: {},
@@ -40,12 +40,27 @@ test('frozen/opening streams get guidance, replacement frames clear it, and old 
         signallingProtocol: { transport: {
             addListener(n, fn) { transportEvents.set(n, fn); }, removeListener(n) { transportEvents.delete(n); }
         } } };
-    const recovery = installRuntimeRecovery(stream, 'https://manager.test/servers/');
-    t.after(() => { recovery.dispose(); global.document = oldDocument; global.fetch = oldFetch; });
+    let allowNavigation = false, finishSave;
+    const navigations = [];
+    global.window = { location: { assign(url) { navigations.push(url); } } };
+    const recovery = installRuntimeRecovery(stream, 'https://manager.test/servers/',
+        () => new Promise(resolve => { finishSave = () => resolve(allowNavigation); }));
+    t.after(() => { recovery.dispose(); global.document = oldDocument; global.fetch = oldFetch; global.window = oldWindow; });
     const tick = async ms => { t.mock.timers.tick(ms); for (let n = 0; n < 10; n++) await Promise.resolve(); };
     const present = () => { const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(fn => fn()); };
     await tick(21_000);
     assert.equal(nodes.length, 1); assert.match(nodes[0].dataset.message, /taking longer/);
+    const managerLink = nodes[0].children.find(n => n.href);
+    let prevented = false;
+    managerLink.listeners.click({ preventDefault() { prevented = true; } });
+    assert.equal(prevented, true);
+    assert.deepEqual(navigations, []);
+    finishSave(); await tick(0);
+    assert.deepEqual(navigations, [], 'failed save keeps the recovery page open');
+    allowNavigation = true;
+    managerLink.listeners.click({ preventDefault() {} });
+    finishSave(); await tick(0);
+    assert.deepEqual(navigations, ['https://manager.test/servers/']);
     present(); assert.equal(nodes.length, 0);
     await tick(21_000); assert.match(nodes[0].dataset.message, /Video has stopped arriving/);
     reply = { kind: 'unresponsive', phase: 'restart_requested' };

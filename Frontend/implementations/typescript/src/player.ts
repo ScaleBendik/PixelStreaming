@@ -18,6 +18,7 @@ import { installNavigationMode } from './navigationMode';
 import { installRuntimeRecovery } from './runtimeRecovery';
 import { installEndSession, isManagedEndContext } from './endSession';
 import { requestSessionEnd } from './sessionEndRequest';
+import { installPlayerRecording } from './playerRecording';
 const PixelStreamingApplicationStyles =
     new PixelStreamingApplicationStyle();
 PixelStreamingApplicationStyles.applyStyleSheet();
@@ -692,8 +693,35 @@ document.body.onload = function() {
         window.history.replaceState(null, '', pageUrl.toString());
     }
 
+    let recordingControl: ReturnType<typeof installPlayerRecording> | undefined;
+    let sessionEnded = false;
+    let navigationPending = false;
+    let navigationGeneration = 0;
+    const beforePlayerLeave = () => recordingControl?.beforeLeave() ?? Promise.resolve(true);
+    const navigateAfterSaving = (navigate: () => void, terminal = false): void => {
+        if ((sessionEnded && !terminal) || (navigationPending && !terminal)) return;
+        // Ending a session supersedes a ticket-refresh redirect already waiting
+        // for the same recording save. A blocked window.close must be retryable.
+        const generation = ++navigationGeneration;
+        navigationPending = true;
+        const navigateIfCurrent = () => {
+            if (generation === navigationGeneration && (!sessionEnded || terminal)) navigate();
+        };
+        if (!recordingControl) {
+            try { navigateIfCurrent(); }
+            finally { if (generation === navigationGeneration) navigationPending = false; }
+            return;
+        }
+        void beforePlayerLeave().then((allowed) => {
+            if (allowed) navigateIfCurrent();
+        }).catch(() => {
+            Logger.Warning('Recording could not be finalized. Finish saving before leaving the player.');
+        }).finally(() => {
+            if (generation === navigationGeneration) navigationPending = false;
+        });
+    };
     const redirectToSessionManagerForReconnect = (reason: string): boolean => {
-        if (!reconnectContext) {
+        if (sessionEnded || !reconnectContext) {
             return false;
         }
 
@@ -708,7 +736,7 @@ document.body.onload = function() {
         persistPlayerQueryState(playerQueryStateStorageKey);
         removeSessionStorage(connectTicketStorageKey);
         removeSessionStorage(endCapabilityKey);
-        window.location.replace(reconnectUrl);
+        navigateAfterSaving(() => window.location.replace(reconnectUrl));
         return true;
     };
 
@@ -1054,6 +1082,7 @@ document.body.onload = function() {
         mediaStartStalePromptGeneration = -1;
         const eventData = (event as { data?: { eventString?: string } }).data;
         const reason = eventData?.eventString ?? '';
+        if (sessionEnded && !isScaleWorldSessionEndedReason(reason)) return;
         if (endSessionPending && !isScaleWorldSessionEndedReason(reason)) return;
         if (isInactivityDisconnectReason(reason)) {
             runtimeRecovery.cancel();
@@ -1063,16 +1092,15 @@ document.body.onload = function() {
         }
 
         if (isScaleWorldSessionEndedReason(reason)) {
+            sessionEnded = true;
             runtimeRecovery.cancel();
             resolutionRecovery.cancel();
             removeSessionStorage(connectTicketStorageKey);
             removeSessionStorage(endCapabilityKey);
             removeSessionStorage(reconnectContextStorageKey);
             showSessionEndedGuidance();
-            endSessionControl?.markEnded();
-            window.setTimeout(() => {
-                window.close();
-            }, 0);
+            if (endSessionControl) endSessionControl.markEnded();
+            else navigateAfterSaving(() => window.close(), true);
             return;
         }
 
@@ -1102,6 +1130,39 @@ document.body.onload = function() {
     }
     document.body.appendChild(application.rootElement);
 
+    // Native dialogs can overlap during a remotely ended session. Restore input only
+    // after the last modal releases it, preserving the user's original input flags.
+    const inputFlags = [Flags.KeyboardInput, Flags.MouseInput, Flags.TouchInput, Flags.GamepadInput];
+    const modalOwners = new Set<string>();
+    let previousModalInputs: boolean[] | null = null;
+    const setModalInput = (owner: string, open: boolean) => {
+        if (open) {
+            if (modalOwners.has(owner)) return;
+            if (modalOwners.size === 0) {
+                previousModalInputs = inputFlags.map((flag) => config.isFlagEnabled(flag));
+                inputFlags.forEach((flag) => config.setFlagEnabled(flag, false));
+            }
+            modalOwners.add(owner);
+        } else {
+            modalOwners.delete(owner);
+            if (modalOwners.size === 0 && previousModalInputs) {
+                const restore = previousModalInputs;
+                previousModalInputs = null;
+                inputFlags.forEach((flag, index) => config.setFlagEnabled(flag, restore[index]));
+            }
+        }
+    };
+    try {
+        if (application.controls?.rootElement) {
+            recordingControl = installPlayerRecording({ stream,
+                controls: application.controls.rootElement, modalParent: stream.videoElementParent,
+                setModalInput: (open) => setModalInput('recording', open) });
+            window.addEventListener('pagehide', () => recordingControl?.dispose(), { once: true });
+        }
+    } catch {
+        Logger.Warning('Local recording unavailable; continuing player startup.');
+    }
+
     try {
         const navigationMode = installNavigationMode(stream);
         window.addEventListener('pagehide', () => navigationMode.dispose(), { once: true });
@@ -1114,15 +1175,17 @@ document.body.onload = function() {
     });
     window.addEventListener('pagehide', () => resolutionRecovery.dispose(), { once: true });
     const runtimeRecovery = installRuntimeRecovery(stream,
-        reconnectContext ? buildSessionManagerReconnectUrl(reconnectContext) : null);
+        reconnectContext ? buildSessionManagerReconnectUrl(reconnectContext) : null,
+        async () => {
+            const allowed = await beforePlayerLeave();
+            return allowed && !sessionEnded;
+        });
     window.addEventListener('pagehide', () => runtimeRecovery.dispose(), { once: true });
 
     // Optional toolbar extensions must never prevent the initial stream connection.
     try {
         if (reconnectContext?.sessionManagerEnvironment && reconnectContext.sessionRequestId &&
             isManagedEndContext(connectTicket, reconnectContext.sessionRequestId)) {
-            const inputFlags = [Flags.KeyboardInput, Flags.MouseInput, Flags.TouchInput, Flags.GamepadInput];
-            let previousInputs: boolean[] | null = null;
             let previousReconnectAttempts: number | null = null;
             endSessionControl = installEndSession({
                 controls: application.controls.rootElement,
@@ -1131,16 +1194,8 @@ document.body.onload = function() {
                 managerOrigin: SESSION_MANAGER_BASE_URLS[reconnectContext.sessionManagerEnvironment],
                 context: { region: reconnectContext.region, instanceId: reconnectContext.instanceId,
                     sessionRequestId: reconnectContext.sessionRequestId },
-                setModalInput: (open) => {
-                    if (open && !previousInputs) {
-                        previousInputs = inputFlags.map((flag) => config.isFlagEnabled(flag));
-                        inputFlags.forEach((flag) => config.setFlagEnabled(flag, false));
-                    } else if (!open && previousInputs) {
-                        const restore = previousInputs;
-                        previousInputs = null;
-                        inputFlags.forEach((flag, index) => config.setFlagEnabled(flag, restore[index]));
-                    }
-                },
+                setModalInput: (open) => setModalInput('end-session', open),
+                beforeNavigate: beforePlayerLeave,
                 onPending: (pending) => {
                     endSessionPending = pending;
                     if (pending && previousReconnectAttempts === null) {
@@ -1152,6 +1207,7 @@ document.body.onload = function() {
                     }
                 },
                 onEnded: () => {
+                    sessionEnded = true;
                     runtimeRecovery.cancel();
                     resolutionRecovery.cancel();
                     config.setNumericSetting(NumericParameters.MaxReconnectAttempts, 0);

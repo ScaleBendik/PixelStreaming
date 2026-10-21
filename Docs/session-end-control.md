@@ -59,6 +59,13 @@ an unknown method to POST. An HTTP regression test covers the real routing.
 
 After confirmed end, navigate this tab to the configured manager /servers/ page. Do not call window.close or depend on opener focus: browser tab selection is unreliable. This return carries no end intent and cannot trigger a second stop. The manager displays pending feedback inline beneath its session status.
 
+When [local recording](browser-local-recording.md) is active, player-controlled
+navigation first finalizes the file. A save failure retains the page until the user
+chooses to leave without the recording. This does not delay the server-side stop.
+An authoritative session end supersedes a pending reconnect or manager-confirmation
+destination, including one waiting for a recording save. Overlapping dialogs share
+input suspension until the last modal closes.
+
 ## Shutdown after viewer removal
 
 The player registry emits `removed` before deleting the player entry. When an

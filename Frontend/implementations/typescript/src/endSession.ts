@@ -32,6 +32,7 @@ export function installEndSession(options: {
     onEnded: () => void;
     onPending?: (pending: boolean) => void;
     endDirect?: () => Promise<boolean>;
+    beforeNavigate?: () => Promise<boolean>;
 }) {
     const { context } = options;
     let port: MessagePort | null = null;
@@ -41,6 +42,8 @@ export function installEndSession(options: {
     let uncertain = false;
     let useManagerConfirmation = false;
     let timeout: number | undefined;
+    let navigationPending = false;
+    let disposed = false;
     const button = document.createElement('button');
     button.type = 'button';
     button.id = 'endSessionBtn';
@@ -62,7 +65,7 @@ export function installEndSession(options: {
     let hintTimer: number | undefined;
     const hideHint = () => { hint.style.display = 'none'; window.clearTimeout(hintTimer); };
     const showInitialHint = () => {
-        if (hintShown || ended) return;
+        if (disposed || hintShown || ended) return;
         hintShown = true;
         hint.style.display = 'block';
         hintTimer = window.setTimeout(hideHint, 7_000);
@@ -104,6 +107,7 @@ export function installEndSession(options: {
     dialog.append(title, message, status, fallback, actions);
     options.modalParent.append(style, dialog);
     const showFallback = (text: string) => {
+        if (disposed) return;
         pending = false;
         options.onPending?.(false);
         window.clearTimeout(timeout);
@@ -114,8 +118,33 @@ export function installEndSession(options: {
         confirm.disabled = false;
         cancel.disabled = false;
     };
+    const navigate = (url: string): void => {
+        if (disposed || navigationPending) return;
+        // An authoritative end may arrive while recording finalization is still
+        // pending. Never carry an old end-confirmation intent past that event.
+        const destination = () => ended ? new URL('/servers/', options.managerOrigin).toString() : url;
+        if (!options.beforeNavigate) { window.location.assign(destination()); return; }
+        navigationPending = true;
+        status.textContent = 'Finishing local recording…';
+        void options.beforeNavigate().then((allowed) => {
+            if (disposed) return;
+            if (allowed) window.location.assign(destination());
+            else {
+                status.textContent = 'Navigation paused. Finish saving your recording before leaving.';
+                // A completed session must still permit returning after a cancelled save warning.
+                if (ended) { fallback.href = destination(); fallback.textContent = 'Return to session manager'; fallback.style.display = 'block'; }
+            }
+        }).catch(() => {
+            if (disposed) return;
+            status.textContent = 'The recording could not be saved. Stay here to review the recording.';
+            if (ended) { fallback.href = destination(); fallback.textContent = 'Return to session manager'; fallback.style.display = 'block'; }
+        }).finally(() => { navigationPending = false; });
+    };
+    fallback.addEventListener('click', (event) => {
+        if (options.beforeNavigate) { event.preventDefault(); navigate(fallback.href); }
+    });
     const markEnded = () => {
-        if (ended) return;
+        if (disposed || ended) return;
         hideHint();
         ended = true;
         pending = false;
@@ -129,17 +158,18 @@ export function installEndSession(options: {
         actions.style.display = 'none';
         button.disabled = true;
         if (!dialog.open) dialog.showModal();
-        window.location.assign(new URL('/servers/', options.managerOrigin).toString());
+        navigate(new URL('/servers/', options.managerOrigin).toString());
     };
     const receive = (event: MessageEvent) => {
         const data = event.data;
-        if (ended || pending || event.origin !== options.managerOrigin || !event.source ||
+        if (disposed || ended || pending || event.origin !== options.managerOrigin || !event.source ||
             data?.type !== 'sw-session-end-channel' || data.version !== 1 ||
             data.region !== context.region || data.instanceId !== context.instanceId ||
             data.sessionRequestId !== context.sessionRequestId || event.ports.length !== 1) return;
         port?.close();
         port = event.ports[0];
         port.onmessage = (reply: MessageEvent) => {
+            if (disposed) return;
             if (reply.data?.type === 'ping') {
                 port?.postMessage({ type: 'pong' });
                 if (dialog.open && !pending && !ended && !uncertain) {
@@ -169,6 +199,7 @@ export function installEndSession(options: {
     };
     window.addEventListener('message', receive);
     button.addEventListener('click', () => {
+        if (disposed) return;
         hideHint();
         document.exitPointerLock?.();
         options.setModalInput(true);
@@ -185,9 +216,9 @@ export function installEndSession(options: {
     });
     cancel.addEventListener('click', () => { if (!pending && !ended) dialog.close(); });
     dialog.addEventListener('cancel', (event) => { if (pending || ended) event.preventDefault(); });
-    dialog.addEventListener('close', () => { if (!ended) options.setModalInput(false); });
+    dialog.addEventListener('close', () => { if (!disposed && !ended) options.setModalInput(false); });
     confirm.addEventListener('click', async () => {
-        if (pending || ended) return;
+        if (disposed || pending || ended) return;
         if (options.endDirect && !useManagerConfirmation) {
             pending = true;
             uncertain = true;
@@ -198,7 +229,7 @@ export function installEndSession(options: {
             options.onPending?.(true);
             let accepted = false;
             try { accepted = await options.endDirect(); } catch { /* Retain the player on any uncertainty. */ }
-            if (ended) return;
+            if (disposed || ended) return;
             if (accepted) markEnded();
             else showFallback('The session end could not be confirmed. Check the session manager.');
             return;
@@ -206,7 +237,7 @@ export function installEndSession(options: {
         if (useManagerConfirmation || !port) {
             // Navigation is only an intent. The authenticated manager confirms and
             // validates the exact session before any stop request is sent.
-            window.location.assign(buildEndSessionUrl(options.managerOrigin, context));
+            navigate(buildEndSessionUrl(options.managerOrigin, context));
             return;
         }
         pending = true;
@@ -224,6 +255,8 @@ export function installEndSession(options: {
         markEnded,
         showInitialHint,
         dispose: () => {
+            if (disposed) return;
+            disposed = true;
             hideHint();
             window.removeEventListener('message', receive);
             window.clearTimeout(timeout);
