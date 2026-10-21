@@ -6,6 +6,7 @@ This directory mixes upstream Pixel Streaming reference documentation with Scale
 
 [End session control and manager integration](session-end-control.md) documents the owner-only toolbar action.
 [Browser local recording](browser-local-recording.md) documents local AV1/VP9/H264 recording across service tiers.
+[Recording usage analytics](recording-analytics.md) defines the optional metadata reports and remaining API/Manager implementation.
 
 ## ScaleWorld Operational Docs
 

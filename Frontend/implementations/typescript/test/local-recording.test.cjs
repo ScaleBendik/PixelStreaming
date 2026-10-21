@@ -79,6 +79,116 @@ function fixture(t, overrides = {}) {
     };
 }
 
+test('analytics starts on actual data and reports saved only after close; capture duration excludes disk finalization', async t => {
+    const reports = [], closing = deferred();
+    let elapsed = 100;
+    const f = fixture(t, { elapsedNow: () => elapsed, createObserver: () => event => reports.push(event) });
+    await f.controller.chooseLocation();
+    assert.equal(reports.length, 0);
+    await f.controller.start();
+    assert.equal(reports.length, 0);
+    elapsed = 1100;
+    f.recorder.chunk('first');
+    f.recorder.chunk('');
+    await tick();
+    assert.deepEqual(reports.map(r => r.eventType), ['recording_started']);
+    f.recorder.finalChunk = 'last';
+    f.writer.close = () => closing.promise;
+    elapsed = 2100;
+    const stopped = f.controller.stop();
+    await tick();
+    assert.equal(reports.length, 1);
+    elapsed = 60_000;
+    closing.resolve();
+    assert.equal(await stopped, true);
+    assert.deepEqual(reports[1], {
+        eventType: 'recording_saved', occurredAtUtc: new Date(1000).toISOString(),
+        codec: 'AV1', container: 'webm', bytesWritten: 9, durationMs: 2000
+    });
+    await f.controller.stop();
+    assert.equal(reports.length, 2);
+});
+
+test('disconnect with only a final chunk reports both start and successful save', async t => {
+    const reports = [];
+    const f = fixture(t, { createObserver: () => event => reports.push(event) });
+    await f.start();
+    f.recorder.finalChunk = 'final';
+    f.source = null;
+    f.controller.sourceChanged();
+    assert.equal(await f.controller.stop(), true);
+    assert.deepEqual(reports.map(r => r.eventType), ['recording_started', 'recording_saved']);
+    assert.equal(reports[1].bytesWritten, 5);
+});
+
+test('analytics never claims a saved clip after file open, write, close, format or empty-data failures', async t => {
+    for (const kind of ['open', 'write', 'close', 'format', 'empty']) {
+        const reports = [];
+        const f = fixture(t, { createObserver: () => event => reports.push(event) });
+        if (kind === 'open') f.file.createWritable = async () => { throw Error('private path'); };
+        if (kind === 'write') f.writer.write = async () => { throw Error('private path'); };
+        if (kind === 'close') f.writer.close = async () => { throw Error('private path'); };
+        await f.start();
+        if (kind === 'format') f.recorder.mimeType = 'video/webm;codecs=vp8';
+        if (kind !== 'empty' && kind !== 'open') f.recorder.chunk('video');
+        await tick();
+        assert.equal(await f.controller.stop(), false, kind);
+        assert.equal(reports.some(r => r.eventType === 'recording_saved'), false, kind);
+        assert.equal(reports.filter(r => r.eventType === 'recording_failed').length, 1, kind);
+        assert.equal(reports.at(-1).failureCode, {
+            open: 'file_open_failed', write: 'write_failed', close: 'file_close_failed',
+            format: 'format_mismatch', empty: 'empty_recording'
+        }[kind]);
+        assert.equal(JSON.stringify(reports).includes('private'), false);
+    }
+});
+
+test('throwing factories, synchronous observers and rejected/hung observers cannot break or delay a saved file', async t => {
+    for (const createObserver of [() => { throw Error('factory'); }, () => () => { throw Error('observer'); },
+        () => async () => { throw Error('async'); }, () => () => new Promise(() => {})]) {
+        const f = fixture(t, { createObserver });
+        await f.start();
+        f.recorder.chunk('video');
+        assert.equal(await f.controller.stop(), true);
+        assert.equal(f.controller.snapshot.phase, 'saved');
+    }
+    await tick();
+});
+
+test('opening cancelled before capture and cancelled picker do not report recording usage', async t => {
+    const reports = [], opening = deferred();
+    const f = fixture(t, { createObserver: () => event => reports.push(event) });
+    f.file.createWritable = () => opening.promise;
+    const starting = f.start();
+    await tick();
+    const stopping = f.controller.stop();
+    opening.resolve(f.writer);
+    await starting;
+    await stopping;
+    assert.deepEqual(reports, []);
+    f.options.pickFile = async () => { throw { name: 'AbortError' }; };
+    await f.controller.chooseLocation();
+    await f.controller.start();
+    assert.deepEqual(reports, []);
+});
+
+test('each clip gets its own observer before asynchronous file access, across codecs', async t => {
+    const runs = [];
+    const f = fixture(t, { createObserver: () => { const events = []; runs.push(events); return event => events.push(event); } });
+    for (const [codec, mime, container] of [['VP9', 'video/webm;codecs=vp9', 'webm'], ['H264', 'video/x-matroska;codecs=avc1', 'matroska']]) {
+        f.source = { ...f.source, codec };
+        f.recorder.mimeType = mime;
+        await f.start();
+        f.recorder.chunk('data');
+        await f.controller.stop();
+        assert.equal(runs.at(-1)[1].codec, codec);
+        assert.equal(runs.at(-1)[1].container, container);
+    }
+    assert.deepEqual(runs.map(r => r.map(e => e.eventType)), [
+        ['recording_started', 'recording_saved'], ['recording_started', 'recording_saved']
+    ]);
+});
+
 test('records original remote tracks, leaves MIME unspecified, and closes only after the final chunk', async t => {
     const f = fixture(t);
     await f.start();

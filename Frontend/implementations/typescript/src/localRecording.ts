@@ -28,6 +28,24 @@ export interface RecordingFormat {
     description: string;
 }
 
+export type RecordingFailureCode = 'file_open_failed' | 'recorder_start_failed' | 'recorder_failed' |
+    'start_timeout' | 'format_mismatch' | 'write_backpressure' | 'write_failed' | 'stop_timeout' |
+    'stop_failed' | 'write_timeout' | 'empty_recording' | 'file_close_failed';
+
+/** Optional metadata only. Never exposes the filename, path, media or error text. */
+export interface RecordingLifecycleEvent {
+    eventType: 'recording_started' | 'recording_saved' | 'recording_failed';
+    occurredAtUtc: string;
+    codec: RecordingFormat['codec'];
+    container: 'webm' | 'matroska';
+    bytesWritten: number;
+    durationMs: number;
+    failureCode?: RecordingFailureCode;
+}
+
+// A separate observer for each attempt freezes its identity before asynchronous file I/O.
+export type RecordingObserverFactory = () => ((event: RecordingLifecycleEvent) => void | Promise<void>) | undefined;
+
 export function getRecordingFormat(codec: string): RecordingFormat | null {
     const name = codec.trim().replace(/^video\//i, '').split(/[.;]/)[0].toLowerCase();
     if (name === 'av1' || name === 'av01') {
@@ -69,6 +87,8 @@ interface RecordingOptions {
     createStream?: (tracks: MediaStreamTrack[]) => MediaStream;
     createRecorder?: (stream: MediaStream) => MediaRecorder;
     now?: () => number;
+    elapsedNow?: () => number;
+    createObserver?: RecordingObserverFactory;
     maxPendingBytes?: number;
     startTimeoutMs?: number;
     ioTimeoutMs?: number;
@@ -84,6 +104,11 @@ interface RecordingRun {
     stopRequested: boolean;
     finishing: boolean;
     failure: string | null;
+    failureCode?: RecordingFailureCode;
+    observer?: ReturnType<RecordingObserverFactory>;
+    captureStartedAt: number | null;
+    captureStoppedAt: number | null;
+    bytesWritten: number;
     receivedData: boolean;
     pendingBytes: number;
     writes: Promise<void>;
@@ -148,9 +173,11 @@ export class LocalRecordingController {
     private choice = 0;
     private disposed = false;
     private readonly now: () => number;
+    private readonly elapsedNow: () => number;
 
     constructor(private readonly options: RecordingOptions) {
         this.now = options.now || Date.now;
+        this.elapsedNow = options.elapsedNow || (() => performance.now());
         if (options.onState) this.listeners.add(options.onState);
     }
 
@@ -228,9 +255,11 @@ export class LocalRecordingController {
         const run: RecordingRun = {
             source: { ...source }, format, writer: null, recorder: null, recorderStarted: false,
             opening: true, stopRequested: false, finishing: false, failure: null,
+            captureStartedAt: null, captureStoppedAt: null, bytesWritten: 0,
             receivedData: false, pendingBytes: 0, writes: Promise.resolve(), completion, complete,
             trackEnded: () => { void this.stop('The media track ended. Finishing the recording.'); }
         };
+        try { run.observer = this.options.createObserver?.(); } catch { /* Reporting is optional. */ }
         this.run = run;
         source.videoTrack.addEventListener('ended', run.trackEnded);
         source.audioTrack?.addEventListener('ended', run.trackEnded);
@@ -244,6 +273,7 @@ export class LocalRecordingController {
             // that late writer open or let it attach to a subsequent recording.
             if (opening) void opening.then(writer => writer.abort()).catch((): void => {});
             run.failure = 'Could not open the recording file. Choose a location and try again.';
+            run.failureCode = 'file_open_failed';
         }
         run.opening = false;
         if (!sameSource(run.source, this.options.getSource())) run.stopRequested = true;
@@ -258,37 +288,42 @@ export class LocalRecordingController {
             run.recorder = recorder;
             recorder.ondataavailable = event => this.receive(run, event.data);
             recorder.onstop = () => { void this.finish(run); };
-            recorder.onerror = () => this.fail(run, 'The browser could not record this stream. The recording was not saved.');
-            run.startTimer = setTimeout(() => this.fail(run, 'No recording data arrived. Try again once the stream is playing.'), this.options.startTimeoutMs ?? 15_000);
+            recorder.onerror = () => this.fail(run, 'The browser could not record this stream. The recording was not saved.', 'recorder_failed');
+            run.startTimer = setTimeout(() => this.fail(run, 'No recording data arrived. Try again once the stream is playing.', 'start_timeout'), this.options.startTimeoutMs ?? 15_000);
+            run.captureStartedAt = this.elapsedNow();
             recorder.start(1_000);
             run.recorderStarted = true;
         } catch {
-            this.fail(run, 'The browser could not start recording this stream.');
+            this.fail(run, 'The browser could not start recording this stream.', 'recorder_start_failed');
         }
     }
 
     private receive(run: RecordingRun, data: Blob): void {
         if (run !== this.run || run.finishing || run.failure || !data.size) return;
         if (!matchesFormat(run.recorder?.mimeType || data.type, run.format)) {
-            this.fail(run, `The browser did not produce ${run.format.codec} ${run.format.description}. The recording was not saved.`);
+            this.fail(run, `The browser did not produce ${run.format.codec} ${run.format.description}. The recording was not saved.`, 'format_mismatch');
             return;
         }
         if (run.pendingBytes + data.size > (this.options.maxPendingBytes ?? 64 * 1024 * 1024)) {
-            this.fail(run, 'The disk could not keep up with the recording. The recording was not saved.');
+            this.fail(run, 'The disk could not keep up with the recording. The recording was not saved.', 'write_backpressure');
             return;
         }
         if (!run.receivedData) {
             run.receivedData = true;
             clearTimeout(run.startTimer);
+            this.notify(run, 'recording_started');
             this.update({ startedAt: this.now(), ...(run.stopRequested ? {} : { phase: 'recording' as const, message: 'Recording to your device.' }) });
         }
         run.pendingBytes += data.size;
         run.writes = run.writes.then(async () => {
             if (run.failure || run !== this.run) return;
             await this.withTimeout(run.writer!.write(data), 'Writing recording data timed out.');
-            if (run === this.run) this.update({ bytesWritten: this.state.bytesWritten + data.size });
+            if (run === this.run) {
+                run.bytesWritten += data.size;
+                this.update({ bytesWritten: run.bytesWritten });
+            }
         }).catch(() => {
-            this.fail(run, 'Could not write the recording file. Check free space and file access. The recording was not saved.');
+            this.fail(run, 'Could not write the recording file. Check free space and file access. The recording was not saved.', 'write_failed');
         }).finally(() => { run.pendingBytes -= data.size; });
     }
 
@@ -308,12 +343,14 @@ export class LocalRecordingController {
     private requestStop(run: RecordingRun, reason: string): void {
         if (run.stopRequested || run.finishing) return;
         run.stopRequested = true;
+        run.captureStoppedAt = this.elapsedNow();
         clearTimeout(run.startTimer);
         this.update({ phase: 'saving', message: reason });
         if (run.opening) return;
         if (!run.recorderStarted) { void this.finish(run); return; }
         run.stopTimer = setTimeout(() => {
             run.failure ||= 'The browser did not finish the recording in time. The recording was not saved.';
+            run.failureCode ||= 'stop_timeout';
             void this.finish(run);
         }, this.options.ioTimeoutMs ?? 15_000);
         try {
@@ -321,19 +358,22 @@ export class LocalRecordingController {
             // If already inactive, wait for its queued final data and stop event.
         } catch {
             run.failure ||= 'The browser could not finish the recording. The recording was not saved.';
+            run.failureCode ||= 'stop_failed';
             void this.finish(run);
         }
     }
 
-    private fail(run: RecordingRun, message: string): void {
+    private fail(run: RecordingRun, message: string, code: RecordingFailureCode): void {
         if (run !== this.run) return;
         run.failure ||= message;
+        run.failureCode ||= code;
         this.requestStop(run, 'Finishing recording cleanup…');
     }
 
     private async finish(run: RecordingRun): Promise<void> {
         if (run.finishing || run.opening) return;
         run.finishing = true;
+        run.captureStoppedAt ??= this.elapsedNow();
         clearTimeout(run.startTimer);
         clearTimeout(run.stopTimer);
         this.update({ phase: 'saving', message: 'Saving the recording…' });
@@ -341,9 +381,11 @@ export class LocalRecordingController {
             await this.withTimeout(run.writes, 'Finishing pending recording writes timed out.');
         } catch {
             run.failure ||= 'Could not finish writing the recording in time. The file was not saved.';
+            run.failureCode ||= 'write_timeout';
         }
         if (!run.failure && run.recorderStarted && !run.receivedData) {
             run.failure = 'No video was captured. The recording was not saved.';
+            run.failureCode = 'empty_recording';
         }
         if (run.writer) {
             try {
@@ -351,6 +393,7 @@ export class LocalRecordingController {
                 else await this.withTimeout(run.writer.close(), 'Saving the recording timed out.');
             } catch {
                 run.failure ||= 'Could not finish saving the recording. The file may be incomplete.';
+                run.failureCode ||= 'file_close_failed';
                 // A failed close is never a saved file. Abort is best effort and
                 // bounded; a stalled drive must not hang session navigation.
                 try { await this.withTimeout(run.writer.abort(), 'Recording cleanup timed out.'); } catch { /* Already reported. */ }
@@ -363,11 +406,28 @@ export class LocalRecordingController {
             run.recorder.onstop = null;
             run.recorder.onerror = null;
         }
+        if (run.failure) this.notify(run, 'recording_failed');
+        else if (run.receivedData) this.notify(run, 'recording_saved');
         this.run = null;
         if (run.failure) this.update({ phase: 'error', message: run.failure });
         else if (run.receivedData) this.update({ phase: 'saved', message: 'Saved to your chosen location.' });
         else this.update({ phase: 'idle', message: 'Recording cancelled. Choose a new location to record.' });
         run.complete(!run.failure);
+    }
+
+    private notify(run: RecordingRun, eventType: RecordingLifecycleEvent['eventType']): void {
+        // Never await analytics: neither network failures nor observer bugs may delay a save.
+        try {
+            const result = run.observer?.({
+                eventType, occurredAtUtc: new Date(this.now()).toISOString(), codec: run.format.codec,
+                container: run.format.extension === '.webm' ? 'webm' : 'matroska',
+                bytesWritten: run.bytesWritten,
+                durationMs: run.captureStartedAt === null ? 0 : Math.max(0, Math.round(
+                    (run.captureStoppedAt ?? this.elapsedNow()) - run.captureStartedAt)),
+                ...(eventType === 'recording_failed' ? { failureCode: run.failureCode } : {})
+            });
+            if (result) void Promise.resolve(result).catch(() => { /* Isolate asynchronous observers too. */ });
+        } catch { /* Local recording remains independent of telemetry. */ }
     }
 
     sourceChanged(): void {

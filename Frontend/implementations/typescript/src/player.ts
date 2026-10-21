@@ -19,6 +19,7 @@ import { installRuntimeRecovery } from './runtimeRecovery';
 import { installEndSession, isManagedEndContext } from './endSession';
 import { requestSessionEnd } from './sessionEndRequest';
 import { installPlayerRecording } from './playerRecording';
+import { installRecordingTelemetry } from './recordingTelemetry';
 const PixelStreamingApplicationStyles =
     new PixelStreamingApplicationStyle();
 PixelStreamingApplicationStyles.applyStyleSheet();
@@ -682,7 +683,16 @@ document.body.onload = function() {
     const storedPlayerQuery =
         readSessionStorage(playerQueryStateStorageKey)?.trim() ?? '';
 
-    if (incomingEndCapability || hasConnectTicketQueryParam || hasReconnectQueryParams || hasReconnectHashParams) {
+    const hasRecordingCapability = pageHashParams.has('sw_recording');
+    let recordingTelemetry: ReturnType<typeof installRecordingTelemetry> | undefined;
+    try {
+        recordingTelemetry = installRecordingTelemetry(pageHashParams,
+            (hasConnectTicketQueryParam ? reconnectContextFromUrl : reconnectContext)?.sessionRequestId,
+            hasConnectTicketQueryParam);
+    } catch { /* Analytics must never interfere with player startup or local recording. */ }
+    pageHashParams.delete('sw_recording');
+
+    if (hasRecordingCapability || incomingEndCapability || hasConnectTicketQueryParam || hasReconnectQueryParams || hasReconnectHashParams) {
         pageUrl.searchParams.delete(CONNECT_TICKET_PARAM);
         deleteReconnectContextParams(pageUrl.searchParams);
         deleteReconnectContextParams(pageHashParams);
@@ -1158,6 +1168,7 @@ document.body.onload = function() {
             const settingsSection = application.configUI.buildSectionWithHeading(
                 settingsContent, 'Recording', settingsContent.children.item(1));
             recordingControl = installPlayerRecording({ stream,
+                createObserver: recordingTelemetry?.createObserver,
                 settingsSection, statusAnchor: application.controls?.settingsIcon?.rootElement,
                 modalParent: stream.videoElementParent,
                 closeSettings: () => application.settingsPanel.hide(),

@@ -19,6 +19,12 @@ defines Get/Set/State messages, initialization and failure behavior. Missing or
 failed Unreal support disables only that checkbox. The setting affects camera
 movement throughout the session; Record and Stop do not change it automatically.
 
+Optional [recording usage analytics](recording-analytics.md) reports capture start,
+successful file close, or failure using metadata only. The player/relay are implemented;
+API token issuance/persistence and Manager analytics display remain follow-ups.
+Without a recording-only capability no reports are sent. Analytics failures never
+block local saving, streaming or navigation; media and local paths are not uploaded.
+
 ## Scope and formats
 
 Recording is available across Standard and Premium sessions. It follows the

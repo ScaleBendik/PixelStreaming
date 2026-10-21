@@ -26,6 +26,9 @@ const ts = require('typescript');
 const controllerJavascript = ts.transpileModule(await readFile(path.join(repository, 'Frontend/implementations/typescript/src/localRecording.ts'), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 }
 }).outputText;
+const telemetryJavascript = ts.transpileModule(await readFile(path.join(repository, 'Frontend/implementations/typescript/src/recordingTelemetry.ts'), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 }
+}).outputText;
 const modulePath = process.env.PLAYWRIGHT_MODULE_PATH;
 let playwright;
 try { playwright = require(modulePath || 'playwright'); }
@@ -125,10 +128,23 @@ function demuxWebM(bytes, requestedCodec) {
     return { trackInfo, frames, audioBlocks };
 }
 
+const reported = [];
 const server = createServer((request, response) => {
-    if (request.url === '/localRecording.js') {
+    if (request.url === '/localRecording.js' || request.url === '/recordingTelemetry.js') {
         response.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-store' });
-        response.end(controllerJavascript);
+        response.end(request.url === '/localRecording.js' ? controllerJavascript : telemetryJavascript);
+        return;
+    }
+    if (request.url === '/api/recording-events' && request.method === 'POST') {
+        let body = '';
+        request.on('data', chunk => { body += chunk; });
+        request.on('end', () => {
+            const event = JSON.parse(body);
+            reported.push(event);
+            response.writeHead(200, { 'Content-Type': 'application/json' });
+            response.end(JSON.stringify({ accepted: true, sessionRequestId: request.headers['x-sw-session-request'],
+                recordingId: event.recordingId, eventType: event.eventType }));
+        });
         return;
     }
     response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
@@ -160,6 +176,7 @@ try {
                 const caseName = `${name}-${requestedCodec}${mutedAudio ? '-muted' : ''}`;
                 const result = await page.evaluate(async ({ requestedCodec, mutedAudio }) => {
                     const { LocalRecordingController } = await import('/localRecording.js');
+                    const { RecordingTelemetry } = await import('/recordingTelemetry.js');
                     const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
                     const deadline = (promise, label) => Promise.race([promise, wait(20000).then(() => { throw new Error(`Timed out: ${label}`); })]);
                     if (!globalThis.RTCRtpScriptTransform) throw new Error('RTCRtpScriptTransform unavailable');
@@ -250,7 +267,14 @@ try {
                         let recordingBytes = 0;
                         const states = [];
                         const recorderEvents = [];
+                        const telemetry = new RecordingTelemetry({
+                            context: { sessionRequestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', capability: 'local-test-only' },
+                            storage: sessionStorage, storageKey: 'recording-proof-outbox'
+                        });
+                        const lifecycleEvents = [];
+                        const observe = telemetry.createObserver();
                         const controller = new LocalRecordingController({
+                            createObserver: () => event => { lifecycleEvents.push(event); observe(event); },
                             getSource: () => ({ connection: receiver, videoTrack, audioTrack, codec, eligible: true }),
                             onState: state => states.push(state.phase),
                             createRecorder: stream => {
@@ -277,6 +301,10 @@ try {
                         if (controller.snapshot.phase !== 'saved') throw new Error(JSON.stringify(controller.snapshot));
                         const recorded = await fileHandle.getFile();
                         if (recorded.size !== recordingBytes) throw new Error('Disk size differs from written chunks');
+                        await deadline((async () => {
+                            while (sessionStorage.getItem('recording-proof-outbox')) await wait(20);
+                        })(), 'recording telemetry acknowledgement');
+                        telemetry.dispose();
                         const playback = document.createElement('video');
                         playback.muted = true;
                         playback.src = URL.createObjectURL(recorded);
@@ -313,7 +341,7 @@ try {
                         const freshSeek = await Promise.race([freshSeeked, wait(3000).then(() => ({ error: 'Seek did not complete within 3 seconds' }))]);
                         return {
                             userAgent: navigator.userAgent, codec, mimeType: recorderEvents[0]?.mime, chunks, recordingBytes, decodedFrames: playbackFrameCount, states,
-                            durationAtMetadata, seekableAtMetadata, durationAfterPlayback, seekPosition, freshSeek,
+                            durationAtMetadata, seekableAtMetadata, durationAfterPlayback, seekPosition, freshSeek, lifecycleEvents,
                             incomingFrames: received,
                             webm: Array.from(new Uint8Array(await recorded.arrayBuffer())),
                             inputTrackRemainedLive: videoTrack.readyState === 'live' && audioTrack.readyState === 'live'
@@ -340,6 +368,15 @@ try {
                 assert.equal(result.inputTrackRemainedLive, true, 'Stopping recorder must not stop stream');
                 assert.equal(result.seekPosition, 1.25, 'Saved recording must seek after playback');
                 assert.equal(result.freshSeek.currentTime, 1.25, 'Saved recording must seek on first open');
+                assert.deepEqual(result.lifecycleEvents.map(e => e.eventType), ['recording_started', 'recording_saved']);
+                const saved = result.lifecycleEvents[1];
+                assert.equal(saved.bytesWritten, bytes.length, 'Analytics bytes must equal the finalized file');
+                assert.equal(saved.codec, requestedCodec);
+                assert.ok(saved.durationMs >= 3900 && saved.durationMs < 15_000, 'Capture duration excludes file playback');
+                const delivered = reported.splice(0);
+                assert.deepEqual(delivered.map(e => e.eventType), ['recording_started', 'recording_saved']);
+                assert.equal(delivered[0].recordingId, delivered[1].recordingId);
+                assert.deepEqual(delivered[1], { ...saved, schemaVersion: 1, recordingId: delivered[0].recordingId });
                 const summary = {
                     browser: name, requestedCodec, mutedAudio, version: browser.version(), executablePath,
                     receivedCodec: result.codec, recordedMimeType: result.mimeType,
@@ -351,6 +388,7 @@ try {
                     fileBytes: bytes.length, inputTrackRemainedLive: result.inputTrackRemainedLive,
                     videoSha256: hash(bytes), packetHashes,
                     controllerStates: result.states,
+                    recordingAnalytics: result.lifecycleEvents,
                     limitations: 'Synthetic local video/Opus sender with separate original audio track; production controller; OPFS disk writer instead of native picker; no Unreal/server acceptance or perceptual A/V sync measurement.'
                 };
                 await writeFile(path.join(outputDirectory, `${caseName}.${requestedCodec === 'H264' ? 'mkv' : 'webm'}`), bytes);

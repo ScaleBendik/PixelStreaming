@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 import express from 'express';
 import { createSessionEndProxy } from './session-end-proxy';
+import { createRecordingEventsRouter } from './recording-events-proxy';
 import fs from 'fs';
 import path from 'path';
 import {
@@ -1012,6 +1013,12 @@ const sessionEndProxy = createSessionEndProxy(
 );
 app.get('/api/session-end', sessionEndProxy);
 app.post('/api/session-end', sessionEndProxy);
+app.use(
+    '/api/recording-events',
+    createRecordingEventsRouter(
+        String(options.instance_agent_api_base_url || process.env.INSTANCE_AGENT_API_BASE_URL || '')
+    )
+);
 
 app.post('/api/session-network-path', express.json({ limit: '8kb' }), async (request, response) => {
     const body = request.body as

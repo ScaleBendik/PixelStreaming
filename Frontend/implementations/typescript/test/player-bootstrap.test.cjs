@@ -7,7 +7,7 @@ const source = ts.transpileModule(fs.readFileSync(require.resolve('../src/player
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
 }).outputText;
 
-function boot({ missingControls = false, installationFails = false, navigationFails = false, recordingFails = false, autoConnect = true, capability, storedCapability, freshTicket = true, beforeLeave = async () => true } = {}) {
+function boot({ missingControls = false, installationFails = false, navigationFails = false, recordingFails = false, telemetryFails = false, recordingCapability, autoConnect = true, capability, storedCapability, freshTicket = true, beforeLeave = async () => true } = {}) {
     const state = { connections: 0, installed: 0, warnings: [], navigations: [], closes: 0, endedMarks: 0, events: new Map() };
     state.emit = (name, data) => { for (const listener of state.events.get(name) || []) listener({ data }); };
     const ids = new Proxy({}, { get: (_, key) => key });
@@ -74,6 +74,13 @@ function boot({ missingControls = false, installationFails = false, navigationFa
             state.recordingOptions = options;
             return { beforeLeave, dispose() {} };
         } },
+        './recordingTelemetry': { installRecordingTelemetry(hash, requestId, fresh) {
+            state.telemetry = { capability: hash.get('sw_recording'), requestId, fresh };
+            if (telemetryFails) throw Error('Optional analytics unavailable');
+            hash.delete('sw_recording');
+            state.observerFactory = () => undefined;
+            return { createObserver: state.observerFactory };
+        } },
         './sessionEndRequest': { requestSessionEnd: async (token, requestId) => { state.directRequest = { token, requestId }; return true; } },
         './endSession': {
             isManagedEndContext: () => true,
@@ -91,7 +98,7 @@ function boot({ missingControls = false, installationFails = false, navigationFa
     state.storage = storage;
     const document = { body: { appendChild() {} } };
     const window = {
-        location: new URL('https://stream.test/' + (freshTicket ? '?ct=test' : '') + '#sm_region=eu-north-1&sm_instance_id=i-test&sm_session_request_id=request-test&sm_session_manager_env=dev' + (capability ? '&sw_end=' + capability : '')),
+        location: new URL('https://stream.test/' + (freshTicket ? '?ct=test' : '') + '#sm_region=eu-north-1&sm_instance_id=i-test&sm_session_request_id=request-test&sm_session_manager_env=dev' + (capability ? '&sw_end=' + capability : '') + (recordingCapability ? '&sw_recording=' + recordingCapability : '')),
         history: { replaceState(_a, _b, url) { state.scrubbedUrl = url; } }, addEventListener() {},
         setTimeout() { return 1; }, clearTimeout() {}, close() { state.closes++; },
         sessionStorage: { getItem: k => storage.get(k), setItem: (k,v) => storage.set(k,v), removeItem: k => storage.delete(k) }
@@ -111,6 +118,18 @@ test('managed owner bootstrap installs the control and connects', () => {
     assert.equal(state.installed, 1);
     assert.equal(state.connections, 1);
     assert.deepEqual(state.warnings, []);
+});
+
+test('recording analytics is wired separately and its token is scrubbed even when initialization fails', () => {
+    for (const telemetryFails of [false, true]) {
+        const state = boot({ telemetryFails, recordingCapability: 'recording-only' });
+        assert.equal(state.connections, 1);
+        assert.ok(state.recordingOptions);
+        assert.deepEqual(state.telemetry, { capability: 'recording-only', requestId: 'request-test', fresh: true });
+        assert.equal(state.recordingOptions.createObserver, telemetryFails ? undefined : state.observerFactory);
+        assert.equal(state.scrubbedUrl.includes('sw_recording'), false);
+        assert.equal(state.scrubbedUrl.includes('recording-only'), false);
+    }
 });
 for (const options of [{ missingControls: true }, { installationFails: true }]) {
     test('optional End session initialization cannot block streaming: ' + JSON.stringify(options), () => {

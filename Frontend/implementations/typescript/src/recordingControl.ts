@@ -1,4 +1,4 @@
-import { getRecordingFormat, getRecordingSupport, LocalRecordingController, RecordingSnapshot, RecordingSource } from './localRecording';
+import { getRecordingFormat, getRecordingSupport, LocalRecordingController, RecordingSnapshot, RecordingSource, RecordingObserverFactory } from './localRecording';
 
 export type RecordingControlOptions = {
     settingsSection: HTMLElement;
@@ -9,6 +9,7 @@ export type RecordingControlOptions = {
     getSource: () => RecordingSource | null;
     setModalInput: (open: boolean) => void;
     beforeRecord?: () => void | Promise<void>;
+    createObserver?: RecordingObserverFactory;
 };
 
 function elapsedTime(startedAt: number | null): string {
@@ -21,7 +22,7 @@ function fileSize(bytes: number): string {
 }
 
 export function installRecordingControl(options: RecordingControlOptions) {
-    const recorder = new LocalRecordingController({ getSource: options.getSource });
+    const recorder = new LocalRecordingController({ getSource: options.getSource, createObserver: options.createObserver });
     let disposed = false;
     let inputCaptured = false;
     let unloadAttached = false;
