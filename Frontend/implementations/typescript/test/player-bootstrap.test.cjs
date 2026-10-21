@@ -25,7 +25,7 @@ function boot({ missingControls = false, installationFails = false, navigationFa
             PixelStreaming: class {
                 constructor(config) {
                     this.config = config;
-                    this.videoElementParent = {};
+                    this.videoElementParent = { hasAttribute: () => false, focus: () => { state.streamFocused = true; } };
                     this.signallingProtocol = { transport: { addListener() {} } };
                 }
                 setSignallingUrlBuilder() {}
@@ -40,7 +40,18 @@ function boot({ missingControls = false, installationFails = false, navigationFa
         },
         '@epicgames-ps/lib-pixelstreamingfrontend-ui-ue5.8': {
             Application: class {
-                constructor() { this.rootElement = {}; if (!missingControls) this.controls = { rootElement: toolbar }; }
+                constructor() {
+                    this.rootElement = {};
+                    if (!missingControls) {
+                        this.controls = { rootElement: toolbar, settingsIcon: { rootElement: {} } };
+                        this.settingsPanel = { settingsContentElement: {} };
+                        this.configUI = { buildSectionWithHeading: (parent, title) => {
+                            assert.equal(parent, this.settingsPanel.settingsContentElement);
+                            state.recordingCategory = title;
+                            return {};
+                        } };
+                    }
+                }
             },
             PixelStreamingApplicationStyle: class { applyStyleSheet() {} }
         },
@@ -113,6 +124,16 @@ test('recording failure cannot prevent streaming or session controls', () => {
     assert.equal(state.installed, 1);
     assert.equal(state.warnings.length, 1);
     assert.equal(boot({ recordingFails: true, autoConnect: false }).connections, 0);
+});
+
+test('recording uses a Settings category and returns focus to the stream', () => {
+    const state = boot();
+    assert.equal(state.recordingCategory, 'Recording');
+    assert.ok(state.recordingOptions.settingsSection);
+    assert.ok(state.recordingOptions.statusAnchor);
+    assert.equal(state.recordingOptions.controls, undefined);
+    state.recordingOptions.focusStream();
+    assert.equal(state.streamFocused, true);
 });
 
 test('overlapping recording and end-session dialogs restore inputs after the last dialog closes', () => {

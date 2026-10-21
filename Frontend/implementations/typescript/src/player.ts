@@ -1153,11 +1153,22 @@ document.body.onload = function() {
         }
     };
     try {
-        if (application.controls?.rootElement) {
+        if (application.settingsPanel) {
+            const settingsSection = application.configUI.buildSectionWithHeading(
+                application.settingsPanel.settingsContentElement, 'Recording');
             recordingControl = installPlayerRecording({ stream,
-                controls: application.controls.rootElement, modalParent: stream.videoElementParent,
+                settingsSection, statusAnchor: application.controls?.settingsIcon?.rootElement,
+                modalParent: stream.videoElementParent,
+                focusStream: () => {
+                    const target = stream.videoElementParent;
+                    if (!target.hasAttribute('tabindex')) target.tabIndex = -1;
+                    target.focus({ preventScroll: true });
+                },
                 setModalInput: (open) => setModalInput('recording', open) });
-            window.addEventListener('pagehide', () => recordingControl?.dispose(), { once: true });
+            window.addEventListener('pagehide', () => {
+                recordingControl?.dispose();
+                settingsSection.parentElement?.remove();
+            }, { once: true });
         }
     } catch {
         Logger.Warning('Local recording unavailable; continuing player startup.');

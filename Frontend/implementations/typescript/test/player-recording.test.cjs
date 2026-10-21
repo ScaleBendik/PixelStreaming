@@ -28,7 +28,7 @@ function fixture() {
     const video = { ...audio, srcObject: { getAudioTracks: () => [] } };
     stream.webRtcController.streamController = { audioElement: audio };
     stream.webRtcController.videoPlayer = { getVideoElement: () => video };
-    const controller = exports.installPlayerRecording({ stream, config, controls: {}, modalParent: {}, setModalInput() {} });
+    const controller = exports.installPlayerRecording({ stream, settingsSection: {}, modalParent: {}, focusStream() {}, setModalInput() {} });
     const stats = (codec = 'AV1', framesDecoded = 3) => events.get('statsReceived')({ data: { aggregatedStats: {
         inboundVideoStats: { codecId: 'video-codec', framesDecoded, bytesReceived: framesDecoded * 100 },
         codecs: new Map([['video-codec', { mimeType: 'video/' + codec }]])

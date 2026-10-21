@@ -1,9 +1,13 @@
 # Browser local recording
 
-The TypeScript player provides **Record video → Choose location → Record → Stop**.
+The TypeScript player provides **Settings → Recording → Choose location → Record → Stop**.
 The user chooses a local file through the browser's Save picker. Recording writes
 chunks to that file and shows **Saved** only after the writer closes successfully.
 There is no upload, second network download, additional viewer, or Unreal plugin.
+All recording controls, filename, format and progress appear inline in the Recording
+category. A passive status badge beside Settings remains visible when it is closed.
+Pointer actions and successful Record activation return keyboard focus to the stream;
+keyboard users can still tab through the controls. Settings can stay open during recording.
 
 ## Scope and formats
 
@@ -29,7 +33,13 @@ not recorded. Received game audio is included when available. Chromium's audio
 recorder encodes that audio; the video passthrough claim does not apply to audio.
 Record resumes a paused playback element containing the received audio while
 preserving its mute and volume settings. Chromium must pull that audio for
-recording to produce chunks; a failed playback start stays visible in the dialog.
+recording to produce chunks; a failed playback start stays visible in Settings.
+
+MP4 is not offered by this implementation. Explicitly requesting `video/mp4` disables
+Chromium's current unspecified-type passthrough selection. A separate remuxer could
+package the received compressed video into MP4 without re-encoding video; codec/audio
+compatibility and player support would need validation. Renaming the extension is
+not conversion, and MP4 alone would not make AV1 playable in H264-only players.
 
 ## Implementation and invariants
 
@@ -57,10 +67,13 @@ recording to produce chunks; a failed playback start stays visible in the dialog
   closure can lose an unfinished recording.
 - Track loss, peer replacement, disconnection and codec changes finalize the
   current clip. Reconnection never appends a new media generation to that clip.
-- `recordingControl.ts` owns the optional toolbar/dialog, status, elapsed time,
+- `recordingControl.ts` owns the inline Settings controls, status, elapsed time,
   size, unload warning and explicit choice to leave after a failed save. Recording
-  continues while its dialog is closed. Player input suspension uses shared modal
-  leases so overlapping recording/session-end dialogs cannot restore input early.
+  continues while Settings is closed. Inline controls isolate their own events;
+  they do not suspend stream input. Stop also cancels pending audio preparation.
+  Only the failed-save navigation decision opens a separate modal, above any
+  End session modal. Shared input leases prevent early input restoration, and
+  native modal focus restoration preserves the underlying session-end controls.
 - Built-in session-end redirects, player-initiated window closure, ticket-refresh redirects and the
   recovery panel's manager link await finalization. A failed save retains the
   page unless the user explicitly chooses to leave. Pagehide cleanup alone cannot
@@ -72,6 +85,20 @@ Use the repository-pinned Node version in `NODE_VERSION`. Run the TypeScript
 player workspace's `npm test` and production `npm run build` after building the
 Common, frontend library and UI library dependencies. No signalling protocol,
 API, runtime command or Unreal build change is required for this feature.
+
+`test/browser-recording-settings.mjs` in the TypeScript player workspace checks
+the actual settings/category styles and KeyboardController in Chrome and Edge,
+with a fake recorder. Run from the repo root with the same Playwright/browser
+environment variables as the media proof below:
+
+```powershell
+node Frontend/implementations/typescript/test/browser-recording-settings.mjs
+```
+
+It covers pointer and keyboard activation, Unreal key routing after Record/Stop,
+collapsed Settings, failed-save navigation above an End session modal, and desktop,
+narrow-window and light-theme layouts. Screenshots go to ignored
+`.review-tmp/recording-settings/`. This does not exercise the native Save picker.
 
 `Frontend/implementations/typescript/test/browser-av1-recording.mjs` is the
 separate real-browser proof harness. From the repo root, run:

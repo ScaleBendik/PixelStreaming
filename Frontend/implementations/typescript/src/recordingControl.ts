@@ -1,8 +1,10 @@
 import { getRecordingFormat, getRecordingSupport, LocalRecordingController, RecordingSnapshot, RecordingSource } from './localRecording';
 
 export type RecordingControlOptions = {
-    controls: HTMLElement;
+    settingsSection: HTMLElement;
+    statusAnchor?: HTMLElement;
     modalParent: HTMLElement;
+    focusStream: () => void;
     getSource: () => RecordingSource | null;
     setModalInput: (open: boolean) => void;
     beforeRecord?: () => void | Promise<void>;
@@ -21,7 +23,6 @@ export function installRecordingControl(options: RecordingControlOptions) {
     const recorder = new LocalRecordingController({ getSource: options.getSource });
     let disposed = false;
     let inputCaptured = false;
-    let reopeningDialog = false;
     let unloadAttached = false;
     let allowLeave = false;
     let localError = '';
@@ -33,36 +34,35 @@ export function installRecordingControl(options: RecordingControlOptions) {
     let preparing = false;
     let preparation = 0;
 
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.id = 'recordingBtn';
-    button.className = 'UiTool';
-    button.title = 'Record video';
-    button.setAttribute('aria-label', 'Record video');
-    button.setAttribute('aria-haspopup', 'dialog');
-    button.style.cssText = 'position:relative;overflow:visible';
-    button.innerHTML = '<svg viewBox="0 0 32 32" width="100%" height="100%" aria-hidden="true"><rect x="4" y="8" width="17" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M21 13l7-4v14l-7-4z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12.5" cy="16" r="3.5" fill="currentColor"/></svg>';
+    const panel = document.createElement('div');
+    panel.id = 'recordingSettings';
+    panel.style.cssText = 'width:280px;max-width:100%;box-sizing:border-box;padding:4px 8px 12px;font:14px/1.5 system-ui;text-transform:none;overflow-wrap:anywhere';
+    options.settingsSection.appendChild(panel);
     const badge = document.createElement('span');
     badge.id = 'recordingBadge';
     badge.setAttribute('aria-hidden', 'true');
     badge.style.cssText = 'display:none;position:absolute;left:calc(100% + 8px);top:50%;transform:translateY(-50%);width:max-content;pointer-events:none;padding:4px 8px;border-radius:5px;background:#20262e;color:#fff;font:12px/1.4 system-ui;text-transform:none;box-shadow:0 2px 8px #0008';
-    button.appendChild(badge);
-    options.controls.appendChild(button);
+    options.statusAnchor?.appendChild(badge);
 
+    // Normal recording controls live inline. Only a failed save during navigation
+    // needs a modal, so its decision remains reachable above End session's dialog.
     const dialog = document.createElement('dialog');
-    dialog.id = 'recordingDialog';
+    dialog.id = 'recordingLeaveDialog';
     dialog.setAttribute('aria-labelledby', 'stream-recording-title');
     dialog.style.cssText = 'width:min(490px,calc(100vw - 40px));max-height:calc(100vh - 40px);overflow:auto;box-sizing:border-box;padding:26px;border:1px solid #59616b;border-radius:14px;background:#20262e;color:#fff;font:16px/1.5 system-ui;text-transform:none;box-shadow:0 20px 80px #0009';
     const style = document.createElement('style');
-    style.textContent = '#recordingDialog::backdrop{background:#0009}#recordingDialog button{font:inherit;border-radius:7px;padding:9px 14px;cursor:pointer;border:1px solid #8793a0;background:transparent;color:#fff}' +
-        '#recordingDialog button:focus-visible,#recordingBtn:focus-visible{outline:3px solid #8bd0ff;outline-offset:3px}' +
-        '#recordingDialog button:disabled{opacity:.5;cursor:not-allowed}';
+    style.textContent = '#recordingLeaveDialog::backdrop{background:#0009}' +
+        '#recordingSettings button,#recordingLeaveDialog button{font:inherit;position:static;width:auto;height:auto;line-height:1.4;text-align:center;border-radius:7px;padding:8px 12px;cursor:pointer;border:1px solid #8793a0;background:transparent;color:inherit}' +
+        '#recordingSettings button:hover,#recordingLeaveDialog button:hover{background:#59616b;color:#fff;border:1px solid #8793a0;padding:8px 12px}' +
+        '#recordingSettings button:focus-visible,#recordingLeaveDialog button:focus-visible{outline:3px solid #8bd0ff;outline-offset:3px}' +
+        '#recordingSettings button:disabled,#recordingLeaveDialog button:disabled{opacity:.5;cursor:not-allowed}' +
+        '#recordingSettings p{margin:10px 0}';
     const title = document.createElement('h2');
     title.id = 'stream-recording-title';
-    title.textContent = 'Record video';
+    title.textContent = 'Recording not saved';
     title.style.cssText = 'margin:0 0 12px;font-size:23px;color:inherit;text-transform:none';
     const description = document.createElement('p');
-    description.textContent = 'Save this session’s video and available audio to a video file on your device. Choose a location, record, then stop to finish saving.';
+    description.textContent = 'Save this session’s video and available audio to a file on your device.';
     const filename = document.createElement('p');
     filename.id = 'recordingFilename';
     filename.style.cssText = 'overflow-wrap:anywhere;font-weight:600';
@@ -76,10 +76,10 @@ export function installRecordingControl(options: RecordingControlOptions) {
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
     const notice = document.createElement('p');
-    notice.textContent = 'Keep this tab open until Saved appears. Closing the tab or browser before saving can lose the recording.';
-    notice.style.cssText = 'font-size:13px;color:#bbc4ce';
+    notice.textContent = 'Keep this tab open until Saved appears to avoid losing the recording.';
+    notice.style.cssText = 'font-size:12px;opacity:.8';
     const actions = document.createElement('div');
-    actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-end;margin-top:22px';
+    actions.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px';
     const action = (id: string, label: string) => {
         const element = document.createElement('button');
         element.type = 'button';
@@ -88,11 +88,11 @@ export function installRecordingControl(options: RecordingControlOptions) {
         return element;
     };
     const choose = action('recordingChoose', 'Choose location');
+    choose.style.gridColumn = '1 / -1';
     const record = action('recordingStart', 'Record');
-    record.style.cssText = 'background:#b9363e;border-color:#b9363e';
+    record.style.cssText = 'background:#b9363e;border-color:#b9363e;color:#fff';
     const stop = action('recordingStop', 'Stop');
-    const close = action('recordingClose', 'Close');
-    actions.append(choose, record, stop, close);
+    actions.append(choose, record, stop);
     const leaveWarning = document.createElement('div');
     leaveWarning.id = 'recordingLeaveWarning';
     leaveWarning.style.display = 'none';
@@ -105,7 +105,8 @@ export function installRecordingControl(options: RecordingControlOptions) {
     leave.style.cssText = 'background:#b9363e;border-color:#b9363e';
     leaveActions.append(stay, leave);
     leaveWarning.append(leaveMessage, leaveActions);
-    dialog.append(title, description, filename, format, details, status, notice, actions, leaveWarning);
+    panel.append(description, filename, format, details, status, notice, actions);
+    dialog.append(title, leaveWarning);
     options.modalParent.append(style, dialog);
 
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -148,8 +149,7 @@ export function installRecordingControl(options: RecordingControlOptions) {
         const reason = unavailableReason();
         choose.disabled = busy || !!reason || !!resolveLeave;
         record.disabled = preparing || snapshot.phase !== 'ready' || !!reason || !!resolveLeave;
-        stop.disabled = !active || !!resolveLeave;
-        close.disabled = snapshot.phase === 'choosing';
+        stop.disabled = (!preparing && !active) || !!resolveLeave;
         filename.textContent = snapshot.filename || 'No location selected';
         details.textContent = `${frozenElapsed} · ${fileSize(snapshot.bytesWritten)} written`;
         const messages: Record<RecordingSnapshot['phase'], string> = {
@@ -160,14 +160,13 @@ export function installRecordingControl(options: RecordingControlOptions) {
         const stateMessage = localError || (preparing ? 'Preparing recording…' : snapshot.message || messages[snapshot.phase]);
         const showReason = !busy && snapshot.phase !== 'error' && snapshot.phase !== 'saved';
         status.textContent = showReason && reason ? reason : stateMessage;
-        status.style.color = localError || snapshot.phase === 'error' ? '#ffb8b8' : '#d8e0e8';
+        status.style.cssText = localError || snapshot.phase === 'error'
+            ? 'color:#ffb8b8;background:#4a1c22;border-radius:4px;padding:6px' : '';
         const badgeText = preparing ? 'Starting…' : active ? `${snapshot.phase === 'starting' ? 'Starting' : '● REC'} ${frozenElapsed}` :
             snapshot.phase === 'saving' ? 'Saving…' : snapshot.phase === 'saved' ? 'Saved' : snapshot.phase === 'error' ? 'Not saved' : '';
         badge.textContent = badgeText;
         badge.style.display = badgeText ? 'block' : 'none';
         badge.style.color = active || snapshot.phase === 'error' ? '#ffb8b8' : '#fff';
-        button.title = badgeText ? `Recording: ${badgeText}` : 'Record video';
-        button.setAttribute('aria-label', button.title);
         syncUnload();
     };
     const cancelPreparation = () => {
@@ -176,14 +175,8 @@ export function installRecordingControl(options: RecordingControlOptions) {
         preparing = false;
         render();
     };
-    const openDialog = (promote = false) => {
-        if (disposed || (dialog.open && !promote)) return;
-        // An end-session dialog may have opened above this one. Re-enter the
-        // modal top layer so the save-failure decision remains accessible.
-        if (dialog.open) {
-            reopeningDialog = true;
-            dialog.close();
-        }
+    const openDialog = () => {
+        if (disposed || dialog.open) return;
         document.exitPointerLock?.();
         if (!inputCaptured) {
             options.setModalInput(true);
@@ -195,20 +188,16 @@ export function installRecordingControl(options: RecordingControlOptions) {
             options.setModalInput(false);
             throw error;
         }
-        finally { reopeningDialog = false; }
         render();
-        if (resolveLeave) stay.focus();
-        else if (!stop.disabled) stop.focus();
-        else if (!choose.disabled) choose.focus();
-        else close.focus();
+        stay.focus();
     };
     const finishLeave = (approved: boolean) => {
         const resolve = resolveLeave;
         resolveLeave = null;
         leaveWarning.style.display = 'none';
-        actions.style.display = 'flex';
         allowLeave = approved;
         syncUnload();
+        render();
         resolve?.(approved);
     };
     const perform = async (operation: () => Promise<unknown>) => {
@@ -217,57 +206,72 @@ export function installRecordingControl(options: RecordingControlOptions) {
         catch (error) { localError = error instanceof Error ? error.message : 'Recording failed. Please try again.'; }
         render();
     };
-    button.addEventListener('click', (event) => { event.stopPropagation(); openDialog(); });
-    choose.addEventListener('click', () => perform(() => recorder.chooseLocation()));
-    record.addEventListener('click', () => perform(async () => {
-        if (preparing) return;
-        const attempt = ++preparation;
-        preparing = true;
-        render();
-        try {
-            // Invoke immediately within the Record gesture so the adapter can
-            // resume a paused audio sink without changing the user's mute choice.
-            await options.beforeRecord?.();
-            if (disposed || attempt !== preparation) return;
-            preparing = false;
-            await recorder.start();
-            if (recorder.snapshot.phase === 'starting' || recorder.snapshot.phase === 'recording') dialog.close();
-        } catch (error) {
-            if (!disposed && attempt === preparation) throw error;
-        } finally {
-            if (attempt === preparation) preparing = false;
+    // Pointer actions should never strand keyboard focus on a control that
+    // suppresses Unreal's document-level keyboard handlers. Keyboard activation
+    // retains normal tab navigation while choosing a file or stopping a clip.
+    const releasePointerFocus = (event: MouseEvent) => {
+        if (event.detail > 0 && (panel.contains(document.activeElement) || document.activeElement === document.body)) {
+            options.focusStream();
         }
-    }));
-    stop.addEventListener('click', () => perform(() => recorder.stop()));
-    close.addEventListener('click', () => { if (!close.disabled) { cancelPreparation(); dialog.close(); } });
+    };
+    choose.addEventListener('click', (event) => {
+        const pending = perform(() => recorder.chooseLocation());
+        releasePointerFocus(event);
+        return pending;
+    });
+    record.addEventListener('click', (event) => {
+        const pending = perform(async () => {
+            if (preparing) return;
+            const attempt = ++preparation;
+            preparing = true;
+            render();
+            try {
+                // Invoke immediately within the Record gesture so the adapter can
+                // resume a paused audio sink without changing the user's mute choice.
+                await options.beforeRecord?.();
+                if (disposed || attempt !== preparation) return;
+                preparing = false;
+                await recorder.start();
+                if (!disposed && attempt === preparation &&
+                    (recorder.snapshot.phase === 'starting' || recorder.snapshot.phase === 'recording') &&
+                    (panel.contains(document.activeElement) || document.activeElement === document.body)) {
+                    options.focusStream();
+                }
+            } catch (error) {
+                if (!disposed && attempt === preparation) throw error;
+            } finally {
+                if (attempt === preparation) preparing = false;
+            }
+        });
+        releasePointerFocus(event);
+        return pending;
+    });
+    stop.addEventListener('click', (event) => {
+        const pending = preparing ? (cancelPreparation(), Promise.resolve()) : perform(() => recorder.stop());
+        releasePointerFocus(event);
+        return pending;
+    });
     stay.addEventListener('click', () => { finishLeave(false); dialog.close(); });
     leave.addEventListener('click', () => { finishLeave(true); dialog.close(); });
-    dialog.addEventListener('cancel', (event) => {
-        if (recorder.snapshot.phase === 'choosing') event.preventDefault();
-        else {
-            cancelPreparation();
-            if (resolveLeave) finishLeave(false);
-        }
+    dialog.addEventListener('cancel', () => {
+        if (resolveLeave) finishLeave(false);
     });
     dialog.addEventListener('close', () => {
-        // Native close events are queued; ignore an older close if the dialog
-        // has already reopened, and preserve the input lease while promoting.
-        if (reopeningDialog || dialog.open) return;
-        cancelPreparation();
+        // Native close events are queued; a new request may already be open.
+        if (dialog.open) return;
         if (resolveLeave) finishLeave(false);
         if (inputCaptured) {
             inputCaptured = false;
             options.setModalInput(false);
         }
-        button.focus();
+        // Let the browser restore the previous focus, including an underlying
+        // End session dialog. Never focus a recording toolbar control here.
     });
-    // The input suspension also covers capture-phase Unreal listeners; stop
-    // bubbling so dialog keystrokes and clicks cannot reach player shortcuts.
+    // Inline controls isolate their own events, without disabling stream input.
+    // The exceptional leave dialog also suspends capture-phase Unreal listeners.
     for (const name of ['keydown', 'keyup', 'keypress', 'pointerdown', 'pointerup', 'click', 'wheel']) {
         dialog.addEventListener(name, (event) => event.stopPropagation());
-    }
-    for (const name of ['keydown', 'keyup', 'keypress', 'pointerdown', 'pointerup']) {
-        button.addEventListener(name, (event) => event.stopPropagation());
+        panel.addEventListener(name, (event) => event.stopPropagation());
     }
     const pageHide = () => {
         if (recorder.hasUnsavedData) void recorder.stop('The page was closed.').catch((): void => {});
@@ -293,8 +297,7 @@ export function installRecordingControl(options: RecordingControlOptions) {
                 return new Promise<boolean>((resolve) => {
                     resolveLeave = resolve;
                     leaveWarning.style.display = 'block';
-                    actions.style.display = 'none';
-                    openDialog(true);
+                    openDialog();
                     render();
                     stay.focus();
                 });
@@ -314,7 +317,8 @@ export function installRecordingControl(options: RecordingControlOptions) {
             void recorder.dispose().catch((): void => {});
             dialog.remove();
             style.remove();
-            button.remove();
+            panel.remove();
+            badge.remove();
         }
     };
 }

@@ -1,0 +1,187 @@
+/**
+ * Real Chrome/Edge regression for inline recording controls and Unreal keyboard
+ * routing. Uses production settings, styles and KeyboardController with a fake
+ * recorder; media/file preservation is covered by browser-av1-recording.mjs.
+ * Run with pinned Node from repo root. Set PLAYWRIGHT_MODULE_PATH if necessary;
+ * RECORDING_BROWSER=chrome|edge optionally limits the browsers. No server starts.
+ */
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { mkdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const require = createRequire(import.meta.url);
+const ts = require('typescript');
+const { chromium } = require(process.env.PLAYWRIGHT_MODULE_PATH || 'playwright');
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
+const output = path.join(root, '.review-tmp/recording-settings');
+await mkdir(output, { recursive: true });
+const compile = async file => ts.transpileModule(await readFile(path.join(root, file), 'utf8'), {
+    compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS, esModuleInterop: true }
+}).outputText;
+const files = {
+    control: 'Frontend/implementations/typescript/src/recordingControl.ts',
+    settings: 'Frontend/ui-library/src/UI/SettingsPanel.ts',
+    sections: 'Frontend/ui-library/src/Config/ConfigUI.ts',
+    keyboard: 'Frontend/library/src/Inputs/KeyboardController.ts',
+    keys: 'Frontend/library/src/Inputs/SpecialKeyCodes.ts',
+    codes: 'Frontend/library/src/Inputs/KeyCodes.ts'
+};
+const sources = Object.fromEntries(await Promise.all(Object.entries(files).map(async ([name, file]) => [name, await compile(file)])));
+const styleExports = {};
+new Function('exports', 'require', await compile('Frontend/ui-library/src/Styles/PixelStreamingApplicationStyles.ts'))(styleExports, require);
+const style = new styleExports.PixelStreamingApplicationStyle();
+const css = require('jss').default.createStyleSheet({ '@global': style.defaultStyles }).toString();
+const browsers = {
+    chrome: process.env.CHROME_EXECUTABLE || 'C:/Program Files/Google/Chrome/Application/chrome.exe',
+    edge: process.env.EDGE_EXECUTABLE || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
+};
+assert.ok(!process.env.RECORDING_BROWSER || browsers[process.env.RECORDING_BROWSER], 'Unsupported RECORDING_BROWSER');
+
+for (const [name, executablePath] of Object.entries(browsers)) {
+    if (process.env.RECORDING_BROWSER && process.env.RECORDING_BROWSER !== name) continue;
+    const browser = await chromium.launch({ executablePath, headless: true });
+    try {
+        for (const [layout, viewport, light] of [
+            ['desktop', { width: 1366, height: 900 }, false],
+            ['compact', { width: 480, height: 700 }, false],
+            ['light', { width: 1366, height: 900 }, true]
+        ]) {
+            const page = await browser.newPage({ viewport });
+            const errors = [];
+            page.on('pageerror', error => errors.push(error.message));
+            await page.setContent(`<html><head><style>${css}
+                html,body{height:100%;margin:0;font-family:system-ui}
+                #videoElementParent{background:linear-gradient(140deg,#31505a,#14242f 65%)}
+                </style></head><body><div id="playerUI"><div id="videoElementParent" tabindex="-1"></div>
+                <div id="uiFeatures"><div id="controls"><button id="settingsBtn" aria-label="Settings">⚙</button></div></div>
+                </div></body></html>`);
+            await page.evaluate(({ sources, palette }) => {
+                const load = (code, require = () => ({})) => {
+                    const result = {};
+                    new Function('exports', 'require', code)(result, require);
+                    return result;
+                };
+                for (const [key, value] of Object.entries(palette)) document.documentElement.style.setProperty(key, value);
+                const settings = new (load(sources.settings).SettingsPanel)();
+                document.getElementById('uiFeatures').append(settings.rootElement);
+                const { ConfigUI } = load(sources.sections, () => ({ SettingsSections: {} }));
+                const configUI = Object.create(ConfigUI.prototype);
+                for (const title of ['Pixel Streaming', 'UI', 'Input', 'Encoder', 'WebRTC', 'Commands']) {
+                    configUI.buildSectionWithHeading(settings.settingsContentElement, title);
+                }
+                const settingsSection = configUI.buildSectionWithHeading(settings.settingsContentElement, 'Recording');
+                document.getElementById('settingsBtn').onclick = () => settings.toggleVisibility();
+                settings.settingsCloseButton.onclick = () => settings.hide();
+                window.keysSent = [];
+                const { KeyboardController } = load(sources.keyboard, name => {
+                    if (name === './SpecialKeyCodes') return load(sources.keys);
+                    if (name === './KeyCodes') return load(sources.codes);
+                    return { Flags: { SuppressBrowserKeys: 'suppress' } };
+                });
+                const keyboard = new KeyboardController({ toStreamerHandlers: new Map([
+                    ['KeyDown', values => window.keysSent.push(values[0])]
+                ]) }, { isFlagEnabled: () => true }, { getActiveKeys: () => [] });
+                keyboard.register();
+                class Recorder {
+                    snapshot = { phase: 'idle', filename: '', bytesWritten: 0, startedAt: null, message: '' };
+                    listeners = new Set();
+                    constructor() { window.recorder = this; }
+                    get hasUnsavedData() { return ['starting', 'recording', 'saving'].includes(this.snapshot.phase); }
+                    state(phase, extra = {}) {
+                        this.snapshot = { ...this.snapshot, phase, message: '', ...extra };
+                        this.listeners.forEach(listener => listener());
+                    }
+                    subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+                    async chooseLocation() {
+                        this.state('choosing');
+                        await Promise.resolve();
+                        this.state('ready', { filename: 'ScaleWorld-demo-session-2026-10-21.webm' });
+                    }
+                    async start() { this.state('recording', { startedAt: Date.now() - 43000, bytesWritten: 28 * 1024 * 1024 }); }
+                    async stop() {
+                        if (this.snapshot.phase === 'error') return false;
+                        if (!this.hasUnsavedData) return true;
+                        this.state('saving');
+                        return new Promise(resolve => { this.finish = success => { this.state(success ? 'saved' : 'error'); resolve(success); }; });
+                    }
+                    sourceChanged() {}
+                    async dispose() {}
+                }
+                const { installRecordingControl } = load(sources.control, () => ({
+                    LocalRecordingController: Recorder, getRecordingSupport: () => ({ supported: true, reason: '' }),
+                    getRecordingFormat: () => ({ codec: 'AV1', extension: '.webm' })
+                }));
+                window.ui = installRecordingControl({ settingsSection,
+                    statusAnchor: document.getElementById('settingsBtn'),
+                    modalParent: document.getElementById('videoElementParent'),
+                    focusStream: () => document.getElementById('videoElementParent').focus({ preventScroll: true }),
+                    getSource: () => ({ connection: {}, videoTrack: { readyState: 'live' }, codec: 'AV1', eligible: true }),
+                    setModalInput: open => { if (open) keyboard.unregister(); else keyboard.register(); }
+                });
+                window.settings = settings;
+            }, { sources, palette: light ? style.defaultLightModePalette : style.defaultDarkModePalette });
+
+            const shot = async state => page.screenshot({ path: path.join(output, `${name}-${layout}-${state}.png`) });
+            await page.locator('#settingsBtn').click();
+            await page.getByRole('button', { name: 'Recording', exact: true }).click();
+            await page.locator('#recordingChoose').scrollIntoViewIfNeeded();
+            assert.equal(await page.locator('#recordingBtn').count(), 0);
+            assert.equal(await page.locator('dialog[open]').count(), 0);
+            const dimensions = await page.locator('#recordingSettings').evaluate(node => ({
+                width: node.scrollWidth, client: node.clientWidth, right: node.getBoundingClientRect().right,
+                left: node.getBoundingClientRect().left
+            }));
+            assert.equal(dimensions.width, dimensions.client, 'No horizontal overflow');
+            assert.ok(dimensions.left >= 0 && dimensions.right <= viewport.width, 'Controls inside viewport');
+            await shot('ready');
+            await page.locator('#recordingChoose').click();
+            await page.locator('#recordingStart').click();
+            await page.waitForFunction(() => document.activeElement.id === 'videoElementParent');
+            await page.keyboard.press('w');
+            assert.equal(await page.evaluate(() => window.keysSent.at(-1)), 87, 'W reaches Unreal after Record');
+            await page.locator('#settingsBtn').click();
+            await page.keyboard.press('a');
+            assert.equal(await page.evaluate(() => window.keysSent.at(-1)), 65, 'A reaches Unreal with settings closed');
+            await shot('recording');
+            await page.locator('#settingsBtn').click();
+            await page.locator('#recordingStop').click();
+            await page.keyboard.press('s');
+            assert.equal(await page.evaluate(() => window.keysSent.at(-1)), 83, 'S reaches Unreal after Stop');
+            await shot('saving');
+            await page.evaluate(() => window.recorder.finish(true));
+            assert.equal(await page.locator('#recordingBadge').textContent(), 'Saved');
+
+            // Native keyboard activation must remain accessible and must not
+            // send the control's Enter key to Unreal or leave focus on Record.
+            await page.locator('#recordingChoose').focus();
+            await page.evaluate(() => { window.keysSent = []; });
+            await page.keyboard.press('Enter');
+            await page.keyboard.press('Tab');
+            assert.equal(await page.evaluate(() => document.activeElement.id), 'recordingStart');
+            await page.keyboard.press('Enter');
+            await page.waitForFunction(() => document.activeElement.id === 'videoElementParent');
+            assert.deepEqual(await page.evaluate(() => window.keysSent), []);
+            await page.keyboard.press('d');
+            assert.equal(await page.evaluate(() => window.keysSent.at(-1)), 68);
+
+            await page.evaluate(() => {
+                const ended = document.createElement('dialog');
+                ended.innerHTML = '<button>Return to servers</button>';
+                document.body.append(ended);
+                ended.showModal();
+                window.recorder.state('error', { message: 'Disk full.' });
+                window.ui.beforeLeave().then(value => { window.leaveDecision = value; });
+            });
+            await page.locator('#recordingStay').click();
+            await page.waitForFunction(() => window.leaveDecision === false);
+            assert.equal(await page.locator('#recordingLeaveDialog').evaluate(node => node.open), false);
+            assert.ok(await page.evaluate(() => document.activeElement.closest('dialog') !== null), 'Underlying session dialog regains focus');
+            assert.deepEqual(errors, []);
+            await page.evaluate(() => window.ui.dispose());
+            await page.close();
+            console.log(JSON.stringify({ browser: name, version: browser.version(), layout, keyboardRouting: 'passed', inlineControls: 'passed', failedSave: 'passed' }));
+        }
+    } finally { await browser.close(); }
+}

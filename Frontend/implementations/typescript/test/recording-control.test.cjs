@@ -36,8 +36,9 @@ function fixture(t, config = {}) {
         const el = {
             tag, children: [], style: {}, attributes: {}, listeners: new Map(), open: false, disabled: false,
             setAttribute(k, v) { this.attributes[k] = v; },
-            append(...items) { this.children.push(...items); },
-            appendChild(item) { this.children.push(item); },
+            append(...items) { this.children.push(...items); items.forEach(item => { item.parent = this; }); },
+            appendChild(item) { this.append(item); },
+            contains(node) { return node === this || this.children.some(child => child.contains(node)); },
             addEventListener(name, listener) { this.listeners.set(name, [...(this.listeners.get(name) || []), listener]); },
             fire(name, event = {}) {
                 let result;
@@ -51,9 +52,9 @@ function fixture(t, config = {}) {
                 this.fire('cancel', { preventDefault() { prevented = true; } });
                 if (!prevented) this.close();
             },
-            focus() { this.focused = true; },
+            focus() { this.focused = true; document.activeElement = this; },
             remove() { this.removed = true; },
-            click() { if (!this.disabled) return this.fire('click', { stopPropagation() {} }); }
+            click(detail = 1) { if (!this.disabled) { this.focus(); return this.fire('click', { detail, stopPropagation() {} }); } }
         };
         nodes.push(el);
         return el;
@@ -91,7 +92,8 @@ function fixture(t, config = {}) {
         sourceChanged() { calls.push('sourceChanged'); }
         async dispose() { calls.push('dispose'); }
     }
-    global.document = { createElement: element, exitPointerLock() { pointerReleases++; } };
+    const stream = element('stream'), settings = element('section'), anchor = element('settingsButton');
+    global.document = { activeElement: stream, body: element('body'), createElement: element, exitPointerLock() { pointerReleases++; } };
     global.window = {
         addEventListener(name, listener) { events.set(name, listener); },
         removeEventListener(name) { events.delete(name); },
@@ -99,64 +101,62 @@ function fixture(t, config = {}) {
         clearInterval(id) { timers.delete(id); }
     };
     const install = loadControl(FakeRecorder, support);
-    const control = install({ controls: element('controls'), modalParent: element('parent'),
+    const control = install({ settingsSection: settings, statusAnchor: anchor, modalParent: element('parent'), focusStream: () => stream.focus(),
         getSource: () => source, setModalInput: open => input.push(open), beforeRecord: config.beforeRecord });
     const byId = id => nodes.find(node => node.id === id);
     t.after(() => { control.dispose(); global.window = originalWindow; global.document = originalDocument; });
-    return { control, recorder, nodes, calls, events, input, timers, byId, support, element,
+    return { control, recorder, nodes, calls, events, input, timers, byId, support, element, stream, settings, anchor,
         setSource(value) { source = value; }, get pointerReleases() { return pointerReleases; },
         async begin() {
-            byId('recordingBtn').click();
             await byId('recordingChoose').click();
             await byId('recordingStart').click();
         }
     };
 }
 
-test('choose, record and stop expose saved status without retaining the input modal during recording', async t => {
+test('inline choose, record and stop return pointer focus to the stream without a recording modal', async t => {
     const f = fixture(t);
     assert.equal(f.byId('recordingStart').disabled, true);
-    f.byId('recordingBtn').click();
-    assert.equal(f.byId('recordingDialog').open, true);
-    assert.deepEqual(f.input, [true]);
-    assert.equal(f.pointerReleases, 1);
+    assert.equal(f.settings.contains(f.byId('recordingSettings')), true);
+    assert.equal(f.byId('recordingBtn'), undefined);
+    assert.equal(f.anchor.contains(f.byId('recordingBadge')), true);
+    assert.equal(f.byId('recordingLeaveDialog').open, false);
+    assert.deepEqual(f.input, []);
     await f.byId('recordingChoose').click();
     assert.equal(f.byId('recordingFilename').textContent, '<clip>.webm');
     assert.equal(f.byId('recordingFilename').innerHTML, undefined);
     assert.equal(f.byId('recordingStart').disabled, false);
     await f.byId('recordingStart').click();
-    assert.equal(f.byId('recordingDialog').open, false);
-    assert.deepEqual(f.input, [true, false]);
+    assert.equal(f.byId('recordingLeaveDialog').open, false);
+    assert.deepEqual(f.input, []);
+    assert.equal(document.activeElement, f.stream);
     assert.match(f.byId('recordingBadge').textContent, /REC 00:00/);
     assert.equal(f.byId('recordingBadge').style.display, 'block');
     assert.match(f.byId('recordingDetails').textContent, /4 KB written/);
-    f.byId('recordingBtn').click();
     assert.equal(f.byId('recordingChoose').disabled, true);
     assert.equal(f.byId('recordingStop').disabled, false);
     await f.byId('recordingStop').click();
     assert.equal(f.byId('recordingBadge').textContent, 'Saved');
     assert.equal(f.byId('recordingStart').disabled, true, 'a new file must be selected for another clip');
     assert.equal(f.byId('recordingChoose').disabled, false);
-    f.byId('recordingClose').click();
-    assert.deepEqual(f.input, [true, false, true, false]);
+    assert.equal(document.activeElement, f.stream);
+    assert.deepEqual(f.input, []);
 });
 
 test('unsupported browsers remain usable and explain missing recording capability without opening a file', t => {
     const f = fixture(t, { support: { supported: false, reason: 'Use desktop Chrome or Edge over HTTPS.' } });
     assert.deepEqual(f.calls, []);
-    f.byId('recordingBtn').click();
     assert.equal(f.byId('recordingStatus').textContent, 'Use desktop Chrome or Edge over HTTPS.');
     f.byId('recordingChoose').click();
     f.byId('recordingStart').click();
     assert.deepEqual(f.calls, []);
-    f.byId('recordingDialog').cancel();
-    assert.deepEqual(f.input, [true, false]);
+    assert.equal(f.byId('recordingLeaveDialog').open, false);
+    assert.deepEqual(f.input, []);
     assert.equal(f.events.has('beforeunload'), false);
 });
 
 test('eligibility follows current source, received codec and live track instead of a chosen filename', async t => {
     const f = fixture(t);
-    f.byId('recordingBtn').click();
     await f.byId('recordingChoose').click();
     f.setSource({ connection: {}, eligible: false, codec: 'AV1', videoTrack: { readyState: 'live' } });
     f.control.refresh();
@@ -189,27 +189,27 @@ test('AV1, VP9 and H.264 streams show their automatic local format without tier 
     }
 });
 
-test('keyboard events stay in the dialog and cancel or disposal restores stream input', t => {
+test('keyboard navigation stays in inline controls and disposal removes their UI and listeners', t => {
     const f = fixture(t);
-    f.byId('recordingBtn').click();
     for (const name of ['keydown', 'keyup', 'keypress', 'pointerdown', 'pointerup', 'click', 'wheel']) {
         let stopped = false;
-        f.byId('recordingDialog').fire(name, { stopPropagation() { stopped = true; } });
+        f.byId('recordingSettings').fire(name, { stopPropagation() { stopped = true; } });
         assert.equal(stopped, true, name);
     }
-    for (const name of ['keydown', 'keyup', 'keypress', 'pointerdown', 'pointerup']) {
-        let stopped = false;
-        f.byId('recordingBtn').fire(name, { stopPropagation() { stopped = true; } });
-        assert.equal(stopped, true, `toolbar ${name}`);
-    }
-    f.byId('recordingDialog').cancel();
-    assert.equal(f.input.at(-1), false);
-    f.byId('recordingBtn').click();
     f.control.dispose();
-    assert.equal(f.input.at(-1), false);
+    assert.deepEqual(f.input, []);
     assert.equal(f.events.size, 0);
     assert.equal(f.timers.size, 0);
-    assert.equal(f.byId('recordingDialog').removed, true);
+    assert.equal(f.byId('recordingSettings').removed, true);
+    assert.equal(f.byId('recordingLeaveDialog').removed, true);
+});
+
+test('keyboard activation of Record returns focus, while Choose location preserves tab navigation', async t => {
+    const f = fixture(t);
+    await f.byId('recordingChoose').click(0);
+    assert.equal(document.activeElement, f.byId('recordingChoose'));
+    await f.byId('recordingStart').click(0);
+    assert.equal(document.activeElement, f.stream);
 });
 
 test('saving is visible until the writer completes and unload protection exists only while data is unsaved', async t => {
@@ -225,7 +225,6 @@ test('saving is visible until the writer completes and unload protection exists 
     f.events.get('beforeunload')(event);
     assert.equal(prevented, true);
     assert.equal(event.returnValue, '');
-    f.byId('recordingBtn').click();
     const stopped = f.byId('recordingStop').click();
     assert.equal(f.byId('recordingBadge').textContent, 'Saving…');
     assert.equal(f.byId('recordingStop').disabled, true);
@@ -242,15 +241,14 @@ test('beforeLeave coalesces finalization and asks before leaving after a save fa
     const first = f.control.beforeLeave();
     assert.equal(f.control.beforeLeave(), first);
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(f.byId('recordingDialog').open, true);
+    assert.equal(f.byId('recordingLeaveDialog').open, true);
     assert.equal(f.byId('recordingLeaveWarning').style.display, 'block');
     assert.equal(f.byId('recordingStatus').textContent, 'Disk is full.');
     f.byId('recordingStay').click();
     assert.equal(await first, false);
-    assert.equal(f.byId('recordingDialog').open, false);
+    assert.equal(f.byId('recordingLeaveDialog').open, false);
     assert.equal(f.input.at(-1), false);
-    f.byId('recordingBtn').click();
-    assert.equal(f.byId('recordingStatus').textContent, 'Disk is full.', 'error can be reopened after staying');
+    assert.equal(f.byId('recordingStatus').textContent, 'Disk is full.', 'error remains inline after staying');
     const second = f.control.beforeLeave();
     await new Promise(resolve => setImmediate(resolve));
     f.byId('recordingLeave').click();
@@ -262,21 +260,20 @@ test('Escape cancels the failed-save leave decision and successful finalization 
     const f = fixture(t, { stop: async recorder => { recorder.state('error'); return false; } });
     const leaving = f.control.beforeLeave();
     await new Promise(resolve => setImmediate(resolve));
-    f.byId('recordingDialog').cancel();
+    f.byId('recordingLeaveDialog').cancel();
     assert.equal(await leaving, false);
     assert.equal(f.input.at(-1), false);
     f.recorder.stop = async () => true;
     assert.equal(await f.control.beforeLeave(), true);
-    assert.equal(f.byId('recordingDialog').open, false);
+    assert.equal(f.byId('recordingLeaveDialog').open, false);
 });
 
-test('failed-save confirmation is promoted above an end-session modal without dropping the input lease', async t => {
+test('failed-save confirmation opens above an end-session modal and holds its input lease', async t => {
     const f = fixture(t, { stop: async recorder => { recorder.state('error'); return false; } });
-    f.byId('recordingBtn').click();
-    const recordingDialog = f.byId('recordingDialog');
+    const recordingDialog = f.byId('recordingLeaveDialog');
     const endDialog = f.element('dialog');
     endDialog.showModal();
-    assert.ok(endDialog.modalOrder > recordingDialog.modalOrder);
+    assert.equal(recordingDialog.open, false);
     const leaving = f.control.beforeLeave();
     await new Promise(resolve => setImmediate(resolve));
     assert.ok(recordingDialog.modalOrder > endDialog.modalOrder);
@@ -293,7 +290,7 @@ test('failed-save confirmation is promoted above an end-session modal without dr
 test('recording startup errors stay visible; picker cancellation does not start recording', async t => {
     const f = fixture(t, { start: async recorder => { recorder.state('error', { message: 'Cannot record this stream.' }); } });
     await f.begin();
-    assert.equal(f.byId('recordingDialog').open, true);
+    assert.equal(f.byId('recordingLeaveDialog').open, false);
     assert.match(f.byId('recordingStatus').textContent, /Cannot record/);
     assert.equal(f.events.has('beforeunload'), false);
     f.recorder.chooseLocation = async () => f.recorder.state('idle', { filename: '' });
@@ -315,13 +312,12 @@ test('pagehide only attempts best-effort finalization for an active recording', 
 test('Record invokes audio preparation within the gesture and coalesces clicks until playback is ready', async t => {
     let complete, preparations = 0;
     const f = fixture(t, { beforeRecord: () => { preparations++; return new Promise(resolve => { complete = resolve; }); } });
-    f.byId('recordingBtn').click();
     await f.byId('recordingChoose').click();
     const started = f.byId('recordingStart').click();
     assert.equal(preparations, 1, 'audio play is invoked synchronously from the click');
     assert.equal(f.byId('recordingStart').disabled, true);
     assert.equal(f.byId('recordingChoose').disabled, true);
-    assert.equal(f.byId('recordingClose').disabled, false);
+    assert.equal(f.byId('recordingStop').disabled, false);
     assert.equal(f.byId('recordingStatus').textContent, 'Preparing recording…');
     f.byId('recordingStart').click();
     assert.equal(preparations, 1);
@@ -329,40 +325,53 @@ test('Record invokes audio preparation within the gesture and coalesces clicks u
     complete();
     await started;
     assert.equal(f.calls.filter(call => call === 'start').length, 1);
-    assert.equal(f.byId('recordingDialog').open, false);
+    assert.equal(f.byId('recordingLeaveDialog').open, false);
 });
 
 test('failed audio preparation stays visible without starting a recording or blocking navigation', async t => {
     const f = fixture(t, { beforeRecord: async () => { throw new Error('Could not start audio playback.'); } });
-    f.byId('recordingBtn').click();
     await f.byId('recordingChoose').click();
     await f.byId('recordingStart').click();
     assert.equal(f.calls.includes('start'), false);
-    assert.equal(f.byId('recordingDialog').open, true);
+    assert.equal(f.byId('recordingLeaveDialog').open, false);
     assert.equal(f.byId('recordingStatus').textContent, 'Could not start audio playback.');
     assert.equal(f.byId('recordingStart').disabled, false);
     assert.equal(f.events.has('beforeunload'), false);
     assert.equal(await f.control.beforeLeave(), true);
 });
 
-test('closing the dialog cancels pending preparation and a late playback completion cannot start recording', async t => {
+test('Stop cancels pending preparation and a late playback completion cannot start recording', async t => {
     let complete;
     const f = fixture(t, { beforeRecord: () => new Promise(resolve => { complete = resolve; }) });
-    f.byId('recordingBtn').click();
     await f.byId('recordingChoose').click();
     const started = f.byId('recordingStart').click();
-    f.byId('recordingClose').click();
-    assert.equal(f.input.at(-1), false);
+    await f.byId('recordingStop').click();
+    assert.deepEqual(f.input, []);
     complete();
     await started;
     assert.equal(f.calls.includes('start'), false);
-    assert.equal(f.byId('recordingDialog').open, false);
+    assert.equal(f.byId('recordingLeaveDialog').open, false);
+});
+
+test('late startup never steals focus from another control or a session-end dialog', async t => {
+    let complete;
+    const f = fixture(t, { start: recorder => {
+        recorder.state('starting');
+        return new Promise(resolve => { complete = () => { recorder.state('recording'); resolve(); }; });
+    } });
+    await f.byId('recordingChoose').click(0);
+    const started = f.byId('recordingStart').click(0);
+    await new Promise(resolve => setImmediate(resolve));
+    const endButton = f.element('button');
+    endButton.focus();
+    complete();
+    await started;
+    assert.equal(document.activeElement, endButton);
 });
 
 test('navigation cancels pending preparation without waiting for playback or leaking its later rejection', async t => {
     let fail;
     const f = fixture(t, { beforeRecord: () => new Promise((_resolve, reject) => { fail = reject; }) });
-    f.byId('recordingBtn').click();
     await f.byId('recordingChoose').click();
     const started = f.byId('recordingStart').click();
     assert.equal(await f.control.beforeLeave(), true);

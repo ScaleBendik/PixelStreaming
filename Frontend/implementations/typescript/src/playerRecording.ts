@@ -1,13 +1,10 @@
 import type { PixelStreaming } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.8';
 import type { RecordingSource } from './localRecording';
-import { installRecordingControl } from './recordingControl';
+import { installRecordingControl, RecordingControlOptions } from './recordingControl';
 
 /** Record media already admitted by Wilbur; local recording has no commercial tier gate. */
-export function installPlayerRecording(options: {
+export function installPlayerRecording(options: Omit<RecordingControlOptions, 'getSource' | 'beforeRecord'> & {
     stream: PixelStreaming;
-    controls: HTMLElement;
-    modalParent: HTMLElement;
-    setModalInput: (open: boolean) => void;
 }) {
     const { stream } = options;
     let observedConnection: RTCPeerConnection | null = null;
