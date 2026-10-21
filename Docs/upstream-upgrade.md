@@ -145,6 +145,23 @@ The reviewed graph has no production or development audit findings after updatin
 The existing packager still copies installed development dependencies; narrowing
 that payload requires preserving workspace-local runtime resolution.
 
+## Fork CI validation
+
+`.github/workflows/fork-validation.yml` runs on relevant branch pushes and pull
+requests in `ScaleBendik/PixelStreaming`, or by manual dispatch. Root package,
+lockfile, Node pin and shared lint configuration changes also trigger it.
+The Linux job uses `NODE_VERSION` and `npm ci` to build/type-check and lint
+Common, Signalling, Wilbur and both browser libraries, run their real test
+scripts, and test/build the TypeScript player. The Windows job runs only the
+synthetic stack/recycle and Unreal-prerequisite policy harnesses.
+
+Both jobs have read-only repository permissions, retain no checkout credential,
+and require no cloud secrets. They publish no package, image or runtime artifact
+and perform no hosted instance operation. Existing upstream publishing guards
+remain separate. Example-workspace lint debt described above is outside these
+component checks. A successful local run does not establish a GitHub-hosted run
+or GPU/media acceptance; required-check branch protection is configured separately.
+
 ## Review hardening
 
 The post-merge review preserves existing admission and input policies while fixing

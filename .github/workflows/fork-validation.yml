@@ -1,0 +1,92 @@
+name: Validate ScaleWorld runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+    paths:
+      - '.github/workflows/fork-validation.yml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'NODE_VERSION'
+      - 'eslint.config.mjs'
+      - 'Common/**'
+      - 'Signalling/**'
+      - 'SignallingWebServer/**'
+      - 'Frontend/library/**'
+      - 'Frontend/ui-library/**'
+      - 'Frontend/implementations/typescript/**'
+      - 'BuildScripts/**'
+  pull_request:
+    paths:
+      - '.github/workflows/fork-validation.yml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'NODE_VERSION'
+      - 'eslint.config.mjs'
+      - 'Common/**'
+      - 'Signalling/**'
+      - 'SignallingWebServer/**'
+      - 'Frontend/library/**'
+      - 'Frontend/ui-library/**'
+      - 'Frontend/implementations/typescript/**'
+      - 'BuildScripts/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    if: github.repository == 'ScaleBendik/PixelStreaming'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: NODE_VERSION
+          cache: npm
+      - name: Install locked workspace dependencies
+        run: npm ci --include=dev --no-audit --no-fund
+      - name: Build and lint Common
+        working-directory: Common
+        run: npm run build && npm run lint
+      - name: Build, lint and test signalling
+        working-directory: Signalling
+        run: npm run build && npm run lint && npm test -- --runInBand
+      - name: Build, lint and test Wilbur
+        working-directory: SignallingWebServer
+        run: npm run build && npm run lint && npm test
+      - name: Build, lint and test browser library
+        working-directory: Frontend/library
+        run: npm run build && npm run lint && npm test -- --runInBand --coverage=false
+      - name: Build, lint and test browser UI
+        working-directory: Frontend/ui-library
+        run: npm run build && npm run lint && npm test
+      - name: Test and build the ScaleWorld player
+        working-directory: Frontend/implementations/typescript
+        run: npm test && npm run build && npm run build:esm
+
+  windows-policy:
+    if: github.repository == 'ScaleBendik/PixelStreaming'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: NODE_VERSION
+      - name: Test startup and recycle policy with synthetic fixtures
+        shell: powershell
+        run: ./SignallingWebServer/platform_scripts/powershell/test_stack_launcher_policy.ps1
+      - name: Test Unreal prerequisite policy with synthetic fixtures
+        shell: powershell
+        run: ./SignallingWebServer/platform_scripts/powershell/test_unreal_prerequisite.ps1
