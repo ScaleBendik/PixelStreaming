@@ -1,7 +1,7 @@
 # PixelStreaming Runtime Artifact Contract
 
 Date: 2026-05-21
-Last updated: 2026-09-08
+Last updated: 2026-10-20
 Status: active foundation
 
 ## Intent
@@ -121,6 +121,20 @@ Capability entries are behavioral
 contracts: a validator may require capability-specific files and behavior when
 one is declared. The other hard requirements are that the manifest exists, the
 runtime ZIP exists, the checksum matches, and the bundle id is immutable.
+
+Browser uploads accept `minimumApiContractVersion` and `capabilities` alongside
+the existing runtime fields. Copy both from the packager manifest into the upload
+form; the API writes the external manifest from these fields and does not inspect
+the ZIP's embedded metadata. Initiation/completion validate positive integer
+requirements and nonempty capability entries, while preserving unknown capability
+names. Omission keeps legacy defaults of minimum 1 and no capabilities. Catalog,
+inventory and upload responses preserve the metadata. A newer minimum produces
+an upload/selection warning and does not block activation. Checksum, immutable
+identity and capability-specific file checks still apply.
+
+Deploy all API replicas before the new Web upload form. Older APIs can silently
+discard this metadata on upload; pause browser runtime uploads during API rollback
+or use direct packager publication. Existing immutable manifests are unchanged.
 
 ## Bundle Contents
 
