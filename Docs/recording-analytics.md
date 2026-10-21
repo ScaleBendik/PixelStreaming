@@ -2,11 +2,13 @@
 
 Status: PixelStreaming producer, tab outbox and Wilbur relay are implemented.
 API capability issuance/ingestion, SQL persistence and Manager analytics presentation
-are deployed to Dev, with issuance still disabled. See the
+are deployed to Dev. The follow-up API Dev configuration enables issuance. See the
 [API owner document](../../scaleworld-server-manager-api/docs/recording-analytics.md)
 and [Manager presentation](../../scaleworld-server-manager-web/docs/recording-analytics.md).
-The Manager document records the exact API/Web serving builds. Matching player
-runtime activation and hosted end-to-end acceptance remain pending. Without a recording capability,
+The Manager document records the exact API/Web serving builds. The operator reports
+deploying the updated Unreal and player artifacts and confirms H264/AV1 capture.
+End-to-end analytics acceptance remains separate. A new Manager owner launch is
+needed to obtain a capability after activation. Without a recording capability,
 the player makes no new recording reports. Recording itself remains available.
 
 ## Meaning of the events
