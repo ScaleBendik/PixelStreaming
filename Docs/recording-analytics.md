@@ -2,7 +2,10 @@
 
 Status: PixelStreaming producer, tab outbox and Wilbur relay are implemented.
 API capability issuance/ingestion, SQL persistence and Manager analytics presentation
-are planned below, not implemented by this change. Without a recording capability,
+are also implemented locally, with issuance disabled by default. See the
+[API owner document](../../scaleworld-server-manager-api/docs/recording-analytics.md)
+and [Manager presentation](../../scaleworld-server-manager-web/docs/recording-analytics.md).
+Deployment and hosted acceptance remain pending. Without a recording capability,
 the player makes no new recording reports. Recording itself remains available.
 
 ## Meaning of the events
@@ -146,9 +149,10 @@ whose acknowledgement was lost; API idempotency is mandatory. An unconfigured AP
 old runtime, expired capability or absent analytics service must never disable
 local recording or trigger a user-facing recording error.
 
-## Remaining API implementation
+## API implementation contract
 
-Implement in `scaleworld-server-manager-api/ScaleWorld.ServerManager.Api`:
+Implemented in `scaleworld-server-manager-api/ScaleWorld.ServerManager.Api`;
+the following requirements describe its contract and acceptance boundaries:
 
 1. **Capability service and issuance.** Follow the purpose-specific end-session
    integration pattern, with independent credential storage/validation and no stop
@@ -163,8 +167,8 @@ Implement in `scaleworld-server-manager-api/ScaleWorld.ServerManager.Api`:
    against the original session even after instance reassignment; never reopen it.
    Ticket refresh/new launches must not invalidate still-live grants for pending
    clips in the same session. Revocation and subject deletion still take precedence.
-2. **Authenticated ingestion.** Add `Web/Controllers/PlayerRecordingEventsController.cs`
-   for the endpoint above: anonymous only with respect to the normal login scheme,
+2. **Authenticated ingestion.** `Web/Controllers/PlayerRecordingController.cs` implements
+   the endpoint above: anonymous only with respect to the normal login scheme,
    always authenticated by the recording capability. Enforce exact header/claim
    identity, schema, event time bounds relative to grant/session (allow bounded
    browser clock skew), per-grant/IP rate limits and server `ReceivedAtUtc`. Preserve
@@ -178,9 +182,10 @@ Implement in `scaleworld-server-manager-api/ScaleWorld.ServerManager.Api`:
    never regress a terminal state on a late start. A lost start must not hide a saved
    file. A delayed start may be rejected after session-end grace without removing
    the already accepted terminal event.
-4. **Analytics read projection.** Extend `SessionAnalyticsQueryService` and the
-   Web model/mapper with optional recording counts, saved bytes/duration and clip
-   timeline entries. Count distinct saved clip IDs by viewer, not events/HTTP calls.
+4. **Analytics read projection.** `RecordingAnalyticsService` exposes a separate
+   paged `/admin/session-analytics/sessions/{id}/recordings` endpoint with recording
+   counts, saved bytes/duration and clip entries, preserving existing session DTOs
+   and sealed event exports. Count distinct saved clip IDs by viewer, not events/HTTP calls.
    Keep recording evidence outside Billing and sealed session-evidence hashes;
    late reports must not mutate billing amounts, lifecycle status or sealed inputs.
    Return absence as not reported, and describe observed attempts separately from
@@ -193,12 +198,11 @@ durable per-event acknowledgement. The existing agent analytics event allowlist
 does not ingest these browser events. This implementation adds no agent credentials
 to the browser, no agent queue and no video artifact/upload contract.
 
-## Remaining Manager implementation
+## Manager implementation
 
-In `scaleworld-server-manager-web`, add secure-connect fragment-preservation tests
-for `sw_recording` alongside `sw_end` and reconnect context. The API builds the URL;
-Manager should not manufacture a token. Extend analytics client types and session
-detail/timeline components with **Videos saved**, total saved duration/bytes,
+`scaleworld-server-manager-web` preserves and tests `sw_recording` alongside `sw_end`
+and reconnect context. The API builds the URL; Manager does not manufacture a token.
+Its session-details section shows **Videos saved**, total saved duration/bytes,
 codec/container and reported outcome. An optional list-column/filter can follow
 once query/index cost is measured. Existing sessions/older API responses should
 show **Not reported**, with no invented zero/“never recorded” assertion. Show viewer
@@ -232,5 +236,5 @@ identity only from the authorized API projection, never browser-provided data.
   API outage/retry and missing integration, session reassignment, analytics UI
   counts, and confirmation that recording/input remain usable throughout failures.
 
-No publication, activation, API/Web implementation or hosted acceptance is performed
-by the PixelStreaming-only implementation pass.
+No publication, activation or hosted acceptance is implied by the local
+PixelStreaming/API/Web implementation. API capability issuance remains off by default.
