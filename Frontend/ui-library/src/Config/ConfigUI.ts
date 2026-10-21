@@ -34,11 +34,7 @@ import {
 } from '../UI/UIConfigurationTypes';
 
 export class ConfigUI {
-    private static readonly defaultExpandedSections = new Set<string>([
-        SettingsSections.PixelStreaming,
-        SettingsSections.WebRTC,
-        SettingsSections.Commands
-    ]);
+    private static readonly defaultExpandedSections = new Set<string>([SettingsSections.PixelStreaming]);
 
     private customFlags = new Map<FlagsIdsExtended, SettingFlag<FlagsIdsExtended>>();
 
@@ -106,9 +102,14 @@ export class ConfigUI {
      * Make DOM elements for a settings section with a heading.
      * @param settingsElem - The parent container for our DOM elements.
      * @param sectionHeading - The heading element to go into the section.
+     * @param beforeElement - Insert before this child instead of appending the section.
      * @returns The constructed DOM element for the section.
      */
-    buildSectionWithHeading(settingsElem: HTMLElement, sectionHeading: string) {
+    buildSectionWithHeading(
+        settingsElem: HTMLElement,
+        sectionHeading: string,
+        beforeElement: Element | null = null
+    ) {
         const isExpandedByDefault = ConfigUI.defaultExpandedSections.has(sectionHeading);
 
         const sectionElem = document.createElement('section');
@@ -162,7 +163,7 @@ export class ConfigUI {
 
         sectionElem.appendChild(settingsHeader);
         sectionElem.appendChild(settingsBody);
-        settingsElem.appendChild(sectionElem);
+        settingsElem.insertBefore(sectionElem, beforeElement);
         return settingsBody;
     }
 

@@ -28,7 +28,7 @@ function fixture() {
     const video = { ...audio, srcObject: { getAudioTracks: () => [] } };
     stream.webRtcController.streamController = { audioElement: audio };
     stream.webRtcController.videoPlayer = { getVideoElement: () => video };
-    const controller = exports.installPlayerRecording({ stream, settingsSection: {}, modalParent: {}, focusStream() {}, setModalInput() {} });
+    const controller = exports.installPlayerRecording({ stream, settingsSection: {}, modalParent: {}, closeSettings() {}, focusStream() {}, setModalInput() {} });
     const stats = (codec = 'AV1', framesDecoded = 3) => events.get('statsReceived')({ data: { aggregatedStats: {
         inboundVideoStats: { codecId: 'video-codec', framesDecoded, bytesReceived: framesDecoded * 100 },
         codecs: new Map([['video-codec', { mimeType: 'video/' + codec }]])
@@ -110,9 +110,15 @@ test('reconnect never inherits codec proof or old tracks and disconnect refreshe
     assert.equal(f.refreshes, before + 1);
     assert.equal(f.source(), null);
     peer.iceConnectionState = 'connected';
+    const beforeDisconnect = f.refreshes;
     f.events.get('webRtcDisconnected')(); assert.equal(f.source(), null);
+    assert.equal(f.refreshes, beforeDisconnect + 1, 'disconnect notifies the recorder immediately');
     f.events.get('webRtcConnected')(); assert.equal(f.source(), null);
     f.stats(); assert.ok(f.source());
+    const beforeFailure = f.refreshes;
+    f.events.get('webRtcFailed')(); assert.equal(f.source(), null);
+    assert.equal(f.refreshes, beforeFailure + 1, 'failed connections also notify the recorder');
+    f.events.get('webRtcConnected')(); f.stats();
     f.transport.get('open')(); assert.equal(f.source(), null, 'new signalling generation clears prior proof');
     f.controller.dispose();
     assert.equal(peer.listeners.size, 0);

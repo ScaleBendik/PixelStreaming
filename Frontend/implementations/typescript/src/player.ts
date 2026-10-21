@@ -1154,11 +1154,13 @@ document.body.onload = function() {
     };
     try {
         if (application.settingsPanel) {
+            const settingsContent = application.settingsPanel.settingsContentElement;
             const settingsSection = application.configUI.buildSectionWithHeading(
-                application.settingsPanel.settingsContentElement, 'Recording');
+                settingsContent, 'Recording', settingsContent.children.item(1));
             recordingControl = installPlayerRecording({ stream,
                 settingsSection, statusAnchor: application.controls?.settingsIcon?.rootElement,
                 modalParent: stream.videoElementParent,
+                closeSettings: () => application.settingsPanel.hide(),
                 focusStream: () => {
                     const target = stream.videoElementParent;
                     if (!target.hasAttribute('tabindex')) target.tabIndex = -1;

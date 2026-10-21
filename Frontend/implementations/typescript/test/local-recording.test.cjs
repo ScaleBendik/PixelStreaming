@@ -330,14 +330,18 @@ test('source replacement, disconnect and codec fallback finalize the current cli
         const f = fixture(t);
         await f.start();
         f.recorder.chunk('frame');
+        f.recorder.finalChunk = 'last';
         f.controller.sourceChanged();
         assert.equal(f.recorder.stopCalls, 0, 'unchanged source keeps recording');
         if (change === 'disconnect') f.source = null;
         else f.source = { ...f.source, [change]: ({ connection: {}, videoTrack: new Track('video'), audioTrack: new Track('audio'), codec: 'video/H264', eligible: false })[change] };
         f.controller.sourceChanged();
-        assert.equal(await f.controller.stop(), true);
-        assert.equal(f.recorder.stopCalls, 1);
+        assert.equal(f.recorder.stopCalls, 1, `${change} stops the recorder without a manual Stop`);
+        await tick();
         assert.equal(f.controller.snapshot.phase, 'saved');
+        assert.deepEqual(f.events.filter(e => ['write', 'close', 'abort'].includes(e[0])), [
+            ['write', 'frame'], ['write', 'last'], ['close']
+        ], `${change} drains the final chunk and closes the file`);
     }
 });
 

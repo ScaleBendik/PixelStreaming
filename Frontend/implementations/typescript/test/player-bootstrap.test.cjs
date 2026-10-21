@@ -44,9 +44,14 @@ function boot({ missingControls = false, installationFails = false, navigationFa
                     this.rootElement = {};
                     if (!missingControls) {
                         this.controls = { rootElement: toolbar, settingsIcon: { rootElement: {} } };
-                        this.settingsPanel = { settingsContentElement: {} };
-                        this.configUI = { buildSectionWithHeading: (parent, title) => {
+                        const sections = ['Pixel Streaming', 'UI', 'Input', 'Encoder', 'WebRTC', 'Commands']
+                            .map(title => ({ title }));
+                        this.settingsPanel = { settingsContentElement: { children: { item: index => sections[index] ?? null } },
+                            hide() { state.settingsHidden = true; } };
+                        this.configUI = { buildSectionWithHeading: (parent, title, beforeElement) => {
                             assert.equal(parent, this.settingsPanel.settingsContentElement);
+                            sections.splice(beforeElement ? sections.indexOf(beforeElement) : sections.length, 0, { title });
+                            state.settingsOrder = sections.map(section => section.title);
                             state.recordingCategory = title;
                             return {};
                         } };
@@ -126,12 +131,15 @@ test('recording failure cannot prevent streaming or session controls', () => {
     assert.equal(boot({ recordingFails: true, autoConnect: false }).connections, 0);
 });
 
-test('recording uses a Settings category and returns focus to the stream', () => {
+test('recording sits below Pixel Streaming in Settings and returns focus to the stream', () => {
     const state = boot();
     assert.equal(state.recordingCategory, 'Recording');
+    assert.deepEqual(state.settingsOrder, ['Pixel Streaming', 'Recording', 'UI', 'Input', 'Encoder', 'WebRTC', 'Commands']);
     assert.ok(state.recordingOptions.settingsSection);
     assert.ok(state.recordingOptions.statusAnchor);
     assert.equal(state.recordingOptions.controls, undefined);
+    state.recordingOptions.closeSettings();
+    assert.equal(state.settingsHidden, true);
     state.recordingOptions.focusStream();
     assert.equal(state.streamFocused, true);
 });

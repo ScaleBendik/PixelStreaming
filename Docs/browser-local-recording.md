@@ -5,9 +5,13 @@ The user chooses a local file through the browser's Save picker. Recording write
 chunks to that file and shows **Saved** only after the writer closes successfully.
 There is no upload, second network download, additional viewer, or Unreal plugin.
 All recording controls, filename, format and progress appear inline in the Recording
-category. A passive status badge beside Settings remains visible when it is closed.
-Pointer actions and successful Record activation return keyboard focus to the stream;
-keyboard users can still tab through the controls. Settings can stay open during recording.
+category, directly below Pixel Streaming. Only Pixel Streaming starts expanded;
+Recording and the remaining categories start collapsed. A passive status badge
+beside Settings remains visible when it is closed.
+Successful Record activation closes Settings and returns keyboard focus to the stream.
+Startup failures keep Settings open to show the error. Settings can be reopened during
+recording to check progress or Stop. Pointer actions also return focus to the stream;
+keyboard users can still tab through the controls when choosing a location or stopping.
 
 ## Scope and formats
 
@@ -67,6 +71,8 @@ not conversion, and MP4 alone would not make AV1 playable in H264-only players.
   closure can lose an unfinished recording.
 - Track loss, peer replacement, disconnection and codec changes finalize the
   current clip. Reconnection never appends a new media generation to that clip.
+  Opening or cancelling the End session confirmation alone keeps recording;
+  an accepted session end or disconnection triggers finalization.
 - `recordingControl.ts` owns the inline Settings controls, status, elapsed time,
   size, unload warning and explicit choice to leave after a failed save. Recording
   continues while Settings is closed. Inline controls isolate their own events;

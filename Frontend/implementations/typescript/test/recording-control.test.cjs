@@ -102,6 +102,7 @@ function fixture(t, config = {}) {
     };
     const install = loadControl(FakeRecorder, support);
     const control = install({ settingsSection: settings, statusAnchor: anchor, modalParent: element('parent'), focusStream: () => stream.focus(),
+        closeSettings: () => { settings.hidden = true; calls.push('closeSettings'); },
         getSource: () => source, setModalInput: open => input.push(open), beforeRecord: config.beforeRecord });
     const byId = id => nodes.find(node => node.id === id);
     t.after(() => { control.dispose(); global.window = originalWindow; global.document = originalDocument; });
@@ -123,10 +124,12 @@ test('inline choose, record and stop return pointer focus to the stream without 
     assert.equal(f.byId('recordingLeaveDialog').open, false);
     assert.deepEqual(f.input, []);
     await f.byId('recordingChoose').click();
+    assert.equal(f.calls.includes('closeSettings'), false, 'choosing a location keeps Settings open');
     assert.equal(f.byId('recordingFilename').textContent, '<clip>.webm');
     assert.equal(f.byId('recordingFilename').innerHTML, undefined);
     assert.equal(f.byId('recordingStart').disabled, false);
     await f.byId('recordingStart').click();
+    assert.equal(f.settings.hidden, true, 'Record closes Settings');
     assert.equal(f.byId('recordingLeaveDialog').open, false);
     assert.deepEqual(f.input, []);
     assert.equal(document.activeElement, f.stream);
@@ -209,6 +212,7 @@ test('keyboard activation of Record returns focus, while Choose location preserv
     await f.byId('recordingChoose').click(0);
     assert.equal(document.activeElement, f.byId('recordingChoose'));
     await f.byId('recordingStart').click(0);
+    assert.equal(f.settings.hidden, true, 'keyboard Record closes Settings');
     assert.equal(document.activeElement, f.stream);
 });
 
@@ -292,6 +296,7 @@ test('recording startup errors stay visible; picker cancellation does not start 
     await f.begin();
     assert.equal(f.byId('recordingLeaveDialog').open, false);
     assert.match(f.byId('recordingStatus').textContent, /Cannot record/);
+    assert.equal(f.calls.includes('closeSettings'), false);
     assert.equal(f.events.has('beforeunload'), false);
     f.recorder.chooseLocation = async () => f.recorder.state('idle', { filename: '' });
     await f.byId('recordingChoose').click();
@@ -324,6 +329,7 @@ test('Record invokes audio preparation within the gesture and coalesces clicks u
     assert.equal(f.calls.includes('start'), false);
     complete();
     await started;
+    assert.equal(f.settings.hidden, true, 'Settings closes after audio preparation and recorder startup');
     assert.equal(f.calls.filter(call => call === 'start').length, 1);
     assert.equal(f.byId('recordingLeaveDialog').open, false);
 });
@@ -335,6 +341,7 @@ test('failed audio preparation stays visible without starting a recording or blo
     assert.equal(f.calls.includes('start'), false);
     assert.equal(f.byId('recordingLeaveDialog').open, false);
     assert.equal(f.byId('recordingStatus').textContent, 'Could not start audio playback.');
+    assert.equal(f.calls.includes('closeSettings'), false);
     assert.equal(f.byId('recordingStart').disabled, false);
     assert.equal(f.events.has('beforeunload'), false);
     assert.equal(await f.control.beforeLeave(), true);
@@ -351,6 +358,7 @@ test('Stop cancels pending preparation and a late playback completion cannot sta
     await started;
     assert.equal(f.calls.includes('start'), false);
     assert.equal(f.byId('recordingLeaveDialog').open, false);
+    assert.equal(f.calls.includes('closeSettings'), false, 'cancelled Record keeps Settings open');
 });
 
 test('late startup never steals focus from another control or a session-end dialog', async t => {
@@ -367,6 +375,7 @@ test('late startup never steals focus from another control or a session-end dial
     complete();
     await started;
     assert.equal(document.activeElement, endButton);
+    assert.equal(f.calls.includes('closeSettings'), false, 'late startup leaves the new interaction alone');
 });
 
 test('navigation cancels pending preparation without waiting for playback or leaking its later rejection', async t => {

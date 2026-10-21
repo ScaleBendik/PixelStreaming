@@ -24,6 +24,7 @@ const files = {
     control: 'Frontend/implementations/typescript/src/recordingControl.ts',
     settings: 'Frontend/ui-library/src/UI/SettingsPanel.ts',
     sections: 'Frontend/ui-library/src/Config/ConfigUI.ts',
+    uiConfiguration: 'Frontend/ui-library/src/UI/UIConfigurationTypes.ts',
     keyboard: 'Frontend/library/src/Inputs/KeyboardController.ts',
     keys: 'Frontend/library/src/Inputs/SpecialKeyCodes.ts',
     codes: 'Frontend/library/src/Inputs/KeyCodes.ts'
@@ -66,12 +67,14 @@ for (const [name, executablePath] of Object.entries(browsers)) {
                 for (const [key, value] of Object.entries(palette)) document.documentElement.style.setProperty(key, value);
                 const settings = new (load(sources.settings).SettingsPanel)();
                 document.getElementById('uiFeatures').append(settings.rootElement);
-                const { ConfigUI } = load(sources.sections, () => ({ SettingsSections: {} }));
+                const { ConfigUI } = load(sources.sections, () => load(sources.uiConfiguration));
                 const configUI = Object.create(ConfigUI.prototype);
                 for (const title of ['Pixel Streaming', 'UI', 'Input', 'Encoder', 'WebRTC', 'Commands']) {
-                    configUI.buildSectionWithHeading(settings.settingsContentElement, title);
+                    const body = configUI.buildSectionWithHeading(settings.settingsContentElement, title);
+                    body.textContent = `${title} settings`;
                 }
-                const settingsSection = configUI.buildSectionWithHeading(settings.settingsContentElement, 'Recording');
+                const settingsSection = configUI.buildSectionWithHeading(settings.settingsContentElement,
+                    'Recording', settings.settingsContentElement.children.item(1));
                 document.getElementById('settingsBtn').onclick = () => settings.toggleVisibility();
                 settings.settingsCloseButton.onclick = () => settings.hide();
                 window.keysSent = [];
@@ -116,6 +119,7 @@ for (const [name, executablePath] of Object.entries(browsers)) {
                 window.ui = installRecordingControl({ settingsSection,
                     statusAnchor: document.getElementById('settingsBtn'),
                     modalParent: document.getElementById('videoElementParent'),
+                    closeSettings: () => settings.hide(),
                     focusStream: () => document.getElementById('videoElementParent').focus({ preventScroll: true }),
                     getSource: () => ({ connection: {}, videoTrack: { readyState: 'live' }, codec: 'AV1', eligible: true }),
                     setModalInput: open => { if (open) keyboard.unregister(); else keyboard.register(); }
@@ -125,6 +129,28 @@ for (const [name, executablePath] of Object.entries(browsers)) {
 
             const shot = async state => page.screenshot({ path: path.join(output, `${name}-${layout}-${state}.png`) });
             await page.locator('#settingsBtn').click();
+            assert.deepEqual(await page.locator('#settingsContent .settingsSectionLabel').allTextContents(),
+                ['Pixel Streaming', 'Recording', 'UI', 'Input', 'Encoder', 'WebRTC', 'Commands']);
+            for (const title of ['Pixel Streaming', 'Recording', 'UI', 'Input', 'Encoder', 'WebRTC', 'Commands']) {
+                const header = page.getByRole('button', { name: title, exact: true });
+                const body = header.locator('..').locator('.settingsSectionBody');
+                const expanded = title === 'Pixel Streaming';
+                assert.equal(await header.getAttribute('aria-expanded'), String(expanded), `${title} default state`);
+                assert.equal(await body.isVisible(), expanded, `${title} content visibility`);
+                await header.click();
+                assert.equal(await body.isVisible(), !expanded, `${title} pointer toggle`);
+                await header.press('Enter');
+                assert.equal(await body.isVisible(), expanded, `${title} Enter toggle`);
+                await header.press('Space');
+                assert.equal(await body.isVisible(), !expanded, `${title} Space toggle`);
+                await header.click();
+            }
+            // Closing Settings preserves the categories the user has opened.
+            await page.getByRole('button', { name: 'UI', exact: true }).click();
+            await page.locator('#settingsClose').click();
+            await page.locator('#settingsBtn').click();
+            assert.equal(await page.getByRole('button', { name: 'UI', exact: true }).getAttribute('aria-expanded'), 'true');
+            await page.getByRole('button', { name: 'UI', exact: true }).click();
             await page.getByRole('button', { name: 'Recording', exact: true }).click();
             await page.locator('#recordingChoose').scrollIntoViewIfNeeded();
             assert.equal(await page.locator('#recordingBtn').count(), 0);
@@ -138,10 +164,10 @@ for (const [name, executablePath] of Object.entries(browsers)) {
             await shot('ready');
             await page.locator('#recordingChoose').click();
             await page.locator('#recordingStart').click();
-            await page.waitForFunction(() => document.activeElement.id === 'videoElementParent');
+            await page.waitForFunction(() => document.activeElement.id === 'videoElementParent' &&
+                !document.getElementById('settings-panel').classList.contains('panel-wrap-visible'));
             await page.keyboard.press('w');
             assert.equal(await page.evaluate(() => window.keysSent.at(-1)), 87, 'W reaches Unreal after Record');
-            await page.locator('#settingsBtn').click();
             await page.keyboard.press('a');
             assert.equal(await page.evaluate(() => window.keysSent.at(-1)), 65, 'A reaches Unreal with settings closed');
             await shot('recording');
@@ -161,7 +187,8 @@ for (const [name, executablePath] of Object.entries(browsers)) {
             await page.keyboard.press('Tab');
             assert.equal(await page.evaluate(() => document.activeElement.id), 'recordingStart');
             await page.keyboard.press('Enter');
-            await page.waitForFunction(() => document.activeElement.id === 'videoElementParent');
+            await page.waitForFunction(() => document.activeElement.id === 'videoElementParent' &&
+                !document.getElementById('settings-panel').classList.contains('panel-wrap-visible'));
             assert.deepEqual(await page.evaluate(() => window.keysSent), []);
             await page.keyboard.press('d');
             assert.equal(await page.evaluate(() => window.keysSent.at(-1)), 68);
@@ -181,7 +208,7 @@ for (const [name, executablePath] of Object.entries(browsers)) {
             assert.deepEqual(errors, []);
             await page.evaluate(() => window.ui.dispose());
             await page.close();
-            console.log(JSON.stringify({ browser: name, version: browser.version(), layout, keyboardRouting: 'passed', inlineControls: 'passed', failedSave: 'passed' }));
+            console.log(JSON.stringify({ browser: name, version: browser.version(), layout, settingsCategories: 'passed', keyboardRouting: 'passed', inlineControls: 'passed', failedSave: 'passed' }));
         }
     } finally { await browser.close(); }
 }

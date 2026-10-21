@@ -4,6 +4,7 @@ export type RecordingControlOptions = {
     settingsSection: HTMLElement;
     statusAnchor?: HTMLElement;
     modalParent: HTMLElement;
+    closeSettings: () => void;
     focusStream: () => void;
     getSource: () => RecordingSource | null;
     setModalInput: (open: boolean) => void;
@@ -212,7 +213,9 @@ export function installRecordingControl(options: RecordingControlOptions) {
     const releasePointerFocus = (event: MouseEvent) => {
         if (event.detail > 0 && (panel.contains(document.activeElement) || document.activeElement === document.body)) {
             options.focusStream();
+            return document.activeElement;
         }
+        return null;
     };
     choose.addEventListener('click', (event) => {
         const pending = perform(() => recorder.chooseLocation());
@@ -220,6 +223,7 @@ export function installRecordingControl(options: RecordingControlOptions) {
         return pending;
     });
     record.addEventListener('click', (event) => {
+        let pointerFocus: Element | null = null;
         const pending = perform(async () => {
             if (preparing) return;
             const attempt = ++preparation;
@@ -234,7 +238,9 @@ export function installRecordingControl(options: RecordingControlOptions) {
                 await recorder.start();
                 if (!disposed && attempt === preparation &&
                     (recorder.snapshot.phase === 'starting' || recorder.snapshot.phase === 'recording') &&
-                    (panel.contains(document.activeElement) || document.activeElement === document.body)) {
+                    (panel.contains(document.activeElement) || document.activeElement === document.body ||
+                        (pointerFocus !== null && document.activeElement === pointerFocus))) {
+                    options.closeSettings();
                     options.focusStream();
                 }
             } catch (error) {
@@ -243,7 +249,7 @@ export function installRecordingControl(options: RecordingControlOptions) {
                 if (attempt === preparation) preparing = false;
             }
         });
-        releasePointerFocus(event);
+        pointerFocus = releasePointerFocus(event);
         return pending;
     });
     stop.addEventListener('click', (event) => {
