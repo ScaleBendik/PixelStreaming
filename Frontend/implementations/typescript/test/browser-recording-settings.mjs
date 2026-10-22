@@ -117,12 +117,13 @@ for (const [name, executablePath] of Object.entries(browsers)) {
                     LocalRecordingController: Recorder, getRecordingSupport: () => ({ supported: true, reason: '' }),
                     getRecordingFormat: () => ({ codec: 'AV1', extension: '.webm' })
                 }));
+                const recordingSource = { connection: {}, videoTrack: { readyState: 'live' }, codec: 'AV1', eligible: true };
                 window.ui = installRecordingControl({ settingsSection,
                     statusAnchor: document.getElementById('settingsBtn'),
                     modalParent: document.getElementById('videoElementParent'),
                     closeSettings: () => settings.hide(),
                     focusStream: () => document.getElementById('videoElementParent').focus({ preventScroll: true }),
-                    getSource: () => ({ connection: {}, videoTrack: { readyState: 'live' }, codec: 'AV1', eligible: true }),
+                    getSource: () => recordingSource,
                     setModalInput: open => { if (open) keyboard.unregister(); else keyboard.register(); }
                 });
                 window.settings = settings;
@@ -226,6 +227,9 @@ for (const [name, executablePath] of Object.entries(browsers)) {
             await shot('ready');
             await page.locator('#recordingChoose').click();
             await page.locator('#recordingStart').click();
+            await page.locator('#recordingCountdown').waitFor({ state: 'visible' });
+            await shot('countdown');
+            await page.waitForFunction(() => window.recorder.snapshot.phase === 'recording');
             await page.waitForFunction(() => document.activeElement.id === 'videoElementParent' &&
                 !document.getElementById('settings-panel').classList.contains('panel-wrap-visible'));
             await page.keyboard.press('w');
@@ -233,13 +237,13 @@ for (const [name, executablePath] of Object.entries(browsers)) {
             await page.keyboard.press('a');
             assert.equal(await page.evaluate(() => window.keysSent.at(-1)), 65, 'A reaches Unreal with settings closed');
             await shot('recording');
-            await page.locator('#settingsBtn').click();
-            await page.locator('#recordingStop').click();
+            await page.locator('#recordingQuickStop').click();
             await page.keyboard.press('s');
             assert.equal(await page.evaluate(() => window.keysSent.at(-1)), 83, 'S reaches Unreal after Stop');
             await shot('saving');
             await page.evaluate(() => window.recorder.finish(true));
             assert.equal(await page.locator('#recordingBadge').textContent(), 'Saved');
+            await page.locator('#settingsBtn').click();
             if (layout === 'desktop') {
                 await page.evaluate(() => { window.cameraSendMode = 'normal'; });
                 await page.locator('#cameraSmoothingRetry').click();
@@ -260,6 +264,7 @@ for (const [name, executablePath] of Object.entries(browsers)) {
             assert.deepEqual(await page.evaluate(() => window.keysSent), []);
             await page.keyboard.press('d');
             assert.equal(await page.evaluate(() => window.keysSent.at(-1)), 68);
+            await page.waitForFunction(() => window.recorder.snapshot.phase === 'recording');
 
             await page.evaluate(() => {
                 const ended = document.createElement('dialog');

@@ -8,8 +8,15 @@ All recording controls, filename, format and progress appear inline in the Recor
 category, directly below Pixel Streaming. Only Pixel Streaming starts expanded;
 Recording and the remaining categories start collapsed. A passive status badge
 beside Settings remains visible when it is closed.
+Start delay accepts integer seconds from 0 to 60 and defaults to 3 for each player
+page. Record closes Settings during the centered, non-interactive countdown;
+0 starts immediately. The small square Stop recording button between Settings
+and the timer cancels preparation/countdown or finalizes the active clip. Disconnect,
+peer/track/codec replacement, navigation and disposal cancel a pending start.
+Audio playback is resumed within the original click gesture before the delay.
 Successful Record activation closes Settings and returns keyboard focus to the stream.
-Startup failures keep Settings open to show the error. Settings can be reopened during
+Immediate startup failures keep Settings open; delayed failures remain available
+in Settings and the status badge. Settings can be reopened during
 recording to check progress or Stop. Pointer actions also return focus to the stream;
 keyboard users can still tab through the controls when choosing a location or stopping.
 

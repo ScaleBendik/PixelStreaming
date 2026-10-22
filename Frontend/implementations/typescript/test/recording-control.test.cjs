@@ -36,7 +36,7 @@ function fixture(t, config = {}) {
         const el = {
             tag, children: [], style: {}, attributes: {}, listeners: new Map(), open: false, disabled: false,
             setAttribute(k, v) { this.attributes[k] = v; },
-            append(...items) { this.children.push(...items); items.forEach(item => { item.parent = this; }); },
+            append(...items) { this.children.push(...items); items.forEach(item => { item.parent = this; item.parentElement = this; }); },
             appendChild(item) { this.append(item); },
             contains(node) { return node === this || this.children.some(child => child.contains(node)); },
             addEventListener(name, listener) { this.listeners.set(name, [...(this.listeners.get(name) || []), listener]); },
@@ -93,6 +93,7 @@ function fixture(t, config = {}) {
         async dispose() { calls.push('dispose'); }
     }
     const stream = element('stream'), settings = element('section'), anchor = element('settingsButton');
+    element('toolbar').append(anchor);
     global.document = { activeElement: stream, body: element('body'), createElement: element, exitPointerLock() { pointerReleases++; } };
     global.window = {
         addEventListener(name, listener) { events.set(name, listener); },
@@ -105,6 +106,7 @@ function fixture(t, config = {}) {
         closeSettings: () => { settings.hidden = true; calls.push('closeSettings'); },
         getSource: () => source, setModalInput: open => input.push(open), beforeRecord: config.beforeRecord });
     const byId = id => nodes.find(node => node.id === id);
+    if (!config.defaultDelay) byId('recordingDelay').value = '0';
     t.after(() => { control.dispose(); global.window = originalWindow; global.document = originalDocument; });
     return { control, recorder, nodes, calls, events, input, timers, byId, support, element, stream, settings, anchor,
         setSource(value) { source = value; }, get pointerReleases() { return pointerReleases; },
@@ -401,4 +403,64 @@ test('disposing during a pending save never authorizes stale navigation or opens
     assert.equal(await f.control.beforeLeave(), false);
     assert.equal(f.byId('recordingLeaveWarning').style.display, 'none');
     assert.equal(f.events.has('beforeunload'), false);
+});
+
+test('default countdown closes settings, starts only after three seconds, and toolbar Stop saves', async t => {
+    const f = fixture(t, { defaultDelay: true });
+    assert.equal(f.byId('recordingDelay').value, '3');
+    const originalNow = Date.now;
+    let now = 10000;
+    Date.now = () => now;
+    t.after(() => { Date.now = originalNow; });
+    await f.byId('recordingChoose').click();
+    const pending = f.byId('recordingStart').click();
+    await Promise.resolve();
+    assert.equal(f.settings.hidden, true);
+    assert.equal(f.calls.includes('start'), false);
+    assert.equal(f.byId('recordingCountdown').textContent, 'Recording in 3');
+    assert.equal(f.byId('recordingCountdown').style.display, 'flex');
+    assert.equal(f.anchor.contains(f.byId('recordingQuickStop')), false, 'never nest buttons');
+    now += 2000;
+    for (const tick of [...f.timers.values()]) tick();
+    assert.equal(f.byId('recordingCountdown').textContent, 'Recording in 1');
+    assert.equal(f.calls.includes('start'), false);
+    now += 1000;
+    for (const tick of [...f.timers.values()]) tick();
+    await pending;
+    assert.equal(f.calls.filter(x => x === 'start').length, 1);
+    assert.equal(f.byId('recordingCountdown').style.display, 'none');
+    await f.byId('recordingQuickStop').click();
+    assert.equal(f.byId('recordingBadge').textContent, 'Saved');
+    assert.equal(f.byId('recordingQuickStop').style.display, 'none');
+});
+
+for (const cancel of ['stop', 'disconnect', 'replacement', 'leave', 'dispose', 'pagehide']) {
+    test(`countdown cancellation on ${cancel} cannot start a stale recording`, async t => {
+        const f = fixture(t, { defaultDelay: true });
+        await f.byId('recordingChoose').click();
+        const pending = f.byId('recordingStart').click();
+        await Promise.resolve();
+        if (cancel === 'stop') await f.byId('recordingQuickStop').click();
+        if (cancel === 'disconnect') { f.setSource(null); f.control.refresh(); }
+        if (cancel === 'replacement') {
+            f.setSource({ connection: {}, videoTrack: { readyState: 'live' }, codec: 'AV1', eligible: true });
+            f.control.refresh();
+        }
+        if (cancel === 'leave') await f.control.beforeLeave();
+        if (cancel === 'dispose') f.control.dispose();
+        if (cancel === 'pagehide') f.events.get('pagehide')();
+        await pending;
+        assert.equal(f.calls.includes('start'), false);
+        assert.ok(f.timers.size <= 1, 'countdown interval removed');
+    });
+}
+
+test('delay normalizes to whole seconds in the supported range', t => {
+    const f = fixture(t);
+    const delay = f.byId('recordingDelay');
+    for (const [input, expected] of [['99', '60'], ['-2', '0'], ['4.9', '4'], ['', '3'], ['bad', '3'], ['0', '0']]) {
+        delay.value = input;
+        delay.fire('change');
+        assert.equal(delay.value, expected);
+    }
 });

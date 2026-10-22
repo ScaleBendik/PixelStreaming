@@ -35,6 +35,9 @@ export function installRecordingControl(options: RecordingControlOptions) {
     let displayedFormat = '';
     let preparing = false;
     let preparation = 0;
+    let countdownEnd = 0;
+    let finishCountdown: (() => void) | null = null;
+    let preparationSource: RecordingSource | null = null;
 
     const panel = document.createElement('div');
     panel.id = 'recordingSettings';
@@ -45,6 +48,12 @@ export function installRecordingControl(options: RecordingControlOptions) {
     badge.setAttribute('aria-hidden', 'true');
     badge.style.cssText = 'display:none;position:absolute;left:calc(100% + 8px);top:50%;transform:translateY(-50%);width:max-content;pointer-events:none;padding:4px 8px;border-radius:5px;background:#20262e;color:#fff;font:12px/1.4 system-ui;text-transform:none;box-shadow:0 2px 8px #0008';
     options.statusAnchor?.appendChild(badge);
+    const countdown = document.createElement('div');
+    countdown.id = 'recordingCountdown';
+    countdown.setAttribute('role', 'status');
+    countdown.setAttribute('aria-live', 'polite');
+    countdown.style.cssText = 'display:none;position:absolute;inset:0;align-items:center;justify-content:center;pointer-events:none;z-index:20;color:white;font:700 64px/1.2 system-ui;text-shadow:0 2px 12px #000';
+    options.modalParent.appendChild(countdown);
 
     // Normal recording controls live inline. Only a failed save during navigation
     // needs a modal, so its decision remains reachable above End session's dialog.
@@ -54,6 +63,7 @@ export function installRecordingControl(options: RecordingControlOptions) {
     dialog.style.cssText = 'width:min(490px,calc(100vw - 40px));max-height:calc(100vh - 40px);overflow:auto;box-sizing:border-box;padding:26px;border:1px solid #59616b;border-radius:14px;background:#20262e;color:#fff;font:16px/1.5 system-ui;text-transform:none;box-shadow:0 20px 80px #0009';
     const style = document.createElement('style');
     style.textContent = '#recordingLeaveDialog::backdrop{background:#0009}' +
+        '#recordingQuickStop:focus-visible{outline:3px solid #8bd0ff;outline-offset:3px}#recordingQuickStop:hover{background:#4a1c22!important}' +
         '#recordingSettings button,#recordingLeaveDialog button{font:inherit;position:static;width:auto;height:auto;line-height:1.4;text-align:center;border-radius:7px;padding:8px 12px;cursor:pointer;border:1px solid #8793a0;background:transparent;color:inherit}' +
         '#recordingSettings button:hover,#recordingLeaveDialog button:hover{background:#59616b;color:#fff;border:1px solid #8793a0;padding:8px 12px}' +
         '#recordingSettings button:focus-visible,#recordingLeaveDialog button:focus-visible{outline:3px solid #8bd0ff;outline-offset:3px}' +
@@ -94,6 +104,29 @@ export function installRecordingControl(options: RecordingControlOptions) {
     const record = action('recordingStart', 'Record');
     record.style.cssText = 'background:#b9363e;border-color:#b9363e;color:#fff';
     const stop = action('recordingStop', 'Stop');
+    const quickStop = action('recordingQuickStop', '■');
+    quickStop.title = 'Stop recording';
+    quickStop.setAttribute('aria-label', 'Stop recording');
+    quickStop.style.cssText = 'display:none;position:absolute;left:calc(100% + 8px);top:50%;transform:translateY(-50%);width:30px;height:30px;padding:0;border:1px solid #ffb8b8;border-radius:5px;background:#20262e;color:#ffb8b8;font:18px/1 system-ui;cursor:pointer';
+    options.statusAnchor?.parentElement?.appendChild(quickStop);
+    const delayLabel = document.createElement('label');
+    delayLabel.textContent = 'Start delay (seconds)';
+    delayLabel.htmlFor = 'recordingDelay';
+    const delay = document.createElement('input');
+    delay.id = 'recordingDelay';
+    delay.type = 'number';
+    delay.min = '0';
+    delay.max = '60';
+    delay.step = '1';
+    delay.value = '3';
+    delay.style.cssText = 'display:block;width:80px;margin:6px 0;padding:6px;box-sizing:border-box;font:inherit';
+    const normalizeDelay = () => {
+        const value = delay.value.trim() === '' ? 3 : Number(delay.value);
+        const seconds = Number.isFinite(value) ? Math.min(60, Math.max(0, Math.trunc(value))) : 3;
+        delay.value = String(seconds);
+        return seconds;
+    };
+    delay.addEventListener('change', normalizeDelay);
     actions.append(choose, record, stop);
     const leaveWarning = document.createElement('div');
     leaveWarning.id = 'recordingLeaveWarning';
@@ -107,7 +140,7 @@ export function installRecordingControl(options: RecordingControlOptions) {
     leave.style.cssText = 'background:#b9363e;border-color:#b9363e';
     leaveActions.append(stay, leave);
     leaveWarning.append(leaveMessage, leaveActions);
-    panel.append(description, filename, format, details, status, notice, actions);
+    panel.append(description, filename, format, delayLabel, delay, details, status, notice, actions);
     dialog.append(title, leaveWarning);
     options.modalParent.append(style, dialog);
 
@@ -152,6 +185,18 @@ export function installRecordingControl(options: RecordingControlOptions) {
         choose.disabled = busy || !!reason || !!resolveLeave;
         record.disabled = preparing || snapshot.phase !== 'ready' || !!reason || !!resolveLeave;
         stop.disabled = (!preparing && !active) || !!resolveLeave;
+        delay.disabled = busy;
+        quickStop.disabled = stop.disabled;
+        quickStop.style.display = preparing || active ? 'block' : 'none';
+        if (options.statusAnchor) {
+            quickStop.style.left = `${options.statusAnchor.offsetLeft + options.statusAnchor.offsetWidth + 8}px`;
+            quickStop.style.top = `${options.statusAnchor.offsetTop + options.statusAnchor.offsetHeight / 2}px`;
+        }
+        badge.style.left = preparing || active ? 'calc(100% + 46px)' : 'calc(100% + 8px)';
+        const remaining = Math.max(0, Math.ceil((countdownEnd - Date.now()) / 1000));
+        countdown.style.display = preparing && remaining > 0 ? 'flex' : 'none';
+        const countdownText = `Recording in ${remaining}`;
+        if (countdown.textContent !== countdownText) countdown.textContent = countdownText;
         filename.textContent = snapshot.filename || 'No location selected';
         details.textContent = `${frozenElapsed} · ${fileSize(snapshot.bytesWritten)} written`;
         const messages: Record<RecordingSnapshot['phase'], string> = {
@@ -175,6 +220,8 @@ export function installRecordingControl(options: RecordingControlOptions) {
         if (!preparing) return;
         preparation++;
         preparing = false;
+        countdownEnd = 0;
+        finishCountdown?.();
         render();
     };
     const openDialog = () => {
@@ -229,13 +276,38 @@ export function installRecordingControl(options: RecordingControlOptions) {
             if (preparing) return;
             const attempt = ++preparation;
             preparing = true;
+            preparationSource = options.getSource();
+            const seconds = normalizeDelay();
+            countdownEnd = Date.now() + seconds * 1000;
             render();
             try {
                 // Invoke immediately within the Record gesture so the adapter can
                 // resume a paused audio sink without changing the user's mute choice.
-                await options.beforeRecord?.();
+                const audioReady = options.beforeRecord?.();
+                if (seconds > 0) {
+                    options.closeSettings();
+                    options.focusStream();
+                }
+                await audioReady;
                 if (disposed || attempt !== preparation) return;
+                if (seconds > 0) await new Promise<void>((resolve) => {
+                    const tick = window.setInterval(() => {
+                        render();
+                        if (Date.now() >= countdownEnd) finishCountdown?.();
+                    }, 100);
+                    finishCountdown = () => {
+                        window.clearInterval(tick);
+                        finishCountdown = null;
+                        resolve();
+                    };
+                    if (Date.now() >= countdownEnd) finishCountdown();
+                });
+                if (disposed || attempt !== preparation) return;
+                const source = options.getSource();
+                if (unavailableReason() || source?.connection !== preparationSource?.connection ||
+                    source?.videoTrack !== preparationSource?.videoTrack || source?.codec !== preparationSource?.codec) return;
                 preparing = false;
+                countdownEnd = 0;
                 await recorder.start();
                 if (!disposed && attempt === preparation &&
                     (recorder.snapshot.phase === 'starting' || recorder.snapshot.phase === 'recording') &&
@@ -248,6 +320,7 @@ export function installRecordingControl(options: RecordingControlOptions) {
                 if (!disposed && attempt === preparation) throw error;
             } finally {
                 if (attempt === preparation) preparing = false;
+                render();
             }
         });
         pointerFocus = releasePointerFocus(event);
@@ -258,6 +331,15 @@ export function installRecordingControl(options: RecordingControlOptions) {
         releasePointerFocus(event);
         return pending;
     });
+    quickStop.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const pending = preparing ? (cancelPreparation(), Promise.resolve()) : perform(() => recorder.stop());
+        options.focusStream();
+        return pending;
+    });
+    for (const name of ['keydown', 'keyup', 'keypress', 'pointerdown', 'pointerup']) {
+        quickStop.addEventListener(name, event => event.stopPropagation());
+    }
     stay.addEventListener('click', () => { finishLeave(false); dialog.close(); });
     leave.addEventListener('click', () => { finishLeave(true); dialog.close(); });
     dialog.addEventListener('cancel', () => {
@@ -281,6 +363,7 @@ export function installRecordingControl(options: RecordingControlOptions) {
         panel.addEventListener(name, (event) => event.stopPropagation());
     }
     const pageHide = () => {
+        cancelPreparation();
         if (recorder.hasUnsavedData) void recorder.stop('The page was closed.').catch((): void => {});
     };
     window.addEventListener('pagehide', pageHide);
@@ -289,7 +372,12 @@ export function installRecordingControl(options: RecordingControlOptions) {
     render();
 
     return {
-        refresh: () => { if (!disposed) { recorder.sourceChanged(); render(); } },
+        refresh: () => { if (!disposed) {
+            const source = options.getSource();
+            if (preparing && (unavailableReason() || source?.connection !== preparationSource?.connection ||
+                source?.videoTrack !== preparationSource?.videoTrack || source?.codec !== preparationSource?.codec)) cancelPreparation();
+            recorder.sourceChanged(); render();
+        } },
         beforeLeave: (): Promise<boolean> => {
             cancelPreparation();
             if (disposed) return Promise.resolve(false);
@@ -326,6 +414,8 @@ export function installRecordingControl(options: RecordingControlOptions) {
             style.remove();
             panel.remove();
             badge.remove();
+            quickStop.remove();
+            countdown.remove();
         }
     };
 }
