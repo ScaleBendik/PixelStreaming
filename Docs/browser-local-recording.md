@@ -60,11 +60,18 @@ recording to produce chunks; a failed playback start stays visible in Settings.
 
 ## Automatic local MP4 export
 
-“convert to MP4 after recording” is enabled by default. Choose location requests a
-folder so the browser can save both the original WebM/MKV and its MP4 copy without
-a second permission prompt after Stop. Turning the checkbox off restores the original
-single-file Save picker. Changing it clears the selected location. Each clip uses a
-unique name; an existing MP4 is never silently overwritten.
+“convert to MP4 after recording” is off by default. Normal recording uses the
+single-file Save picker. After saving, “Convert previous recording to MP4” converts
+the most recent successful recording from this page, with a separate MP4 Save
+picker. Cancelling that picker leaves the recording intact; selecting the source
+file itself is rejected. The button does not browse recordings from earlier visits.
+
+Opting into automatic conversion makes Choose location request a folder, so the
+browser can save both files without another prompt after Stop. The UI explains this
+permission requirement. Use a dedicated folder; browsers may restrict Desktop or
+drive-root folder access even where single-file saving is permitted. Changing the
+checkbox clears the selected location. Automatic clips use unique names and do not
+silently overwrite existing MP4s; manual output uses the native Save confirmation.
 
 After the original is finalized, Settings opens to show conversion progress, Cancel,
 and retry on failure. Success shows “Your video is now ready” and Open video. The

@@ -52,7 +52,7 @@ export class Mp4ExportController {
             this.cancel('MP4 conversion stopped responding. Your original recording is saved; you can retry.');
         }, 180_000);
     }
-    start(source: RecordingFileHandle, folder: RecordingFolder): Promise<void> {
+    start(source: RecordingFileHandle, target: RecordingFolder | (RecordingFileHandle & Mp4Destination)): Promise<void> {
         if (this.busy) return this.completed;
         const generation = ++this.generation;
         this.cancelling = false;
@@ -66,14 +66,23 @@ export class Mp4ExportController {
                 if (!source.getFile) throw new Error('Missing saved recording');
                 const file = await source.getFile();
                 // Never silently overwrite a pre-existing MP4 during automatic export.
-                let existing = false;
-                try { await folder.getFileHandle(filename); existing = true; }
-                catch (error) { if ((error as DOMException).name !== 'NotFoundError') throw error; }
+                let destination: RecordingFileHandle & Mp4Destination;
+                if ('getFileHandle' in target) {
+                    let existing = false;
+                    try { await target.getFileHandle(filename); existing = true; }
+                    catch (error) { if ((error as DOMException).name !== 'NotFoundError') throw error; }
+                    if (generation !== this.generation) return;
+                    const outputName = existing ? filename.replace(/\.mp4$/, `-${crypto.randomUUID()}.mp4`) : filename;
+                    destination = await target.getFileHandle(outputName, { create: true });
+                } else {
+                    destination = target;
+                    // Save pickers can return the source itself if a user changes
+                    // the suggested filename. Never overwrite the original clip.
+                    const handle = source as RecordingFileHandle & { isSameEntry?(other: RecordingFileHandle): Promise<boolean> };
+                    if (source === destination || await handle.isSameEntry?.(destination)) throw new Error('Source and destination are identical');
+                }
                 if (generation !== this.generation) return;
-                const outputName = existing ? filename.replace(/\.mp4$/, `-${crypto.randomUUID()}.mp4`) : filename;
-                const destination = await folder.getFileHandle(outputName, { create: true });
-                if (generation !== this.generation) return;
-                this.update({ filename: outputName });
+                this.update({ filename: destination.name });
                 const worker = this.createWorker(); this.worker = worker;
                 worker.onmessage = event => {
                     if (generation !== this.generation || !this.busy) return;

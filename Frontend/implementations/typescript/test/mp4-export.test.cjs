@@ -76,3 +76,16 @@ test('existing MP4 gets a new filename instead of being overwritten', async t =>
     assert.match(f.writes[0], /^clip-.+\.mp4$/);
     f.workers[0].onmessage({data:{type:'saved'}}); await done;
 });
+test('manual export uses the explicit file without requesting a folder', async t => {
+    const f = fixture(t), done = f.controller.start(f.source, f.destination); await tick();
+    assert.equal(f.workers[0].messages[0].destination, f.destination);
+    assert.deepEqual(f.writes, []);
+    f.workers[0].onmessage({data:{type:'saved'}}); await done;
+});
+test('manual export refuses to replace the original even through another handle', async t => {
+    const f = fixture(t);
+    f.source.isSameEntry = async () => true;
+    await f.controller.start(f.source, f.destination);
+    assert.equal(f.controller.snapshot.phase, 'error');
+    assert.equal(f.workers.length, 0);
+});

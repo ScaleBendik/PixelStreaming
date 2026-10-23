@@ -153,9 +153,22 @@ try {
                 const control = window.mp4Proof.installMp4RecordingExport({recorder,parent,
                     openSettings:()=>opened++, onChange:()=>{}, focusStream:()=>{}});
                 const enabledByDefault = parent.querySelector('input').checked;
+                let filePickerCalls = 0;
+                window.showSaveFilePicker = async opts => { filePickerCalls++; return directory.getFileHandle(opts.suggestedName,{create:true}); };
                 const selected = await control.pickFile({suggestedName:'ui-test.webm'});
                 const writer = await selected.createWritable(); await writer.write(original); await writer.close();
                 recorder.savedFile=selected; recorder.snapshot.phase='saved'; subscriber();
+                const stayedIdle = !control.busy && opened === 0;
+                parent.querySelector('#recordingMp4Previous').click();
+                await control.wait();
+                const manualSaved = parent.querySelector('#recordingMp4Status').textContent;
+                window.showSaveFilePicker = async () => {throw new DOMException('Cancelled','AbortError');};
+                parent.querySelector('#recordingMp4Previous').click(); await control.wait();
+                const cancelledPickerKeptSaved = parent.querySelector('#recordingMp4Status').textContent === manualSaved;
+                parent.querySelector('input').click();
+                const automatic = await control.pickFile({suggestedName:'automatic-test.webm'});
+                const autoWriter = await automatic.createWritable(); await autoWriter.write(original); await autoWriter.close();
+                recorder.savedFile=automatic; recorder.snapshot.phase='saved'; subscriber();
                 const autoStarted=control.busy;
                 const progressVisible=parent.querySelector('progress').style.display !== 'none';
                 parent.querySelector('#recordingMp4Cancel').click();
@@ -165,7 +178,7 @@ try {
                 await control.wait();
                 // The helper reads the saved file to create a local Open video link.
                 for(let i=0;i<100 && !parent.querySelector('#recordingMp4Open').href;i++) await new Promise(r=>setTimeout(r,10));
-                const result={enabledByDefault, autoStarted, progressVisible, cancelled, opened,
+                const result={enabledByDefault, stayedIdle, manualSaved, filePickerCalls, cancelledPickerKeptSaved, autoStarted, progressVisible, cancelled, opened,
                     ready:parent.querySelector('#recordingMp4Status').textContent,
                     openVideo:parent.querySelector('#recordingMp4Open').href.startsWith('blob:'),
                     progress:parent.querySelector('progress').value,
@@ -189,8 +202,10 @@ try {
                 }
                 return {...result,rejected,openedWriter,failures};
             }, {browserName});
-            assert.equal(ui.enabledByDefault,true); assert.equal(ui.autoStarted,true); assert.equal(ui.progressVisible,true);
-            assert.match(ui.cancelled,/cancelled/); assert.equal(ui.opened,2); assert.match(ui.ready,/Your video is now ready/);
+            assert.equal(ui.enabledByDefault,false); assert.equal(ui.stayedIdle,true); assert.match(ui.manualSaved,/Your video is now ready/);
+            assert.equal(ui.filePickerCalls,2); assert.equal(ui.cancelledPickerKeptSaved,true);
+            assert.equal(ui.autoStarted,true); assert.equal(ui.progressVisible,true);
+            assert.match(ui.cancelled,/cancelled/); assert.equal(ui.opened,3); assert.match(ui.ready,/Your video is now ready/);
             assert.equal(ui.openVideo,true); assert.equal(ui.progress,100); assert.ok(ui.originalBytes>0);
             assert.equal(ui.rejected,true); assert.equal(ui.openedWriter,false);
             for(const failure of ui.failures) { assert.equal(failure.failed,true); assert.equal(failure.closed,false); assert.equal(failure.aborted,true); }
