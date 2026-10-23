@@ -72,6 +72,7 @@ export interface RecordingFileWriter {
 
 export interface RecordingFileHandle {
     name: string;
+    getFile?(): Promise<File>;
     createWritable(): Promise<RecordingFileWriter & { seek(position: number): Promise<void> }>;
 }
 
@@ -99,6 +100,7 @@ interface RecordingOptions {
 }
 
 interface RecordingRun {
+    file: RecordingFileHandle;
     source: RecordingSource;
     format: RecordingFormat;
     writer: RecordingFileWriter | null;
@@ -176,6 +178,7 @@ export class LocalRecordingController {
     private run: RecordingRun | null = null;
     private choice = 0;
     private disposed = false;
+    private saved: RecordingFileHandle | null = null;
     private readonly now: () => number;
     private readonly elapsedNow: () => number;
 
@@ -187,6 +190,15 @@ export class LocalRecordingController {
 
     get snapshot(): RecordingSnapshot { return { ...this.state }; }
     get hasUnsavedData(): boolean { return this.run !== null; }
+    get savedFile(): RecordingFileHandle | null { return this.saved; }
+
+    resetLocation(): void {
+        if (this.run || this.disposed) return;
+        ++this.choice;
+        this.file = null;
+        this.fileFormat = null;
+        this.update({ phase: 'idle', filename: '', bytesWritten: 0, startedAt: null, message: 'Choose a location for your recording.' });
+    }
 
     subscribe(listener: (state: RecordingSnapshot) => void): () => void {
         this.listeners.add(listener);
@@ -257,6 +269,7 @@ export class LocalRecordingController {
         let complete!: (saved: boolean) => void;
         const completion = new Promise<boolean>(resolve => { complete = resolve; });
         const run: RecordingRun = {
+            file,
             source: { ...source }, format, writer: null, recorder: null, recorderStarted: false,
             opening: true, stopRequested: false, finishing: false, failure: null,
             captureStartedAt: null, captureStoppedAt: null, bytesWritten: 0,
@@ -418,7 +431,10 @@ export class LocalRecordingController {
         else if (run.receivedData) this.notify(run, 'recording_saved');
         this.run = null;
         if (run.failure) this.update({ phase: 'error', message: run.failure });
-        else if (run.receivedData) this.update({ phase: 'saved', bytesWritten: run.bytesWritten, message: 'Saved to your chosen location.' });
+        else if (run.receivedData) {
+            this.saved = run.file;
+            this.update({ phase: 'saved', bytesWritten: run.bytesWritten, message: 'Saved to your chosen location.' });
+        }
         else this.update({ phase: 'idle', message: 'Recording cancelled. Choose a new location to record.' });
         run.complete(!run.failure);
     }

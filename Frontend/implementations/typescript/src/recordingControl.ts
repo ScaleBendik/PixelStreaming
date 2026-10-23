@@ -1,10 +1,12 @@
 import { getRecordingFormat, getRecordingSupport, LocalRecordingController, RecordingSnapshot, RecordingSource, RecordingObserverFactory } from './localRecording';
+import { installMp4RecordingExport } from './recordingMp4Control';
 
 export type RecordingControlOptions = {
     settingsSection: HTMLElement;
     statusAnchor?: HTMLElement;
     modalParent: HTMLElement;
     closeSettings: () => void;
+    openSettings: () => void;
     focusStream: () => void;
     getSource: () => RecordingSource | null;
     setModalInput: (open: boolean) => void;
@@ -22,7 +24,9 @@ function fileSize(bytes: number): string {
 }
 
 export function installRecordingControl(options: RecordingControlOptions) {
-    const recorder = new LocalRecordingController({ getSource: options.getSource, createObserver: options.createObserver });
+    let mp4: ReturnType<typeof installMp4RecordingExport> | undefined;
+    const recorder = new LocalRecordingController({ getSource: options.getSource, createObserver: options.createObserver,
+        pickFile: pickerOptions => mp4!.pickFile(pickerOptions) });
     let disposed = false;
     let inputCaptured = false;
     let unloadAttached = false;
@@ -145,13 +149,13 @@ export function installRecordingControl(options: RecordingControlOptions) {
     options.modalParent.append(style, dialog);
 
     const beforeUnload = (event: BeforeUnloadEvent) => {
-        if (!allowLeave && recorder.hasUnsavedData) {
+        if (!allowLeave && (recorder.hasUnsavedData || mp4?.busy)) {
             event.preventDefault();
             event.returnValue = '';
         }
     };
     const syncUnload = () => {
-        const needed = !allowLeave && recorder.hasUnsavedData;
+        const needed = !allowLeave && (recorder.hasUnsavedData || !!mp4?.busy);
         if (needed === unloadAttached) return;
         if (needed) window.addEventListener('beforeunload', beforeUnload);
         else window.removeEventListener('beforeunload', beforeUnload);
@@ -171,7 +175,7 @@ export function installRecordingControl(options: RecordingControlOptions) {
         if (disposed) return;
         const snapshot = recorder.snapshot;
         const active = snapshot.phase === 'starting' || snapshot.phase === 'recording';
-        const busy = preparing || active || snapshot.phase === 'saving' || snapshot.phase === 'choosing';
+        const busy = preparing || active || snapshot.phase === 'saving' || snapshot.phase === 'choosing' || !!mp4?.busy;
         if (active) frozenElapsed = elapsedTime(snapshot.startedAt);
         else if (snapshot.phase === 'idle' || snapshot.phase === 'ready') frozenElapsed = '00:00';
         if (active && lastPhase !== snapshot.phase) allowLeave = false;
@@ -183,9 +187,10 @@ export function installRecordingControl(options: RecordingControlOptions) {
         format.textContent = displayedFormat ? `Format: ${displayedFormat}` : '';
         const reason = unavailableReason();
         choose.disabled = busy || !!reason || !!resolveLeave;
-        record.disabled = preparing || snapshot.phase !== 'ready' || !!reason || !!resolveLeave;
+        record.disabled = preparing || !!mp4?.busy || snapshot.phase !== 'ready' || !!reason || !!resolveLeave;
         stop.disabled = (!preparing && !active) || !!resolveLeave;
         delay.disabled = busy;
+        mp4?.setPreparing(preparing);
         quickStop.disabled = stop.disabled;
         quickStop.style.display = preparing || active ? 'block' : 'none';
         if (options.statusAnchor) {
@@ -209,7 +214,7 @@ export function installRecordingControl(options: RecordingControlOptions) {
         status.textContent = showReason && reason ? reason : stateMessage;
         status.style.cssText = localError || snapshot.phase === 'error'
             ? 'color:#ffb8b8;background:#4a1c22;border-radius:4px;padding:6px' : '';
-        const badgeText = preparing ? 'Starting…' : active ? `${snapshot.phase === 'starting' ? 'Starting' : '● REC'} ${frozenElapsed}` :
+        const badgeText = mp4?.busy ? 'Preparing MP4…' : preparing ? 'Starting…' : active ? `${snapshot.phase === 'starting' ? 'Starting' : '● REC'} ${frozenElapsed}` :
             snapshot.phase === 'saving' ? 'Saving…' : snapshot.phase === 'saved' ? 'Saved' : snapshot.phase === 'error' ? 'Not saved' : '';
         badge.textContent = badgeText;
         badge.style.display = badgeText ? 'block' : 'none';
@@ -367,6 +372,8 @@ export function installRecordingControl(options: RecordingControlOptions) {
         if (recorder.hasUnsavedData) void recorder.stop('The page was closed.').catch((): void => {});
     };
     window.addEventListener('pagehide', pageHide);
+    mp4 = installMp4RecordingExport({ recorder, parent: panel, openSettings: options.openSettings,
+        onChange: render, focusStream: options.focusStream });
     const unsubscribe = recorder.subscribe(render);
     const timer = window.setInterval(render, 1000);
     render();
@@ -388,7 +395,10 @@ export function installRecordingControl(options: RecordingControlOptions) {
                 try { saved = await recorder.stop('Finishing recording before leaving.'); }
                 catch { /* Keep the page available until the user decides. */ }
                 if (disposed) return false;
-                if (saved) return true;
+                if (saved) {
+                    await mp4?.wait();
+                    return !disposed;
+                }
                 return new Promise<boolean>((resolve) => {
                     resolveLeave = resolve;
                     leaveWarning.style.display = 'block';
@@ -410,6 +420,7 @@ export function installRecordingControl(options: RecordingControlOptions) {
             window.removeEventListener('beforeunload', beforeUnload);
             if (inputCaptured) { inputCaptured = false; options.setModalInput(false); }
             void recorder.dispose().catch((): void => {});
+            mp4?.dispose();
             dialog.remove();
             style.remove();
             panel.remove();

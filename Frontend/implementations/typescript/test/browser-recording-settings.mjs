@@ -22,6 +22,7 @@ const compile = async file => ts.transpileModule(await readFile(path.join(root, 
 }).outputText;
 const files = {
     control: 'Frontend/implementations/typescript/src/recordingControl.ts',
+    mp4: 'Frontend/implementations/typescript/src/recordingMp4Control.ts',
     smoothing: 'Frontend/implementations/typescript/src/cameraSmoothing.ts',
     settings: 'Frontend/ui-library/src/UI/SettingsPanel.ts',
     sections: 'Frontend/ui-library/src/Config/ConfigUI.ts',
@@ -113,7 +114,10 @@ for (const [name, executablePath] of Object.entries(browsers)) {
                     sourceChanged() {}
                     async dispose() {}
                 }
-                const { installRecordingControl } = load(sources.control, () => ({
+                const { installRecordingControl } = load(sources.control, name => name === './recordingMp4Control' ? load(sources.mp4, () => ({ Mp4ExportController: class {
+                    snapshot = { phase: 'idle', percent: 0, message: '', filename: '' }; busy = false;
+                    reset() {} wait() { return Promise.resolve(); } dispose() {}
+                } })) : ({
                     LocalRecordingController: Recorder, getRecordingSupport: () => ({ supported: true, reason: '' }),
                     getRecordingFormat: () => ({ codec: 'AV1', extension: '.webm' })
                 }));
@@ -122,6 +126,7 @@ for (const [name, executablePath] of Object.entries(browsers)) {
                     statusAnchor: document.getElementById('settingsBtn'),
                     modalParent: document.getElementById('videoElementParent'),
                     closeSettings: () => settings.hide(),
+                    openSettings: () => settings.show(),
                     focusStream: () => document.getElementById('videoElementParent').focus({ preventScroll: true }),
                     getSource: () => recordingSource,
                     setModalInput: open => { if (open) keyboard.unregister(); else keyboard.register(); }

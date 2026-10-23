@@ -26,7 +26,8 @@
     },
     "dependencies": {
         "@epicgames-ps/lib-pixelstreamingfrontend-ue5.8": "*",
-        "@epicgames-ps/lib-pixelstreamingfrontend-ui-ue5.8": "*"
+        "@epicgames-ps/lib-pixelstreamingfrontend-ui-ue5.8": "*",
+        "mediabunny": "1.62.1"
     },
     "repository": {
         "type": "git",

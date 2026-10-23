@@ -16,7 +16,15 @@ module.exports = {
 		return config;
 	}, {}),
 
-    plugins: [].concat(pages.map((page) => new HtmlWebpackPlugin({
+    plugins: [{ apply(compiler) {
+        compiler.hooks.thisCompilation.tap('Mp4ExportNotices', compilation => {
+            compilation.hooks.processAssets.tap({ name: 'Mp4ExportNotices', stage: webpack.Compilation.PROCESS_ASSETS_STAGE_ADDITIONAL }, () => {
+                const packageRoot = require.resolve('mediabunny').split(`${path.sep}dist${path.sep}`)[0];
+                const notice = 'Mediabunny 1.62.1 (unmodified), MPL-2.0.\nSource including all covered files: https://registry.npmjs.org/mediabunny/-/mediabunny-1.62.1.tgz\n\n';
+                compilation.emitAsset('third-party/mediabunny.txt', new webpack.sources.RawSource(notice + fs.readFileSync(path.join(packageRoot, 'LICENSE'), 'utf8')));
+            });
+        });
+    } }].concat(pages.map((page) => new HtmlWebpackPlugin({
           title: `${page}`,
           template: `./src/${page}.html`,
           filename: `${page}.html`,
@@ -64,6 +72,7 @@ module.exports = {
     },
     output: {
       filename: '[name].js',
+      chunkFilename: '[name].[contenthash].js',
       library: 'epicgames-frontend',
       libraryTarget: 'umd',
       path: process.env.WEBPACK_OUTPUT_PATH ? path.resolve(process.env.WEBPACK_OUTPUT_PATH) : path.resolve(__dirname, '../../../SignallingWebServer/www'),

@@ -68,6 +68,7 @@ test('authoritative end supersedes pending manager confirmation after the record
     f.button.click(); f.confirm.click();
     f.controller.markEnded();
     assert.equal(requests, 1, 'reuse the in-flight save rather than starting another');
+    assert.equal(f.dialog.open, false, 'conversion controls remain accessible while navigation waits');
     assert.deepEqual(f.navigations, []);
     finish(true); await flush();
     assert.deepEqual(f.navigations, ['https://manager.test/servers/']);
@@ -84,6 +85,7 @@ test('authoritative end removes old confirmation intent from retry links after c
             if (rejected) reject(new Error('Save failed')); else finish(false);
             await flush();
             assert.deepEqual(f.navigations, []);
+            assert.equal(f.dialog.open, true, 'return link remains reachable after navigation is paused');
             const link = f.nodes.find(n => n.tag === 'a');
             assert.equal(link.href, 'https://manager.test/servers/');
             assert.equal(link.textContent, 'Return to session manager');

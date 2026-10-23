@@ -58,11 +58,37 @@ Record resumes a paused playback element containing the received audio while
 preserving its mute and volume settings. Chromium must pull that audio for
 recording to produce chunks; a failed playback start stays visible in Settings.
 
-MP4 is not offered by this implementation. Explicitly requesting `video/mp4` disables
-Chromium's current unspecified-type passthrough selection. A separate remuxer could
-package the received compressed video into MP4 without re-encoding video; codec/audio
-compatibility and player support would need validation. Renaming the extension is
-not conversion, and MP4 alone would not make AV1 playable in H264-only players.
+## Automatic local MP4 export
+
+“convert to MP4 after recording” is enabled by default. Choose location requests a
+folder so the browser can save both the original WebM/MKV and its MP4 copy without
+a second permission prompt after Stop. Turning the checkbox off restores the original
+single-file Save picker. Changing it clears the selected location. Each clip uses a
+unique name; an existing MP4 is never silently overwritten.
+
+After the original is finalized, Settings opens to show conversion progress, Cancel,
+and retry on failure. Success shows “Your video is now ready” and Open video. The
+folder name is displayed; browsers cannot reliably open Windows Explorer or Finder.
+Cancellation, missing encoder support and conversion failure preserve the original.
+The tab must remain open until conversion finishes. Built-in navigation waits for
+conversion; Cancel conversion permits leaving with the original retained.
+
+The bundled Mediabunny worker uses native WebCodecs, local file handles and streamed
+output; there are no media uploads, CDN scripts, extra software or server conversion.
+H.264 video is remuxed without re-encoding. AV1/VP9 video is decoded and encoded to
+H.264 at its original dimensions with high-quality encoding; this costs CPU/GPU time
+and is lossy. Audio, when present, becomes AAC. The result is indexed H.264/AAC MP4,
+not AV1/VP9 renamed to MP4. Variable frame timestamps are preserved. Missing video
+durations at Matroska cluster boundaries are inferred from adjacent timestamps;
+the final frame uses its declared duration or the previous interval. No frames are
+intentionally dropped. Codec availability depends on browser/OS; failure leaves the
+raw recording available. MP4 conversion is not a second recording analytics event.
+
+`mp4Conversion.ts` owns media processing, `mp4Export.worker.ts` isolates it from the
+player UI, `mp4Export.ts` owns cancellation/timeouts, and `recordingMp4Control.ts`
+owns the settings workflow. Mediabunny is pinned; its ambient type dependencies are
+nested beneath it in the lockfile to avoid changing unrelated workspace DOM types.
+The build emits its license/source notice at `third-party/mediabunny.txt`.
 
 ## Implementation and invariants
 
@@ -117,6 +143,15 @@ not conversion, and MP4 alone would not make AV1 playable in H264-only players.
 
 ## Verification and remaining acceptance
 
+After creating local fixtures with `test/browser-av1-recording.mjs`, run
+`node Frontend/implementations/typescript/test/browser-mp4-export.mjs` from the repo
+root. It exercises the real worker and native local file handles in Chrome/Edge for
+H.264, AV1 and VP9: H.264/AAC output, frame preservation, H.264 NAL preservation,
+seeking, audio decoding, original-file preservation and automatic export/cancel/retry.
+This synthetic proof does not establish long/high-resolution clip performance,
+Mac encoder support, weak-laptop performance or Adobe import. Validate these on the
+deployed runtime before making broad compatibility claims.
+
 Use the repository-pinned Node version in `NODE_VERSION`. Run the TypeScript
 player workspace's `npm test` and production `npm run build` after building the
 Common, frontend library and UI library dependencies. No signalling protocol,
@@ -158,10 +193,9 @@ live. The AV1/VP9/H264 matrix passes with Chrome 155.0.8059.85 and Edge
 received Opus audio is included, and clips play and seek. Synthetic media
 establishes the browser path, not an Unreal/GPU build or native-picker acceptance.
 
-Chunked MediaRecorder output can omit duration/seek-index metadata at file open;
-players may discover duration only after reading the media. Test the intended
-external players and long recordings before promising immediately indexed seeking.
-Container metadata changes can be implemented separately without video re-encoding.
+Raw browser chunks omit seek metadata; the recording writer now adds it before
+file close. Test the intended external players and long recordings against the
+finalized files. MP4 export separately addresses codec/container compatibility.
 
 Before promoting an artifact to serving environments, accept the actual native picker, cancel/overwrite
 prompts, write permissions/free-space failures, repeated clips, audio synchronization,

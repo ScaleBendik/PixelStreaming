@@ -1172,6 +1172,11 @@ document.body.onload = function() {
                 settingsSection, statusAnchor: application.controls?.settingsIcon?.rootElement,
                 modalParent: stream.videoElementParent,
                 closeSettings: () => application.settingsPanel.hide(),
+                openSettings: () => {
+                    if (settingsSection.hidden) settingsSection.parentElement?.querySelector<HTMLElement>('.settingsSectionHeader')?.click();
+                    application.settingsPanel.show();
+                    settingsSection.querySelector('#recordingMp4')?.scrollIntoView({ block: 'nearest' });
+                },
                 focusStream: () => {
                     const target = stream.videoElementParent;
                     if (!target.hasAttribute('tabindex')) target.tabIndex = -1;

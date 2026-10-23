@@ -119,13 +119,20 @@ export function installEndSession(options: {
         cancel.disabled = false;
     };
     const navigate = (url: string): void => {
-        if (disposed || navigationPending) return;
+        if (disposed) return;
+        if (navigationPending) {
+            if (dialog.open) dialog.close();
+            return;
+        }
         // An authoritative end may arrive while recording finalization is still
         // pending. Never carry an old end-confirmation intent past that event.
         const destination = () => ended ? new URL('/servers/', options.managerOrigin).toString() : url;
         if (!options.beforeNavigate) { window.location.assign(destination()); return; }
         navigationPending = true;
         status.textContent = 'Finishing local recording…';
+        // Local MP4 conversion can outlive the session. Let Settings expose its
+        // progress and Cancel button instead of leaving them behind this modal.
+        if (dialog.open) dialog.close();
         void options.beforeNavigate().then((allowed) => {
             if (disposed) return;
             if (allowed) window.location.assign(destination());
@@ -133,11 +140,13 @@ export function installEndSession(options: {
                 status.textContent = 'Navigation paused. Finish saving your recording before leaving.';
                 // A completed session must still permit returning after a cancelled save warning.
                 if (ended) { fallback.href = destination(); fallback.textContent = 'Return to session manager'; fallback.style.display = 'block'; }
+                if (!dialog.open) dialog.showModal();
             }
         }).catch(() => {
             if (disposed) return;
             status.textContent = 'The recording could not be saved. Stay here to review the recording.';
             if (ended) { fallback.href = destination(); fallback.textContent = 'Return to session manager'; fallback.style.display = 'block'; }
+            if (!dialog.open) dialog.showModal();
         }).finally(() => { navigationPending = false; });
     };
     fallback.addEventListener('click', (event) => {

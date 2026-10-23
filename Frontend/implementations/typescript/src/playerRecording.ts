@@ -34,7 +34,7 @@ export function installPlayerRecording(options: Omit<RecordingControlOptions, 'g
         const player = stream.webRtcController;
         const sinks = [player.streamController.audioElement, player.videoPlayer.getVideoElement()];
         const sink = sinks.find(element =>
-            (element.srcObject as MediaStream | null)?.getAudioTracks?.().includes(source.audioTrack!));
+            (element.srcObject as MediaStream | null)?.getAudioTracks?.().some(track => track === source.audioTrack));
         if (!sink) throw new Error('Audio is not ready. Start session playback, then try recording again.');
         // Chromium must pull the received audio to produce recorder chunks.
         // Call play within the Record gesture; preserve the user's mute/volume.

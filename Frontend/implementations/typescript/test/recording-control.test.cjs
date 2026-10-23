@@ -18,7 +18,7 @@ function loadControl(Recorder, support) {
             if (['H264', 'AVC1', 'AVC3'].includes(codec)) return { codec: 'H264', extension: '.mkv' };
             return null;
         } }
-        : module.require(request);
+        : request === './recordingMp4Control' ? { installMp4RecordingExport: () => ({ busy: false, enabled: true, setPreparing() {}, wait: async () => {}, dispose() {} }) } : module.require(request);
     loaded._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
     }).outputText, filename);
@@ -103,6 +103,7 @@ function fixture(t, config = {}) {
     };
     const install = loadControl(FakeRecorder, support);
     const control = install({ settingsSection: settings, statusAnchor: anchor, modalParent: element('parent'), focusStream: () => stream.focus(),
+        openSettings: () => { settings.hidden = false; calls.push('openSettings'); },
         closeSettings: () => { settings.hidden = true; calls.push('closeSettings'); },
         getSource: () => source, setModalInput: open => input.push(open), beforeRecord: config.beforeRecord });
     const byId = id => nodes.find(node => node.id === id);
