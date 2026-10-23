@@ -18,6 +18,8 @@ export function installMp4RecordingExport(options: {
     let manualTask: Promise<void> | null = null;
     let pickerError = '';
     let manualOutput = false;
+    let imported: RecordingFileHandle | null = null;
+    let sourceName = '';
     const root = document.createElement('div');
     root.id = 'recordingMp4';
     const label = document.createElement('label');
@@ -47,11 +49,15 @@ export function installMp4RecordingExport(options: {
     const cancel = button('recordingMp4Cancel', 'Cancel conversion');
     const retry = button('recordingMp4Retry', 'Retry MP4 conversion');
     const previous = button('recordingMp4Previous', 'Convert previous recording to MP4');
+    const browse = button('recordingMp4Browse', 'Choose saved recording…');
+    const convertSelected = button('recordingMp4Selected', 'Convert selected recording to MP4');
+    const inputFile = document.createElement('p');
+    inputFile.id = 'recordingMp4Input'; inputFile.style.cssText = 'font-size:12px;overflow-wrap:anywhere';
     const open = document.createElement('a');
-    open.id = 'recordingMp4Open'; open.textContent = 'Open video'; open.target = '_blank'; open.rel = 'noopener';
+    open.id = 'recordingMp4Open'; open.textContent = 'Open MP4'; open.target = '_blank'; open.rel = 'noopener';
     open.style.cssText = 'display:none;color:inherit;text-decoration:underline;padding:8px 0';
-    actions.append(previous, cancel, retry, open);
-    root.append(label, warning, folderNotice, progress, status, location, actions);
+    actions.append(previous, browse, convertSelected, cancel, retry, open);
+    root.append(label, warning, folderNotice, progress, status, location, inputFile, actions);
     options.parent.appendChild(root);
     const exporter = new Mp4ExportController(() => { render(); options.onChange(); });
     function render() {
@@ -59,12 +65,16 @@ export function installMp4RecordingExport(options: {
         const snapshot = exporter.snapshot;
         checkbox.disabled = preparing || picking || exporter.busy || ['choosing', 'starting', 'recording', 'saving'].includes(options.recorder.snapshot.phase);
         previous.disabled = checkbox.disabled || !options.recorder.savedFile?.getFile;
+        browse.disabled = checkbox.disabled;
+        convertSelected.disabled = checkbox.disabled || !imported;
+        convertSelected.hidden = !imported;
+        inputFile.textContent = imported ? `Selected recording: ${imported.name}` : 'Choose a saved WebM or MKV recording from an earlier visit to convert it locally.';
         folderNotice.hidden = !checkbox.checked;
         progress.style.display = exporter.busy || snapshot.phase === 'saved' ? 'block' : 'none';
         progress.value = snapshot.percent;
         status.textContent = pickerError || snapshot.message;
-        location.textContent = manualOutput ? `MP4: ${snapshot.filename}. The original recording remains at its original location.` :
-            folder ? `Folder: ${folder.name}${snapshot.filename ? ` · ${snapshot.filename}` : ''}. The original recording is kept here too.` : '';
+        location.textContent = snapshot.phase !== 'idle' ?
+            `Original recording: ${sourceName} (kept unchanged). ${snapshot.phase === 'saved' ? 'MP4 saved' : 'MP4 destination'}: ${snapshot.filename}${!manualOutput && folder ? ` · Folder: ${folder.name}` : ''}.` : '';
         cancel.style.display = exporter.busy ? '' : 'none';
         retry.style.display = !manualOutput && ['error', 'cancelled'].includes(snapshot.phase) && selected && folder ? '' : 'none';
         retry.disabled = options.recorder.hasUnsavedData;
@@ -73,6 +83,7 @@ export function installMp4RecordingExport(options: {
     const start = async (source = selected, target: Parameters<Mp4ExportController['start']>[1] | null = folder) => {
         if (!source || !target || exporter.busy || disposed) return;
         pickerError = '';
+        sourceName = source.name;
         manualOutput = !('getFileHandle' in target);
         if (videoUrl) { URL.revokeObjectURL(videoUrl); videoUrl = null; }
         options.openSettings();
@@ -111,9 +122,8 @@ export function installMp4RecordingExport(options: {
     });
     cancel.addEventListener('click', () => exporter.cancel());
     retry.addEventListener('click', () => { void start(); });
-    previous.addEventListener('click', () => {
-        const source = options.recorder.savedFile;
-        if (previous.disabled || !source?.getFile || disposed) return;
+    const convertFile = (source: RecordingFileHandle | null) => {
+        if (checkbox.disabled || !source?.getFile || disposed) return;
         picking = true; pickerError = ''; render(); options.onChange();
         // Invoke the native picker directly from this user gesture, before any await.
         manualTask = (async () => {
@@ -126,14 +136,44 @@ export function installMp4RecordingExport(options: {
                 });
                 if (!disposed) await start(source, destination);
             } catch (error) {
-                if ((error as DOMException).name !== 'AbortError') pickerError = 'Could not choose an MP4 file. Your original recording is saved.';
+                if ((error as DOMException).name !== 'AbortError') pickerError = 'Could not choose an MP4 file. Your original recording is unchanged.';
+            } finally {
+                picking = false; manualTask = null;
+                if (!disposed) { render(); options.onChange(); }
+            }
+        })();
+    };
+    previous.addEventListener('click', () => convertFile(options.recorder.savedFile));
+    convertSelected.addEventListener('click', () => convertFile(imported));
+    browse.addEventListener('click', () => {
+        if (browse.disabled || disposed) return;
+        picking = true; pickerError = ''; render(); options.onChange();
+        manualTask = (async () => {
+            try {
+                const browser = window as unknown as { showOpenFilePicker(options: {
+                    multiple: boolean; excludeAcceptAllOption: boolean;
+                    types: { description: string; accept: Record<string, string[]> }[];
+                }): Promise<RecordingFileHandle[]> };
+                // Reading the source requires no folder/write permission. Saving is
+                // a separate click so its picker has a fresh user activation.
+                const [file] = await browser.showOpenFilePicker({ multiple: false, excludeAcceptAllOption: true,
+                    types: [{ description: 'WebM or MKV recording', accept: { 'video/webm': ['.webm'], 'video/x-matroska': ['.mkv'] } }] });
+                if (disposed || !file) return;
+                if (!/\.(webm|mkv)$/i.test(file.name) || !file.getFile) {
+                    pickerError = 'Choose a WebM (.webm) or Matroska (.mkv) recording.';
+                    return;
+                }
+                imported = file;
+                resetExport();
+            } catch (error) {
+                if ((error as DOMException).name !== 'AbortError') pickerError = 'Could not open the recording. Check file access and try again.';
             } finally {
                 picking = false; manualTask = null;
                 if (!disposed) { render(); options.onChange(); }
             }
         })();
     });
-    for (const control of [checkbox, cancel, retry, previous]) control.addEventListener('click', event => {
+    for (const control of [checkbox, cancel, retry, previous, browse, convertSelected]) control.addEventListener('click', event => {
         if ((event as MouseEvent).detail > 0) options.focusStream();
     });
     render();

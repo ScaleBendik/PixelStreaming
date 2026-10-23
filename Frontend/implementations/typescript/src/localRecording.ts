@@ -433,7 +433,7 @@ export class LocalRecordingController {
         if (run.failure) this.update({ phase: 'error', message: run.failure });
         else if (run.receivedData) {
             this.saved = run.file;
-            this.update({ phase: 'saved', bytesWritten: run.bytesWritten, message: 'Saved to your chosen location.' });
+            this.update({ phase: 'saved', bytesWritten: run.bytesWritten, message: 'Original recording saved to your chosen location.' });
         }
         else this.update({ phase: 'idle', message: 'Recording cancelled. Choose a new location to record.' });
         run.complete(!run.failure);

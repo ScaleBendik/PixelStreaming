@@ -210,6 +210,64 @@ try {
             assert.equal(ui.rejected,true); assert.equal(ui.openedWriter,false);
             for(const failure of ui.failures) { assert.equal(failure.failed,true); assert.equal(failure.closed,false); assert.equal(failure.aborted,true); }
             console.log(JSON.stringify({browserName,ui}));
+            const imported = await page.evaluate(async ({browserName}) => {
+                const directory = await navigator.storage.getDirectory();
+                const source = await directory.getFileHandle(`${browserName}-H264.mkv`);
+                const before = await (await source.getFile()).arrayBuffer();
+                const parent = document.createElement('div'); document.body.append(parent);
+                let subscriber, opened = 0, saveCalls = 0, pickerOptions;
+                const recorder = { snapshot:{phase:'idle'}, savedFile:null, hasUnsavedData:false,
+                    subscribe(callback){subscriber=callback;return()=>{};},resetLocation(){} };
+                const control = window.mp4Proof.installMp4RecordingExport({recorder,parent,
+                    openSettings:()=>opened++,onChange:()=>{},focusStream:()=>{}});
+                const click = id => parent.querySelector('#'+id).click();
+                const text = id => parent.querySelector('#'+id).textContent;
+                const previousDisabled = parent.querySelector('#recordingMp4Previous').disabled;
+                let release;
+                window.showOpenFilePicker = opts => {pickerOptions=opts;return new Promise(resolve=>{release=resolve;});};
+                window.showSaveFilePicker = async opts => {saveCalls++;return directory.getFileHandle(opts.suggestedName,{create:true});};
+                click('recordingMp4Browse');
+                const busyWhilePicking = control.busy && parent.querySelector('#recordingMp4Browse').disabled;
+                release([source]); await control.wait();
+                const selected = text('recordingMp4Input');
+                const noPrematureSave = saveCalls === 0 && opened === 0;
+                click('recordingMp4Selected'); await control.wait();
+                const saved = text('recordingMp4Status'), location = text('recordingMp4Location');
+                window.showOpenFilePicker = async () => {throw new DOMException('Cancelled','AbortError');};
+                click('recordingMp4Browse'); await control.wait();
+                const cancelPreserved = text('recordingMp4Input') === selected && text('recordingMp4Status') === saved;
+                window.showOpenFilePicker = async () => {throw new DOMException('Denied','NotAllowedError');};
+                click('recordingMp4Browse'); await control.wait();
+                const denied = text('recordingMp4Status');
+                window.showOpenFilePicker = async () => [{name:'wrong.mp4',getFile:()=>{throw Error('must not read');}}];
+                click('recordingMp4Browse'); await control.wait();
+                const rejectedExtension = text('recordingMp4Status');
+                window.showSaveFilePicker = async () => source;
+                click('recordingMp4Selected'); await control.wait();
+                const sameFileRejected = text('recordingMp4Status');
+                const after = await (await source.getFile()).arrayBuffer();
+                const originalUnchanged = new Uint8Array(before).every((v,i)=>v===new Uint8Array(after)[i]) && before.byteLength===after.byteLength;
+                // Existing recording activity disables imports, including startup/countdown.
+                recorder.snapshot.phase='recording'; subscriber();
+                const disabledDuringRecording = parent.querySelector('#recordingMp4Browse').disabled && parent.querySelector('#recordingMp4Selected').disabled;
+                recorder.snapshot.phase='idle'; subscriber(); control.setPreparing(true);
+                const disabledDuringCountdown = parent.querySelector('#recordingMp4Browse').disabled;
+                control.setPreparing(false);
+                // Disposing while the picker is open must not start conversion afterwards.
+                window.showOpenFilePicker = () => new Promise(resolve=>{release=resolve;});
+                click('recordingMp4Browse'); const pending = control.wait(); control.dispose(); release([source]); await pending;
+                parent.remove();
+                return {previousDisabled,busyWhilePicking,selected,noPrematureSave,saved,location,cancelPreserved,denied,rejectedExtension,
+                    sameFileRejected,originalUnchanged,disabledDuringRecording,disabledDuringCountdown,saveCalls,opened,pickerOptions};
+            }, {browserName});
+            assert.equal(imported.previousDisabled,true); assert.equal(imported.busyWhilePicking,true);
+            assert.equal(imported.noPrematureSave,true); assert.equal(imported.cancelPreserved,true);
+            assert.match(imported.saved,/MP4 saved/); assert.match(imported.location,/Original recording: .*H264.mkv.*MP4 saved: .*H264.mp4/);
+            assert.match(imported.denied,/Could not open/); assert.match(imported.rejectedExtension,/Choose a WebM/);
+            assert.match(imported.sameFileRejected,/Could not export MP4/); assert.equal(imported.originalUnchanged,true);
+            assert.equal(imported.disabledDuringRecording,true); assert.equal(imported.disabledDuringCountdown,true);
+            assert.equal(imported.saveCalls,1); assert.equal(imported.opened,2); assert.equal(imported.pickerOptions.multiple,false);
+            console.log(JSON.stringify({browserName,imported}));
             assert.deepEqual(errors, []); assert.deepEqual(external, []);
         } finally { await browser.close(); }
     }

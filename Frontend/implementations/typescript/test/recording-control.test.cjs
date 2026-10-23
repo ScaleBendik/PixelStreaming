@@ -128,7 +128,7 @@ test('inline choose, record and stop return pointer focus to the stream without 
     assert.deepEqual(f.input, []);
     await f.byId('recordingChoose').click();
     assert.equal(f.calls.includes('closeSettings'), false, 'choosing a location keeps Settings open');
-    assert.equal(f.byId('recordingFilename').textContent, '<clip>.webm');
+    assert.equal(f.byId('recordingFilename').textContent, 'Original recording: <clip>.webm');
     assert.equal(f.byId('recordingFilename').innerHTML, undefined);
     assert.equal(f.byId('recordingStart').disabled, false);
     await f.byId('recordingStart').click();

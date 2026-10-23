@@ -202,7 +202,7 @@ export function installRecordingControl(options: RecordingControlOptions) {
         countdown.style.display = preparing && remaining > 0 ? 'flex' : 'none';
         const countdownText = `Recording in ${remaining}`;
         if (countdown.textContent !== countdownText) countdown.textContent = countdownText;
-        filename.textContent = snapshot.filename || 'No location selected';
+        filename.textContent = snapshot.filename ? `Original recording: ${snapshot.filename}` : 'No location selected';
         details.textContent = `${frozenElapsed} · ${fileSize(snapshot.bytesWritten)} written`;
         const messages: Record<RecordingSnapshot['phase'], string> = {
             idle: 'Choose where to save your recording.', choosing: 'Choose a filename in the Save dialog.',

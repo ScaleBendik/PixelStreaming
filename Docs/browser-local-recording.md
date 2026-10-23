@@ -64,7 +64,12 @@ recording to produce chunks; a failed playback start stays visible in Settings.
 single-file Save picker. After saving, “Convert previous recording to MP4” converts
 the most recent successful recording from this page, with a separate MP4 Save
 picker. Cancelling that picker leaves the recording intact; selecting the source
-file itself is rejected. The button does not browse recordings from earlier visits.
+file itself is rejected. “Choose saved recording…” also opens a single WebM/MKV
+file from an earlier visit, without requiring a current-session recording or folder
+write access. “Convert selected recording to MP4” then opens the output Save picker
+from a separate user gesture. Cancelling either picker preserves existing results;
+invalid or unsupported media fails safely without modifying the source. This is
+intended for this recorder's H.264, AV1 and VP9 files, not a general media converter.
 
 Opting into automatic conversion makes Choose location request a folder, so the
 browser can save both files without another prompt after Stop. The UI explains this
@@ -74,8 +79,11 @@ checkbox clears the selected location. Automatic clips use unique names and do n
 silently overwrite existing MP4s; manual output uses the native Save confirmation.
 
 After the original is finalized, Settings opens to show conversion progress, Cancel,
-and retry on failure. Success shows “Your video is now ready” and Open video. The
-reveal scrolls only Settings vertically; it must not use ancestor-scrolling
+and retry on failure. Raw completion says “Original recording saved”; conversion
+completion says “MP4 saved. Your video is now ready” and offers Open MP4. The source
+and output filenames are displayed separately, with confirmation that the original
+is kept unchanged. During conversion/failure the output is labelled a destination,
+not a saved file. The reveal scrolls only Settings vertically; it must not use ancestor-scrolling
 `scrollIntoView` during the horizontal panel transition. No delayed scroll remains
 after closing Settings. Normal, compact and ultrawide layout regressions cover this.
 The folder name is displayed; browsers cannot reliably open Windows Explorer or Finder.

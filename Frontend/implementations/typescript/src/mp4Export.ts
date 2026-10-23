@@ -93,7 +93,7 @@ export class Mp4ExportController {
                         this.update({ percent: Math.min(99, Math.max(0, data.percent)), message: `Preparing MP4… ${Math.min(99, Math.max(0, data.percent))}%` });
                     } else if (data.type === 'saved') {
                         this.saved = destination;
-                        this.finish('saved', 'Your video is now ready.');
+                        this.finish('saved', 'MP4 saved. Your video is now ready. The original recording is kept unchanged.');
                     } else if (data.type === 'cancelled') this.finish('cancelled', 'Conversion cancelled. Your original recording is saved.');
                     else if (data.type === 'error') this.finish('error', 'MP4 conversion failed or this browser cannot encode H.264/AAC. Your original recording is saved.');
                 };
