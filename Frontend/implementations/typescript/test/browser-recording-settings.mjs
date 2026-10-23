@@ -23,6 +23,7 @@ const compile = async file => ts.transpileModule(await readFile(path.join(root, 
 const files = {
     control: 'Frontend/implementations/typescript/src/recordingControl.ts',
     mp4: 'Frontend/implementations/typescript/src/recordingMp4Control.ts',
+    reveal: 'Frontend/implementations/typescript/src/recordingSettings.ts',
     smoothing: 'Frontend/implementations/typescript/src/cameraSmoothing.ts',
     settings: 'Frontend/ui-library/src/UI/SettingsPanel.ts',
     sections: 'Frontend/ui-library/src/Config/ConfigUI.ts',
@@ -49,6 +50,8 @@ for (const [name, executablePath] of Object.entries(browsers)) {
         for (const [layout, viewport, light] of [
             ['desktop', { width: 1366, height: 900 }, false],
             ['compact', { width: 480, height: 700 }, false],
+            ['ultrawide', { width: 3440, height: 1440 }, false],
+            ['superwide', { width: 5120, height: 1440 }, false],
             ['light', { width: 1366, height: 900 }, true]
         ]) {
             const page = await browser.newPage({ viewport });
@@ -126,12 +129,13 @@ for (const [name, executablePath] of Object.entries(browsers)) {
                     statusAnchor: document.getElementById('settingsBtn'),
                     modalParent: document.getElementById('videoElementParent'),
                     closeSettings: () => settings.hide(),
-                    openSettings: () => settings.show(),
+                    openSettings: () => load(sources.reveal).showRecordingSettings(settings, settingsSection),
                     focusStream: () => document.getElementById('videoElementParent').focus({ preventScroll: true }),
                     getSource: () => recordingSource,
                     setModalInput: open => { if (open) keyboard.unregister(); else keyboard.register(); }
                 });
                 window.settings = settings;
+                window.revealRecording = () => load(sources.reveal).showRecordingSettings(settings, settingsSection);
                 const cameraEvents = new Map();
                 let cameraResponse;
                 window.cameraConnected = true;
@@ -160,6 +164,37 @@ for (const [name, executablePath] of Object.entries(browsers)) {
             }, { sources, palette: light ? style.defaultLightModePalette : style.defaultDarkModePalette });
 
             const shot = async state => page.screenshot({ path: path.join(output, `${name}-${layout}-${state}.png`) });
+            // Exercise the real reveal callback while the panel is offscreen and
+            // the Recording category is collapsed. Force vertical overflow too.
+            const reveal = await page.evaluate(async () => {
+                const panel = window.settings.rootElement;
+                const content = window.settings.settingsContentElement;
+                const spacer = document.createElement('div'); spacer.style.height = '1600px'; content.prepend(spacer);
+                const player = document.getElementById('playerUI');
+                const ui = document.getElementById('uiFeatures');
+                const state = () => ({x:window.scrollX,y:window.scrollY,uiX:ui.scrollLeft,uiY:ui.scrollTop,
+                    playerX:player.getBoundingClientRect().x,playerY:player.getBoundingClientRect().y,
+                    width:player.getBoundingClientRect().width,height:player.getBoundingClientRect().height});
+                const before = state();
+                window.revealRecording();
+                await new Promise(r=>setTimeout(r,400));
+                const target = document.getElementById('recordingMp4').getBoundingClientRect();
+                const bounds = panel.getBoundingClientRect();
+                const visible = target.top >= bounds.top - 1 && target.bottom <= bounds.bottom + 1;
+                const after = state();
+                window.settings.hide();
+                window.revealRecording(); window.settings.hide();
+                panel.scrollTop = 0;
+                await new Promise(r=>setTimeout(r,400));
+                const closedStayedPut = panel.scrollTop === 0 && !panel.classList.contains('panel-wrap-visible');
+                spacer.remove();
+                const section = document.getElementById('recordingMp4').closest('.settingsSectionBody');
+                if(!section.hidden) section.parentElement.querySelector('.settingsSectionHeader').click();
+                return {before,after,visible,closedStayedPut};
+            });
+            assert.deepEqual(reveal.after,reveal.before,'Reveal must not move or resize player/outer containers');
+            assert.equal(reveal.visible,true,'Conversion controls are visible inside Settings');
+            assert.equal(reveal.closedStayedPut,true,'Closing the panel cancels any delayed scrolling');
             await page.locator('#settingsBtn').click();
             assert.deepEqual(await page.locator('#settingsContent .settingsSectionLabel').allTextContents(),
                 ['Pixel Streaming', 'Recording', 'UI', 'Input', 'Encoder', 'WebRTC', 'Commands']);
@@ -286,7 +321,7 @@ for (const [name, executablePath] of Object.entries(browsers)) {
             assert.deepEqual(errors, []);
             await page.evaluate(() => { window.cameraControl.dispose(); window.ui.dispose(); });
             await page.close();
-            console.log(JSON.stringify({ browser: name, version: browser.version(), layout, cameraSmoothing: 'passed', settingsCategories: 'passed', keyboardRouting: 'passed', inlineControls: 'passed', failedSave: 'passed' }));
+            console.log(JSON.stringify({ browser: name, version: browser.version(), layout, conversionReveal: 'passed', cameraSmoothing: 'passed', settingsCategories: 'passed', keyboardRouting: 'passed', inlineControls: 'passed', failedSave: 'passed' }));
         }
     } finally { await browser.close(); }
 }

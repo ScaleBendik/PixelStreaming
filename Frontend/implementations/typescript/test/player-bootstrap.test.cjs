@@ -69,6 +69,7 @@ function boot({ missingControls = false, installationFails = false, navigationFa
             state.beforeRecoveryNavigate = beforeNavigate;
             return { cancel() {}, dispose() {} };
         } },
+        './recordingSettings': { showRecordingSettings() {} },
         './playerRecording': { installPlayerRecording(options) {
             if (recordingFails) throw new Error('Simulated recording initialization failure');
             state.recordingOptions = options;

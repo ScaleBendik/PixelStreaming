@@ -75,7 +75,10 @@ silently overwrite existing MP4s; manual output uses the native Save confirmatio
 
 After the original is finalized, Settings opens to show conversion progress, Cancel,
 and retry on failure. Success shows “Your video is now ready” and Open video. The
-folder name is displayed; browsers cannot reliably open Windows Explorer or Finder.
+reveal scrolls only Settings vertically; it must not use ancestor-scrolling
+`scrollIntoView` during the horizontal panel transition. No delayed scroll remains
+after closing Settings. Normal, compact and ultrawide layout regressions cover this.
+The folder name is displayed; browsers cannot reliably open Windows Explorer or Finder.
 Cancellation, missing encoder support and conversion failure preserve the original.
 The tab must remain open until conversion finishes. Built-in navigation waits for
 conversion; Cancel conversion permits leaving with the original retained.
