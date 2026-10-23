@@ -1,4 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
+import { SeekableRecordingWriter } from './seekableRecording';
 
 export interface RecordingSource {
     connection: object;
@@ -63,6 +64,7 @@ export function getRecordingFormat(codec: string): RecordingFormat | null {
 // These deliberately narrow types also work with TypeScript DOM versions that
 // do not yet declare the File System Access API.
 export interface RecordingFileWriter {
+    readonly bytesWritten?: number;
     write(data: Blob): Promise<void>;
     close(): Promise<void>;
     abort(): Promise<void>;
@@ -70,7 +72,7 @@ export interface RecordingFileWriter {
 
 export interface RecordingFileHandle {
     name: string;
-    createWritable(): Promise<RecordingFileWriter>;
+    createWritable(): Promise<RecordingFileWriter & { seek(position: number): Promise<void> }>;
 }
 
 export interface RecordingFilePickerOptions {
@@ -80,6 +82,8 @@ export interface RecordingFilePickerOptions {
 }
 
 interface RecordingOptions {
+    /** Writer factory seam for lifecycle tests; production always indexes the container. */
+    createFileWriter?: (file: RecordingFileHandle) => Promise<RecordingFileWriter>;
     getSource: () => RecordingSource | null;
     onState?: (state: RecordingSnapshot) => void;
     getSupport?: () => RecordingSupport;
@@ -266,7 +270,8 @@ export class LocalRecordingController {
         this.update({ phase: 'starting', filename: file.name, bytesWritten: 0, startedAt: null, message: `Waiting for ${format.codec} video…` });
         let opening: Promise<RecordingFileWriter> | undefined;
         try {
-            opening = file.createWritable();
+            opening = this.options.createFileWriter ? this.options.createFileWriter(file) :
+                file.createWritable().then(writer => new SeekableRecordingWriter(writer));
             run.writer = await this.withTimeout(opening, 'Opening the recording file timed out.');
         } catch {
             // A picker handle may finish opening after the timeout. Never leave
@@ -319,7 +324,7 @@ export class LocalRecordingController {
             if (run.failure || run !== this.run) return;
             await this.withTimeout(run.writer!.write(data), 'Writing recording data timed out.');
             if (run === this.run) {
-                run.bytesWritten += data.size;
+                run.bytesWritten = run.writer!.bytesWritten ?? run.bytesWritten + data.size;
                 this.update({ bytesWritten: run.bytesWritten });
             }
         }).catch(() => {
@@ -390,7 +395,10 @@ export class LocalRecordingController {
         if (run.writer) {
             try {
                 if (run.failure || !run.receivedData) await this.withTimeout(run.writer.abort(), 'Recording cleanup timed out.');
-                else await this.withTimeout(run.writer.close(), 'Saving the recording timed out.');
+                else {
+                    await this.withTimeout(run.writer.close(), 'Saving the recording timed out.');
+                    run.bytesWritten = run.writer.bytesWritten ?? run.bytesWritten;
+                }
             } catch {
                 run.failure ||= 'Could not finish saving the recording. The file may be incomplete.';
                 run.failureCode ||= 'file_close_failed';
@@ -410,7 +418,7 @@ export class LocalRecordingController {
         else if (run.receivedData) this.notify(run, 'recording_saved');
         this.run = null;
         if (run.failure) this.update({ phase: 'error', message: run.failure });
-        else if (run.receivedData) this.update({ phase: 'saved', message: 'Saved to your chosen location.' });
+        else if (run.receivedData) this.update({ phase: 'saved', bytesWritten: run.bytesWritten, message: 'Saved to your chosen location.' });
         else this.update({ phase: 'idle', message: 'Recording cancelled. Choose a new location to record.' });
         run.complete(!run.failure);
     }

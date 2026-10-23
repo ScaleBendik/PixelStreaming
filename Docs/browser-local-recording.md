@@ -66,6 +66,17 @@ not conversion, and MP4 alone would not make AV1 playable in H264-only players.
 
 ## Implementation and invariants
 
+- `seekableRecording.ts` wraps the disk writer with bounded streaming EBML parsing.
+  It preserves encoded blocks and track descriptions, adds an Info/Duration field,
+  reserves a SeekHead at the start, and collects video keyframe offsets. Stop appends
+  Cues and patches SeekHead, duration and Segment length before committing the file.
+  Duration uses media timestamps and the final frame's declared/inferred interval;
+  it does not convert variable frame rate. Memory does not grow with video payload:
+  parsing buffers are capped at 64 MiB, headers at 1 MiB and the index at 100,000
+  keyframes. Unsupported/malformed data or failed finalization aborts the write and
+  never reports Saved. Saved UI/analytics byte counts include the finalized metadata.
+  These changes apply to new recordings only. They improve seeking in compatible
+  players; they do not add WebM/MKV/AV1/VP9 support to Adobe or produce MP4.
 - `Frontend/implementations/typescript/src/playerRecording.ts` adapts the current
   peer's original incoming tracks and generation-fenced decoded-codec stats.
   No separate tier grant is required for media already admitted by Wilbur.
@@ -85,7 +96,7 @@ not conversion, and MP4 alone would not make AV1 playable in H264-only players.
   Startup and individual I/O operations have bounded waits. Errors stop recording,
   attempt to abort the incomplete write, and report failure without stopping the
   original playback tracks or claiming the file was saved.
-- Stop waits for the final recorder data event, drains writes, then closes the
+- Stop waits for the final recorder data event, drains writes, finalizes metadata, then closes the
   writer. File System Access stages writes until close; a crash or forced tab
   closure can lose an unfinished recording.
 - Track loss, peer replacement, disconnection and codec changes finalize the

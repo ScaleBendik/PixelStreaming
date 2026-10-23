@@ -4,10 +4,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const Module = require('node:module');
 const ts = require('typescript');
+const dependency = path.resolve(__dirname, '../src/seekableRecording.ts');
+const indexed = new Module(dependency, module);
+indexed._compile(ts.transpileModule(fs.readFileSync(dependency, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText, dependency);
 const filename = path.resolve(__dirname, '../src/localRecording.ts');
 const loaded = new Module(filename, module);
 loaded.filename = filename;
 loaded.paths = module.paths;
+const originalRequire = loaded.require.bind(loaded);
+loaded.require = name => name === './seekableRecording' ? indexed.exports : originalRequire(name);
 loaded._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
 }).outputText, filename);
@@ -60,6 +65,7 @@ function fixture(t, overrides = {}) {
     };
     const file = { name: 'clip.webm', async createWritable() { events.push(['open']); return writer; } };
     const options = {
+        createFileWriter: file => file.createWritable(),
         getSource: () => source,
         getSupport: () => ({ supported: true, reason: '' }),
         async pickFile(options) { pickerCalls++; events.push(['choose', options]); return file; },
@@ -78,6 +84,21 @@ function fixture(t, overrides = {}) {
         async start() { await controller.chooseLocation(); await controller.start(); }
     };
 }
+
+test('production indexing rejects invalid media without committing or reporting saved', async t => {
+    const reports = [];
+    const f = fixture(t, { createFileWriter: undefined, createObserver: () => event => reports.push(event) });
+    f.writer.seek = async () => {};
+    await f.start();
+    f.recorder.chunk('not an EBML recording');
+    assert.equal(await f.controller.stop(), false);
+    assert.equal(f.controller.snapshot.phase, 'error');
+    assert.equal(f.events.some(e => e[0] === 'close'), false);
+    assert.equal(f.events.some(e => e[0] === 'abort'), true);
+    assert.equal(reports.some(e => e.eventType === 'recording_saved'), false);
+    assert.equal(reports.at(-1).eventType, 'recording_failed');
+    assert.equal(f.tracks.every(track => track.stops === 0), true);
+});
 
 test('analytics starts on actual data and reports saved only after close; capture duration excludes disk finalization', async t => {
     const reports = [], closing = deferred();

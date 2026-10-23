@@ -26,6 +26,9 @@ const ts = require('typescript');
 const controllerJavascript = ts.transpileModule(await readFile(path.join(repository, 'Frontend/implementations/typescript/src/localRecording.ts'), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 }
 }).outputText;
+const indexJavascript = ts.transpileModule(await readFile(path.join(repository, 'Frontend/implementations/typescript/src/seekableRecording.ts'), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 }
+}).outputText;
 const telemetryJavascript = ts.transpileModule(await readFile(path.join(repository, 'Frontend/implementations/typescript/src/recordingTelemetry.ts'), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 }
 }).outputText;
@@ -130,9 +133,9 @@ function demuxWebM(bytes, requestedCodec) {
 
 const reported = [];
 const server = createServer((request, response) => {
-    if (request.url === '/localRecording.js' || request.url === '/recordingTelemetry.js') {
+    if (request.url === '/seekableRecording' || request.url === '/localRecording.js' || request.url === '/recordingTelemetry.js') {
         response.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-store' });
-        response.end(request.url === '/localRecording.js' ? controllerJavascript : telemetryJavascript);
+        response.end(request.url === '/seekableRecording' ? indexJavascript : request.url === '/localRecording.js' ? controllerJavascript : telemetryJavascript);
         return;
     }
     if (request.url === '/api/recording-events' && request.method === 'POST') {
@@ -286,8 +289,10 @@ try {
                                 fileHandle = await directory.getFileHandle(options.suggestedName, { create: true });
                                 return { name: fileHandle.name, createWritable: async () => {
                                     const writable = await fileHandle.createWritable();
+                                    let position = 0;
                                     return {
-                                        write: async blob => { await writable.write(blob); chunks++; recordingBytes += blob.size; },
+                                        write: async blob => { await writable.write(blob); chunks++; position += blob.size; recordingBytes = Math.max(recordingBytes, position); },
+                                        seek: async offset => { await writable.seek(offset); position = offset; },
                                         close: () => writable.close(), abort: () => writable.abort()
                                     };
                                 } };
@@ -366,6 +371,7 @@ try {
                     return digest;
                 });
                 assert.equal(result.inputTrackRemainedLive, true, 'Stopping recorder must not stop stream');
+                assert.ok(Number.isFinite(Number(result.durationAtMetadata)) && Number(result.durationAtMetadata) > 0, 'Duration must be finite on first metadata load');
                 assert.equal(result.seekPosition, 1.25, 'Saved recording must seek after playback');
                 assert.equal(result.freshSeek.currentTime, 1.25, 'Saved recording must seek on first open');
                 assert.deepEqual(result.lifecycleEvents.map(e => e.eventType), ['recording_started', 'recording_saved']);
