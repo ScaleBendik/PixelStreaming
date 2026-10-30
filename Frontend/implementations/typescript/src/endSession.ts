@@ -140,13 +140,13 @@ export function installEndSession(options: {
                 status.textContent = 'Navigation paused. Finish saving your recording before leaving.';
                 // A completed session must still permit returning after a cancelled save warning.
                 if (ended) { fallback.href = destination(); fallback.textContent = 'Return to session manager'; fallback.style.display = 'block'; }
-                if (!dialog.open) dialog.showModal();
+                if (!dialog.open) { options.setModalInput(true); dialog.showModal(); }
             }
         }).catch(() => {
             if (disposed) return;
             status.textContent = 'The recording could not be saved. Stay here to review the recording.';
             if (ended) { fallback.href = destination(); fallback.textContent = 'Return to session manager'; fallback.style.display = 'block'; }
-            if (!dialog.open) dialog.showModal();
+            if (!dialog.open) { options.setModalInput(true); dialog.showModal(); }
         }).finally(() => { navigationPending = false; });
     };
     fallback.addEventListener('click', (event) => {
@@ -225,7 +225,7 @@ export function installEndSession(options: {
     });
     cancel.addEventListener('click', () => { if (!pending && !ended) dialog.close(); });
     dialog.addEventListener('cancel', (event) => { if (pending || ended) event.preventDefault(); });
-    dialog.addEventListener('close', () => { if (!disposed && !ended) options.setModalInput(false); });
+    dialog.addEventListener('close', () => { if (!disposed && !ended && !dialog.open) options.setModalInput(false); });
     confirm.addEventListener('click', async () => {
         if (disposed || pending || ended) return;
         if (options.endDirect && !useManagerConfirmation) {

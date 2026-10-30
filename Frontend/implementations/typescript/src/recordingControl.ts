@@ -26,7 +26,7 @@ function fileSize(bytes: number): string {
 export function installRecordingControl(options: RecordingControlOptions) {
     let mp4: ReturnType<typeof installMp4RecordingExport> | undefined;
     const recorder = new LocalRecordingController({ getSource: options.getSource, createObserver: options.createObserver,
-        pickFile: pickerOptions => mp4!.pickFile(pickerOptions) });
+        pickFile: pickerOptions => mp4!.pickFile(pickerOptions), discardFile: file => mp4!.discardFile(file) });
     let disposed = false;
     let inputCaptured = false;
     let unloadAttached = false;
@@ -136,7 +136,7 @@ export function installRecordingControl(options: RecordingControlOptions) {
     leaveWarning.id = 'recordingLeaveWarning';
     leaveWarning.style.display = 'none';
     const leaveMessage = document.createElement('p');
-    leaveMessage.textContent = 'The recording could not be saved. Leave this page without a completed recording?';
+    leaveMessage.textContent = 'The recording save has not been confirmed. Leave this page without a confirmed recording?';
     const leaveActions = document.createElement('div');
     leaveActions.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-end';
     const stay = action('recordingStay', 'Stay on this page');
@@ -210,23 +210,26 @@ export function installRecordingControl(options: RecordingControlOptions) {
             saving: 'Saving… Keep this tab open.', saved: 'Saved. Choose a new location to record another clip.', error: 'The recording could not be saved.'
         };
         const stateMessage = localError || (preparing ? 'Preparing recording…' : snapshot.message || messages[snapshot.phase]);
-        const showReason = !busy && snapshot.phase !== 'error' && snapshot.phase !== 'saved';
+        const showReason = !localError && !busy && snapshot.phase !== 'error' && snapshot.phase !== 'saved';
         status.textContent = showReason && reason ? reason : stateMessage;
         status.style.cssText = localError || snapshot.phase === 'error'
             ? 'color:#ffb8b8;background:#4a1c22;border-radius:4px;padding:6px' : '';
-        const badgeText = mp4?.busy ? 'Preparing MP4…' : preparing ? 'Starting…' : active ? `${snapshot.phase === 'starting' ? 'Starting' : '● REC'} ${frozenElapsed}` :
+        const badgeText = localError ? 'Recording not started' : mp4?.busy ? 'Preparing MP4…' : preparing ? 'Starting…' : active ? `${snapshot.phase === 'starting' ? 'Starting' : '● REC'} ${frozenElapsed}` :
             snapshot.phase === 'saving' ? 'Saving…' : snapshot.phase === 'saved' ? 'Saved' : snapshot.phase === 'error' ? 'Not saved' : '';
         badge.textContent = badgeText;
+        badge.title = localError;
         badge.style.display = badgeText ? 'block' : 'none';
-        badge.style.color = active || snapshot.phase === 'error' ? '#ffb8b8' : '#fff';
+        badge.style.color = localError || active || snapshot.phase === 'error' ? '#ffb8b8' : '#fff';
         syncUnload();
     };
-    const cancelPreparation = () => {
+    const cancelPreparation = (message = '') => {
         if (!preparing) return;
+        localError = message;
         preparation++;
         preparing = false;
         countdownEnd = 0;
         finishCountdown?.();
+        recorder.resetLocation();
         render();
     };
     const openDialog = () => {
@@ -257,7 +260,12 @@ export function installRecordingControl(options: RecordingControlOptions) {
     const perform = async (operation: () => Promise<unknown>) => {
         localError = '';
         try { await operation(); }
-        catch (error) { localError = error instanceof Error ? error.message : 'Recording failed. Please try again.'; }
+        catch (error) {
+            if (disposed) return;
+            localError = error instanceof Error ? error.message : 'Recording failed. Please try again.';
+            if (!recorder.hasUnsavedData) recorder.resetLocation();
+            options.openSettings();
+        }
         render();
     };
     // Pointer actions should never strand keyboard focus on a control that
@@ -310,7 +318,10 @@ export function installRecordingControl(options: RecordingControlOptions) {
                 if (disposed || attempt !== preparation) return;
                 const source = options.getSource();
                 if (unavailableReason() || source?.connection !== preparationSource?.connection ||
-                    source?.videoTrack !== preparationSource?.videoTrack || source?.codec !== preparationSource?.codec) return;
+                    source?.videoTrack !== preparationSource?.videoTrack || source?.codec !== preparationSource?.codec) {
+                    cancelPreparation('Recording cancelled because the stream changed. Choose the current stream and try again.');
+                    return;
+                }
                 preparing = false;
                 countdownEnd = 0;
                 await recorder.start();
@@ -382,7 +393,8 @@ export function installRecordingControl(options: RecordingControlOptions) {
         refresh: () => { if (!disposed) {
             const source = options.getSource();
             if (preparing && (unavailableReason() || source?.connection !== preparationSource?.connection ||
-                source?.videoTrack !== preparationSource?.videoTrack || source?.codec !== preparationSource?.codec)) cancelPreparation();
+                source?.videoTrack !== preparationSource?.videoTrack || source?.codec !== preparationSource?.codec))
+                cancelPreparation('Recording cancelled because the stream changed. Choose the current stream and try again.');
             recorder.sourceChanged(); render();
         } },
         beforeLeave: (): Promise<boolean> => {
@@ -391,8 +403,8 @@ export function installRecordingControl(options: RecordingControlOptions) {
             if (allowLeave) return Promise.resolve(true);
             if (leaveRequest) return leaveRequest;
             leaveRequest = (async () => {
-                let saved = false;
-                try { saved = await recorder.stop('Finishing recording before leaving.'); }
+                let saved = !recorder.hasUnsavedData;
+                try { saved = await recorder.stop('Finishing recording before leaving.') || saved; }
                 catch { /* Keep the page available until the user decides. */ }
                 if (disposed) return false;
                 if (saved) {

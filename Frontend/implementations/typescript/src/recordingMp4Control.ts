@@ -1,5 +1,5 @@
 import { LocalRecordingController, RecordingFileHandle, RecordingFilePickerOptions } from './localRecording';
-import { Mp4ExportController, RecordingFolder } from './mp4Export';
+import { createRecordingFile, discardEmptyRecordingFile, Mp4ExportController, RecordingFolder } from './mp4Export';
 
 export function installMp4RecordingExport(options: {
     recorder: LocalRecordingController;
@@ -182,6 +182,7 @@ export function installMp4RecordingExport(options: {
         get enabled() { return checkbox.checked; },
         setPreparing(value: boolean) { preparing = value; render(); },
         wait: () => manualTask ?? exporter.wait(),
+        discardFile: discardEmptyRecordingFile,
         async pickFile(pickerOptions: RecordingFilePickerOptions): Promise<RecordingFileHandle> {
             const browser = window as unknown as {
                 showDirectoryPicker(options: { mode: 'readwrite' }): Promise<RecordingFolder>;
@@ -196,8 +197,8 @@ export function installMp4RecordingExport(options: {
             // Automatic sibling files need folder permission. Unique names avoid
             // overwriting another clip without a separate confirmation dialog.
             const name = pickerOptions.suggestedName.replace(/(\.[^.]+)$/, `-${crypto.randomUUID().slice(0, 8)}$1`);
-            const file = await chosen.getFileHandle(name, { create: true });
-            if (disposed) throw new DOMException('Cancelled', 'AbortError');
+            const file = await createRecordingFile(chosen, name);
+            if (disposed) { await discardEmptyRecordingFile(file); throw new DOMException('Cancelled', 'AbortError'); }
             folder = chosen; selected = file; attempted = null;
             resetExport();
             return file;

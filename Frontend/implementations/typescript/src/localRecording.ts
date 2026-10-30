@@ -73,6 +73,7 @@ export interface RecordingFileWriter {
 export interface RecordingFileHandle {
     name: string;
     getFile?(): Promise<File>;
+    isSameEntry?(other: RecordingFileHandle): Promise<boolean>;
     createWritable(): Promise<RecordingFileWriter & { seek(position: number): Promise<void> }>;
 }
 
@@ -89,6 +90,7 @@ interface RecordingOptions {
     onState?: (state: RecordingSnapshot) => void;
     getSupport?: () => RecordingSupport;
     pickFile?: (options: RecordingFilePickerOptions) => Promise<RecordingFileHandle>;
+    discardFile?: (file: RecordingFileHandle) => Promise<void>;
     createStream?: (tracks: MediaStreamTrack[]) => MediaStream;
     createRecorder?: (stream: MediaStream) => MediaRecorder;
     now?: () => number;
@@ -168,6 +170,8 @@ function matchesFormat(mime: string, expected: RecordingFormat): boolean {
  * captureStream() would lose that path. Actual passthrough still needs browser
  * acceptance testing: MediaRecorder exposes no "require passthrough" switch.
  */
+class RecordingIoTimeout extends Error {}
+
 export class LocalRecordingController {
     private state: RecordingSnapshot = {
         phase: 'idle', filename: '', bytesWritten: 0, startedAt: null, message: 'Choose a location for your recording.'
@@ -195,6 +199,7 @@ export class LocalRecordingController {
     resetLocation(): void {
         if (this.run || this.disposed) return;
         ++this.choice;
+        if (this.file) void this.discard(this.file);
         this.file = null;
         this.fileFormat = null;
         this.update({ phase: 'idle', filename: '', bytesWritten: 0, startedAt: null, message: 'Choose a location for your recording.' });
@@ -236,7 +241,8 @@ export class LocalRecordingController {
                 excludeAcceptAllOption: true,
                 types: [{ description: format.description, accept: { [format.mimeType]: [format.extension] } }]
             });
-            if (choice !== this.choice || this.disposed) return;
+            if (choice !== this.choice || this.disposed) { await this.discard(file); return; }
+            if (this.file && this.file !== file) void this.discard(this.file);
             this.file = file;
             this.fileFormat = format;
             this.update({ phase: 'ready', filename: file.name, bytesWritten: 0, startedAt: null, message: 'Ready to record.' });
@@ -258,6 +264,7 @@ export class LocalRecordingController {
         }
         const format = getRecordingFormat(source.codec)!;
         if (this.fileFormat?.codec !== format.codec) {
+            void this.discard(this.file);
             this.file = null;
             this.fileFormat = null;
             this.update({ phase: 'error', message: 'The video codec changed. Choose a new recording location for the current format.' });
@@ -289,7 +296,8 @@ export class LocalRecordingController {
         } catch {
             // A picker handle may finish opening after the timeout. Never leave
             // that late writer open or let it attach to a subsequent recording.
-            if (opening) void opening.then(writer => writer.abort()).catch((): void => {});
+            if (opening) void opening.then(writer => writer.abort()).catch((): void => {})
+                .then(() => this.discard(file));
             run.failure = 'Could not open the recording file. Choose a location and try again.';
             run.failureCode = 'file_open_failed';
         }
@@ -352,7 +360,15 @@ export class LocalRecordingController {
                 ++this.choice;
                 this.update({ phase: this.file ? 'ready' : 'idle', message: this.file ? 'Ready to record.' : 'Choose a location for your recording.' });
             }
-            return Promise.resolve(this.state.phase !== 'error');
+            // A historical error is not an unsaved operation. Only the completion
+            // of the run being stopped can refuse the current navigation.
+            const unused = this.file;
+            if (unused) {
+                this.file = null;
+                this.fileFormat = null;
+                this.update({ phase: 'idle', filename: '', message: 'Choose a location for your recording.' });
+            }
+            return unused ? this.discard(unused).then(() => true) : Promise.resolve(true);
         }
         this.requestStop(run, reason);
         return run.completion;
@@ -409,7 +425,17 @@ export class LocalRecordingController {
             try {
                 if (run.failure || !run.receivedData) await this.withTimeout(run.writer.abort(), 'Recording cleanup timed out.');
                 else {
-                    await this.withTimeout(run.writer.close(), 'Saving the recording timed out.');
+                    const closing = run.writer.close();
+                    try { await this.withTimeout(closing, 'Saving the recording timed out.'); }
+                    catch (error) {
+                        if (!(error instanceof RecordingIoTimeout)) throw error;
+                        // A timeout is not proof that the native commit failed.
+                        // Let navigation offer an escape while keeping this run
+                        // owned until close settles; never race close with abort.
+                        this.update({ message: 'Saving is taking longer than expected. Keep this page open to confirm the result.' });
+                        run.complete(false);
+                        await closing;
+                    }
                     run.bytesWritten = run.writer.bytesWritten ?? run.bytesWritten;
                 }
             } catch {
@@ -420,6 +446,7 @@ export class LocalRecordingController {
                 try { await this.withTimeout(run.writer.abort(), 'Recording cleanup timed out.'); } catch { /* Already reported. */ }
             }
         }
+        if (run.failure || !run.receivedData) await this.discard(run.file);
         run.source.videoTrack.removeEventListener('ended', run.trackEnded);
         run.source.audioTrack?.removeEventListener('ended', run.trackEnded);
         if (run.recorder) {
@@ -469,9 +496,15 @@ export class LocalRecordingController {
         this.listeners.clear();
     }
 
+    private async discard(file: RecordingFileHandle): Promise<void> {
+        try {
+            if (this.options.discardFile) await this.withTimeout(this.options.discardFile(file), 'Recording cleanup timed out.');
+        } catch { /* Best effort: never delete an unverified or still-open file. */ }
+    }
+
     private withTimeout<T>(promise: Promise<T>, message: string): Promise<T> {
         return new Promise<T>((resolve, reject) => {
-            const timer = setTimeout(() => reject(new Error(message)), this.options.ioTimeoutMs ?? 15_000);
+            const timer = setTimeout(() => reject(new RecordingIoTimeout(message)), this.options.ioTimeoutMs ?? 15_000);
             promise.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
         });
     }

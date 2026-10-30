@@ -269,3 +269,18 @@ test('initial connection hint appears once, expires, and is dismissed when openi
     f.button.click();
     assert.equal(hint.style.display, 'none');
 });
+
+test('refused live-session navigation reacquires modal input, including queued close events', async t => {
+    for (const rejection of [false, true]) await t.test(String(rejection), async t => {
+        const f = fixture(t, { beforeNavigate: async () => { if (rejection) throw new Error('save'); return false; } });
+        f.button.click();
+        f.nodes.find(node => node.tag === 'a').listeners.click({ preventDefault() {} });
+        await flush();
+        assert.equal(f.dialog.open, true);
+        assert.equal(f.ended, 0);
+        assert.equal(f.input.at(-1), true);
+        f.dialog.listeners.close();
+        assert.equal(f.input.at(-1), true, 'old queued close cannot unlock a reopened modal');
+        f.cancel.click(); assert.equal(f.input.at(-1), false);
+    });
+});

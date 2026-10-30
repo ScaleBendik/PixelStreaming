@@ -102,6 +102,7 @@ for (const [name, executablePath] of Object.entries(browsers)) {
                         this.listeners.forEach(listener => listener());
                     }
                     subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+                    resetLocation() { if (!this.hasUnsavedData) this.state('idle', { filename: '', bytesWritten: 0, startedAt: null }); }
                     async chooseLocation() {
                         this.state('choosing');
                         await Promise.resolve();
@@ -132,6 +133,7 @@ for (const [name, executablePath] of Object.entries(browsers)) {
                     openSettings: () => load(sources.reveal).showRecordingSettings(settings, settingsSection),
                     focusStream: () => document.getElementById('videoElementParent').focus({ preventScroll: true }),
                     getSource: () => recordingSource,
+                    beforeRecord: async () => { if (window.failPreparation) throw new Error('Audio preparation failed.'); },
                     setModalInput: open => { if (open) keyboard.unregister(); else keyboard.register(); }
                 });
                 window.settings = settings;
@@ -311,13 +313,28 @@ for (const [name, executablePath] of Object.entries(browsers)) {
                 ended.innerHTML = '<button>Return to servers</button>';
                 document.body.append(ended);
                 ended.showModal();
-                window.recorder.state('error', { message: 'Disk full.' });
                 window.ui.beforeLeave().then(value => { window.leaveDecision = value; });
+                window.recorder.finish(false);
             });
             await page.locator('#recordingStay').click();
             await page.waitForFunction(() => window.leaveDecision === false);
             assert.equal(await page.locator('#recordingLeaveDialog').evaluate(node => node.open), false);
             assert.ok(await page.evaluate(() => document.activeElement.closest('dialog') !== null), 'Underlying session dialog regains focus');
+            assert.equal(await page.evaluate(() => window.ui.beforeLeave()), true, 'settled error does not gate later navigation');
+            if (layout === 'desktop') {
+                await page.evaluate(() => {
+                    document.querySelector('dialog[open]').close();
+                    window.failPreparation = true;
+                    window.revealRecording();
+                    document.getElementById('recordingDelay').value = '3';
+                });
+                await page.locator('#recordingChoose').click();
+                await page.locator('#recordingStart').click();
+                await page.waitForFunction(() => document.getElementById('recordingBadge').textContent === 'Recording not started');
+                assert.equal(await page.locator('#recordingStatus').textContent(), 'Audio preparation failed.');
+                assert.equal(await page.locator('#settings-panel').evaluate(node => node.classList.contains('panel-wrap-visible')), true);
+                await shot('preparation-error');
+            }
             assert.deepEqual(errors, []);
             await page.evaluate(() => { window.cameraControl.dispose(); window.ui.dispose(); });
             await page.close();

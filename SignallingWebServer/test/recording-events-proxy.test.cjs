@@ -12,7 +12,7 @@ async function run(options = {}) {
         calls.push(args); return options.send ? options.send(...args) : { ok: true, json: async () => ({ ...ack, secret: 'omit' }) };
     });
     await handler({ method: options.method || 'POST', body: options.body ?? body,
-        get: n => n === 'X-SW-Recording' ? options.capability ?? 'recording-token' : options.sessionId ?? id }, {
+        get: n => n === 'X-SW-Recording' ? options.capability ?? 'a'.repeat(64) : options.sessionId ?? id }, {
         setHeader(k, v) { result[k] = v; }, sendStatus(s) { result.status = s; }, json(b) { result.body = b; }
     });
     return { calls, result };
@@ -21,7 +21,7 @@ async function run(options = {}) {
 test('only the fixed HTTPS recording endpoint and dedicated headers are forwarded; acknowledgement is stripped', async () => {
     const { calls, result } = await run();
     assert.equal(calls[0][0], 'https://api.example.test/session/player-recordings');
-    assert.deepEqual(calls[0][1].headers, { 'Content-Type': 'application/json', 'X-SW-Recording': 'recording-token', 'X-SW-Session-Request': id });
+    assert.deepEqual(calls[0][1].headers, { 'Content-Type': 'application/json', 'X-SW-Recording': 'a'.repeat(64), 'X-SW-Session-Request': id });
     assert.deepEqual(JSON.parse(calls[0][1].body), body);
     assert.equal(calls[0][1].redirect, 'error');
     assert.equal(calls[0][1].method, 'POST');
@@ -52,12 +52,32 @@ test('unknown fields, media/paths, malformed IDs, unbounded metrics and incompat
 
 test('invalid credentials, methods and unsafe/missing upstream configuration do not forward anything', async () => {
     for (const options of [{ capability: '' }, { capability: 'x'.repeat(8193) }, { capability: 'token with spaces' },
+        ...['recording-token', 'a'.repeat(63), 'a'.repeat(65), 'g'.repeat(64)].map(capability => ({ capability })),
         { sessionId: '-'.repeat(36) }, { url: '' }, { url: 'http://api.test' }, { url: 'https://user:password@api.test' },
         { method: 'GET' }, { method: 'HEAD' }, { method: 'PUT' }]) {
         const r = await run(options);
         assert.equal(r.calls.length, 0);
         assert.ok([401, 405, 503].includes(r.result.status));
     }
+});
+
+test('local forwarding budget cannot be bypassed by rotating capabilities and resets after a minute', async () => {
+    let now = 0, forwarded = 0;
+    const handler = createRecordingEventsProxy('https://api.test', async () => {
+        forwarded++; return { ok: false, status: 401 };
+    }, () => now);
+    async function request(index) {
+        let status;
+        await handler({ method: 'POST', body, get: name => name === 'X-SW-Recording' ? index.toString(16).padStart(64, '0') : id },
+            { setHeader() {}, sendStatus(value) { status = value; } });
+        return status;
+    }
+    for (let i = 0; i < 60; i++) assert.equal(await request(i), 401);
+    assert.equal(await request(60), 429);
+    assert.equal(forwarded, 60);
+    now = 60_000;
+    assert.equal(await request(61), 401);
+    assert.equal(forwarded, 61);
 });
 
 test('no success without durable API acknowledgement of the exact session, clip and event', async () => {
@@ -87,7 +107,7 @@ test('HTTP route bounds parsing, hides parser errors and never forwards HEAD/GET
     try {
         await new Promise((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
         const url = 'http://127.0.0.1:' + server.address().port + '/api/recording-events';
-        const headers = { 'Content-Type': 'application/json', 'X-SW-Recording': 'recording-token', 'X-SW-Session-Request': id };
+        const headers = { 'Content-Type': 'application/json', 'X-SW-Recording': 'a'.repeat(64), 'X-SW-Session-Request': id };
         for (const method of ['GET', 'HEAD', 'PUT']) {
             const res = await fetch(url, { method, headers });
             assert.equal(res.status, 405); await res.text();

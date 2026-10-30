@@ -69,6 +69,7 @@ function fixture(t, config = {}) {
             for (const listener of this.listeners) listener(this.snapshot);
         }
         subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+        resetLocation() { if (!this.hasUnsavedData) this.state('idle', { filename: '' }); }
         async chooseLocation() {
             calls.push('choose');
             this.state('choosing');
@@ -257,14 +258,14 @@ test('beforeLeave coalesces finalization and asks before leaving after a save fa
     assert.equal(f.input.at(-1), false);
     assert.equal(f.byId('recordingStatus').textContent, 'Disk is full.', 'error remains inline after staying');
     const second = f.control.beforeLeave();
-    await new Promise(resolve => setImmediate(resolve));
-    f.byId('recordingLeave').click();
     assert.equal(await second, true);
+    assert.equal(f.byId('recordingLeaveDialog').open, false, 'settled error is not unsaved data');
     assert.equal(f.events.has('beforeunload'), false);
 });
 
 test('Escape cancels the failed-save leave decision and successful finalization does not ask', async t => {
     const f = fixture(t, { stop: async recorder => { recorder.state('error'); return false; } });
+    await f.begin();
     const leaving = f.control.beforeLeave();
     await new Promise(resolve => setImmediate(resolve));
     f.byId('recordingLeaveDialog').cancel();
@@ -277,6 +278,7 @@ test('Escape cancels the failed-save leave decision and successful finalization 
 
 test('failed-save confirmation opens above an end-session modal and holds its input lease', async t => {
     const f = fixture(t, { stop: async recorder => { recorder.state('error'); return false; } });
+    await f.begin();
     const recordingDialog = f.byId('recordingLeaveDialog');
     const endDialog = f.element('dialog');
     endDialog.showModal();
@@ -345,7 +347,7 @@ test('failed audio preparation stays visible without starting a recording or blo
     assert.equal(f.byId('recordingLeaveDialog').open, false);
     assert.equal(f.byId('recordingStatus').textContent, 'Could not start audio playback.');
     assert.equal(f.calls.includes('closeSettings'), false);
-    assert.equal(f.byId('recordingStart').disabled, false);
+    assert.equal(f.byId('recordingStart').disabled, true, 'unused output was discarded; select a new location');
     assert.equal(f.events.has('beforeunload'), false);
     assert.equal(await f.control.beforeLeave(), true);
 });
@@ -390,7 +392,7 @@ test('navigation cancels pending preparation without waiting for playback or lea
     fail(new Error('Late audio failure'));
     await started;
     assert.equal(f.calls.includes('start'), false);
-    assert.equal(f.byId('recordingStatus').textContent, 'Ready to record.');
+    assert.equal(f.byId('recordingStatus').textContent, 'Choose where to save your recording.');
 });
 
 test('disposing during a pending save never authorizes stale navigation or opens a leave prompt', async t => {
@@ -464,4 +466,38 @@ test('delay normalizes to whole seconds in the supported range', t => {
         delay.fire('change');
         assert.equal(delay.value, expected);
     }
+});
+
+test('old startup errors never gate reconnect or recovery navigation without unsaved data', async t => {
+    const f = fixture(t);
+    f.recorder.state('error', { message: 'Earlier recording failed.' });
+    assert.equal(f.recorder.hasUnsavedData, false);
+    assert.equal(await f.control.beforeLeave(), true);
+    assert.equal(await f.control.beforeLeave(), true);
+    assert.equal(f.byId('recordingLeaveDialog').open, false);
+});
+
+test('default countdown audio failure reopens settings and exposes a persistent error badge', async t => {
+    const f = fixture(t, { defaultDelay: true, beforeRecord: async () => { throw new Error('Audio is not ready.'); } });
+    await f.byId('recordingChoose').click();
+    await f.byId('recordingStart').click();
+    assert.equal(f.calls.includes('closeSettings'), true);
+    assert.equal(f.settings.hidden, false);
+    assert.equal(f.calls.includes('start'), false);
+    assert.equal(f.byId('recordingBadge').textContent, 'Recording not started');
+    assert.equal(f.byId('recordingBadge').title, 'Audio is not ready.');
+    assert.equal(f.recorder.snapshot.filename, '', 'failed preparation releases its unused output');
+    assert.equal(f.byId('recordingCountdown').style.display, 'none');
+});
+
+test('source replacement during default countdown visibly cancels without starting the replacement', async t => {
+    const f = fixture(t, { defaultDelay: true });
+    await f.byId('recordingChoose').click();
+    const pending = f.byId('recordingStart').click();
+    await Promise.resolve();
+    f.setSource({ connection: {}, videoTrack: { readyState: 'live' }, codec: 'AV1', eligible: true });
+    f.control.refresh(); await pending;
+    assert.equal(f.calls.includes('start'), false);
+    assert.equal(f.byId('recordingBadge').textContent, 'Recording not started');
+    assert.match(f.byId('recordingStatus').textContent, /stream changed/);
 });

@@ -61,7 +61,15 @@ export function validRecordingEvent(value: unknown): value is Record<string, unk
 }
 
 /** Only the API can authenticate this recording-only capability and acknowledge durable ingestion. */
-export function createRecordingEventsProxy(apiBaseUrl: string, send: typeof fetch = fetch): RequestHandler {
+export function createRecordingEventsProxy(
+    apiBaseUrl: string,
+    send: typeof fetch = fetch,
+    now = Date.now
+): RequestHandler {
+    // One budget for this Wilbur route, including rotated/invalid capabilities.
+    // This limits upstream work without trusting caller-supplied client addresses.
+    let windowStart = now();
+    let forwarded = 0;
     let endpoint: string | undefined;
     try {
         const base = new URL(apiBaseUrl);
@@ -84,7 +92,7 @@ export function createRecordingEventsProxy(apiBaseUrl: string, send: typeof fetc
             !sessionRequestId ||
             !uuid.test(sessionRequestId) ||
             !capability ||
-            !/^[A-Za-z0-9_.-]{1,8192}$/.test(capability)
+            !/^[0-9a-f]{64}$/i.test(capability)
         ) {
             response.sendStatus(401);
             return;
@@ -97,6 +105,16 @@ export function createRecordingEventsProxy(apiBaseUrl: string, send: typeof fetc
             response.sendStatus(503);
             return;
         }
+        const timestamp = now();
+        if (timestamp >= windowStart + 60_000 || timestamp < windowStart) {
+            windowStart = timestamp;
+            forwarded = 0;
+        }
+        if (forwarded >= 60) {
+            response.sendStatus(429);
+            return;
+        }
+        forwarded++;
         const body = request.body;
         try {
             const upstream = await send(endpoint, {

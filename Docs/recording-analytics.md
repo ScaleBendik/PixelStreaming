@@ -25,6 +25,10 @@ valid attempt (unsupported stream, missing location) produce no report. Stop,
 disconnect, codec/peer replacement and accepted End session use the same existing
 file-finalization path, so they produce the same terminal events.
 
+A close exceeding the local wait deadline is unconfirmed, not a terminal failure.
+While the page remains open, the actual close result determines the single
+saved/failed report. Forced navigation can still lose that final report.
+
 Use saved clips to answer “did this viewer save a video?” Label the result
 **browser reported**. No report means **not reported/unknown**, not proof the user
 did not record. External screen recorders are invisible, clients can falsify
@@ -88,6 +92,13 @@ that attempt's events and retries. AV1/VP9 require `webm`; H264 requires `matros
 Metrics are nonnegative safe integers, at most 1 TiB and 24 hours. Saved bytes must
 be positive. Timestamps are canonical UTC ISO strings with milliseconds. Extra
 fields, invalid UUIDs, unsupported codecs and bodies above 8 KiB are rejected.
+
+Wilbur requires exactly 64 hexadecimal capability characters and limits forwarding
+to 60 requests per minute per route/process, including rotated tokens. Rejected
+upstream attempts count; expiration of the local window allows retries. The API
+still authenticates tokens and enforces durable limits. Its pre-authentication
+300/minute/source-IP/process budget may be shared behind ingress: verify actual
+trusted proxy identity and concurrent clients before claiming hosted rate capacity.
 
 Only `recording_failed` includes mandatory `failureCode`, one of:
 `file_open_failed`, `recorder_start_failed`, `recorder_failed`, `start_timeout`,

@@ -153,7 +153,8 @@ test('analytics never claims a saved clip after file open, write, close, format 
         if (kind === 'format') f.recorder.mimeType = 'video/webm;codecs=vp8';
         if (kind !== 'empty' && kind !== 'open') f.recorder.chunk('video');
         await tick();
-        assert.equal(await f.controller.stop(), false, kind);
+        await f.controller.stop();
+        assert.equal(f.controller.snapshot.phase, 'error', kind);
         assert.equal(reports.some(r => r.eventType === 'recording_saved'), false, kind);
         assert.equal(reports.filter(r => r.eventType === 'recording_failed').length, 1, kind);
         assert.equal(reports.at(-1).failureCode, {
@@ -294,7 +295,7 @@ test('a late file writer is aborted after opening times out and cannot revive th
     await f.controller.chooseLocation();
     await f.controller.start();
     assert.equal(f.controller.snapshot.phase, 'error');
-    assert.equal(await f.controller.stop(), false);
+    assert.equal(await f.controller.stop(), true, 'opening already failed; no active operation can block navigation');
     opening.resolve(f.writer);
     await tick();
     assert.deepEqual(f.events.filter(e => ['recorder', 'close', 'abort'].includes(e[0])), [['abort']]);
@@ -599,4 +600,53 @@ test('rejects changed output video codec or mismatched H264 container without a 
         assert.equal(f.controller.snapshot.phase, 'error');
         assert.equal(f.events.some(e => e[0] === 'close'), false);
     }
+});
+
+test('settled recording failure is retained inline but later stop has no unsaved operation', async t => {
+    const f = fixture(t); await f.start(); f.recorder.chunk('data'); f.recorder.onerror();
+    assert.equal(await f.controller.stop(), false);
+    assert.equal(f.controller.hasUnsavedData, false);
+    assert.equal(await f.controller.stop(), true);
+    assert.equal(f.controller.snapshot.phase, 'error');
+});
+
+test('a slow close stays unconfirmed until its actual result without racing abort', async t => {
+    for (const succeed of [true, false]) {
+        const closing = deferred(), reports = [];
+        const f = fixture(t, { ioTimeoutMs: 10, createObserver: () => event => reports.push(event) });
+        f.writer.close = () => closing.promise;
+        await f.start(); f.recorder.chunk('video');
+        assert.equal(await f.controller.stop(), false, 'navigation gets a bounded unconfirmed result');
+        assert.equal(f.controller.snapshot.phase, 'saving');
+        assert.equal(f.controller.hasUnsavedData, true);
+        assert.match(f.controller.snapshot.message, /taking longer/);
+        assert.deepEqual(reports.map(event => event.eventType), ['recording_started']);
+        assert.equal(f.events.some(event => event[0] === 'abort'), false);
+        if (succeed) closing.resolve(); else closing.reject(new Error('disk rejected commit'));
+        await tick();
+        assert.equal(f.controller.snapshot.phase, succeed ? 'saved' : 'error');
+        assert.equal(f.controller.hasUnsavedData, false);
+        assert.deepEqual(reports.map(event => event.eventType), ['recording_started', succeed ? 'recording_saved' : 'recording_failed']);
+        assert.equal(await f.controller.stop(), true);
+    }
+});
+
+test('unused selections and failed captures request owned empty-file cleanup', async t => {
+    const discarded = [], f = fixture(t, { discardFile: async file => discarded.push(file) });
+    await f.controller.chooseLocation();
+    f.controller.resetLocation(); await tick();
+    assert.deepEqual(discarded, [f.file]);
+    await f.start();
+    assert.equal(await f.controller.stop(), false, 'an empty capture fails');
+    assert.deepEqual(discarded, [f.file, f.file]);
+});
+
+test('a folder selection completing after cancellation is cleaned without becoming ready', async t => {
+    const selected = deferred(), discarded = [];
+    const f = fixture(t, { pickFile: () => selected.promise, discardFile: async file => discarded.push(file) });
+    const choosing = f.controller.chooseLocation();
+    await f.controller.stop();
+    selected.resolve(f.file); await choosing;
+    assert.deepEqual(discarded, [f.file]);
+    assert.notEqual(f.controller.snapshot.phase, 'ready');
 });

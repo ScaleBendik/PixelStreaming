@@ -4,6 +4,34 @@ import type { Mp4Destination } from './mp4Conversion';
 export interface RecordingFolder {
     name: string;
     getFileHandle(name: string, options?: { create?: boolean }): Promise<RecordingFileHandle & Mp4Destination>;
+    removeEntry?(name: string): Promise<void>;
+}
+const createdFiles = new WeakMap<RecordingFileHandle, RecordingFolder>();
+
+export async function createRecordingFile(folder: RecordingFolder, suggestedName: string): Promise<RecordingFileHandle & Mp4Destination> {
+    let name = suggestedName;
+    for (let attempt = 0; attempt < 5; attempt++) {
+        try { await folder.getFileHandle(name); }
+        catch (error) {
+            if ((error as DOMException).name !== 'NotFoundError') throw error;
+            const file = await folder.getFileHandle(name, { create: true });
+            createdFiles.set(file, folder);
+            return file;
+        }
+        name = suggestedName.replace(/(\.[^.]+)$/, `-${crypto.randomUUID()}$1`);
+    }
+    throw new Error('Could not choose a unique output filename');
+}
+
+export async function discardEmptyRecordingFile(file: RecordingFileHandle): Promise<void> {
+    const folder = createdFiles.get(file);
+    if (!folder?.removeEntry || !file.isSameEntry || !file.getFile) return;
+    try {
+        const current = await folder.getFileHandle(file.name);
+        if (!await file.isSameEntry(current) || (await file.getFile()).size !== 0) return;
+        await folder.removeEntry(file.name);
+        createdFiles.delete(file);
+    } catch { /* Preserve entries when identity, permissions or open writers prevent safe cleanup. */ }
 }
 export interface Mp4ExportSnapshot {
     phase: 'idle' | 'converting' | 'saved' | 'cancelled' | 'error';
@@ -24,6 +52,7 @@ export class Mp4ExportController {
     private saved: RecordingFileHandle | null = null;
     private completed: Promise<void> = Promise.resolve();
     private cancelling = false;
+    private destination: RecordingFileHandle | null = null;
     constructor(private onChange: () => void, private createWorker: () => ExportWorker = () =>
         new Worker(new URL('./mp4Export.worker.ts', import.meta.url), { type: 'module', name: 'local-mp4-export' })) {}
     get snapshot(): Mp4ExportSnapshot { return { ...this.state }; }
@@ -43,8 +72,14 @@ export class Mp4ExportController {
         clearTimeout(this.timer);
         this.worker?.terminate(); this.worker = null;
         const resolve = this.resolve; this.resolve = null;
+        const destination = this.destination; this.destination = null;
         this.update({ phase, message, ...(phase === 'saved' ? { percent: 100 } : {}) });
-        resolve?.();
+        if (destination && phase !== 'saved') {
+            // Keep completion bounded even when a removable drive stops responding.
+            let timer: ReturnType<typeof setTimeout>;
+            void Promise.race([discardEmptyRecordingFile(destination), new Promise<void>(done => { timer = setTimeout(done, 2000); })])
+                .finally(() => { clearTimeout(timer); resolve?.(); });
+        } else resolve?.();
     }
     private watchdog(): void {
         clearTimeout(this.timer);
@@ -65,15 +100,11 @@ export class Mp4ExportController {
             try {
                 if (!source.getFile) throw new Error('Missing saved recording');
                 const file = await source.getFile();
+                if (generation !== this.generation) return;
                 // Never silently overwrite a pre-existing MP4 during automatic export.
                 let destination: RecordingFileHandle & Mp4Destination;
                 if ('getFileHandle' in target) {
-                    let existing = false;
-                    try { await target.getFileHandle(filename); existing = true; }
-                    catch (error) { if ((error as DOMException).name !== 'NotFoundError') throw error; }
-                    if (generation !== this.generation) return;
-                    const outputName = existing ? filename.replace(/\.mp4$/, `-${crypto.randomUUID()}.mp4`) : filename;
-                    destination = await target.getFileHandle(outputName, { create: true });
+                    destination = await createRecordingFile(target, filename);
                 } else {
                     destination = target;
                     // Save pickers can return the source itself if a user changes
@@ -81,7 +112,8 @@ export class Mp4ExportController {
                     const handle = source as RecordingFileHandle & { isSameEntry?(other: RecordingFileHandle): Promise<boolean> };
                     if (source === destination || await handle.isSameEntry?.(destination)) throw new Error('Source and destination are identical');
                 }
-                if (generation !== this.generation) return;
+                if (generation !== this.generation) { void discardEmptyRecordingFile(destination); return; }
+                this.destination = destination;
                 this.update({ filename: destination.name });
                 const worker = this.createWorker(); this.worker = worker;
                 worker.onmessage = event => {

@@ -159,6 +159,25 @@ The build emits its license/source notice at `third-party/mediabunny.txt`.
   page unless the user explicitly chooses to leave. Pagehide cleanup alone cannot
   guarantee completion. This does not delay authoritative server-side session end.
 
+Historical errors with no active recording do not block later managed navigation.
+If recording preparation fails after countdown closes Settings, Settings reopens
+and the passive badge exposes the error. Source replacement cancels preparation
+with an explanation. Refused pre-End navigation restores the End modal's input
+lease, including when an older native close event arrives afterward.
+
+The 15-second close deadline is an unconfirmed save, not a failed commit. The
+controller keeps the in-flight close and Saving state, offers an explicit bounded
+leave decision, and reports Saved/Failed only when close actually settles. Staying
+on the page permits confirmation; leaving can lose both that result and its report.
+No abort races the pending close. Native long recordings still require acceptance.
+
+Unused/cancelled/failed automatic folder outputs receive best-effort cleanup.
+Deletion requires proof this page created the entry, matching file identity and
+zero committed bytes. Existing files, nonempty results, replacements and entries
+without verifiable identity are preserved. Late picker/folder completion also
+cleans unused output. Single-file picker destinations are never deleted by this
+cleanup because the page cannot prove they were newly created.
+
 ## Verification and remaining acceptance
 
 After creating local fixtures with `test/browser-av1-recording.mjs`, run
