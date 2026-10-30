@@ -28,7 +28,9 @@ movement throughout the session; Record and Stop do not change it automatically.
 
 Optional [recording usage analytics](recording-analytics.md) reports capture start,
 successful file close, or failure using metadata only. The player/relay are implemented;
-API token issuance/persistence and Manager analytics display remain follow-ups.
+API token issuance/persistence and Manager analytics display are deployed; the
+[Manager owner document](../../scaleworld-server-manager-web/docs/recording-analytics.md)
+records environment-specific acceptance.
 Without a recording-only capability no reports are sent. Analytics failures never
 block local saving, streaming or navigation; media and local paths are not uploaded.
 
@@ -179,6 +181,16 @@ cleans unused output. Single-file picker destinations are never deleted by this
 cleanup because the page cannot prove they were newly created.
 
 ## Verification and remaining acceptance
+
+Dev d1 serves review-fix runtime `pixelstreaming-runtime-20261030-001`, clean
+source `03ad6885d4c2f637c3e3a99b159adf327d8bdcc1`. Its hosted Chrome session
+rendered H.264 at 2240x1260/about 30 fps and exposed the native-save recording
+controls with the correct MKV format. Normal player End session returned to Manager,
+cleared ownership and requested provider shutdown. Native app control timed out before the Save
+picker could be exercised, so this check does not establish a saved clip or new
+recording-analytics delivery. Chrome/Edge native save, cancellation, cleanup and
+slow/large recordings remain acceptance gates; source regression coverage is
+separate from those gates.
 
 After creating local fixtures with `test/browser-av1-recording.mjs`, run
 `node Frontend/implementations/typescript/test/browser-mp4-export.mjs` from the repo
