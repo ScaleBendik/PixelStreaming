@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 import { randomUUID } from 'node:crypto';
 import { SessionQualityReceiver } from './SessionQuality';
+import { TurnRelayObservationReceiver } from './TurnRelayObservation';
 import {
     CodecTicketPolicy,
     CodecEvidence,
@@ -397,6 +398,7 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
     private streamerDisconnectedListener: () => void;
     private scaleWorldMediaEvidenceCapabilityReported: boolean;
     private readonly sessionQualityReceiver = new SessionQualityReceiver();
+    private readonly turnRelayReceiver = new TurnRelayObservationReceiver();
     private scaleWorldMediaReceivedReported: boolean;
     private scaleWorldMediaFlowObservedReported: boolean;
 
@@ -488,6 +490,20 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
         this.protocol.on(Messages.layerPreference.typeName, this.sendToStreamer.bind(this));
 
         this.protocol.on('unhandled', (message: BaseMessage) => {
+            if (message.type === 'scaleWorldTurnRelay') {
+                if (
+                    this.scaleWorldSessionIdentityValidated &&
+                    this.scaleWorldSessionRequestId &&
+                    this.playerId
+                ) {
+                    const evidence = this.turnRelayReceiver.accept(
+                        message as unknown as Record<string, unknown>
+                    );
+                    if (evidence)
+                        this.server.playerRegistry.emit('scaleWorldTurnRelay', this.playerId, evidence);
+                }
+                return;
+            }
             if (message.type === 'scaleWorldSessionQuality') {
                 if (
                     this.scaleWorldSessionIdentityValidated &&

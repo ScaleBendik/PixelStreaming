@@ -14,6 +14,7 @@ import {
 } from '@epicgames-ps/lib-pixelstreamingsignalling-ue5.8';
 import { beautify, IProgramOptions, sanitizeOptionsForLogging } from './Utils';
 import { createTurnCredentialsProvider, hasCredentiallessTurnServer } from './turnCredentials';
+import { withTurnFallback } from './turn-fallback';
 import { initInputHandler } from './InputHandler';
 import { Command, Option } from 'commander';
 import { initialize } from 'express-openapi';
@@ -729,6 +730,15 @@ if (missingEnvVars.size > 0) {
     const missing = Array.from(missingEnvVars).sort().join(', ');
     Logger.error(`Missing required environment variables referenced in configuration: ${missing}`);
     throw Error(`Missing required environment variables referenced in configuration: ${missing}`);
+}
+
+if (process.env.SCALEWORLD_TURN_MODE === 'redundant') {
+    if (options.turn_secret)
+        throw Error(
+            'Redundant TURN requires relay-specific credentials; a global turn_secret would overwrite fallback credentials.'
+        );
+    options.peer_options_player = withTurnFallback(options.peer_options_player, 'player');
+    options.peer_options_streamer = withTurnFallback(options.peer_options_streamer, 'streamer');
 }
 
 options.auth_issuer = resolveAuthOption(options.auth_issuer, 'CONNECT_TICKET_ISSUER');

@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 import { CodecEvidenceJournal } from './codec-evidence-journal';
+import { TurnRelayClassifier } from './turn-fallback';
 import { RuntimeRecovery, type RecoveryEvent, type RecoveryNotice } from './runtime-recovery';
 import fs from 'fs';
 import path from 'path';
@@ -2718,6 +2719,43 @@ export function wireInstanceAgent(
             requestFastPolling('viewer_media_flow_observed');
         }
     );
+    const turnRelayClassifier = new TurnRelayClassifier();
+    const playerRelayObservations = new Map<string, { signature: string }>();
+    server.playerRegistry.on('scaleWorldTurnRelay', (playerId: string, evidence: Record<string, unknown>) => {
+        const sessionContext = readPlayerSessionContext(playerId);
+        if (!hasPlayerSessionContext(sessionContext)) return;
+        let observation = playerRelayObservations.get(playerId);
+        if (!observation) {
+            observation = { signature: '' };
+            playerRelayObservations.set(playerId, observation);
+        }
+        // Capture admitted identity and dedup state before awaiting DNS. A short-lived
+        // viewer can leave meanwhile; its evidence still belongs to this exact request.
+        const state = observation;
+        void turnRelayClassifier
+            .refreshAddresses()
+            .then(() => {
+                const role = turnRelayClassifier.classify(evidence);
+                const signature = `${String(evidence.connectionId)}:${role}`;
+                if (state.signature === signature || pendingEvents.length >= MAX_PENDING_EVENTS - 1) return;
+                state.signature = signature;
+                queueEvent(
+                    'viewer_turn_relay_observed',
+                    {
+                        relayEvidenceVersion: 1,
+                        connectionId: evidence.connectionId,
+                        sequence: evidence.sequence,
+                        relayRole: role,
+                        ...buildPlayerSessionMetadata(sessionContext)
+                    },
+                    getPlayerEventSessionId(sessionContext)
+                );
+                if (role === 'fallback')
+                    Logger.warn('[turn] An admitted viewer selected the retained fallback relay.');
+                requestFastPolling('viewer_turn_relay_observed');
+            })
+            .catch(() => log('TURN relay observation unavailable.'));
+    });
     server.playerRegistry.on(
         'scaleWorldSessionQuality',
         (playerId: string, summary: Record<string, unknown>) => {
@@ -2763,6 +2801,7 @@ export function wireInstanceAgent(
         );
         if (normalizedPlayerId) {
             playerSessionContexts.delete(normalizedPlayerId);
+            playerRelayObservations.delete(normalizedPlayerId);
         }
         requestFastPolling('viewer_disconnected');
     });

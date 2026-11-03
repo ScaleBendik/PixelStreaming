@@ -1246,6 +1246,18 @@ Assert-ContainsText `
 
 Assert-ContainsText `
     -Content $startDevTurn `
+    -Expected 'resolve_turn_configuration.ps1" -Phase Select' `
+    -Message 'Wilbur startup must select TURN parameters before requesting secrets.'
+
+Assert-ContainsText `
+    -Content $startDevTurn `
+    -Expected 'resolve_turn_configuration.ps1" -Phase Validate' `
+    -Message 'Wilbur startup must validate resolved TURN endpoints before starting.'
+
+& (Join-Path $PSScriptRoot 'test_turn_configuration.ps1')
+
+Assert-ContainsText `
+    -Content $startDevTurn `
     -Expected 'ssm get-parameters --names %RUNTIME_PARAMETER_NAMES%' `
     -Message 'Wilbur startup must use SSM get-parameters instead of serial get-parameter calls.'
 

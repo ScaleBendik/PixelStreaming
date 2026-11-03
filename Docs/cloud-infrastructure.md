@@ -185,7 +185,18 @@ Current note:
     - `dev` -> `https://scaleworld.api.scaleaq-dev.net`
     - `stage` -> `https://scaleworld.api.scaleaq-stage.net`
     - `prod` -> `https://scaleworld.api.scaleaq.net`
-- TURN credentials still default to the current shared SSM paths for all lanes
+- TURN startup defaults to `SCALEWORLD_TURN_MODE=legacy-shared`, preserving the
+  current endpoints and generic SSM paths. Opt-in `isolated`/`redundant` modes select both
+  endpoints and credentials under `/pixelstreaming/{nonprod,prod}/turn/`, refuses
+  missing/cross-lane configuration and requires lane-specific public/private DNS.
+  Prod-only redundant mode also reads separate `/pixelstreaming/prod/turn-fallback/` credentials
+  and advertises the retained relay; selected fallback use generates authenticated
+  analytics evidence and an operator warning. Two bounded media retries reuse the
+  existing subscription after ICE failure. Dev/Stage reject redundant mode because
+  their planned primary and fallback aliases refer to the same host. This is an intentional shared fallback
+  dependency, not full physical isolation. This source preparation has not
+  activated a new hosted relay. See
+  [TURN migration and rollback](turnserverdoc.md#deploying-endpoint-selection-before-a-new-turn-host).
 - cloud startup now enables Wilbur reverse-proxy mode by default
   - `ENABLE_REVERSE_PROXY=true`
   - `REVERSE_PROXY_NUM_PROXIES=1`
@@ -313,6 +324,7 @@ Operational note:
 
 Both use env placeholders:
 
+- `${ENV:TURN_PUBLIC_HOST}` (player) / `${ENV:TURN_PRIVATE_HOST}` (streamer)
 - `${ENV:TURN_USERNAME}`
 - `${ENV:TURN_CREDENTIAL}`
 

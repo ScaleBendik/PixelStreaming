@@ -12,4 +12,5 @@ export class CandidateStat {
     protocol: 'tcp' | 'udp';
     relayProtocol: 'tcp' | 'udp' | 'tls';
     transportId: string;
+    url?: string;
 }

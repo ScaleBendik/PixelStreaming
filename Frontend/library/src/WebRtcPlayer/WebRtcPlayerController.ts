@@ -188,6 +188,8 @@ export class WebRtcPlayerController {
 
     private signallingConnectionGeneration = 0;
     private peerConnectionGeneration = 0;
+    private turnRecoveryAttempts = 0;
+    private turnRecoveryTimer: ReturnType<typeof setTimeout> | undefined;
     private subscribedSignallingConnectionGeneration = -1;
     private activeSubscribedStreamerId = '';
     private isApplyingAutomaticStreamerSelection = false;
@@ -296,6 +298,7 @@ export class WebRtcPlayerController {
             this.codecCapabilitiesSent = false;
             this.lastReportedCodec = undefined;
             this.signallingConnectionGeneration++;
+            this.turnRecoveryAttempts = 0;
             this.subscribedSignallingConnectionGeneration = -1;
             this.activeSubscribedStreamerId = '';
             const BrowserSendOffer = this.config.isFlagEnabled(Flags.BrowserSendOffer);
@@ -1160,6 +1163,7 @@ export class WebRtcPlayerController {
         peerConfig: RTCConfiguration,
         startBrowserOffer: boolean
     ): PeerConnectionController {
+        clearTimeout(this.turnRecoveryTimer);
         const previousController = this.peerConnectionController;
         const controller = new PeerConnectionController(peerConfig, this.config, this.preferredCodec);
         const generation = ++this.peerConnectionGeneration;
@@ -1243,10 +1247,46 @@ export class WebRtcPlayerController {
         };
 
         let webRtcConnectedSent = false;
+        let turnRecoveryRequested = false;
+        const turnHosts = new Set(
+            (peerConfig.iceServers ?? []).flatMap((server) =>
+                (Array.isArray(server.urls) ? server.urls : [server.urls])
+                    .map((url) => /^turns?:([^:?]+)/i.exec(url)?.[1]?.toLowerCase())
+                    .filter(Boolean)
+            )
+        );
+        const recoverTurnConnection = () => {
+            this.turnRecoveryTimer = undefined;
+            if (
+                !this.isCurrentPeerConnection(controller, generation) ||
+                !['failed', 'disconnected'].includes(controller.peerConnection?.iceConnectionState) ||
+                turnRecoveryRequested ||
+                turnHosts.size < 2 ||
+                this.turnRecoveryAttempts >= 2 ||
+                !this.enableAutoReconnect ||
+                !this.protocol?.isConnected() ||
+                !this.activeSubscribedStreamerId
+            )
+                return;
+            turnRecoveryRequested = true;
+            this.turnRecoveryAttempts++;
+            Logger.Info('Retrying media negotiation after an ICE failure with redundant TURN configured.');
+            this.pixelStreaming._onWebRtcConnecting();
+            // Reuse the existing same-stream subscription path. The server owns codec selection
+            // and media generation; no new socket, ticket, or lifecycle owner is invented here.
+            this.handleStreamerSelectionChanged(this.activeSubscribedStreamerId);
+        };
         controller.onIceConnectionStateChange = () => {
             if (!this.isCurrentPeerConnection(controller, generation)) {
                 return;
             }
+
+            clearTimeout(this.turnRecoveryTimer);
+            this.turnRecoveryTimer = undefined;
+            const iceState = controller.peerConnection?.iceConnectionState;
+            if (iceState === 'failed') recoverTurnConnection();
+            else if (iceState === 'disconnected' && turnHosts.size >= 2 && !turnRecoveryRequested)
+                this.turnRecoveryTimer = setTimeout(recoverTurnConnection, 10_000);
 
             // Browsers emit "connected" when getting first connection and "completed" when finishing
             // candidate checking. However, sometimes browsers can skip "connected" and only emit "completed".
@@ -1284,6 +1324,8 @@ export class WebRtcPlayerController {
     }
 
     private retirePeerConnectionController(): void {
+        clearTimeout(this.turnRecoveryTimer);
+        this.turnRecoveryTimer = undefined;
         const previousController = this.peerConnectionController;
         if (!previousController) {
             return;

@@ -28,7 +28,7 @@ async function waitFor(predicate, describe) {
     throw new Error('Timed out waiting for ' + describe);
 }
 
-async function startWilbur(t, overrides = {}) {
+async function startWilbur(t, overrides = {}, environment = {}) {
     const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'scaleworld-ue58-test-'));
     t.after(() => fs.rm(folder, { recursive: true, force: true }));
     const playerPort = await freePort();
@@ -57,7 +57,7 @@ async function startWilbur(t, overrides = {}) {
     await fs.writeFile(configPath, JSON.stringify(config));
     const child = spawn(process.execPath, ['dist/index.js', '--config_file', configPath], {
         cwd: path.resolve(__dirname, '..'), windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, AWS_EC2_METADATA_DISABLED: 'true' }
+        env: { ...process.env, AWS_EC2_METADATA_DISABLED: 'true', ...environment }
     });
     let output = '';
     child.stdout.on('data', (data) => { output += data.toString(); });
@@ -110,6 +110,48 @@ test('REST-only Wilbur starts without serving the player or changing keepalive d
     assert.match(wilbur.output(), /\[player-keepalive\] Enabled/);
     assert.match(wilbur.output(), /"player_keepalive_timeout": "0"/);
 });
+
+for (const [name, publicHost, privateHost] of [
+    ['legacy-shared', 'turn.scaleworld.net', '172.31.32.124'],
+    ['nonprod', 'turn-nonprod.scaleworld.net', 'turn-nonprod.internal.scaleworld.net'],
+    ['prod', 'turn-prod.scaleworld.net', 'turn-prod.internal.scaleworld.net'],
+    ['redundant', 'turn-prod.scaleworld.net', 'turn-prod.internal.scaleworld.net']
+]) {
+    test('packaged TURN peer files resolve the ' + name + ' endpoints and preserve credentials', { timeout: 20000 }, async (t) => {
+        const credential = 'local-test-config-credential-must-never-appear-in-logs';
+        const wilbur = await startWilbur(t, {
+            auth_mode: 'off',
+            peer_options_player_file: path.resolve(__dirname, '../peer_options.player.json'),
+            peer_options_streamer_file: path.resolve(__dirname, '../peer_options.streamer.json')
+        }, {
+            TURN_PUBLIC_HOST: publicHost, TURN_PRIVATE_HOST: privateHost,
+            TURN_USERNAME: 'local-test-user', TURN_CREDENTIAL: credential,
+            SCALEWORLD_TURN_MODE: name === 'redundant' ? 'redundant' : name === 'legacy-shared' ? 'legacy-shared' : 'isolated',
+            SCALEWORLD_STREAMING_LANE: name === 'nonprod' ? 'nonprod' : 'prod',
+            TURN_FALLBACK_USERNAME: 'independent-fallback-user', TURN_FALLBACK_CREDENTIAL: 'independent-fallback-password'
+        });
+        const streamer = connect(t, 'ws://127.0.0.1:' + wilbur.streamerPort);
+        const player = connect(t, 'ws://127.0.0.1:' + wilbur.playerPort);
+        for (const [peer, urls] of [
+            [streamer, ['turn:' + privateHost + ':3478?transport=udp', 'turn:' + privateHost + ':3478?transport=tcp']],
+            [player, ['turn:' + publicHost + ':3478?transport=udp', 'turns:' + publicHost + ':443?transport=tcp']]
+        ]) {
+            await waitFor(() => peer.messages.some((message) => message.type === 'config'), name + ' peer config');
+            const options = peer.messages.find((message) => message.type === 'config').peerConnectionOptions;
+            assert.equal(options.iceTransportPolicy, 'all');
+            assert.deepEqual(options.iceServers[0], { urls: ['stun:stun.l.google.com:19302'] });
+            assert.deepEqual(options.iceServers[1], { urls, username: 'local-test-user', credential });
+            assert.equal(options.iceServers.length, name === 'redundant' ? 3 : 2);
+            if (name === 'redundant') {
+                assert.equal(options.iceServers[2].username, 'independent-fallback-user');
+                assert.equal(options.iceServers[2].credential, 'independent-fallback-password');
+                assert.match(options.iceServers[2].urls[0], peer === player ? /turn.scaleworld.net/ : /172.31.32.124/);
+            }
+        }
+        assert.ok(!wilbur.output().includes(credential), 'TURN credential appeared in Wilbur output');
+        assert.ok(!wilbur.output().includes('independent-fallback-password'));
+    });
+}
 
 test('TURN generation preserves split ICE policies, config-first ordering and signed admission', { timeout: 20000 }, async (t) => {
     const signingKey = 'local-test-signing-key-with-at-least-32-characters';

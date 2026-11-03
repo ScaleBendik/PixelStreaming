@@ -160,6 +160,7 @@ export class AggregatedStats {
         localCandidate.id = stat.id;
         localCandidate.relayProtocol = stat.relayProtocol;
         localCandidate.transportId = stat.transportId;
+        localCandidate.url = stat.url;
         this.localCandidates.push(localCandidate);
     }
 

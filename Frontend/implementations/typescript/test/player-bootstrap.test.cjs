@@ -8,7 +8,7 @@ const source = ts.transpileModule(fs.readFileSync(require.resolve('../src/player
 }).outputText;
 
 function boot({ missingControls = false, installationFails = false, navigationFails = false, recordingFails = false, telemetryFails = false, recordingCapability, autoConnect = true, capability, storedCapability, freshTicket = true, beforeLeave = async () => true } = {}) {
-    const state = { connections: 0, installed: 0, warnings: [], navigations: [], closes: 0, endedMarks: 0, events: new Map() };
+    const state = { connections: 0, installed: 0, warnings: [], navigations: [], closes: 0, endedMarks: 0, events: new Map(), now:Date.now() };
     state.emit = (name, data) => { for (const listener of state.events.get(name) || []) listener({ data }); };
     const ids = new Proxy({}, { get: (_, key) => key });
     const toolbar = {};
@@ -26,7 +26,10 @@ function boot({ missingControls = false, installationFails = false, navigationFa
                 constructor(config) {
                     this.config = config;
                     this.videoElementParent = { hasAttribute: () => false, focus: () => { state.streamFocused = true; } };
-                    this.signallingProtocol = { transport: { addListener() {} } };
+                    this.signallingProtocol = { transport: { addListener() {} }, sendMessage(message) {
+                        if (state.failRelaySend && message.type === 'scaleWorldTurnRelay') throw Error('Socket connecting');
+                        (state.signallingMessages ??= []).push(message);
+                    } };
                 }
                 setSignallingUrlBuilder() {}
                 addEventListener(name, listener) {
@@ -36,7 +39,7 @@ function boot({ missingControls = false, installationFails = false, navigationFa
                 }
                 connect() { state.connections++; }
             },
-            SessionQuality: class { report() { return null; } setConnected() {} }
+            SessionQuality: class { report() { return null; } setConnected() {} observe() {} }
         },
         '@epicgames-ps/lib-pixelstreamingfrontend-ui-ue5.8': {
             Application: class {
@@ -107,8 +110,8 @@ function boot({ missingControls = false, installationFails = false, navigationFa
     window.location.replace = url => state.navigations.push(['replace', url]);
     window.location.assign = url => state.navigations.push(['assign', url]);
     const exports = {};
-    vm.runInNewContext(source, { exports, module: { exports }, document, window, URL, URLSearchParams,
-        atob, console, performance, require(name) { assert.ok(modules[name], name); return modules[name]; } });
+    vm.runInNewContext(source, { exports, module: { exports }, document, window, URL, URLSearchParams, Date:class extends Date { static now() { return state.now; } },
+        atob, console, performance, fetch: async (_url, options) => { (state.httpBodies ??= []).push(JSON.parse(options.body)); return {ok:true}; }, require(name) { assert.ok(modules[name], name); return modules[name]; } });
     document.body.onload();
     assert.ok(window.pixelStreaming, 'bootstrap must finish');
     return state;
@@ -119,6 +122,63 @@ test('managed owner bootstrap installs the control and connects', () => {
     assert.equal(state.installed, 1);
     assert.equal(state.connections, 1);
     assert.deepEqual(state.warnings, []);
+});
+
+test('selected relay identity travels on signalling and never leaks to the legacy HTTP reporter', () => {
+    const state = boot();
+    state.emit('statsReceived', {aggregatedStats: {
+        inboundVideoStats: { id: 'video', timestamp: 1, bytesReceived: 1000 },
+        getActiveCandidatePair: () => ({localCandidateId:'local', remoteCandidateId:'remote'}),
+        localCandidates:[{id:'unused',candidateType:'relay',url:'turn:other.example:3478?transport=udp'},
+            {id:'local',candidateType:'relay',url:'turns:turn.scaleworld.net:443?transport=tcp'}],
+        remoteCandidates:[{id:'remote',candidateType:'relay',address:'172.31.32.124'}]
+    }});
+    const relay = state.signallingMessages.find(message => message.type === 'scaleWorldTurnRelay');
+    assert.equal(relay.localRelayUrl, 'turns:turn.scaleworld.net:443?transport=tcp');
+    assert.equal(relay.remoteRelayAddress, '172.31.32.124');
+    assert.equal(relay.localRelay, true); assert.equal(relay.remoteRelay, true);
+    assert.equal(state.httpBodies.length, 1);
+    assert.equal('localRelayUrl' in state.httpBodies[0], false);
+    assert.equal('remoteRelayAddress' in state.httpBodies[0], false);
+});
+
+function relayStats(host, remoteAddress) {
+    return {aggregatedStats: {
+        inboundVideoStats: {id:'video', timestamp:1, bytesReceived:1000},
+        getActiveCandidatePair: () => ({localCandidateId:'local', remoteCandidateId:'remote'}),
+        localCandidates:[{id:'local', candidateType:'relay', url:`turn:${host}:3478?transport=udp`}],
+        remoteCandidates:[{id:'remote', candidateType:remoteAddress ? 'relay' : 'host', address:remoteAddress}]
+    }};
+}
+
+test('local and remote relay transitions report immediately while unchanged paths keep their heartbeat cadence', () => {
+    const state = boot();
+    state.emit('statsReceived', relayStats('turn-prod.scaleworld.net'));
+    state.now += 1000;
+    state.emit('statsReceived', relayStats('turn-prod.scaleworld.net'));
+    assert.equal(state.signallingMessages.length, 1);
+    state.emit('statsReceived', relayStats('turn.scaleworld.net'));
+    assert.equal(state.signallingMessages.length, 2, 'a new peer selecting fallback does not wait for the old 30-second cadence');
+    state.emit('statsReceived', relayStats('turn.scaleworld.net', '192.0.2.10'));
+    state.emit('statsReceived', relayStats('turn.scaleworld.net', '192.0.2.20'));
+    assert.equal(state.signallingMessages.length, 4, 'remote-only path changes also report immediately');
+    state.now += 29_999;
+    state.emit('statsReceived', relayStats('turn.scaleworld.net', '192.0.2.20'));
+    assert.equal(state.signallingMessages.length, 4);
+    state.now++;
+    state.emit('statsReceived', relayStats('turn.scaleworld.net', '192.0.2.20'));
+    assert.equal(state.signallingMessages.length, 5);
+});
+
+test('a connecting socket cannot block legacy HTTP reporting or suppress the next relay send', () => {
+    const state = boot(); state.failRelaySend = true;
+    const stats = relayStats('turn.scaleworld.net');
+    assert.doesNotThrow(() => state.emit('statsReceived', stats));
+    assert.equal(state.httpBodies.length, 1);
+    assert.equal(state.httpBodies[0].localRelayUrl, undefined);
+    state.failRelaySend = false;
+    state.emit('statsReceived', stats);
+    assert.equal(state.signallingMessages.length, 1, 'failed sends do not advance the signature or heartbeat');
 });
 
 test('recording analytics is wired separately and its token is scrubbed even when initialization fails', () => {

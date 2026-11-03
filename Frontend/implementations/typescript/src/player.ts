@@ -74,6 +74,8 @@ type ReconnectContext = {
 };
 
 type CandidateLike = {
+    url?: string;
+    address?: string;
     id?: string;
     candidateType?: string;
     relayProtocol?: string;
@@ -117,6 +119,10 @@ type SessionNetworkPathReport = {
     usesTurn: boolean;
     candidateType?: string;
     relayProtocol?: string;
+    localRelay: boolean;
+    remoteRelay: boolean;
+    localRelayUrl?: string;
+    remoteRelayAddress?: string;
 };
 
 type VideoFrameCallbackMetadata = {
@@ -496,7 +502,11 @@ const deriveSessionNetworkPathReport = (
         sessionRequestId,
         usesTurn,
         candidateType,
-        relayProtocol
+        relayProtocol,
+        localRelay: localCandidateType === 'relay',
+        remoteRelay: remoteCandidateType === 'relay',
+        localRelayUrl: localCandidateType === 'relay' ? localCandidate?.url : undefined,
+        remoteRelayAddress: remoteCandidateType === 'relay' ? remoteCandidate?.address : undefined
     };
 };
 
@@ -1029,6 +1039,12 @@ document.body.onload = function() {
         sessionNetworkPathRuntimeId || sessionNetworkPathRequestId;
     let lastConfirmedSessionNetworkPathSignature = '';
     let pendingSessionNetworkPathSignature = '';
+    let lastTurnRelayReportAt = 0;
+    let lastTurnRelaySignature = '';
+    stream.signallingProtocol.transport.addListener('open', () => {
+        lastTurnRelayReportAt = 0;
+        lastTurnRelaySignature = '';
+    });
     if (sessionNetworkPathCorrelationId) {
         stream.addEventListener('statsReceived', (event) => {
             const aggregatedStats = (event as Event & {
@@ -1047,7 +1063,30 @@ document.body.onload = function() {
                 return;
             }
 
-            const signature = JSON.stringify(report);
+            // Selected-pair evidence travels on the admitted signalling connection.
+            // Never send candidate addresses to the legacy unauthenticated HTTP reporter.
+            const { localRelay, remoteRelay, localRelayUrl, remoteRelayAddress, ...legacyReport } = report;
+            const relayMessage = {
+                type: 'scaleWorldTurnRelay',
+                relayEvidenceVersion: 1,
+                usesTurn: report.usesTurn,
+                localRelay,
+                remoteRelay,
+                localRelayUrl,
+                remoteRelayAddress
+            };
+            const relaySignature = JSON.stringify(relayMessage);
+            if (relaySignature !== lastTurnRelaySignature || Date.now() - lastTurnRelayReportAt >= 30_000) {
+                try {
+                    stream.signallingProtocol.sendMessage(relayMessage);
+                    lastTurnRelayReportAt = Date.now();
+                    lastTurnRelaySignature = relaySignature;
+                } catch {
+                    // A connecting/closed socket must not block HTTP telemetry or suppress the next retry.
+                }
+            }
+
+            const signature = JSON.stringify(legacyReport);
             if (
                 signature === lastConfirmedSessionNetworkPathSignature ||
                 signature === pendingSessionNetworkPathSignature
@@ -1061,7 +1100,7 @@ document.body.onload = function() {
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(report),
+                body: JSON.stringify(legacyReport),
                 keepalive: true,
                 credentials: 'same-origin'
             })

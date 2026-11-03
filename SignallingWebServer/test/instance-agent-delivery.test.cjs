@@ -290,3 +290,70 @@ test('quality snapshots coalesce without fast polling or displacing queued lifec
     assert.equal(h.batches.flat().filter(e => e.eventType === 'session_network_path').length, 100);
     assert.equal(h.batches.flat().filter(e => e.eventType === 'viewer_quality_summary').length, 0);
 });
+
+test('relay observations use admitted request identity, retain transitions and strip raw candidate evidence', async t => {
+    const { TurnRelayClassifier } = require('../dist/turn-fallback');
+    const refresh = TurnRelayClassifier.prototype.refreshAddresses;
+    TurnRelayClassifier.prototype.refreshAddresses = async () => {};
+    const previousMode = process.env.SCALEWORLD_TURN_MODE;
+    const previousLane = process.env.SCALEWORLD_STREAMING_LANE;
+    process.env.SCALEWORLD_TURN_MODE = 'redundant';
+    process.env.SCALEWORLD_STREAMING_LANE = 'prod';
+    t.after(() => {
+        TurnRelayClassifier.prototype.refreshAddresses = refresh;
+        if (previousMode === undefined) delete process.env.SCALEWORLD_TURN_MODE;
+        else process.env.SCALEWORLD_TURN_MODE = previousMode;
+        if (previousLane === undefined) delete process.env.SCALEWORLD_STREAMING_LANE;
+        else process.env.SCALEWORLD_STREAMING_LANE = previousLane;
+    });
+    const handlers = {};
+    const playerRegistry = { count: () => 1, has: () => true,
+        get: id => id === 'admitted' ? { scaleWorldSessionIdentityValidated: true, scaleWorldSessionRequestId: 'signed-request' } : {},
+        on: (name, callback) => { handlers[name] = callback; } };
+    const h = await harness(t, { playerRegistry });
+    const evidence = { connectionId: 'server-connection', sequence: 1, usesTurn: true, localRelay: true,
+        localRelayUrl: 'turn:turn.scaleworld.net:3478?transport=udp', remoteRelayAddress: '192.0.2.10',
+        sessionRequestId: 'spoofed-request', credential: 'must-not-persist' };
+    handlers.scaleWorldTurnRelay('unsigned', evidence);
+    handlers.scaleWorldTurnRelay('admitted', evidence);
+    handlers.scaleWorldTurnRelay('admitted', { ...evidence, sequence: 2 });
+    await h.poll();
+    let events = h.batches.flat().filter(event => event.eventType === 'viewer_turn_relay_observed');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].metadata.sessionRequestId, 'signed-request');
+    assert.equal(events[0].metadata.relayRole, 'fallback');
+    for (const field of ['localRelayUrl', 'remoteRelayAddress', 'credential']) assert.equal(events[0].metadata[field], undefined);
+    handlers.scaleWorldTurnRelay('admitted', { ...evidence, sequence: 3, usesTurn: false, localRelay: false });
+    await h.poll();
+    events = h.batches.flat().filter(event => event.eventType === 'viewer_turn_relay_observed');
+    assert.deepEqual(events.map(event => event.metadata.relayRole), ['fallback', 'direct']);
+});
+
+test('first remote-only relay observation waits for DNS and survives viewer removal without adopting a replacement request', async t => {
+    const { TurnRelayClassifier } = require('../dist/turn-fallback');
+    const refresh = TurnRelayClassifier.prototype.refreshAddresses;
+    const held = deferred();
+    TurnRelayClassifier.prototype.refreshAddresses = function () {
+        return held.promise.then(() => this.primaryAddresses.add('192.0.2.20'));
+    };
+    t.after(() => { TurnRelayClassifier.prototype.refreshAddresses = refresh; });
+    const { EventEmitter } = require('node:events');
+    let requestId = 'original-request';
+    let connected = true;
+    const players = Object.assign(new EventEmitter(), {
+        count: () => connected ? 1 : 0, has: () => connected,
+        get: () => connected ? { scaleWorldSessionIdentityValidated:true, scaleWorldSessionRequestId:requestId } : undefined
+    });
+    const h = await harness(t, {playerRegistry:players, release:() => held.resolve()});
+    players.emit('scaleWorldTurnRelay', 'player', {connectionId:'old-connection', sequence:1,
+        usesTurn:true, localRelay:false, remoteRelay:true, remoteRelayAddress:'192.0.2.20'});
+    await h.poll();
+    assert.equal(h.batches.flat().filter(e => e.eventType === 'viewer_turn_relay_observed').length, 0);
+    connected = false; players.emit('removed', 'player');
+    connected = true; requestId = 'replacement-request';
+    held.resolve(); await settle(); await h.poll();
+    const events = h.batches.flat().filter(e => e.eventType === 'viewer_turn_relay_observed');
+    assert.equal(events.length, 1, 'the first observation is enriched without another browser report');
+    assert.equal(events[0].metadata.relayRole, 'primary');
+    assert.equal(events[0].metadata.sessionRequestId, 'original-request');
+});

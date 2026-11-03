@@ -774,6 +774,24 @@ test('session quality accepts only managed viewers and strips browser identity f
     managed.close(); unsigned.close();
 });
 
+test('relay observations require admitted identity and cannot supply their own correlation or role', () => {
+    const server = serverWith(); const observations = [];
+    server.playerRegistry.on('scaleWorldTurnRelay', (...args) => observations.push(args));
+    const managed = new Socket(); const unsigned = new Socket();
+    server.onPlayerConnected(managed, request({ sessionRequestId: 'signed-request', activeSessionId: 'signed-session' }));
+    server.onPlayerConnected(unsigned, request());
+    const report = { type: 'scaleWorldTurnRelay', relayEvidenceVersion: 1, usesTurn: true, localRelay: true, remoteRelay: false,
+        localRelayUrl: 'turns:turn.scaleworld.net:443?transport=tcp', sessionRequestId:'spoof', connectionId:'spoof', relayRole:'primary' };
+    unsigned.receive(report); managed.receive({...report, localRelayUrl:'turn:secret@host'});
+    assert.equal(observations.length, 0);
+    managed.receive(report); managed.receive(report);
+    assert.equal(observations.length, 1);
+    assert.notEqual(observations[0][1].connectionId, 'spoof');
+    assert.equal('sessionRequestId' in observations[0][1], false);
+    assert.equal('relayRole' in observations[0][1], false);
+    managed.close(); unsigned.close();
+});
+
 for (const state of ['absent', 'negotiating', 'policy-mismatch']) {
     test(`Premium shadow rejection explains unavailable owner: ${state}`, () => {
         const server = serverWith();

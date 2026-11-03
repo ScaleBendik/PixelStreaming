@@ -44,20 +44,22 @@ echo ERROR: Unsupported SCALEWORLD_STREAMING_LANE "%SCALEWORLD_STREAMING_LANE%".
 exit /b 1
 
 :apply_streaming_lane_nonprod
-if not defined TURN_USER_PARAM set "TURN_USER_PARAM=/pixelstreaming/turn/username"
-if not defined TURN_CREDENTIAL_PARAM set "TURN_CREDENTIAL_PARAM=/pixelstreaming/turn/credential"
 if not defined CONNECT_TICKET_SIGNING_KEY_PARAM set "CONNECT_TICKET_SIGNING_KEY_PARAM=/pixelstreaming/connect-ticket/signing-key"
 if not defined CONNECT_TICKET_ISSUER set "CONNECT_TICKET_ISSUER=scaleworld-dev-connect-ticket"
 goto after_streaming_lane_defaults
 
 :apply_streaming_lane_prod
-if not defined TURN_USER_PARAM set "TURN_USER_PARAM=/pixelstreaming/turn/username"
-if not defined TURN_CREDENTIAL_PARAM set "TURN_CREDENTIAL_PARAM=/pixelstreaming/turn/credential"
 if not defined CONNECT_TICKET_SIGNING_KEY_PARAM set "CONNECT_TICKET_SIGNING_KEY_PARAM=/pixelstreaming/prod/connect-ticket/signing-key"
 if not defined CONNECT_TICKET_ISSUER set "CONNECT_TICKET_ISSUER=scaleworld-prod-connect-ticket"
 goto after_streaming_lane_defaults
 
 :after_streaming_lane_defaults
+set "TURN_CONFIGURATION_READY="
+for /f "usebackq tokens=1,* delims==" %%I in (`powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%..\powershell\resolve_turn_configuration.ps1" -Phase Select`) do set "%%I=%%J"
+if not "%TURN_CONFIGURATION_READY%"=="1" (
+  echo ERROR: TURN configuration selection failed. No runtime parameters were requested.
+  exit /b 1
+)
 set "AWS_EXE=aws"
 set "ENABLE_GIT_SYNC_BEFORE_START=false"
 set "DISCARD_LOCAL_GIT_CHANGES_ON_SYNC=true"
@@ -205,6 +207,7 @@ call :startup_phase parameters.started 0
 call :load_runtime_parameters
 call :startup_phase parameters.completed %errorlevel%
 if errorlevel 1 exit /b 1
+if defined TURN_FALLBACK_USER_PARAM call :load_turn_fallback_parameters
 call :resolve_instance_agent_control_plane_env
 if errorlevel 1 exit /b 1
 call :apply_instance_agent_control_plane_defaults
@@ -225,6 +228,9 @@ if not defined TURN_CREDENTIAL (
 )
 
 echo Loaded TURN credentials from SSM parameter store.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%..\powershell\resolve_turn_configuration.ps1" -Phase Validate
+if errorlevel 1 exit /b 1
+echo Using TURN mode: "%SCALEWORLD_TURN_MODE%", public host: "%TURN_PUBLIC_HOST%", private host: "%TURN_PRIVATE_HOST%".
 
 if /i not "%CONNECT_TICKET_AUTH_MODE%"=="off" (
   if not defined CONNECT_TICKET_SIGNING_KEY (
@@ -407,6 +413,14 @@ exit /b %errorlevel%
 if exist "%STARTUP_TELEMETRY_CMD%" call "%STARTUP_TELEMETRY_CMD%" phase %~1 %~2
 exit /b %errorlevel%
 
+:load_turn_fallback_parameters
+rem Keep the primary SSM batch within its ten-name API limit.
+for /f "usebackq tokens=1,*" %%I in (`%AWS_CALL% ssm get-parameters --names %TURN_FALLBACK_USER_PARAM% %TURN_FALLBACK_CREDENTIAL_PARAM% --with-decryption --region "%REGION%" --query "Parameters[].[Name,Value]" --output text`) do (
+  if /i "%%I"=="%TURN_FALLBACK_USER_PARAM%" set "TURN_FALLBACK_USERNAME=%%J"
+  if /i "%%I"=="%TURN_FALLBACK_CREDENTIAL_PARAM%" set "TURN_FALLBACK_CREDENTIAL=%%J"
+)
+exit /b 0
+
 :load_runtime_parameters
 set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM="
 set "INSTANCE_AGENT_API_BASE_URL_LOADED_FROM_PARAM_NAME="
@@ -415,6 +429,7 @@ set "INSTANCE_AGENT_CONTROL_PLANE_ENV_LOADED_FROM_PARAM_NAME="
 set "INSTANCE_AGENT_BOOTSTRAP_SHARED_SECRET_LOADED_FROM_PARAM="
 set "INSTANCE_AGENT_ARTIFACT_BUCKET_LOADED_FROM_PARAM="
 set "RUNTIME_PARAMETER_NAMES=%TURN_USER_PARAM% %TURN_CREDENTIAL_PARAM%"
+if defined TURN_PUBLIC_HOST_PARAM set "RUNTIME_PARAMETER_NAMES=%RUNTIME_PARAMETER_NAMES% %TURN_PUBLIC_HOST_PARAM% %TURN_PRIVATE_HOST_PARAM%"
 
 if /i not "%CONNECT_TICKET_AUTH_MODE%"=="off" (
   if not defined CONNECT_TICKET_SIGNING_KEY (
@@ -449,6 +464,8 @@ if not defined INSTANCE_AGENT_ARTIFACT_BUCKET (
 for /f "usebackq tokens=1,*" %%I in (`%AWS_CALL% ssm get-parameters --names %RUNTIME_PARAMETER_NAMES% --with-decryption --region "%REGION%" --query "Parameters[].[Name,Value]" --output text`) do (
   if /i "%%I"=="%TURN_USER_PARAM%" set "TURN_USERNAME=%%J"
   if /i "%%I"=="%TURN_CREDENTIAL_PARAM%" set "TURN_CREDENTIAL=%%J"
+  if defined TURN_PUBLIC_HOST_PARAM if /i "%%I"=="%TURN_PUBLIC_HOST_PARAM%" set "TURN_PUBLIC_HOST=%%J"
+  if defined TURN_PRIVATE_HOST_PARAM if /i "%%I"=="%TURN_PRIVATE_HOST_PARAM%" set "TURN_PRIVATE_HOST=%%J"
   if /i "%%I"=="%CONNECT_TICKET_SIGNING_KEY_PARAM%" set "CONNECT_TICKET_SIGNING_KEY=%%J"
   if /i "%%I"=="%INSTANCE_AGENT_API_BASE_URL_PARAM%" (
     set "INSTANCE_AGENT_API_BASE_URL=%%J"
