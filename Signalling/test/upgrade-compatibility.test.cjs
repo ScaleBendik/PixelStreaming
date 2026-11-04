@@ -697,8 +697,9 @@ for (const codec of ['H264', 'VP9', 'AV1']) {
         negotiate(viewer, owner);
         const beforeShadow = streamer.messages.length;
         server.onPlayerConnected(shadowSocket, request({ shadowSessionRequestId: 'signed-request', codecPolicy: policy }));
-        if (codec === 'H264') {
+        if (codec === 'H264' || codec === 'AV1') {
             assert.equal(shadowSocket.readyState, WebSocket.CLOSED);
+            assert.match(shadowSocket.closeReason, new RegExp(`Shadow connect is unavailable for ${codec} sessions`));
             assert.equal(server.playerRegistry.count(), 1);
             assert.equal(viewer.readyState, WebSocket.OPEN);
             assert.equal(owner.codecNegotiated, true);
@@ -712,7 +713,17 @@ for (const codec of ['H264', 'VP9', 'AV1']) {
             assert.equal(server.playerRegistry.count(), 1);
             assert.equal(streamer.messages.length, beforeShadow);
             assert.equal(viewer.readyState, WebSocket.OPEN);
-            viewer.close(); streamer.close();
+            assert.equal(owner.codecNegotiated, true);
+            viewer.close();
+            // The restriction must not prevent an ordinary reconnect after the old viewer leaves.
+            const replacementSocket = new Socket();
+            server.onPlayerConnected(replacementSocket, request({ sessionRequestId: 'signed-request', activeSessionId: 'signed-session', codecPolicy: policy }));
+            const replacement = server.playerRegistry.listPlayers()[0];
+            negotiate(replacementSocket, replacement);
+            assert.equal(replacementSocket.readyState, WebSocket.OPEN);
+            assert.equal(replacement.codecNegotiated, true);
+            assert.equal(replacement.selectedCodec, codec);
+            replacementSocket.close(); streamer.close();
             return;
         }
         const shadow = server.playerRegistry.listPlayers()[1];
@@ -728,6 +739,36 @@ for (const codec of ['H264', 'VP9', 'AV1']) {
         assert.equal(owner.streamerPlayerId, ownerId);
         assert.equal(owner.codecNegotiated, true);
         assert.deepEqual([...owner.subscribedStreamer.subscribers], [owner.playerId]);
+        viewer.close(); streamer.close();
+    });
+}
+
+for (const [ownerCodec, secondCodec] of [['AV1', 'VP9'], ['VP9', 'AV1']]) {
+    test(`${ownerCodec} owner and ${secondCodec} duplicate cannot bypass AV1 single-viewer protection`, () => {
+        const server = serverWith();
+        server.codecEvidenceRecorder = () => {};
+        const streamer = new Socket(); const viewer = new Socket(); const duplicate = new Socket();
+        server.onStreamerConnected(streamer, request());
+        streamer.receive({ type: 'endpointId', id: 'test-streamer' });
+        const policy = { version: 1, snapshotId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', policyHash: 'A'.repeat(64), allowedCodecs: ['AV1', 'VP9'], defaultCodec: 'AV1', allowSwitching: false };
+        const claims = { sessionRequestId: 'signed-request', activeSessionId: 'signed-session', codecPolicy: policy };
+        server.onPlayerConnected(viewer, request(claims));
+        const owner = server.playerRegistry.listPlayers()[0];
+        viewer.receive({ type: 'scaleWorldCodecCapabilities', supportedCodecs: [ownerCodec] });
+        viewer.receive({ type: 'subscribe', streamerId: 'test-streamer' });
+        const sdp = ['v=0', 'm=video 9 UDP/TLS/RTP/SAVPF 96', `a=rtpmap:96 ${ownerCodec}/90000`, ''].join('\r\n');
+        streamer.receive({ type: 'offer', playerId: owner.streamerPlayerId, sdp });
+        viewer.receive({ type: 'answer', sdp, mediaGeneration: 0 });
+        const beforeDuplicate = streamer.messages.length;
+        server.onPlayerConnected(duplicate, request(claims));
+        duplicate.receive({ type: 'scaleWorldCodecCapabilities', supportedCodecs: [secondCodec] });
+        duplicate.receive({ type: 'subscribe', streamerId: 'test-streamer' });
+        assert.equal(duplicate.readyState, WebSocket.CLOSED);
+        assert.equal(streamer.messages.length, beforeDuplicate, 'Rejected viewer never reaches Unreal');
+        assert.equal(server.playerRegistry.count(), 1);
+        assert.equal(viewer.readyState, WebSocket.OPEN);
+        assert.equal(owner.codecNegotiated, true);
+        assert.equal(owner.selectedCodec, ownerCodec);
         viewer.close(); streamer.close();
     });
 }

@@ -27,6 +27,10 @@ import { redactSensitiveLogValue } from './LogRedaction';
 import * as LogUtils from './LoggingUtils';
 import { SignallingServer } from './SignallingServer';
 
+function requiresSingleViewer(codec: VideoCodec | undefined): boolean {
+    return codec === 'H264' || codec === 'AV1';
+}
+
 /**
  * A connection between the signalling server and a player connection.
  * This is where messages expected to be handled by the player come in
@@ -109,8 +113,8 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
                 this.codecAdmissionFailureReason = 'Shadow connect policy does not permit the owner codec';
                 return false;
             }
-            if (source.selectedCodec === 'H264') {
-                this.codecAdmissionFailureReason = 'Shadow connect is unavailable for H264 sessions';
+            if (requiresSingleViewer(source.selectedCodec)) {
+                this.codecAdmissionFailureReason = `Shadow connect is unavailable for ${source.selectedCodec} sessions`;
                 return false;
             }
             this.selectedCodec = source.selectedCodec;
@@ -725,11 +729,12 @@ export class PlayerConnection implements IPlayer, LogUtils.IMessageLogger {
                         player instanceof PlayerConnection &&
                         player !== this &&
                         player.subscribedStreamer === streamer &&
-                        (this.selectedCodec === 'H264' || player.selectedCodec === 'H264')
+                        (requiresSingleViewer(this.selectedCodec) ||
+                            requiresSingleViewer(player.selectedCodec))
                 )
         ) {
             this.failCodecNegotiation(
-                'H264 sessions support one viewer. Close the existing player before reconnecting.'
+                'H264 and AV1 sessions support one viewer. Close the existing player before reconnecting.'
             );
             return;
         }
