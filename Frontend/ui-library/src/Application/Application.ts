@@ -49,7 +49,7 @@ import { FullScreenIconBase, FullScreenIconExternal } from '../UI/FullscreenIcon
  */
 export type VideoQPIndicatorConfig = {
     disableIndicator?: boolean;
-    /** Setting this to true will hide the indicator when the connection is "good" ie. green */
+    /** Hide the green, low-QP H.264 indicator. Unrated codecs remain visible. */
     hideWhenGood?: boolean;
 };
 
@@ -663,6 +663,7 @@ export class Application {
      */
     onDisconnect(eventString: string, allowClickToReconnect: boolean) {
         this.hasPresentedMediaForCurrentConnection = false;
+        this.videoQpIndicator?.setConnected(false);
 
         if (this.isInitialAutoConnectPending && !allowClickToReconnect && !eventString.trim()) {
             this.showOpeningStreamOverlay();
@@ -684,6 +685,7 @@ export class Application {
      * Handles when Web Rtc is connecting
      */
     onWebRtcConnecting() {
+        this.videoQpIndicator?.setConnected(false);
         this.showOpeningStreamOverlay();
     }
 
@@ -691,6 +693,7 @@ export class Application {
      * Handles when Web Rtc has connected
      */
     onWebRtcConnected() {
+        this.videoQpIndicator?.setConnected(true);
         this.showOpeningStreamOverlay();
     }
 
@@ -699,6 +702,7 @@ export class Application {
      */
     onWebRtcFailed() {
         this.hasPresentedMediaForCurrentConnection = false;
+        this.videoQpIndicator?.setConnected(false);
         this.showErrorOverlay('Unable to setup video');
     }
 
@@ -767,6 +771,10 @@ export class Application {
     }
 
     onStatsReceived(aggregatedStats: AggregatedStats) {
+        const codecId = aggregatedStats.inboundVideoStats.codecId;
+        this.videoQpIndicator?.updateVideoCodec(
+            codecId ? aggregatedStats.codecs.get(codecId)?.mimeType : undefined
+        );
         // Grab all stats we can off the aggregated stats
         this.statsPanel?.handleStats(aggregatedStats);
     }

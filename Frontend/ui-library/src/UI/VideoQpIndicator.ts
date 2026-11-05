@@ -3,21 +3,22 @@
 import { VideoQPIndicatorConfig } from '../Application/Application';
 
 /**
- * A UI element showing the QP (quantization parameter) of the video stream at the last encoded frame (well, last transmitted QP really).
- * A blockier encoding will have a higher QP and this will make the indicator turn more red.
- * A non-blocky stream will have a lower QP and this will make the indicator turn more green.
- * The QP indicator is represented visually using a WiFi icon.
+ * Shows the last encoder QP (quantization parameter). QP scales differ by codec;
+ * the legacy H.264 thresholds must not rate AV1, VP9 or an unknown codec.
  */
 export class VideoQpIndicator {
     config?: VideoQPIndicatorConfig;
 
     videoEncoderAvgQP = -1;
+    private videoCodec?: string;
+    private connected = false;
+    private blinkInterval?: ReturnType<typeof setInterval>;
 
     // non html elements
     statsText = '';
     color = '';
 
-    // qp colors
+    // Legacy H.264 thresholds; these are not a perceptual quality score.
     readonly orangeQP = 26;
     readonly redQP = 35;
 
@@ -50,7 +51,7 @@ export class VideoQpIndicator {
             this._rootElement.appendChild(this.qualityText);
 
             // set colors to not connected initially
-            this.updateQpTooltip(-1);
+            this.render();
         }
         return this._rootElement;
     }
@@ -156,12 +157,13 @@ export class VideoQpIndicator {
     blinkVideoQualityStatus(speed: number) {
         let iteration = speed;
         let opacity = 1;
-        const tickID = setInterval(() => {
+        this.blinkInterval = setInterval(() => {
             opacity -= 0.1;
             this.qualityText.style.opacity = String(Math.abs((opacity - 0.5) * 2));
             if (opacity <= 0.1) {
                 if (--iteration === 0) {
-                    clearInterval(tickID);
+                    clearInterval(this.blinkInterval);
+                    this.blinkInterval = undefined;
                 } else {
                     opacity = 1;
                 }
@@ -169,16 +171,65 @@ export class VideoQpIndicator {
         }, 100 / speed);
     }
 
-    /**
-     * updates the QP tooltip by converting the Video Encoder QP to a color light
-     * @param QP - The video encoder QP number needed to find the average
-     */
+    /** Reset codec and QP at the connection boundary so a new peer cannot inherit a rating. */
+    setConnected(connected: boolean) {
+        this.connected = connected;
+        if (!connected) {
+            this.videoCodec = undefined;
+            this.videoEncoderAvgQP = -1;
+        }
+        this.render();
+    }
+
+    /** Use the actual inbound video codec from RTC stats, never the preferred codec. */
+    updateVideoCodec(mimeType?: string) {
+        const codec = mimeType?.trim().toLowerCase();
+        this.videoCodec =
+            codec === 'video/h264'
+                ? 'H.264'
+                : codec === 'video/av1'
+                  ? 'AV1'
+                  : codec === 'video/vp9'
+                    ? 'VP9'
+                    : codec === 'video/vp8'
+                      ? 'VP8'
+                      : undefined;
+        this.render();
+    }
+
     updateQpTooltip(QP: number) {
         this.videoEncoderAvgQP = QP;
-        if (QP > this.redQP) {
+        this.render();
+    }
+
+    private render() {
+        clearInterval(this.blinkInterval);
+        this.blinkInterval = undefined;
+        this.qualityText.style.opacity = '1';
+        this.qualityStatus.style.opacity = '1';
+        const QP = this.videoEncoderAvgQP;
+        if (!this.connected || !Number.isFinite(QP) || QP < 0) {
+            this.color = '#b0b0b0';
+            this.outer.setAttributeNS(null, 'fill', '#3c3b40');
+            this.middle.setAttributeNS(null, 'fill', '#3c3b40');
+            this.inner.setAttributeNS(null, 'fill', '#3c3b40');
+            this.dot.setAttributeNS(null, 'fill', '#3c3b40');
+            this.statsText = `<div style="color: ${this.color}">${
+                this.connected ? 'Waiting for encoder statistics' : 'Not connected'
+            }</div>`;
+        } else if (this.videoCodec !== 'H.264') {
+            this.color = '#b0b0b0';
+            this.statsText = `<div style="color: ${this.color}">${
+                this.videoCodec ?? 'Unknown codec'
+            } QP: ${QP} (quality not rated)</div>`;
+            this.outer.setAttributeNS(null, 'fill', this.color);
+            this.middle.setAttributeNS(null, 'fill', this.color);
+            this.inner.setAttributeNS(null, 'fill', this.color);
+            this.dot.setAttributeNS(null, 'fill', this.color);
+        } else if (QP > this.redQP) {
             this.color = 'red';
             this.blinkVideoQualityStatus(2);
-            this.statsText = `<div style="color: ${this.color}">Poor encoding quality</div>`;
+            this.statsText = `<div style="color: ${this.color}">High H.264 quantization (QP ${QP})</div>`;
             this.outer.setAttributeNS(null, 'fill', '#3c3b40');
             this.middle.setAttributeNS(null, 'fill', '#3c3b40');
             this.inner.setAttributeNS(null, 'fill', this.color);
@@ -186,22 +237,15 @@ export class VideoQpIndicator {
         } else if (QP > this.orangeQP) {
             this.color = 'orange';
             this.blinkVideoQualityStatus(1);
-            this.statsText = `<div style="color: ${this.color}">Blocky encoding quality</div>`;
+            this.statsText = `<div style="color: ${this.color}">Moderate H.264 quantization (QP ${QP})</div>`;
             this.outer.setAttributeNS(null, 'fill', '#3c3b40');
             this.middle.setAttributeNS(null, 'fill', this.color);
             this.inner.setAttributeNS(null, 'fill', this.color);
             this.dot.setAttributeNS(null, 'fill', this.color);
-        } else if (QP <= 0) {
-            this.color = '#b0b0b0';
-            this.outer.setAttributeNS(null, 'fill', '#3c3b40');
-            this.middle.setAttributeNS(null, 'fill', '#3c3b40');
-            this.inner.setAttributeNS(null, 'fill', '#3c3b40');
-            this.dot.setAttributeNS(null, 'fill', '#3c3b40');
-            this.statsText = `<div style="color: ${this.color}">Not connected</div>`;
         } else {
             this.color = 'lime';
             this.qualityStatus.style.opacity = this.config?.hideWhenGood === true ? '0' : '1';
-            this.statsText = `<div style="color: ${this.color}">Clear encoding quality</div>`;
+            this.statsText = `<div style="color: ${this.color}">Low H.264 quantization (QP ${QP})</div>`;
             this.outer.setAttributeNS(null, 'fill', this.color);
             this.middle.setAttributeNS(null, 'fill', this.color);
             this.inner.setAttributeNS(null, 'fill', this.color);

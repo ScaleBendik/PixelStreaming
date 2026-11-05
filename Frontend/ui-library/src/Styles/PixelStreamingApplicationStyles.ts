@@ -97,9 +97,12 @@ export class PixelStreamingApplicationStyle {
             backgroundColor: 'var(--color7)'
         },
         '#connection .tooltiptext': {
-            top: '125%',
-            transform: 'translateX(-25%)',
+            top: 'auto',
+            bottom: '125%',
+            transform: 'none',
             left: '0',
+            width: 'max-content',
+            maxWidth: '80vw',
             zIndex: '20',
             padding: '5px 10px'
         },
