@@ -3,8 +3,8 @@
 import { VideoQPIndicatorConfig } from '../Application/Application';
 
 /**
- * Shows the last encoder QP (quantization parameter). QP scales differ by codec;
- * the legacy H.264 thresholds must not rate AV1, VP9 or an unknown codec.
+ * Estimates encoding quality from the last encoder QP (quantization parameter).
+ * AV1 and H.264 use separate thresholds; unsupported codecs remain unrated.
  */
 export class VideoQpIndicator {
     config?: VideoQPIndicatorConfig;
@@ -21,6 +21,13 @@ export class VideoQpIndicator {
     // Legacy H.264 thresholds; these are not a perceptual quality score.
     readonly orangeQP = 26;
     readonly redQP = 35;
+
+    // AV1 reports a 0–255 qindex. Chromium's hardware AV1 encoder uses these
+    // quality-scaling bounds for low/high quantization pressure:
+    // https://chromium.googlesource.com/chromium/src/+/HEAD/third_party/blink/renderer/platform/peerconnection/rtc_video_encoder.cc
+    // They provide a codec-specific heuristic, not a perceptual quality score.
+    readonly av1OrangeQP = 145;
+    readonly av1RedQP = 205;
 
     _rootElement: HTMLElement;
     _qualityText: HTMLElement;
@@ -208,7 +215,11 @@ export class VideoQpIndicator {
         this.qualityText.style.opacity = '1';
         this.qualityStatus.style.opacity = '1';
         const QP = this.videoEncoderAvgQP;
-        if (!this.connected || !Number.isFinite(QP) || QP < 0) {
+        const isAv1 = this.videoCodec === 'AV1';
+        const maxQP = isAv1 ? 255 : this.videoCodec === 'H.264' ? 51 : undefined;
+        const orangeQP = isAv1 ? this.av1OrangeQP : this.orangeQP;
+        const redQP = isAv1 ? this.av1RedQP : this.redQP;
+        if (!this.connected || !Number.isFinite(QP) || QP < 0 || (maxQP !== undefined && QP > maxQP)) {
             this.color = '#b0b0b0';
             this.outer.setAttributeNS(null, 'fill', '#3c3b40');
             this.middle.setAttributeNS(null, 'fill', '#3c3b40');
@@ -217,7 +228,7 @@ export class VideoQpIndicator {
             this.statsText = `<div style="color: ${this.color}">${
                 this.connected ? 'Waiting for encoder statistics' : 'Not connected'
             }</div>`;
-        } else if (this.videoCodec !== 'H.264') {
+        } else if (this.videoCodec !== 'H.264' && !isAv1) {
             this.color = '#b0b0b0';
             this.statsText = `<div style="color: ${this.color}">${
                 this.videoCodec ?? 'Unknown codec'
@@ -226,18 +237,26 @@ export class VideoQpIndicator {
             this.middle.setAttributeNS(null, 'fill', this.color);
             this.inner.setAttributeNS(null, 'fill', this.color);
             this.dot.setAttributeNS(null, 'fill', this.color);
-        } else if (QP > this.redQP) {
+        } else if (QP > redQP) {
             this.color = 'red';
             this.blinkVideoQualityStatus(2);
-            this.statsText = `<div style="color: ${this.color}">High H.264 quantization (QP ${QP})</div>`;
+            this.statsText = `<div style="color: ${this.color}">${
+                isAv1
+                    ? `Poor AV1 encoding quality (QP ${QP}; estimated)`
+                    : `High H.264 quantization (QP ${QP})`
+            }</div>`;
             this.outer.setAttributeNS(null, 'fill', '#3c3b40');
             this.middle.setAttributeNS(null, 'fill', '#3c3b40');
             this.inner.setAttributeNS(null, 'fill', this.color);
             this.dot.setAttributeNS(null, 'fill', this.color);
-        } else if (QP > this.orangeQP) {
+        } else if (QP > orangeQP) {
             this.color = 'orange';
             this.blinkVideoQualityStatus(1);
-            this.statsText = `<div style="color: ${this.color}">Moderate H.264 quantization (QP ${QP})</div>`;
+            this.statsText = `<div style="color: ${this.color}">${
+                isAv1
+                    ? `Reduced AV1 encoding quality (QP ${QP}; estimated)`
+                    : `Moderate H.264 quantization (QP ${QP})`
+            }</div>`;
             this.outer.setAttributeNS(null, 'fill', '#3c3b40');
             this.middle.setAttributeNS(null, 'fill', this.color);
             this.inner.setAttributeNS(null, 'fill', this.color);
@@ -245,7 +264,11 @@ export class VideoQpIndicator {
         } else {
             this.color = 'lime';
             this.qualityStatus.style.opacity = this.config?.hideWhenGood === true ? '0' : '1';
-            this.statsText = `<div style="color: ${this.color}">Low H.264 quantization (QP ${QP})</div>`;
+            this.statsText = `<div style="color: ${this.color}">${
+                isAv1
+                    ? `Good AV1 encoding quality (QP ${QP}; estimated)`
+                    : `Low H.264 quantization (QP ${QP})`
+            }</div>`;
             this.outer.setAttributeNS(null, 'fill', this.color);
             this.middle.setAttributeNS(null, 'fill', this.color);
             this.inner.setAttributeNS(null, 'fill', this.color);
